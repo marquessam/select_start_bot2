@@ -1,0 +1,17 @@
+{
+  "name": "select-start-bot2",
+  "version": "1.0.0",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.7.1",
+    "mongoose": "^6.8.0",
+    "dotenv": "^16.0.3",
+    "axios": "^1.2.1",
+    "node-cron": "^3.0.2",
+    "@discordjs/builders": "^1.4.0",
+    "@discordjs/rest": "^1.5.0"
+  }
+}
