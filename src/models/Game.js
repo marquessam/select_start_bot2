@@ -1,4 +1,4 @@
-// src/models/Game.js
+// File: src/models/Game.js
 const mongoose = require('mongoose');
 
 const gameSchema = new mongoose.Schema({
@@ -25,6 +25,10 @@ const gameSchema = new mongoose.Schema({
     type: Number,
     required: true,
   },
+  numAchievements: {
+    type: Number,
+    required: true,
+  },
   progressionAchievements: [{
     type: String,  // Achievement IDs that constitute "beating" the game
     required: true,
@@ -36,7 +40,7 @@ const gameSchema = new mongoose.Schema({
   createdAt: {
     type: Date,
     default: Date.now,
-  },
+  }
 });
 
 // Index for efficient queries
