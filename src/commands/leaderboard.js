@@ -1,7 +1,45 @@
 // File: src/commands/leaderboard.js
+const { SlashCommandBuilder } = require('discord.js');
 const leaderboardService = require('../services/leaderboardService');
 
-async function formatMonthlyLeaderboard(data) {
+module.exports = {
+    data: new SlashCommandBuilder()
+        .setName('leaderboard')
+        .setDescription('View the leaderboards')
+        .addStringOption(option =>
+            option.setName('type')
+                .setDescription('Which leaderboard to view')
+                .setRequired(false)
+                .addChoices(
+                    { name: 'Monthly', value: 'monthly' },
+                    { name: 'Yearly', value: 'yearly' }
+                )),
+
+    async execute(message, args) {
+        try {
+            const type = args ? args[0]?.toLowerCase() : 'monthly';
+
+            if (type === 'monthly' || !type) {
+                const monthlyData = await leaderboardService.getCurrentMonthlyProgress();
+                const formattedMessage = formatMonthlyLeaderboard(monthlyData);
+                await message.channel.send(formattedMessage);
+            }
+            else if (type === 'yearly') {
+                const yearlyData = await leaderboardService.getYearlyPoints();
+                const formattedMessage = formatYearlyLeaderboard(yearlyData);
+                await message.channel.send(formattedMessage);
+            }
+            else {
+                await message.reply('Invalid command. Use !leaderboard, !leaderboard monthly, or !leaderboard yearly');
+            }
+        } catch (error) {
+            console.error('Error displaying leaderboard:', error);
+            await message.reply('There was an error getting the leaderboard data!');
+        }
+    }
+};
+
+function formatMonthlyLeaderboard(data) {
     const { game, leaderboard } = data;
     let message = `🏆 Current Monthly Challenge: ${game}\n\n`;
     message += "```\n";
@@ -21,7 +59,7 @@ async function formatMonthlyLeaderboard(data) {
     return message;
 }
 
-async function formatYearlyLeaderboard(leaderboard) {
+function formatYearlyLeaderboard(leaderboard) {
     let message = "🏆 2024 Overall Standings\n\n";
     message += "```\n";
     message += "Rank  Player             Points  Monthly  Shadow\n";
@@ -40,31 +78,3 @@ async function formatYearlyLeaderboard(leaderboard) {
     message += "```";
     return message;
 }
-
-module.exports = {
-    name: 'leaderboard',
-    description: 'View leaderboards',
-    async execute(message, args) {
-        try {
-            // Handle subcommands
-            const subCommand = args[0]?.toLowerCase();
-
-            if (subCommand === 'monthly' || !subCommand) {
-                const monthlyData = await leaderboardService.getCurrentMonthlyProgress();
-                const formattedMessage = await formatMonthlyLeaderboard(monthlyData);
-                await message.channel.send(formattedMessage);
-            }
-            else if (subCommand === 'year' || subCommand === 'yearly') {
-                const yearlyData = await leaderboardService.getYearlyPoints();
-                const formattedMessage = await formatYearlyLeaderboard(yearlyData);
-                await message.channel.send(formattedMessage);
-            }
-            else {
-                await message.reply('Invalid command. Use !leaderboard, !leaderboard monthly, or !leaderboard yearly');
-            }
-        } catch (error) {
-            console.error('Error displaying leaderboard:', error);
-            await message.reply('There was an error getting the leaderboard data!');
-        }
-    }
-};
