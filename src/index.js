@@ -1,6 +1,6 @@
 // File: src/index.js
 require('dotenv').config();
-const { Client, GatewayIntentBits, Collection } = require('discord.js');
+const { Client, Events, GatewayIntentBits, Collection } = require('discord.js');
 const mongoose = require('mongoose');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -14,15 +14,25 @@ const client = new Client({
   ]
 });
 
-// Store commands in a collection
+// Initialize commands collection
 client.commands = new Collection();
+
+// Load command files
 const commandsPath = path.join(__dirname, 'commands');
-const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith('.js') && file !== 'deployCommands.js');
+const commandFiles = fs.readdirSync(commandsPath).filter(file => 
+  file.endsWith('.js') && file !== 'index.js' && file !== 'deployCommands.js'
+);
 
 for (const file of commandFiles) {
-    const filePath = path.join(commandsPath, file);
+  const filePath = path.join(commandsPath, file);
+  try {
     const command = require(filePath);
-    client.commands.set(command.data.name, command);
+    if ('data' in command && 'execute' in command) {
+      client.commands.set(command.data.name, command);
+    }
+  } catch (error) {
+    console.error(`Error loading command ${file}:`, error);
+  }
 }
 
 // Connect to MongoDB
@@ -31,13 +41,13 @@ mongoose.connect(process.env.MONGODB_URI)
   .catch(err => console.error('MongoDB connection error:', err));
 
 // Bot ready event
-client.once('ready', () => {
+client.once(Events.ClientReady, () => {
   console.log(`Logged in as ${client.user.tag}`);
 });
 
 // Command handling
-client.on('interactionCreate', async interaction => {
-  if (!interaction.isCommand()) return;
+client.on(Events.InteractionCreate, async interaction => {
+  if (!interaction.isChatInputCommand()) return;
 
   const command = client.commands.get(interaction.commandName);
   if (!command) return;
@@ -46,10 +56,17 @@ client.on('interactionCreate', async interaction => {
     await command.execute(interaction);
   } catch (error) {
     console.error(error);
-    await interaction.reply({ 
-      content: 'There was an error executing this command!', 
-      ephemeral: true 
-    });
+    if (interaction.replied || interaction.deferred) {
+      await interaction.followUp({ 
+        content: 'There was an error executing this command!', 
+        ephemeral: true 
+      });
+    } else {
+      await interaction.reply({ 
+        content: 'There was an error executing this command!', 
+        ephemeral: true 
+      });
+    }
   }
 });
 
