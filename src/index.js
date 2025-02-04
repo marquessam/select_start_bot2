@@ -4,6 +4,8 @@ const { Client, Events, GatewayIntentBits } = require('discord.js');
 const mongoose = require('mongoose');
 const { initializeGames } = require('./utils/initializeGames');
 const { initializeUsers } = require('./utils/initializeUsers');
+const scheduler = require('./services/scheduler');
+const achievementTracker = require('./services/achievementTracker');
 
 const client = new Client({
     intents: [
@@ -18,13 +20,21 @@ mongoose.connect(process.env.MONGODB_URI)
     .then(async () => {
         console.log('Connected to MongoDB');
         
-        // Initialize users first
+        // Initialize users and games
         await initializeUsers();
         console.log('Users initialized');
         
-        // Then initialize games
         await initializeGames();
         console.log('Games initialized');
+
+        // Do an initial achievement check
+        console.log('Starting initial achievement check...');
+        await achievementTracker.checkAllUsers();
+        console.log('Initial achievement check completed');
+
+        // Start the scheduler
+        scheduler.startAll();
+        console.log('Scheduler started');
     })
     .catch(err => console.error('Error during startup:', err));
 
@@ -44,6 +54,14 @@ client.on(Events.MessageCreate, async message => {
         message.reply('Pong!');
     }
     // Add other commands here
+});
+
+// Graceful shutdown
+process.on('SIGTERM', async () => {
+    console.log('SIGTERM received. Shutting down gracefully...');
+    scheduler.stopAll();
+    await mongoose.connection.close();
+    process.exit(0);
 });
 
 client.login(process.env.DISCORD_TOKEN);
