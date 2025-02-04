@@ -1,4 +1,6 @@
 // File: src/models/Award.js
+const mongoose = require('mongoose');
+
 const awardSchema = new mongoose.Schema({
     userId: {
         type: String,
@@ -44,15 +46,8 @@ const awardSchema = new mongoose.Schema({
     }
 });
 
-// Static method to calculate points
-awardSchema.methods.calculatePoints = function() {
-    if (this.awards.mastered) return 5;
-    if (this.awards.beaten) return 3;
-    if (this.awards.participation) return 1;
-    return 0;
-};
+// Compound index for efficient queries
+awardSchema.index({ raUsername: 1, gameId: 1, year: 1, month: 1 }, { unique: true });
 
-const Game = mongoose.model('Game', gameSchema);
 const Award = mongoose.model('Award', awardSchema);
-
-module.exports = { Game, Award };
+module.exports = Award;
