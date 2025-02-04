@@ -44,3 +44,7 @@ const gameSchema = new mongoose.Schema({
         default: Date.now,
     }
 });
+
+// Create and export the model directly
+const Game = mongoose.model('Game', gameSchema);
+module.exports = Game;
