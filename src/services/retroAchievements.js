@@ -1,4 +1,4 @@
-// src/services/retroAchievements.js
+// File: src/services/retroAchievements.js
 const axios = require('axios');
 
 class RetroAchievementsAPI {
