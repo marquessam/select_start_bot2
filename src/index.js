@@ -1,6 +1,9 @@
+// File: src/index.js
 require('dotenv').config();
 const { Client, GatewayIntentBits, Collection } = require('discord.js');
 const mongoose = require('mongoose');
+const fs = require('node:fs');
+const path = require('node:path');
 
 // Create a new Discord client
 const client = new Client({
@@ -13,6 +16,14 @@ const client = new Client({
 
 // Store commands in a collection
 client.commands = new Collection();
+const commandsPath = path.join(__dirname, 'commands');
+const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith('.js') && file !== 'deployCommands.js');
+
+for (const file of commandFiles) {
+    const filePath = path.join(commandsPath, file);
+    const command = require(filePath);
+    client.commands.set(command.data.name, command);
+}
 
 // Connect to MongoDB
 mongoose.connect(process.env.MONGODB_URI)
