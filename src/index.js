@@ -3,6 +3,7 @@ require('dotenv').config();
 const { Client, Events, GatewayIntentBits } = require('discord.js');
 const mongoose = require('mongoose');
 const { initializeGames } = require('./utils/initializeGames');
+const { initializeUsers } = require('./utils/initializeUsers');
 
 const client = new Client({
     intents: [
@@ -12,14 +13,17 @@ const client = new Client({
     ]
 });
 
-// Connect to MongoDB
+// Connect to MongoDB and initialize data
 mongoose.connect(process.env.MONGODB_URI)
-    .then(() => {
+    .then(async () => {
         console.log('Connected to MongoDB');
-        // Initialize games after MongoDB connection is established
-        return initializeGames();
-    })
-    .then(() => {
+        
+        // Initialize users first
+        await initializeUsers();
+        console.log('Users initialized');
+        
+        // Then initialize games
+        await initializeGames();
         console.log('Games initialized');
     })
     .catch(err => console.error('Error during startup:', err));
