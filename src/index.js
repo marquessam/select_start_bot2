@@ -1,76 +1,45 @@
 // File: src/index.js
 require('dotenv').config();
-const { Client, Events, GatewayIntentBits, Collection } = require('discord.js');
+const { Client, Events, GatewayIntentBits } = require('discord.js');
 const mongoose = require('mongoose');
-const fs = require('node:fs');
-const path = require('node:path');
+const { initializeGames } = require('./utils/initializeGames');
 
-// Create a new Discord client
 const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent,
-    GatewayIntentBits.GuildIntegrations
-
-  ]
+    intents: [
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.MessageContent,
+    ]
 });
-
-// Initialize commands collection
-client.commands = new Collection();
-
-// Load command files
-const commandsPath = path.join(__dirname, 'commands');
-const commandFiles = fs.readdirSync(commandsPath).filter(file => 
-  file.endsWith('.js') && file !== 'index.js' && file !== 'deployCommands.js'
-);
-
-for (const file of commandFiles) {
-  const filePath = path.join(commandsPath, file);
-  try {
-    const command = require(filePath);
-    if ('data' in command && 'execute' in command) {
-      client.commands.set(command.data.name, command);
-    }
-  } catch (error) {
-    console.error(`Error loading command ${file}:`, error);
-  }
-}
 
 // Connect to MongoDB
 mongoose.connect(process.env.MONGODB_URI)
-  .then(() => console.log('Connected to MongoDB'))
-  .catch(err => console.error('MongoDB connection error:', err));
+    .then(() => {
+        console.log('Connected to MongoDB');
+        // Initialize games after MongoDB connection is established
+        return initializeGames();
+    })
+    .then(() => {
+        console.log('Games initialized');
+    })
+    .catch(err => console.error('Error during startup:', err));
 
-// Bot ready event
+// Event handler for when the bot is ready
 client.once(Events.ClientReady, () => {
-  console.log(`Logged in as ${client.user.tag}`);
+    console.log(`Logged in as ${client.user.tag}`);
 });
 
-// Command handling
-client.on(Events.InteractionCreate, async interaction => {
-  if (!interaction.isChatInputCommand()) return;
+// Message handler for ! commands
+client.on(Events.MessageCreate, async message => {
+    if (!message.content.startsWith('!') || message.author.bot) return;
 
-  const command = client.commands.get(interaction.commandName);
-  if (!command) return;
+    const args = message.content.slice(1).trim().split(/ +/);
+    const command = args.shift().toLowerCase();
 
-  try {
-    await command.execute(interaction);
-  } catch (error) {
-    console.error(error);
-    if (interaction.replied || interaction.deferred) {
-      await interaction.followUp({ 
-        content: 'There was an error executing this command!', 
-        ephemeral: true 
-      });
-    } else {
-      await interaction.reply({ 
-        content: 'There was an error executing this command!', 
-        ephemeral: true 
-      });
+    if (command === 'ping') {
+        message.reply('Pong!');
     }
-  }
+    // Add other commands here
 });
 
-// Login to Discord
 client.login(process.env.DISCORD_TOKEN);
