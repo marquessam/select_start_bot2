@@ -3,8 +3,9 @@
   "version": "1.0.0",
   "description": "Discord bot for tracking RetroAchievements progress",
   "main": "src/index.js",
+  "type": "commonjs",
   "engines": {
-    "node": ">=16.9.0"
+    "node": "18.x"
   },
   "scripts": {
     "start": "node src/index.js",
