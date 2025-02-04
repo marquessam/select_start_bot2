@@ -45,17 +45,27 @@ client.once(Events.ClientReady, () => {
 
 // Message handler for ! commands
 client.on(Events.MessageCreate, async message => {
-    if (!message.content.startsWith('!') || message.author.bot) return;
+    console.log('Message received:', message.content);
+    
+    if (!message.content.startsWith('!') || message.author.bot) {
+        return;
+    }
 
     const args = message.content.slice(1).trim().split(/ +/);
-    const command = args.shift().toLowerCase();
+    const commandName = args.shift().toLowerCase();
+    
+    console.log('Command received:', commandName, 'with args:', args);
 
-    if (command === 'ping') {
-        message.reply('Pong!');
+    // Get command file
+    try {
+        const commandFile = require(`./commands/${commandName}.js`);
+        console.log('Command file found:', commandFile);
+        await commandFile.execute(message, args);
+    } catch (error) {
+        console.error('Error executing command:', error);
+        message.reply('There was an error executing that command!');
     }
-    // Add other commands here
 });
-
 // Graceful shutdown
 process.on('SIGTERM', async () => {
     console.log('SIGTERM received. Shutting down gracefully...');
