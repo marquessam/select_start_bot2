@@ -1,9 +1,11 @@
+// File: package.json
 {
   "name": "select-start-bot2",
   "version": "1.0.0",
+  "description": "Discord bot for tracking RetroAchievements progress",
   "main": "src/index.js",
   "scripts": {
-    "start": "node src/index.js"
+    "start": "node src/index.js",
     "deploy": "node src/deploy-commands.js"
   },
   "dependencies": {
