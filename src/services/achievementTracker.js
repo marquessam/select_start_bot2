@@ -1,5 +1,6 @@
 // File: src/services/achievementTracker.js
-const { Game, Award } = require('../models/Game');
+const Game = require('../models/Game');
+const Award = require('../models/Award');
 const User = require('../models/User');
 const RetroAchievementsAPI = require('./retroAchievements');
 
@@ -13,9 +14,11 @@ class AchievementTracker {
 
     async checkUserProgress(raUsername) {
         try {
+            console.log(`Checking progress for user ${raUsername}...`);
+            
             // Get active monthly and shadow games
             const currentDate = new Date();
-            const currentMonth = currentDate.getMonth() + 1; // JavaScript months are 0-based
+            const currentMonth = currentDate.getMonth() + 1;
             const currentYear = currentDate.getFullYear();
 
             const activeGames = await Game.find({
@@ -23,7 +26,10 @@ class AchievementTracker {
                 year: currentYear
             });
 
+            console.log(`Found ${activeGames.length} active games`);
+
             for (const game of activeGames) {
+                console.log(`Processing game: ${game.title}`);
                 const progress = await this.raAPI.getUserProgress(raUsername, game.gameId);
                 await this.processGameProgress(raUsername, game, progress);
             }
@@ -34,6 +40,8 @@ class AchievementTracker {
                 { lastChecked: new Date() }
             );
 
+            console.log(`Completed progress check for ${raUsername}`);
+
         } catch (error) {
             console.error(`Error checking progress for user ${raUsername}:`, error);
             throw error;
@@ -42,29 +50,26 @@ class AchievementTracker {
 
     async processGameProgress(raUsername, game, progress) {
         try {
-            let earned = {
-                participation: false,
-                beaten: false,
-                mastered: false
-            };
-
+            console.log(`Processing ${game.title} progress for ${raUsername}`);
+            
             const achievements = progress.achievements || {};
             const earnedCount = Object.values(achievements)
                 .filter(ach => ach.dateEarned)
                 .length;
 
-            // Check participation (any achievement)
-            if (earnedCount > 0) {
-                earned.participation = true;
-            }
+            console.log(`User has earned ${earnedCount} achievements`);
+
+            const earned = {
+                participation: earnedCount > 0,
+                beaten: false,
+                mastered: false
+            };
 
             // Check if game is beaten (all progression achievements)
-            if (game.progressionAchievements.length > 0) {
+            if (game.progressionAchievements && game.progressionAchievements.length > 0) {
                 const hasAllProgression = game.progressionAchievements
                     .every(progAch => achievements[progAch.id]?.dateEarned);
-                if (hasAllProgression) {
-                    earned.beaten = true;
-                }
+                earned.beaten = hasAllProgression;
             }
 
             // Check mastery (all achievements, only for monthly games)
@@ -72,22 +77,39 @@ class AchievementTracker {
                 earned.mastered = true;
             }
 
-            // Update or create award record
+            console.log(`Awards status: ${JSON.stringify(earned)}`);
+
+            // Create or update award record
+            const award = new Award({
+                userId: raUsername,
+                raUsername,
+                gameId: game.gameId,
+                month: game.month,
+                year: game.year,
+                awards: earned,
+                achievementCount: earnedCount,
+                lastUpdated: new Date()
+            });
+
+            // Use findOneAndUpdate with upsert
             await Award.findOneAndUpdate(
                 {
-                    userId: raUsername,
+                    raUsername,
                     gameId: game.gameId,
                     month: game.month,
                     year: game.year
                 },
                 {
-                    raUsername,
-                    awards: earned,
-                    achievementCount: earnedCount,
-                    lastUpdated: new Date()
+                    $set: {
+                        awards: earned,
+                        achievementCount: earnedCount,
+                        lastUpdated: new Date()
+                    }
                 },
-                { upsert: true }
+                { upsert: true, new: true }
             );
+
+            console.log(`Successfully updated awards for ${raUsername}`);
 
         } catch (error) {
             console.error(`Error processing game progress for user ${raUsername}, game ${game.gameId}:`, error);
@@ -102,7 +124,6 @@ class AchievementTracker {
         for (const user of users) {
             try {
                 await this.checkUserProgress(user.raUsername);
-                console.log(`Completed checking achievements for ${user.raUsername}`);
             } catch (error) {
                 console.error(`Error checking user ${user.raUsername}:`, error);
                 // Continue with next user even if one fails
