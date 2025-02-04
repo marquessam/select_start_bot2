@@ -1,5 +1,6 @@
 // File: src/utils/initializeGames.js
-const { Game } = require('../models/Game');
+const mongoose = require('mongoose');
+const Game = require('../models/Game');
 const RetroAchievementsAPI = require('../services/retroAchievements');
 
 const monthlyGames = [
@@ -31,49 +32,44 @@ const monthlyGames = [
 
 async function initializeGames() {
     try {
+        console.log('Starting game initialization...');
         const raAPI = new RetroAchievementsAPI(
             process.env.RA_USERNAME,
             process.env.RA_API_KEY
         );
 
         for (const monthData of monthlyGames) {
-            // Initialize monthly game
+            console.log(`Processing games for ${monthData.month}/${monthData.year}`);
+            
+            // Monthly Game
+            console.log(`Fetching info for monthly game: ${monthData.monthlyGame.title}`);
             const monthlyGameInfo = await raAPI.getGameInfo(monthData.monthlyGame.gameId);
-            await Game.updateOne(
-                {
-                    month: monthData.month,
-                    year: monthData.year,
-                    type: 'MONTHLY'
-                },
-                {
-                    $set: {
-                        gameId: monthData.monthlyGame.gameId,
-                        title: monthData.monthlyGame.title,
-                        numAchievements: monthlyGameInfo.numAchievements || 0,
-                        active: true
-                    }
-                },
-                { upsert: true }
-            );
+            
+            const monthlyGame = new Game({
+                gameId: monthData.monthlyGame.gameId,
+                title: monthData.monthlyGame.title,
+                type: 'MONTHLY',
+                month: monthData.month,
+                year: monthData.year,
+                numAchievements: monthlyGameInfo.numAchievements || 0,
+                active: true
+            });
+            await monthlyGame.save();
 
-            // Initialize shadow game
+            // Shadow Game
+            console.log(`Fetching info for shadow game: ${monthData.shadowGame.title}`);
             const shadowGameInfo = await raAPI.getGameInfo(monthData.shadowGame.gameId);
-            await Game.updateOne(
-                {
-                    month: monthData.month,
-                    year: monthData.year,
-                    type: 'SHADOW'
-                },
-                {
-                    $set: {
-                        gameId: monthData.shadowGame.gameId,
-                        title: monthData.shadowGame.title,
-                        numAchievements: shadowGameInfo.numAchievements || 0,
-                        active: true
-                    }
-                },
-                { upsert: true }
-            );
+            
+            const shadowGame = new Game({
+                gameId: monthData.shadowGame.gameId,
+                title: monthData.shadowGame.title,
+                type: 'SHADOW',
+                month: monthData.month,
+                year: monthData.year,
+                numAchievements: shadowGameInfo.numAchievements || 0,
+                active: true
+            });
+            await shadowGame.save();
         }
         
         console.log('Games initialized successfully');
