@@ -8,6 +8,22 @@ class RetroAchievementsAPI {
     this.baseUrl = 'https://retroachievements.org/API';
   }
 
+  async getGameInfo(gameId) {
+    try {
+      const response = await axios.get(`${this.baseUrl}/API_GetGame.php`, {
+        params: {
+          z: this.username,
+          y: this.apiKey,
+          i: gameId
+        },
+      });
+      return response.data;
+    } catch (error) {
+      console.error('Error fetching game info:', error);
+      throw error;
+    }
+  }
+
   async getUserProgress(raUsername, gameId) {
     try {
       const response = await axios.get(`${this.baseUrl}/API_GetGameInfoAndUserProgress.php`, {
