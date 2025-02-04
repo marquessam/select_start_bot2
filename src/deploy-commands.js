@@ -29,6 +29,7 @@ for (const file of commandFiles) {
 
 // Construct and prepare an instance of the REST module
 const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
+console.log('Commands to register:', commands);
 
 // Deploy commands
 (async () => {
