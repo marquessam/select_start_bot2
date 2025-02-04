@@ -76,3 +76,42 @@ class AchievementTracker {
             await Award.findOneAndUpdate(
                 {
                     userId: raUsername,
+                    gameId: game.gameId,
+                    month: game.month,
+                    year: game.year
+                },
+                {
+                    raUsername,
+                    awards: earned,
+                    achievementCount: earnedCount,
+                    lastUpdated: new Date()
+                },
+                { upsert: true }
+            );
+
+        } catch (error) {
+            console.error(`Error processing game progress for user ${raUsername}, game ${game.gameId}:`, error);
+            throw error;
+        }
+    }
+
+    async checkAllUsers() {
+        const users = await User.find({ isActive: true });
+        console.log(`Starting achievement check for ${users.length} users`);
+
+        for (const user of users) {
+            try {
+                await this.checkUserProgress(user.raUsername);
+                console.log(`Completed checking achievements for ${user.raUsername}`);
+            } catch (error) {
+                console.error(`Error checking user ${user.raUsername}:`, error);
+                // Continue with next user even if one fails
+                continue;
+            }
+        }
+
+        console.log('Completed checking all users');
+    }
+}
+
+module.exports = new AchievementTracker();
