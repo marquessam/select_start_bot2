@@ -13,40 +13,44 @@ class AchievementTracker {
     }
 
     async checkUserProgress(raUsername) {
-        try {
-            console.log(`Checking progress for user ${raUsername}...`);
-            
-            // Get active monthly and shadow games
-            const currentDate = new Date();
-            const currentMonth = currentDate.getMonth() + 1;
-            const currentYear = currentDate.getFullYear();
+    try {
+        console.log(`Checking progress for user ${raUsername}...`);
+        
+        // Get active monthly and shadow games
+        const currentDate = new Date();
+        const currentMonth = currentDate.getMonth() + 1;
+        const currentYear = currentDate.getFullYear();
 
-            const activeGames = await Game.find({
-                month: currentMonth,
-                year: currentYear
-            });
+        console.log(`Searching for games in ${currentMonth}/${currentYear}`);
+        
+        const activeGames = await Game.find({
+            month: currentMonth,
+            year: currentYear,
+            active: true
+        });
 
-            console.log(`Found ${activeGames.length} active games`);
+        console.log(`Found ${activeGames.length} active games:`, 
+            activeGames.map(g => ({title: g.title, type: g.type})));
 
-            for (const game of activeGames) {
-                console.log(`Processing game: ${game.title}`);
-                const progress = await this.raAPI.getUserProgress(raUsername, game.gameId);
-                await this.processGameProgress(raUsername, game, progress);
-            }
-
-            // Update user's last checked timestamp
-            await User.findOneAndUpdate(
-                { raUsername },
-                { lastChecked: new Date() }
-            );
-
-            console.log(`Completed progress check for ${raUsername}`);
-
-        } catch (error) {
-            console.error(`Error checking progress for user ${raUsername}:`, error);
-            throw error;
+        for (const game of activeGames) {
+            console.log(`Processing game: ${game.title} (${game.type})`);
+            const progress = await this.raAPI.getUserProgress(raUsername, game.gameId);
+            await this.processGameProgress(raUsername, game, progress);
         }
+
+        // Update user's last checked timestamp
+        await User.findOneAndUpdate(
+            { raUsername },
+            { lastChecked: new Date() }
+        );
+
+        console.log(`Completed progress check for ${raUsername}`);
+
+    } catch (error) {
+        console.error(`Error checking progress for user ${raUsername}:`, error);
+        throw error;
     }
+}
 
     async processGameProgress(raUsername, game, progress) {
         try {
