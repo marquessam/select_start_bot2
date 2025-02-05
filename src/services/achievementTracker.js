@@ -12,92 +12,131 @@ class AchievementTracker {
         );
     }
 
-   async checkUserProgress(raUsername) {
-    try {
-        console.log(`Checking progress for user ${raUsername}...`);
-        
-        // Get all unique games for 2024
-        const games = await Game.find({
-            year: 2024,
-            active: true
-        }).distinct('gameId');
-
-        console.log(`Found ${games.length} unique games for 2024`);
-
-        // Process each game only once
-        for (const gameId of games) {
-            const game = await Game.findOne({ gameId });
-            console.log(`Processing ${game.title} (${game.type}) from month ${game.month}`);
+    async checkUserProgress(raUsername) {
+        try {
+            console.log(`\nChecking progress for user ${raUsername}...`);
             
-            const progress = await this.raAPI.getUserProgress(raUsername, gameId);
-            await this.processGameProgress(raUsername, game, progress);
-        }
+            const games = await Game.find({
+                year: 2024,
+                active: true
+            }).distinct('gameId');
 
-        console.log(`Completed all progress checks for ${raUsername}`);
-    } catch (error) {
-        console.error(`Error checking progress for ${raUsername}:`, error);
-        throw error;
-    }
-}
-   async processGameProgress(raUsername, game, progress) {
-    try {
-        const achievements = progress.achievements || {};
-        const totalAchievements = game.numAchievements;
-        const userAchievements = Object.values(achievements)
-            .filter(ach => ach.dateEarned)
-            .length;
+            console.log(`Found ${games.length} unique games for 2024`);
 
-        console.log(`${raUsername} has earned ${userAchievements}/${totalAchievements} in ${game.title}`);
-
-        let awards = {
-            participation: false,
-            beaten: false,
-            mastered: false
-        };
-
-        // Simple sequential checks
-        if (userAchievements > 0) {
-            awards.participation = true;
-        }
-
-        if (userAchievements === totalAchievements) {
-            awards.participation = true;
-            awards.beaten = true;
-            if (game.type === 'MONTHLY') {
-                awards.mastered = true;
+            for (const gameId of games) {
+                const game = await Game.findOne({ gameId });
+                console.log(`\nProcessing ${game.title} (${game.type}) from month ${game.month}`);
+                
+                const progress = await this.raAPI.getUserProgress(raUsername, gameId);
+                await this.processGameProgress(raUsername, game, progress);
             }
+
+        } catch (error) {
+            console.error(`Error checking progress for ${raUsername}:`, error);
+            throw error;
+        }
+    }
+
+    checkBeatenStatus(game, achievements) {
+        // Convert achievements object to array of earned achievement IDs
+        const earnedAchievements = Object.entries(achievements)
+            .filter(([_, ach]) => ach.dateEarned)
+            .map(([id, _]) => id);
+
+        let progressionComplete = true;
+        let winConditionComplete = true;
+
+        // Check progression achievements if required
+        if (game.requireProgression && game.progression?.length > 0) {
+            progressionComplete = game.progression.every(achId => 
+                earnedAchievements.includes(achId)
+            );
+            console.log(`Progression check: ${progressionComplete ? 'Complete' : 'Incomplete'}`);
         }
 
-        console.log(`Awards for ${raUsername} in ${game.title}:`, awards);
+        // Check win conditions
+        if (game.winCondition?.length > 0) {
+            if (game.requireAllWinConditions) {
+                winConditionComplete = game.winCondition.every(achId => 
+                    earnedAchievements.includes(achId)
+                );
+            } else {
+                winConditionComplete = game.winCondition.some(achId => 
+                    earnedAchievements.includes(achId)
+                );
+            }
+            console.log(`Win condition check: ${winConditionComplete ? 'Complete' : 'Incomplete'}`);
+        }
 
-        // Update database
-        await Award.updateOne(
-            {
-                raUsername,
-                gameId: game.gameId,
-                month: game.month,
-                year: game.year
-            },
-            {
-                $set: {
-                    awards,
-                    achievementCount: userAchievements,
-                    lastUpdated: new Date()
-                }
-            },
-            { upsert: true }
-        );
-
-    } catch (error) {
-        console.error(`Error processing progress for ${raUsername} in ${game.title}:`, error);
-        throw error;
+        return progressionComplete && winConditionComplete;
     }
-}
+
+    async processGameProgress(raUsername, game, progress) {
+        try {
+            const achievements = progress.achievements || {};
+            const earnedCount = Object.values(achievements)
+                .filter(ach => ach.dateEarned)
+                .length;
+
+            console.log(`${raUsername} has earned ${earnedCount}/${game.numAchievements} achievements in ${game.title}`);
+
+            let awards = {
+                participation: false,
+                beaten: false,
+                mastered: false
+            };
+
+            // Check participation (any achievement)
+            if (earnedCount > 0) {
+                awards.participation = true;
+            }
+
+            // Check beaten status
+            if (earnedCount > 0) {
+                awards.beaten = this.checkBeatenStatus(game, achievements);
+            }
+
+            // Check mastery (only for monthly games with masteryCheck enabled)
+            if (game.type === 'MONTHLY' && game.masteryCheck && earnedCount === game.numAchievements) {
+                awards.mastered = true;
+                awards.beaten = true;  // Mastery implies beaten
+            }
+
+            console.log(`Awards for ${raUsername} in ${game.title}:`, awards);
+
+            // Update database
+            await Award.findOneAndUpdate(
+                {
+                    raUsername,
+                    gameId: game.gameId,
+                    month: game.month,
+                    year: game.year
+                },
+                {
+                    awards,
+                    achievementCount: earnedCount,
+                    lastUpdated: new Date()
+                },
+                { upsert: true }
+            );
+
+        } catch (error) {
+            console.error(`Error processing progress for ${raUsername} in ${game.title}:`, error);
+            throw error;
+        }
+    }
 
     async checkAllUsers() {
         const users = await User.find({ isActive: true });
+        console.log(`Starting achievement check for ${users.length} users`);
+
         for (const user of users) {
-            await this.checkUserProgress(user.raUsername);
+            try {
+                await this.checkUserProgress(user.raUsername);
+            } catch (error) {
+                console.error(`Error checking user ${user.raUsername}:`, error);
+                continue;
+            }
         }
     }
 }
