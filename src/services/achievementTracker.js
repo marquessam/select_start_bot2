@@ -39,63 +39,60 @@ class AchievementTracker {
         throw error;
     }
 }
-    async processGameProgress(raUsername, game, progress) {
-        try {
-            const achievements = progress.achievements || {};
-            const totalAchievements = game.numAchievements;
-            const earnedAchievements = Object.values(achievements)
-                .filter(ach => ach.dateEarned)
-                .length;
+   async processGameProgress(raUsername, game, progress) {
+    try {
+        const achievements = progress.achievements || {};
+        const totalAchievements = game.numAchievements;
+        const userAchievements = Object.values(achievements)
+            .filter(ach => ach.dateEarned)
+            .length;
 
-            console.log(`${raUsername} has earned ${earnedAchievements}/${totalAchievements} in ${game.title}`);
+        console.log(`${raUsername} has earned ${userAchievements}/${totalAchievements} in ${game.title}`);
 
-            // Simple award logic
-            let awards = {
-                participation: earnedAchievements > 0,
-                beaten: false,
-                mastered: false
-            };
+        let awards = {
+            participation: false,
+            beaten: false,
+            mastered: false
+        };
 
-            // Check for mastery first (100% completion)
-            if (earnedAchievements === totalAchievements) {
-                awards.participation = true;
-                awards.beaten = true;
+        // Simple sequential checks
+        if (userAchievements > 0) {
+            awards.participation = true;
+        }
+
+        if (userAchievements === totalAchievements) {
+            awards.participation = true;
+            awards.beaten = true;
+            if (game.type === 'MONTHLY') {
                 awards.mastered = true;
             }
-            // If not mastered but has some achievements, check for beaten
-            else if (earnedAchievements > 0) {
-                awards.participation = true;
-                // Check win conditions for beaten status
-                if (game.progressionAchievements && game.progressionAchievements.length > 0) {
-                    const hasBeaten = game.progressionAchievements
-                        .every(achId => achievements[achId]?.dateEarned);
-                    awards.beaten = hasBeaten;
-                }
-            }
-
-            console.log(`Awards for ${raUsername} in ${game.title}:`, awards);
-
-            // Update database
-            await Award.findOneAndUpdate(
-                {
-                    raUsername,
-                    gameId: game.gameId,
-                    month: game.month,
-                    year: game.year
-                },
-                {
-                    awards,
-                    achievementCount: earnedAchievements,
-                    lastUpdated: new Date()
-                },
-                { upsert: true }
-            );
-
-        } catch (error) {
-            console.error(`Error processing progress for ${raUsername} in ${game.title}:`, error);
-            throw error;
         }
+
+        console.log(`Awards for ${raUsername} in ${game.title}:`, awards);
+
+        // Update database
+        await Award.updateOne(
+            {
+                raUsername,
+                gameId: game.gameId,
+                month: game.month,
+                year: game.year
+            },
+            {
+                $set: {
+                    awards,
+                    achievementCount: userAchievements,
+                    lastUpdated: new Date()
+                }
+            },
+            { upsert: true }
+        );
+
+    } catch (error) {
+        console.error(`Error processing progress for ${raUsername} in ${game.title}:`, error);
+        throw error;
     }
+}
 
     async checkAllUsers() {
         const users = await User.find({ isActive: true });
