@@ -36,8 +36,8 @@ module.exports = {
 
                 if (monthlyGame && monthlyAward) {
                     monthText += `**${monthlyGame.title}** (Monthly)\n`;
-                    monthText += `▫️ ${monthlyAward.achievementCount}/${monthlyGame.numAchievements}\n`;
-
+                    monthText += `▫️ Achievements: ${monthlyAward.achievementCount}/${monthlyGame.numAchievements} (${(monthlyAward.achievementCount/monthlyGame.numAchievements*100).toFixed(1)}%)\n`;
+                    
                     let awardText = [];
                     if (monthlyAward.awards.participation) awardText.push("🏁P");
                     if (monthlyAward.awards.beaten) awardText.push("⭐B");
@@ -53,8 +53,8 @@ module.exports = {
 
                 if (shadowGame && shadowAward) {
                     monthText += `**${shadowGame.title}** (Shadow)\n`;
-                    monthText += `▫️ ${shadowAward.achievementCount}/${shadowGame.numAchievements}\n`;
-
+                    monthText += `▫️ Achievements: ${shadowAward.achievementCount}/${shadowGame.numAchievements} (${(shadowAward.achievementCount/shadowGame.numAchievements*100).toFixed(1)}%)\n`;
+                    
                     let awardText = [];
                     if (shadowAward.awards.participation) awardText.push("🏁P");
                     if (shadowAward.awards.beaten) awardText.push("⭐B");
