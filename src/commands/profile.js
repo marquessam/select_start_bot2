@@ -11,43 +11,69 @@ module.exports = {
             const currentYear = new Date().getFullYear();
 
             let reply = `**Profile for ${raUsername}**\n\n`;
-            reply += `**2024 Awards:**\n\`\`\`\n`;
 
-            // Get all data
-            const games = await Game.find({ year: currentYear }).sort({ month: 1 });
+            // Get all games and awards
+            const games = await Game.find({ 
+                year: currentYear 
+            }).sort({ month: 1 });
+            
             const awards = await Award.find({ 
                 raUsername,
-                year: currentYear
+                year: currentYear 
             });
 
-            // Process month by month
-            let currentMonth = null;
-            for (const game of games) {
-                // Print month header if it's a new month
-                if (currentMonth !== game.month) {
-                    if (currentMonth !== null) reply += '\n';
-                    currentMonth = game.month;
-                    reply += `${game.month === 1 ? 'January' : 'February'}:\n`;
+            // Group by month
+            for (let month = 1; month <= 2; month++) {
+                const monthName = month === 1 ? 'January' : 'February';
+                reply += `**${monthName}**\n`;
+
+                // Process Monthly game
+                const monthlyGame = games.find(g => g.month === month && g.type === 'MONTHLY');
+                const monthlyAward = awards.find(a => a.gameId === monthlyGame?.gameId);
+
+                if (monthlyGame && monthlyAward) {
+                    const percentage = ((monthlyAward.achievementCount / monthlyGame.numAchievements) * 100).toFixed(1);
+                    reply += `${monthlyGame.title} (Monthly)\n`;
+                    reply += `Progress: ${monthlyAward.achievementCount}/${monthlyGame.numAchievements} (${percentage}%)\n`;
+                    reply += `Awards: `;
+                    
+                    if (monthlyAward.awards.mastered) reply += "✨ MASTERED";
+                    else if (monthlyAward.awards.beaten) reply += "⭐ BEATEN";
+                    else if (monthlyAward.awards.participation) reply += "🏁 PARTICIPATION";
+                    else reply += "None";
+                    reply += '\n';
                 }
 
-                // Find award for this game
-                const award = awards.find(a => a.gameId === game.gameId);
-                
-                // Print game info
-                reply += `${game.title} (${game.type}):\n`;
-                reply += `  Progress: ${award ? award.achievementCount : 0}/${game.numAchievements}\n`;
-                
-                // Print awards
-                if (award && award.awards) {
-                    if (award.awards.mastered) reply += '  ★ MASTERED\n';
-                    else if (award.awards.beaten) reply += '  ✓ BEATEN\n';
-                    else if (award.awards.participation) reply += '  • PARTICIPATED\n';
-                } else {
-                    reply += '  No awards yet\n';
+                // Process Shadow game
+                const shadowGame = games.find(g => g.month === month && g.type === 'SHADOW');
+                const shadowAward = awards.find(a => a.gameId === shadowGame?.gameId);
+
+                if (shadowGame && shadowAward) {
+                    const percentage = ((shadowAward.achievementCount / shadowGame.numAchievements) * 100).toFixed(1);
+                    reply += `${shadowGame.title} (Shadow)\n`;
+                    reply += `Progress: ${shadowAward.achievementCount}/${shadowGame.numAchievements} (${percentage}%)\n`;
+                    reply += `Awards: `;
+                    
+                    if (shadowAward.awards.mastered) reply += "✨ MASTERED";
+                    else if (shadowAward.awards.beaten) reply += "⭐ BEATEN";
+                    else if (shadowAward.awards.participation) reply += "🏁 PARTICIPATION";
+                    else reply += "None";
+                    reply += '\n';
                 }
+
+                reply += '\n';
             }
 
-            reply += '\`\`\`';
+            // Calculate total points
+            let totalPoints = 0;
+            awards.forEach(award => {
+                if (award.awards.mastered) totalPoints += 5;
+                else if (award.awards.beaten) totalPoints += 3;
+                else if (award.awards.participation) totalPoints += 1;
+            });
+
+            reply += `**Total 2024 Points: ${totalPoints}**`;
+
             message.channel.send(reply);
 
         } catch (error) {
