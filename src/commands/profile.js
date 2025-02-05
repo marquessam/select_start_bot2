@@ -3,27 +3,27 @@ const { EmbedBuilder } = require('discord.js');
 const Game = require('../models/Game');
 const Award = require('../models/Award');
 
-function formatProgress(earned, total) {
-    if (!total || total === 0) return '0/0 (0%)';
-    const percentage = ((earned / total) * 100).toFixed(1);
-    return `${earned}/${total} (${percentage}%)`;
+function formatProgress(count, total) {
+    const percentage = ((count / total) * 100).toFixed(1);
+    return `${count}/${total} (${percentage}%)`;
 }
 
-function calculatePoints(awards) {
-    let points = 0;
-    // Points are additive
-    if (awards.participation) points += 1;  // Base participation
-    if (awards.beaten) points += 3;         // Additional for beating
-    if (awards.mastered) points += 3;       // Additional for mastery
-    return points;
-}
-
-function getAwardEmoji(award) {
+function formatAwards(award) {
     const parts = [];
     if (award.awards.participation) parts.push('🏁P');
     if (award.awards.beaten) parts.push('⭐B');
     if (award.awards.mastered) parts.push('✨M');
-    return parts.join(' + ');
+    
+    const points = calculatePoints(award.awards);
+    return `${parts.join(' + ')} = ${points}pts`;
+}
+
+function calculatePoints(awards) {
+    let points = 0;
+    if (awards.participation) points += 1;  // Participation
+    if (awards.beaten) points += 3;         // Beaten
+    if (awards.mastered) points += 3;       // Mastery
+    return points;
 }
 
 module.exports = {
@@ -38,10 +38,7 @@ module.exports = {
                 .setThumbnail(`https://retroachievements.org/UserPic/${raUsername}.png`);
 
             const games = await Game.find({ year: 2025 }).sort({ month: 1 });
-            const awards = await Award.find({ 
-                raUsername,
-                year: 2025 
-            });
+            const awards = await Award.find({ raUsername, year: 2025 });
 
             // Process each month
             for (let month = 1; month <= 2; month++) {
@@ -53,10 +50,9 @@ module.exports = {
                 const monthlyAward = awards.find(a => a.gameId === monthlyGame?.gameId);
 
                 if (monthlyGame && monthlyAward) {
-                    monthText += `**${monthlyGame.title}** (Monthly)\n`;
+                    monthText += `▫️ **${monthlyGame.title}** (Monthly)\n`;
                     monthText += `▫️ ${formatProgress(monthlyAward.achievementCount, monthlyGame.numAchievements)}\n`;
-                    const points = calculatePoints(monthlyAward.awards);
-                    monthText += `▫️ ${getAwardEmoji(monthlyAward)} = ${points}pts\n\n`;
+                    monthText += `▫️ ${formatAwards(monthlyAward)}\n\n`;
                 }
 
                 // Shadow Game
@@ -64,31 +60,30 @@ module.exports = {
                 const shadowAward = awards.find(a => a.gameId === shadowGame?.gameId);
 
                 if (shadowGame && shadowAward) {
-                    monthText += `**${shadowGame.title}** (Shadow)\n`;
+                    monthText += `▫️ **${shadowGame.title}** (Shadow)\n`;
                     monthText += `▫️ ${formatProgress(shadowAward.achievementCount, shadowGame.numAchievements)}\n`;
-                    const points = calculatePoints(shadowAward.awards);
-                    monthText += `▫️ ${getAwardEmoji(shadowAward)} = ${points}pts\n`;
+                    monthText += `▫️ ${formatAwards(shadowAward)}`;
                 }
 
                 if (monthText) {
-                    embed.addFields({ 
-                        name: `${monthName} 2025`, 
+                    embed.addFields({
+                        name: monthName,
                         value: monthText,
-                        inline: false 
+                        inline: false
                     });
                 }
             }
 
-            // Calculate total points (additive)
+            // Calculate total points
             let totalPoints = 0;
             awards.forEach(award => {
                 totalPoints += calculatePoints(award.awards);
             });
 
-            embed.addFields({ 
-                name: 'Total Points', 
+            embed.addFields({
+                name: 'Total Points',
                 value: `**${totalPoints}** points earned in 2025`,
-                inline: false 
+                inline: false
             });
 
             message.channel.send({ embeds: [embed] });
