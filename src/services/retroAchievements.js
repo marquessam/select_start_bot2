@@ -10,18 +10,22 @@ class RetroAchievementsAPI {
 
     async getGameInfo(gameId) {
         try {
+            console.log(`Fetching game info for game ${gameId}`);
+            
             const response = await axios.get(`${this.baseUrl}/API_GetGame.php`, {
                 params: {
                     z: this.username,
                     y: this.apiKey,
-                    i: gameId
+                    i: gameId  // Changed from 'g' to 'i'
                 },
             });
+
+            console.log('API Response:', response.data);
             
-            if (!response.data || !response.data.NumAchievements) {
-                throw new Error(`Invalid game data received for game ${gameId}`);
+            if (!response.data) {
+                throw new Error(`No data received for game ${gameId}`);
             }
-            
+
             return response.data;
         } catch (error) {
             console.error('Error fetching game info:', error);
@@ -58,27 +62,6 @@ class RetroAchievementsAPI {
             };
         } catch (error) {
             console.error(`Error fetching user progress for ${raUsername} game ${gameId}:`, error);
-            throw error;
-        }
-    }
-
-    async getUserProfile(raUsername) {
-        try {
-            const response = await axios.get(`${this.baseUrl}/API_GetUserProfile.php`, {
-                params: {
-                    z: this.username,
-                    y: this.apiKey,
-                    u: raUsername
-                },
-            });
-            
-            if (!response.data) {
-                throw new Error(`No profile data received for user ${raUsername}`);
-            }
-            
-            return response.data;
-        } catch (error) {
-            console.error(`Error fetching user profile for ${raUsername}:`, error);
             throw error;
         }
     }
