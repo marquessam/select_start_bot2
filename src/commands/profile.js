@@ -3,26 +3,11 @@ const { EmbedBuilder } = require('discord.js');
 const Game = require('../models/Game');
 const Award = require('../models/Award');
 
-function formatProgress(count, total) {
-    const percentage = ((count / total) * 100).toFixed(1);
-    return `${count}/${total} (${percentage}%)`;
-}
-
-function formatAwards(award) {
-    const parts = [];
-    if (award.awards.participation) parts.push('🏁P');
-    if (award.awards.beaten) parts.push('⭐B');
-    if (award.awards.mastered) parts.push('✨M');
-    
-    const points = calculatePoints(award.awards);
-    return `${parts.join(' + ')} = ${points}pts`;
-}
-
 function calculatePoints(awards) {
     let points = 0;
-    if (awards.participation) points += 1;  // Participation
-    if (awards.beaten) points += 3;         // Beaten
-    if (awards.mastered) points += 3;       // Mastery
+    if (awards.participation) points += 1;
+    if (awards.beaten) points += 3;
+    if (awards.mastered) points += 3;
     return points;
 }
 
@@ -50,9 +35,16 @@ module.exports = {
                 const monthlyAward = awards.find(a => a.gameId === monthlyGame?.gameId);
 
                 if (monthlyGame && monthlyAward) {
-                    monthText += `▫️ **${monthlyGame.title}** (Monthly)\n`;
-                    monthText += `▫️ ${formatProgress(monthlyAward.achievementCount, monthlyGame.numAchievements)}\n`;
-                    monthText += `▫️ ${formatAwards(monthlyAward)}\n\n`;
+                    monthText += `**${monthlyGame.title}** (Monthly)\n`;
+                    monthText += `▫️ ${monthlyAward.achievementCount}/${monthlyGame.numAchievements}\n`;
+
+                    let awardText = [];
+                    if (monthlyAward.awards.participation) awardText.push("🏁P");
+                    if (monthlyAward.awards.beaten) awardText.push("⭐B");
+                    if (monthlyAward.awards.mastered) awardText.push("✨M");
+                    
+                    const points = calculatePoints(monthlyAward.awards);
+                    monthText += `▫️ ${awardText.join(" + ")} = ${points}pts\n\n`;
                 }
 
                 // Shadow Game
@@ -60,9 +52,16 @@ module.exports = {
                 const shadowAward = awards.find(a => a.gameId === shadowGame?.gameId);
 
                 if (shadowGame && shadowAward) {
-                    monthText += `▫️ **${shadowGame.title}** (Shadow)\n`;
-                    monthText += `▫️ ${formatProgress(shadowAward.achievementCount, shadowGame.numAchievements)}\n`;
-                    monthText += `▫️ ${formatAwards(shadowAward)}`;
+                    monthText += `**${shadowGame.title}** (Shadow)\n`;
+                    monthText += `▫️ ${shadowAward.achievementCount}/${shadowGame.numAchievements}\n`;
+
+                    let awardText = [];
+                    if (shadowAward.awards.participation) awardText.push("🏁P");
+                    if (shadowAward.awards.beaten) awardText.push("⭐B");
+                    if (shadowAward.awards.mastered) awardText.push("✨M");
+                    
+                    const points = calculatePoints(shadowAward.awards);
+                    monthText += `▫️ ${awardText.join(" + ")} = ${points}pts`;
                 }
 
                 if (monthText) {
