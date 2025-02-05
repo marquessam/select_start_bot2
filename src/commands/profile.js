@@ -5,9 +5,9 @@ const Award = require('../models/Award');
 
 function calculatePoints(awards) {
     let points = 0;
-    if (awards.participation) points += 1;  // Participation
-    if (awards.beaten) points += 3;         // Beaten
-    if (awards.mastered) points += 3;       // Mastery
+    if (awards.participation) points += 1;
+    if (awards.beaten) points += 3;
+    if (awards.mastered) points += 3;
     return points;
 }
 
@@ -17,31 +17,20 @@ module.exports = {
         try {
             const raUsername = args[0] || "royek";
             
-            // Create embed
             const embed = new EmbedBuilder()
                 .setColor('#0099ff')
                 .setTitle(`Profile for ${raUsername}`)
-                .setThumbnail(`https://retroachievements.org/UserPic/${raUsername}.png`)
-                .setTimestamp();
+                .setThumbnail(`https://retroachievements.org/UserPic/${raUsername}.png`);
 
-            let description = '';
+            const games = await Game.find({ year: 2025 }).sort({ month: 1 });
+            const awards = await Award.find({ raUsername, year: 2025 });
 
-            // Get all games and awards
-            const games = await Game.find({ 
-                year: 2025 
-            }).sort({ month: 1 });
-            
-            const awards = await Award.find({ 
-                raUsername,
-                year: 2025 
-            });
-
-            // Group by month
+            // Process each month
             for (let month = 1; month <= 2; month++) {
                 const monthName = month === 1 ? 'January' : 'February';
-                description += `**${monthName} 2025**\n`;
+                let monthText = '';
 
-                // Process Monthly game
+                // Monthly Game
                 const monthlyGame = games.find(g => g.month === month && g.type === 'MONTHLY');
                 const monthlyAward = awards.find(a => a.gameId === monthlyGame?.gameId);
 
@@ -49,21 +38,18 @@ module.exports = {
                     const percentage = ((monthlyAward.achievementCount / monthlyGame.numAchievements) * 100).toFixed(1);
                     const points = calculatePoints(monthlyAward.awards);
                     
-                    description += `${monthlyGame.title} (Monthly)\n`;
-                    description += `Progress: ${monthlyAward.achievementCount}/${monthlyGame.numAchievements} (${percentage}%)\n`;
-                    description += `Awards: `;
+                    monthText += `**${monthlyGame.title}** (Monthly)\n`;
+                    monthText += `▫️ ${monthlyAward.achievementCount}/${monthlyGame.numAchievements} (${percentage}%)\n`;
                     
-                    let awardText = [];
-                    if (monthlyAward.awards.participation) awardText.push("🏁 P(1)");
-                    if (monthlyAward.awards.beaten) awardText.push("⭐ B(3)");
-                    if (monthlyAward.awards.mastered) awardText.push("✨ M(3)");
+                    let awards = [];
+                    if (monthlyAward.awards.participation) awards.push("🏁P");
+                    if (monthlyAward.awards.beaten) awards.push("⭐B");
+                    if (monthlyAward.awards.mastered) awards.push("✨M");
                     
-                    description += awardText.join(" + ");
-                    if (awardText.length > 0) description += ` = ${points} points`;
-                    description += '\n';
+                    monthText += `▫️ ${awards.join(" ")} = ${points}pts\n\n`;
                 }
 
-                // Process Shadow game
+                // Shadow Game
                 const shadowGame = games.find(g => g.month === month && g.type === 'SHADOW');
                 const shadowAward = awards.find(a => a.gameId === shadowGame?.gameId);
 
@@ -71,21 +57,22 @@ module.exports = {
                     const percentage = ((shadowAward.achievementCount / shadowGame.numAchievements) * 100).toFixed(1);
                     const points = calculatePoints(shadowAward.awards);
                     
-                    description += `${shadowGame.title} (Shadow)\n`;
-                    description += `Progress: ${shadowAward.achievementCount}/${shadowGame.numAchievements} (${percentage}%)\n`;
-                    description += `Awards: `;
+                    monthText += `**${shadowGame.title}** (Shadow)\n`;
+                    monthText += `▫️ ${shadowAward.achievementCount}/${shadowGame.numAchievements} (${percentage}%)\n`;
                     
-                    let awardText = [];
-                    if (shadowAward.awards.participation) awardText.push("🏁 P(1)");
-                    if (shadowAward.awards.beaten) awardText.push("⭐ B(3)");
-                    if (shadowAward.awards.mastered) awardText.push("✨ M(3)");
+                    let awards = [];
+                    if (shadowAward.awards.participation) awards.push("🏁P");
+                    if (shadowAward.awards.beaten) awards.push("⭐B");
+                    if (shadowAward.awards.mastered) awards.push("✨M");
                     
-                    description += awardText.join(" + ");
-                    if (awardText.length > 0) description += ` = ${points} points`;
-                    description += '\n';
+                    monthText += `▫️ ${awards.join(" ")} = ${points}pts\n`;
                 }
 
-                description += '\n';
+                embed.addFields({ 
+                    name: `${monthName} 2025`, 
+                    value: monthText || 'No data available',
+                    inline: false 
+                });
             }
 
             // Calculate total points
@@ -94,9 +81,11 @@ module.exports = {
                 totalPoints += calculatePoints(award.awards);
             });
 
-            description += `**Total 2025 Points: ${totalPoints}**`;
-
-            embed.setDescription(description);
+            embed.addFields({ 
+                name: 'Total Points', 
+                value: `**${totalPoints}** points earned in 2025`,
+                inline: false 
+            });
 
             message.channel.send({ embeds: [embed] });
 
