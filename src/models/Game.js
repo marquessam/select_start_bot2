@@ -29,22 +29,28 @@ const gameSchema = new mongoose.Schema({
         type: Number,
         required: true,
     },
-    progressionAchievements: [{
-        id: String,
-        title: String,
-        description: String,
-        points: Number,
+    progression: [{
+        type: String,  // Achievement IDs for progression
     }],
+    winCondition: [{
+        type: String,  // Achievement IDs for win conditions
+    }],
+    requireProgression: {
+        type: Boolean,
+        default: false
+    },
+    requireAllWinConditions: {
+        type: Boolean,
+        default: false
+    },
+    masteryCheck: {
+        type: Boolean,
+        default: false
+    },
     active: {
         type: Boolean,
         default: true,
-    },
-    createdAt: {
-        type: Date,
-        default: Date.now,
     }
 });
 
-// Create and export the model directly
-const Game = mongoose.model('Game', gameSchema);
-module.exports = Game;
+module.exports = mongoose.model('Game', gameSchema);
