@@ -3,10 +3,10 @@ const mongoose = require('mongoose');
 const Game = require('../models/Game');
 const RetroAchievementsAPI = require('../services/retroAchievements');
 
-const games2024 = [
+const games2025 = [
     {
         month: 1,
-        year: 2024,
+        year: 2025,  // Fixed year
         monthlyGame: {
             gameId: "319",
             title: "Chrono Trigger",
@@ -27,7 +27,7 @@ const games2024 = [
     },
     {
         month: 2,
-        year: 2024,
+        year: 2025,  // Fixed year
         monthlyGame: {
             gameId: "355",
             title: "The Legend of Zelda: A Link to the Past",
@@ -63,12 +63,10 @@ async function initializeGames() {
             process.env.RA_API_KEY
         );
 
-        for (const monthData of games2024) {
-            console.log(`Processing games for month ${monthData.month}`);
-
+        for (const monthData of games2025) {
             // Monthly Game
             const monthlyInfo = await raAPI.getGameInfo(monthData.monthlyGame.gameId);
-            console.log(`Monthly game ${monthData.monthlyGame.title} has ${monthlyInfo.numAchievements} achievements`);
+            console.log(`Initializing monthly game: ${monthData.monthlyGame.title}`);
             
             await Game.create({
                 ...monthData.monthlyGame,
@@ -80,7 +78,7 @@ async function initializeGames() {
 
             // Shadow Game
             const shadowInfo = await raAPI.getGameInfo(monthData.shadowGame.gameId);
-            console.log(`Shadow game ${monthData.shadowGame.title} has ${shadowInfo.numAchievements} achievements`);
+            console.log(`Initializing shadow game: ${monthData.shadowGame.title}`);
             
             await Game.create({
                 ...monthData.shadowGame,
@@ -91,11 +89,14 @@ async function initializeGames() {
             });
         }
 
-        // Verify initialization
         const finalGames = await Game.find({}).sort({ month: 1 });
-        console.log('Games initialized:', finalGames.map(g => 
-            `${g.title} (${g.type}) - Month ${g.month} - ${g.numAchievements} achievements`
-        ));
+        console.log('Initialized games:', finalGames.map(g => ({
+            title: g.title,
+            type: g.type,
+            month: g.month,
+            year: g.year,
+            achievements: g.numAchievements
+        })));
 
     } catch (error) {
         console.error('Error initializing games:', error);
@@ -103,4 +104,4 @@ async function initializeGames() {
     }
 }
 
-module.exports = { initializeGames, games2024 };
+module.exports = { initializeGames };
