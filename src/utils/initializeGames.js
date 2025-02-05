@@ -3,29 +3,34 @@ const mongoose = require('mongoose');
 const Game = require('../models/Game');
 const RetroAchievementsAPI = require('../services/retroAchievements');
 
-const monthlyGames = [
+// Single source of truth for games
+const games2024 = [
     {
         month: 1,
-        year: 2025,
+        year: 2024,
         monthlyGame: {
             gameId: "319",
-            title: "Chrono Trigger"
+            title: "Chrono Trigger",
+            type: "MONTHLY"
         },
         shadowGame: {
             gameId: "10024",
-            title: "Mario Tennis"
+            title: "Mario Tennis",
+            type: "SHADOW"
         }
     },
     {
         month: 2,
-        year: 2025,
+        year: 2024,
         monthlyGame: {
             gameId: "355",
-            title: "The Legend of Zelda: A Link to the Past"
+            title: "The Legend of Zelda: A Link to the Past",
+            type: "MONTHLY"
         },
         shadowGame: {
             gameId: "274",
-            title: "UN Squadron"
+            title: "UN Squadron",
+            type: "SHADOW"
         }
     }
 ];
@@ -34,87 +39,49 @@ async function initializeGames() {
     try {
         console.log('Starting game initialization...');
         
-        // First, log existing games
-        const existingGames = await Game.find({});
-        console.log('Existing games in database:', existingGames);
-
+        // Clear existing games to prevent duplicates
+        await Game.deleteMany({});
+        
         const raAPI = new RetroAchievementsAPI(
             process.env.RA_USERNAME,
             process.env.RA_API_KEY
         );
 
-        for (const monthData of monthlyGames) {
-            console.log(`Processing games for ${monthData.month}/${monthData.year}`);
-
-            // Monthly Game
-            console.log(`Fetching info for monthly game: ${monthData.monthlyGame.title}`);
-            const monthlyGameInfo = await raAPI.getGameInfo(monthData.monthlyGame.gameId);
-            
-            const monthlyGameData = {
+        for (const monthData of games2024) {
+            // Add monthly game
+            const monthlyInfo = await raAPI.getGameInfo(monthData.monthlyGame.gameId);
+            await Game.create({
                 gameId: monthData.monthlyGame.gameId,
                 title: monthData.monthlyGame.title,
                 type: 'MONTHLY',
                 month: monthData.month,
                 year: monthData.year,
-                numAchievements: monthlyGameInfo.numAchievements || 0,
-                active: true,
-                progressionAchievements: [] // We'll need to define these specifically for each game
-            };
+                numAchievements: monthlyInfo.numAchievements || 0,
+                active: true
+            });
 
-            console.log('Saving monthly game:', monthlyGameData);
-            await Game.findOneAndUpdate(
-                {
-                    month: monthData.month,
-                    year: monthData.year,
-                    type: 'MONTHLY'
-                },
-                monthlyGameData,
-                { upsert: true, new: true }
-            );
-
-            // Shadow Game
-            console.log(`Fetching info for shadow game: ${monthData.shadowGame.title}`);
-            const shadowGameInfo = await raAPI.getGameInfo(monthData.shadowGame.gameId);
-            
-            const shadowGameData = {
+            // Add shadow game
+            const shadowInfo = await raAPI.getGameInfo(monthData.shadowGame.gameId);
+            await Game.create({
                 gameId: monthData.shadowGame.gameId,
                 title: monthData.shadowGame.title,
                 type: 'SHADOW',
                 month: monthData.month,
                 year: monthData.year,
-                numAchievements: shadowGameInfo.numAchievements || 0,
-                active: true,
-                progressionAchievements: [] // We'll need to define these specifically for each game
-            };
-
-            console.log('Saving shadow game:', shadowGameData);
-            await Game.findOneAndUpdate(
-                {
-                    month: monthData.month,
-                    year: monthData.year,
-                    type: 'SHADOW'
-                },
-                shadowGameData,
-                { upsert: true, new: true }
-            );
+                numAchievements: shadowInfo.numAchievements || 0,
+                active: true
+            });
         }
-
-        // Verify final state
-        const finalGames = await Game.find({}).sort({ month: 1 });
-        console.log('Games in database after initialization:', 
-            finalGames.map(g => ({
-                title: g.title,
-                type: g.type,
-                month: g.month,
-                achievements: g.numAchievements
-            }))
-        );
         
-        console.log('Games initialized successfully');
+        const finalGames = await Game.find({});
+        console.log('Games initialized:', finalGames.map(g => 
+            `${g.title} (${g.type}) - Month ${g.month}`
+        ));
+        
     } catch (error) {
         console.error('Error initializing games:', error);
         throw error;
     }
 }
 
-module.exports = { initializeGames };
+module.exports = { initializeGames, games2024 };
