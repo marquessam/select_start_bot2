@@ -12,31 +12,33 @@ class AchievementTracker {
         );
     }
 
-    async checkUserProgress(raUsername) {
-        try {
-            console.log(`Checking progress for user ${raUsername}...`);
+   async checkUserProgress(raUsername) {
+    try {
+        console.log(`Checking progress for user ${raUsername}...`);
+        
+        // Get all unique games for 2024
+        const games = await Game.find({
+            year: 2024,
+            active: true
+        }).distinct('gameId');
+
+        console.log(`Found ${games.length} unique games for 2024`);
+
+        // Process each game only once
+        for (const gameId of games) {
+            const game = await Game.findOne({ gameId });
+            console.log(`Processing ${game.title} (${game.type}) from month ${game.month}`);
             
-            // Get all games for 2024
-            const games = await Game.find({
-                year: 2024,
-                active: true
-            });
-
-            console.log(`Found ${games.length} games for 2024`);
-
-            for (const game of games) {
-                console.log(`Processing ${game.title} (${game.type}) from month ${game.month}`);
-                const progress = await this.raAPI.getUserProgress(raUsername, game.gameId);
-                await this.processGameProgress(raUsername, game, progress);
-            }
-
-            console.log(`Completed all progress checks for ${raUsername}`);
-        } catch (error) {
-            console.error(`Error checking progress for ${raUsername}:`, error);
-            throw error;
+            const progress = await this.raAPI.getUserProgress(raUsername, gameId);
+            await this.processGameProgress(raUsername, game, progress);
         }
-    }
 
+        console.log(`Completed all progress checks for ${raUsername}`);
+    } catch (error) {
+        console.error(`Error checking progress for ${raUsername}:`, error);
+        throw error;
+    }
+}
     async processGameProgress(raUsername, game, progress) {
         try {
             const achievements = progress.achievements || {};
