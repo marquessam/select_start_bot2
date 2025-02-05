@@ -1,4 +1,5 @@
 // File: src/commands/profile.js
+const { EmbedBuilder } = require('discord.js');
 const Game = require('../models/Game');
 const Award = require('../models/Award');
 
@@ -16,7 +17,14 @@ module.exports = {
         try {
             const raUsername = args[0] || "royek";
             
-            let reply = `**Profile for ${raUsername}**\n\n`;
+            // Create embed
+            const embed = new EmbedBuilder()
+                .setColor('#0099ff')
+                .setTitle(`Profile for ${raUsername}`)
+                .setThumbnail(`https://retroachievements.org/UserPic/${raUsername}.png`)
+                .setTimestamp();
+
+            let description = '';
 
             // Get all games and awards
             const games = await Game.find({ 
@@ -31,7 +39,7 @@ module.exports = {
             // Group by month
             for (let month = 1; month <= 2; month++) {
                 const monthName = month === 1 ? 'January' : 'February';
-                reply += `**${monthName} 2025**\n`;
+                description += `**${monthName} 2025**\n`;
 
                 // Process Monthly game
                 const monthlyGame = games.find(g => g.month === month && g.type === 'MONTHLY');
@@ -41,18 +49,18 @@ module.exports = {
                     const percentage = ((monthlyAward.achievementCount / monthlyGame.numAchievements) * 100).toFixed(1);
                     const points = calculatePoints(monthlyAward.awards);
                     
-                    reply += `${monthlyGame.title} (Monthly)\n`;
-                    reply += `Progress: ${monthlyAward.achievementCount}/${monthlyGame.numAchievements} (${percentage}%)\n`;
-                    reply += `Awards: `;
+                    description += `${monthlyGame.title} (Monthly)\n`;
+                    description += `Progress: ${monthlyAward.achievementCount}/${monthlyGame.numAchievements} (${percentage}%)\n`;
+                    description += `Awards: `;
                     
                     let awardText = [];
                     if (monthlyAward.awards.participation) awardText.push("🏁 P(1)");
                     if (monthlyAward.awards.beaten) awardText.push("⭐ B(3)");
                     if (monthlyAward.awards.mastered) awardText.push("✨ M(3)");
                     
-                    reply += awardText.join(" + ");
-                    if (awardText.length > 0) reply += ` = ${points} points`;
-                    reply += '\n';
+                    description += awardText.join(" + ");
+                    if (awardText.length > 0) description += ` = ${points} points`;
+                    description += '\n';
                 }
 
                 // Process Shadow game
@@ -63,32 +71,34 @@ module.exports = {
                     const percentage = ((shadowAward.achievementCount / shadowGame.numAchievements) * 100).toFixed(1);
                     const points = calculatePoints(shadowAward.awards);
                     
-                    reply += `${shadowGame.title} (Shadow)\n`;
-                    reply += `Progress: ${shadowAward.achievementCount}/${shadowGame.numAchievements} (${percentage}%)\n`;
-                    reply += `Awards: `;
+                    description += `${shadowGame.title} (Shadow)\n`;
+                    description += `Progress: ${shadowAward.achievementCount}/${shadowGame.numAchievements} (${percentage}%)\n`;
+                    description += `Awards: `;
                     
                     let awardText = [];
                     if (shadowAward.awards.participation) awardText.push("🏁 P(1)");
                     if (shadowAward.awards.beaten) awardText.push("⭐ B(3)");
                     if (shadowAward.awards.mastered) awardText.push("✨ M(3)");
                     
-                    reply += awardText.join(" + ");
-                    if (awardText.length > 0) reply += ` = ${points} points`;
-                    reply += '\n';
+                    description += awardText.join(" + ");
+                    if (awardText.length > 0) description += ` = ${points} points`;
+                    description += '\n';
                 }
 
-                reply += '\n';
+                description += '\n';
             }
 
-            // Calculate total points with the new calculation
+            // Calculate total points
             let totalPoints = 0;
             awards.forEach(award => {
                 totalPoints += calculatePoints(award.awards);
             });
 
-            reply += `**Total 2025 Points: ${totalPoints}**`;
+            description += `**Total 2025 Points: ${totalPoints}**`;
 
-            message.channel.send(reply);
+            embed.setDescription(description);
+
+            message.channel.send({ embeds: [embed] });
 
         } catch (error) {
             console.error('Error showing profile:', error);
