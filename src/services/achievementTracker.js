@@ -37,29 +37,29 @@ class AchievementTracker {
         }
     }
 
-    async processGameProgress(raUsername, game, progress) {
-        try {
-            const achievements = progress.achievements || {};
-            const earnedCount = progress.earnedAchievements;
-            console.log(`User has earned ${earnedCount}/${game.numAchievements} achievements`);
+    
+async processGameProgress(raUsername, game, progress) {
+    try {
+        console.log(`Processing ${game.title} progress for ${raUsername}`);
+        console.log('Progress data:', {
+            userCompletion: progress.userCompletion,
+            achievementsEarned: `${progress.earnedAchievements}/${progress.numAchievements}`
+        });
 
-            let awards = {
-                participation: false,
-                beaten: false,
-                mastered: false
-            };
+        let awards = {
+            participation: false,
+            beaten: false,
+            mastered: false
+        };
 
-            // Check participation (any achievement)
-            if (earnedCount > 0) {
-                awards.participation = true;
-                console.log('Awarded: Participation');
-            }
-
+        // Check participation
+        if (progress.earnedAchievements > 0) {
+            awards.participation = true;
+            
             // Check beaten status
-            if (earnedCount > 0) {
-                const earnedAchievements = Object.entries(progress.achievements)
-                    .filter(([_, ach]) => ach.DateEarned || ach.dateEarned)
-                    .map(([id, _]) => id);
+            if (game.winCondition && game.winCondition.length > 0) {
+                const earnedAchievements = Object.keys(progress.achievements || {})
+                    .filter(id => progress.achievements[id].DateEarned || progress.achievements[id].dateEarned);
 
                 let progressionMet = !game.requireProgression;
                 if (game.requireProgression && game.progression) {
@@ -81,41 +81,43 @@ class AchievementTracker {
 
                 if (progressionMet && winConditionMet) {
                     awards.beaten = true;
-                    console.log('Awarded: Beaten');
                 }
             }
-
-            // Check mastery
-            if (game.type === 'MONTHLY' && game.masteryCheck && 
-                earnedCount === game.numAchievements) {
-                awards.mastered = true;
-                awards.beaten = true;
-                console.log('Awarded: Mastery');
-            }
-
-            // Update database
-            await Award.findOneAndUpdate(
-                {
-                    raUsername,
-                    gameId: game.gameId,
-                    month: game.month,
-                    year: 2025  // Fixed year to 2025
-                },
-                {
-                    awards,
-                    achievementCount: earnedCount,
-                    lastUpdated: new Date()
-                },
-                { upsert: true }
-            );
-
-            console.log(`Updated awards for ${raUsername} in ${game.title}:`, awards);
-
-        } catch (error) {
-            console.error(`Error processing progress for ${raUsername} in ${game.title}:`, error);
-            throw error;
         }
+
+        // Check mastery
+        if (game.type === 'MONTHLY' && 
+            progress.earnedAchievements === progress.numAchievements && 
+            progress.earnedAchievements > 0) {
+            awards.mastered = true;
+            awards.beaten = true;
+        }
+
+        // Save to database with all the info we need
+        await Award.findOneAndUpdate(
+            {
+                raUsername,
+                gameId: game.gameId,
+                month: game.month,
+                year: game.year
+            },
+            {
+                achievementCount: progress.earnedAchievements,
+                totalAchievements: progress.numAchievements,
+                userCompletion: progress.userCompletion,
+                awards,
+                lastUpdated: new Date()
+            },
+            { upsert: true }
+        );
+
+        console.log(`Updated awards for ${raUsername} in ${game.title}:`, awards);
+
+    } catch (error) {
+        console.error(`Error processing progress for ${raUsername} in ${game.title}:`, error);
+        throw error;
     }
+}
 
     async checkAllUsers() {
         const users = await User.find({ isActive: true });
