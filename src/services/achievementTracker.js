@@ -71,60 +71,89 @@ class AchievementTracker {
         return progressionComplete && winConditionComplete;
     }
 
-    async processGameProgress(raUsername, game, progress) {
-        try {
-            const achievements = progress.achievements || {};
-            const earnedCount = Object.values(achievements)
-                .filter(ach => ach.dateEarned)
-                .length;
+   async processGameProgress(raUsername, game, progress) {
+    try {
+        console.log(`\nProcessing ${game.title} progress for ${raUsername}`);
+        
+        const earnedCount = progress.earnedAchievements;
+        const totalCount = progress.numAchievements;
+        
+        console.log(`User has earned ${earnedCount}/${totalCount} achievements`);
+        
+        let awards = {
+            participation: false,
+            beaten: false,
+            mastered: false
+        };
 
-            console.log(`${raUsername} has earned ${earnedCount}/${game.numAchievements} achievements in ${game.title}`);
+        // Check participation
+        if (earnedCount > 0) {
+            awards.participation = true;
+            console.log('Awarded: Participation');
 
-            let awards = {
-                participation: false,
-                beaten: false,
-                mastered: false
-            };
+            // Check win conditions only if they have achievements
+            if (game.winCondition && game.winCondition.length > 0) {
+                const earnedAchievements = Object.entries(progress.achievements)
+                    .filter(([_, ach]) => ach.DateEarned || ach.dateEarned)
+                    .map(([id, _]) => id);
 
-            // Check participation (any achievement)
-            if (earnedCount > 0) {
-                awards.participation = true;
+                // Check progression if required
+                let progressionMet = !game.requireProgression;  // true if not required
+                if (game.requireProgression && game.progression) {
+                    progressionMet = game.progression.every(id => 
+                        earnedAchievements.includes(id)
+                    );
+                }
+
+                // Check win conditions
+                let winConditionMet = false;
+                if (game.requireAllWinConditions) {
+                    winConditionMet = game.winCondition.every(id => 
+                        earnedAchievements.includes(id)
+                    );
+                } else {
+                    winConditionMet = game.winCondition.some(id => 
+                        earnedAchievements.includes(id)
+                    );
+                }
+
+                if (progressionMet && winConditionMet) {
+                    awards.beaten = true;
+                    console.log('Awarded: Beaten');
+                }
             }
-
-            // Check beaten status
-            if (earnedCount > 0) {
-                awards.beaten = this.checkBeatenStatus(game, achievements);
-            }
-
-            // Check mastery (only for monthly games with masteryCheck enabled)
-            if (game.type === 'MONTHLY' && game.masteryCheck && earnedCount === game.numAchievements) {
-                awards.mastered = true;
-                awards.beaten = true;  // Mastery implies beaten
-            }
-
-            console.log(`Awards for ${raUsername} in ${game.title}:`, awards);
-
-            // Update database
-            await Award.findOneAndUpdate(
-                {
-                    raUsername,
-                    gameId: game.gameId,
-                    month: game.month,
-                    year: game.year
-                },
-                {
-                    awards,
-                    achievementCount: earnedCount,
-                    lastUpdated: new Date()
-                },
-                { upsert: true }
-            );
-
-        } catch (error) {
-            console.error(`Error processing progress for ${raUsername} in ${game.title}:`, error);
-            throw error;
         }
+
+        // Check mastery (only for monthly games)
+        if (game.type === 'MONTHLY' && game.masteryCheck && earnedCount === totalCount) {
+            awards.mastered = true;
+            awards.beaten = true;  // Mastery implies beaten
+            console.log('Awarded: Mastery');
+        }
+
+        console.log(`Final awards for ${raUsername}:`, awards);
+
+        // Update database
+        await Award.findOneAndUpdate(
+            {
+                raUsername,
+                gameId: game.gameId,
+                month: game.month,
+                year: game.year
+            },
+            {
+                awards,
+                achievementCount: earnedCount,
+                lastUpdated: new Date()
+            },
+            { upsert: true }
+        );
+
+    } catch (error) {
+        console.error(`Error processing progress for ${raUsername} in ${game.title}:`, error);
+        throw error;
     }
+}
 
     async checkAllUsers() {
         const users = await User.find({ isActive: true });
