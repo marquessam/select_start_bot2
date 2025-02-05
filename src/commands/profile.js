@@ -5,9 +5,9 @@ const Award = require('../models/Award');
 
 function calculatePoints(awards) {
     let points = 0;
-    if (awards.participation) points += 1;
-    if (awards.beaten) points += 3;
-    if (awards.mastered) points += 3;
+    if (awards.participation) points += 1;  // Participation
+    if (awards.beaten) points += 3;         // Beaten
+    if (awards.mastered) points += 3;       // Mastery
     return points;
 }
 
@@ -23,68 +23,64 @@ module.exports = {
                 .setThumbnail(`https://retroachievements.org/UserPic/${raUsername}.png`);
 
             const games = await Game.find({ year: 2025 }).sort({ month: 1 });
-            const awards = await Award.find({ raUsername, year: 2025 });
+            const awards = await Award.find({ 
+                raUsername, 
+                year: 2025 
+            }).sort({ month: 1 });
 
-            // Process each month
-            for (let month = 1; month <= 2; month++) {
-                const monthName = month === 1 ? 'January' : 'February';
-                let monthText = '';
+            let currentMonth = null;
+            let monthText = '';
+            let totalPoints = 0;
 
-                // Monthly Game
-                const monthlyGame = games.find(g => g.month === month && g.type === 'MONTHLY');
-                const monthlyAward = awards.find(a => a.gameId === monthlyGame?.gameId);
-
-                if (monthlyGame && monthlyAward) {
-                    monthText += `**${monthlyGame.title}** (Monthly)\n`;
-                    monthText += `▫️ Progress: ${monthlyAward.achievementCount}/${monthlyAward.numAchievements} (${monthlyAward.userCompletion})\n`;
-                    
-                    let awardText = [];
-                    if (monthlyAward.awards.participation) awardText.push("🏁P");
-                    if (monthlyAward.awards.beaten) awardText.push("⭐B");
-                    if (monthlyAward.awards.mastered) awardText.push("✨M");
-                    
-                    const points = calculatePoints(monthlyAward.awards);
-                    monthText += `▫️ ${awardText.join(" + ")} = ${points}pts\n\n`;
+            // Process all awards
+            for (const award of awards) {
+                const month = award.month;
+                // If we're starting a new month, add the previous month's text
+                if (currentMonth !== month) {
+                    if (monthText) {
+                        embed.addFields({ 
+                            name: currentMonth === 1 ? 'January' : 'February', 
+                            value: monthText 
+                        });
+                    }
+                    currentMonth = month;
+                    monthText = '';
                 }
 
-                // Shadow Game
-                const shadowGame = games.find(g => g.month === month && g.type === 'SHADOW');
-                const shadowAward = awards.find(a => a.gameId === shadowGame?.gameId);
+                // Find the corresponding game to get type
+                const game = games.find(g => g.gameId === award.gameId);
+                if (!game) continue;
 
-                if (shadowGame && shadowAward) {
-                    monthText += `**${shadowGame.title}** (Shadow)\n`;
-                    monthText += `▫️ Progress: ${shadowAward.achievementCount}/${shadowAward.numAchievements} (${shadowAward.userCompletion})\n`;
-                    
-                    let awardText = [];
-                    if (shadowAward.awards.participation) awardText.push("🏁P");
-                    if (shadowAward.awards.beaten) awardText.push("⭐B");
-                    if (shadowAward.awards.mastered) awardText.push("✨M");
-                    
-                    const points = calculatePoints(shadowAward.awards);
-                    monthText += `▫️ ${awardText.join(" + ")} = ${points}pts`;
-                }
-
-                if (monthText) {
-                    embed.addFields({
-                        name: monthName,
-                        value: monthText,
-                        inline: false
-                    });
-                }
+                monthText += `**${game.title}** (${game.type})\n`;
+                monthText += `▫️ Progress: ${award.achievementCount}/${award.totalAchievements} (${award.userCompletion})\n`;
+                
+                // Build award display
+                let awardText = [];
+                if (award.awards.participation) awardText.push("🏁P");
+                if (award.awards.beaten) awardText.push("⭐B");
+                if (award.awards.mastered) awardText.push("✨M");
+                
+                const points = calculatePoints(award.awards);
+                totalPoints += points;
+                monthText += `▫️ ${awardText.join(" + ")} = ${points}pts\n\n`;
             }
 
-            // Calculate total points
-            let totalPoints = 0;
-            awards.forEach(award => {
-                totalPoints += calculatePoints(award.awards);
-            });
+            // Add the last month's text if any
+            if (monthText) {
+                embed.addFields({ 
+                    name: currentMonth === 1 ? 'January' : 'February', 
+                    value: monthText 
+                });
+            }
 
+            // Add total points
             embed.addFields({
                 name: 'Total Points',
                 value: `**${totalPoints}** points earned in 2025`,
                 inline: false
             });
 
+            // Send the embed
             message.channel.send({ embeds: [embed] });
 
         } catch (error) {
