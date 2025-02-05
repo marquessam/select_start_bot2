@@ -1,80 +1,57 @@
 // File: src/commands/leaderboard.js
-const { SlashCommandBuilder } = require('discord.js');
-const leaderboardService = require('../services/leaderboardService');
+const Game = require('../models/Game');
+const Award = require('../models/Award');
 
 module.exports = {
-    data: new SlashCommandBuilder()
-        .setName('leaderboard')
-        .setDescription('View the leaderboards')
-        .addStringOption(option =>
-            option.setName('type')
-                .setDescription('Which leaderboard to view')
-                .setRequired(false)
-                .addChoices(
-                    { name: 'Monthly', value: 'monthly' },
-                    { name: 'Yearly', value: 'yearly' }
-                )),
-
+    name: 'leaderboard',
     async execute(message, args) {
         try {
-            const type = args ? args[0]?.toLowerCase() : 'monthly';
+            // Get current month's game
+            const currentDate = new Date();
+            const currentMonth = currentDate.getMonth() + 1;
+            const currentYear = currentDate.getFullYear();
 
-            if (type === 'monthly' || !type) {
-                const monthlyData = await leaderboardService.getCurrentMonthlyProgress();
-                const formattedMessage = formatMonthlyLeaderboard(monthlyData);
-                await message.channel.send(formattedMessage);
+            const monthlyGame = await Game.findOne({
+                month: currentMonth,
+                year: currentYear,
+                type: 'MONTHLY'
+            });
+
+            if (!monthlyGame) {
+                return message.reply('No monthly game found for current month.');
             }
-            else if (type === 'yearly') {
-                const yearlyData = await leaderboardService.getYearlyPoints();
-                const formattedMessage = formatYearlyLeaderboard(yearlyData);
-                await message.channel.send(formattedMessage);
-            }
-            else {
-                await message.reply('Invalid command. Use !leaderboard, !leaderboard monthly, or !leaderboard yearly');
-            }
+
+            // Get all awards for this game
+            const awards = await Award.find({
+                gameId: monthlyGame.gameId,
+                month: currentMonth,
+                year: currentYear
+            });
+
+            // Build simple leaderboard message
+            let reply = `Current Monthly Game: ${monthlyGame.title}\n\n`;
+            reply += "```\n";
+            reply += "Player          Progress  Awards\n";
+            reply += "--------------------------------\n";
+
+            awards.forEach(award => {
+                const username = award.raUsername.padEnd(15);
+                const progress = `${award.achievementCount}/${monthlyGame.numAchievements}`.padEnd(9);
+                let awardText = '';
+                if (award.achievementCount === monthlyGame.numAchievements) awardText += '🏆';
+                else if (award.beaten) awardText += '⭐';
+                else if (award.achievementCount > 0) awardText += '✓';
+                
+                reply += `${username} ${progress} ${awardText}\n`;
+            });
+            
+            reply += "```\n";
+            reply += "🏆 = Mastered | ⭐ = Beaten | ✓ = Participated";
+
+            message.channel.send(reply);
         } catch (error) {
-            console.error('Error displaying leaderboard:', error);
-            await message.reply('There was an error getting the leaderboard data!');
+            console.error('Leaderboard error:', error);
+            message.reply('Error getting leaderboard data.');
         }
     }
 };
-
-function formatMonthlyLeaderboard(data) {
-    const { game, leaderboard } = data;
-    let message = `🏆 Current Monthly Challenge: ${game}\n\n`;
-    message += "```\n";
-    message += "Rank  Player             Progress  Percent\n";
-    message += "----------------------------------------\n";
-
-    leaderboard.forEach((entry, index) => {
-        const rank = (index + 1).toString().padEnd(4);
-        const username = entry.username.padEnd(18);
-        const progress = `${entry.achievements}/${entry.totalAchievements}`.padEnd(8);
-        const percent = `${entry.percentage}%`.padEnd(6);
-        
-        message += `${rank} ${username} ${progress} ${percent}\n`;
-    });
-
-    message += "```";
-    return message;
-}
-
-function formatYearlyLeaderboard(leaderboard) {
-    let message = "🏆 2024 Overall Standings\n\n";
-    message += "```\n";
-    message += "Rank  Player             Points  Monthly  Shadow\n";
-    message += "----------------------------------------------\n";
-
-    leaderboard.forEach((entry, index) => {
-        const rank = (index + 1).toString().padEnd(4);
-        const username = entry.username.padEnd(18);
-        const points = entry.totalPoints.toString().padEnd(7);
-        const monthly = entry.monthlyGames.toString().padEnd(8);
-        const shadow = entry.shadowGames.toString();
-        
-        message += `${rank} ${username} ${points} ${monthly} ${shadow}\n`;
-    });
-
-    message += "```";
-    return message;
-}
