@@ -1,10 +1,10 @@
 // File: src/index.js
 require('dotenv').config();
-const { Client, Events, GatewayIntentBits } = require('discord.js');
+const { Client, Events, GatewayIntentBits, Collection } = require('discord.js');
 const mongoose = require('mongoose');
 const { initializeGames } = require('./utils/initializeGames');
 const { initializeUsers } = require('./utils/initializeUsers');
-const scheduler = require('./services/scheduler');
+const Scheduler = require('./services/scheduler');
 const achievementTracker = require('./services/achievementTracker');
 
 const client = new Client({
@@ -14,6 +14,12 @@ const client = new Client({
         GatewayIntentBits.MessageContent,
     ]
 });
+
+// Initialize commands collection
+client.commands = new Collection();
+
+// Create scheduler with Discord client
+const scheduler = new Scheduler(client);
 
 // Connect to MongoDB and initialize data
 mongoose.connect(process.env.MONGODB_URI)
@@ -32,7 +38,8 @@ mongoose.connect(process.env.MONGODB_URI)
         await achievementTracker.checkAllUsers();
         console.log('Initial achievement check completed');
 
-        // Start the scheduler
+        // Initialize and start the scheduler
+        await scheduler.initialize();
         scheduler.startAll();
         console.log('Scheduler started');
     })
@@ -66,6 +73,12 @@ client.on(Events.MessageCreate, async message => {
         message.reply('There was an error executing that command!');
     }
 });
+
+// Error handler for unhandled rejections
+process.on('unhandledRejection', error => {
+    console.error('Unhandled promise rejection:', error);
+});
+
 // Graceful shutdown
 process.on('SIGTERM', async () => {
     console.log('SIGTERM received. Shutting down gracefully...');
@@ -74,4 +87,27 @@ process.on('SIGTERM', async () => {
     process.exit(0);
 });
 
-client.login(process.env.DISCORD_TOKEN);
+// Handle other termination signals
+process.on('SIGINT', async () => {
+    console.log('SIGINT received. Shutting down gracefully...');
+    scheduler.stopAll();
+    await mongoose.connection.close();
+    process.exit(0);
+});
+
+// Handle uncaught exceptions
+process.on('uncaughtException', error => {
+    console.error('Uncaught exception:', error);
+    // Attempt graceful shutdown
+    scheduler.stopAll();
+    mongoose.connection.close()
+        .then(() => process.exit(1))
+        .catch(() => process.exit(1));
+});
+
+// Login to Discord
+client.login(process.env.DISCORD_TOKEN)
+    .catch(error => {
+        console.error('Error logging in to Discord:', error);
+        process.exit(1);
+    });
