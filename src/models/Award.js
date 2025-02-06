@@ -5,6 +5,7 @@ const awardSchema = new mongoose.Schema({
     raUsername: {
         type: String,
         required: true,
+        set: v => v.toLowerCase(),  // Normalize username on save
     },
     gameId: {
         type: String,
@@ -22,11 +23,11 @@ const awardSchema = new mongoose.Schema({
         type: Number,
         required: true,
     },
-    totalAchievements: {  // Add this field
+    totalAchievements: {
         type: Number,
         required: true,
     },
-    userCompletion: {     // Add this field
+    userCompletion: {
         type: String,
         required: true,
     },
@@ -49,5 +50,8 @@ const awardSchema = new mongoose.Schema({
         default: Date.now,
     }
 });
+
+// Index for efficient queries
+awardSchema.index({ raUsername: 1, gameId: 1, year: 1, month: 1 }, { unique: true });
 
 module.exports = mongoose.model('Award', awardSchema);
