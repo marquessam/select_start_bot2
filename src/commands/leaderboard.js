@@ -15,7 +15,7 @@ function padString(str, length) {
     return str.toString().slice(0, length).padEnd(length);
 }
 
-async function displayMonthlyLeaderboard(message) {
+async function displayMonthlyLeaderboard() {
     const currentDate = new Date();
     const currentMonth = currentDate.getMonth() + 1;
     const currentYear = currentDate.getFullYear();
@@ -30,14 +30,15 @@ async function displayMonthlyLeaderboard(message) {
         throw new Error('No monthly game found for current month.');
     }
 
-   const awards = await Award.find({
+    // Get all awards for this game with progress > 0
+    const awards = await Award.find({
         gameId: monthlyGame.gameId,
         month: currentMonth,
         year: currentYear,
         achievementCount: { $gt: 0 }
     });
 
-    // Group by username (case insensitive) and take highest score
+    // Group by lowercase username to handle case sensitivity
     const uniqueAwards = {};
     awards.forEach(award => {
         const lowerUsername = award.raUsername.toLowerCase();
@@ -47,11 +48,11 @@ async function displayMonthlyLeaderboard(message) {
         }
     });
 
-    // Convert back to array and sort
+    // Sort by achievement count
     const sortedAwards = Object.values(uniqueAwards)
         .sort((a, b) => b.achievementCount - a.achievementCount);
 
-    // Assign ranks
+    // Handle ties
     let currentRank = 1;
     let currentScore = -1;
     let increment = 0;
@@ -105,38 +106,32 @@ async function displayMonthlyLeaderboard(message) {
                 value: '```\n' + othersText + '```' 
             });
         }
-    } else {
-        embed.addFields({ 
-            name: 'Leaderboard', 
-            value: 'No participants yet!' 
-        });
     }
 
     return embed;
 }
 
-async function displayYearlyLeaderboard(message) {
+async function displayYearlyLeaderboard() {
     const currentYear = new Date().getFullYear();
     const awards = await Award.find({ year: currentYear });
 
-   const userPoints = {};
+    const userPoints = {};
 
     // Group by lowercase username to handle case sensitivity
     for (const award of awards) {
         const username = award.raUsername.toLowerCase();
         if (!userPoints[username]) {
             userPoints[username] = {
-                username: award.raUsername,  // Keep original case for display
+                username: award.raUsername,
                 totalPoints: 0,
                 participations: 0,
                 beaten: 0,
                 mastered: 0,
-                processedGames: new Set()  // Track processed games to avoid duplicates
+                processedGames: new Set()
             };
         }
 
         const gameKey = `${award.gameId}-${award.month}`;
-        // Only process each game once per user
         if (!userPoints[username].processedGames.has(gameKey)) {
             const points = calculatePoints(award.awards);
             if (points > 0) {
@@ -149,38 +144,13 @@ async function displayYearlyLeaderboard(message) {
         }
     }
 
-    // Convert to array and clean up
-    const sortedUsers = Object.values(userPoints)
+    // Convert to array and sort by points
+    const leaderboard = Object.values(userPoints)
         .filter(user => user.totalPoints > 0)
         .map(user => {
-            const { processedGames, ...cleanUser } = user;  // Remove the Set before returning
+            const { processedGames, ...cleanUser } = user;
             return cleanUser;
         })
-        .sort((a, b) => b.totalPoints - a.totalPoints);
-
-    for (const award of awards) {
-        const username = award.raUsername.toLowerCase();
-        if (!userPoints[username]) {
-            userPoints[username] = {
-                username: award.raUsername,
-                totalPoints: 0,
-                participations: 0,
-                beaten: 0,
-                mastered: 0
-            };
-        }
-
-        const points = calculatePoints(award.awards);
-        if (points > 0) {
-            userPoints[username].totalPoints += points;
-            if (award.awards.participation) userPoints[username].participations++;
-            if (award.awards.beaten) userPoints[username].beaten++;
-            if (award.awards.mastered) userPoints[username].mastered++;
-        }
-    }
-
-    const sortedUsers = Object.values(userPoints)
-        .filter(user => user.totalPoints > 0)
         .sort((a, b) => b.totalPoints - a.totalPoints);
 
     // Handle ties
@@ -188,7 +158,7 @@ async function displayYearlyLeaderboard(message) {
     let currentPoints = -1;
     let increment = 0;
 
-    sortedUsers.forEach(user => {
+    leaderboard.forEach(user => {
         if (user.totalPoints !== currentPoints) {
             currentRank += increment;
             increment = 1;
@@ -204,11 +174,11 @@ async function displayYearlyLeaderboard(message) {
         .setColor('#0099ff')
         .setTitle('2025 Yearly Rankings');
 
-    if (sortedUsers.length > 0) {
+    if (leaderboard.length > 0) {
         let text = 'Rank  Player         Pts  P  B  M\n';
         text += '--------------------------------\n';
 
-        sortedUsers.forEach(user => {
+        leaderboard.forEach(user => {
             const rank = padString(user.rank, 4);
             const name = padString(user.username, 13);
             const points = padString(user.totalPoints, 4);
@@ -238,9 +208,9 @@ module.exports = {
             let embed;
 
             if (type === 'month' || type === 'm') {
-                embed = await displayMonthlyLeaderboard(message);
+                embed = await displayMonthlyLeaderboard();
             } else if (type === 'year' || type === 'y') {
-                embed = await displayYearlyLeaderboard(message);
+                embed = await displayYearlyLeaderboard();
             } else {
                 return message.reply('Invalid command. Use !leaderboard month/m or !leaderboard year/y');
             }
