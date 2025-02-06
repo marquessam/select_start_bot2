@@ -5,11 +5,8 @@ const userSchema = new mongoose.Schema({
     raUsername: {
         type: String,
         required: true,
-        unique: true
-    },
-    discordId: {
-        type: String,
-        sparse: true  // Allows null/undefined while still maintaining uniqueness
+        unique: true,
+        set: v => v.toLowerCase(),  // Normalize username on save
     },
     isActive: {
         type: Boolean,
