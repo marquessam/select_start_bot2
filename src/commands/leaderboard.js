@@ -4,18 +4,71 @@ const Game = require('../models/Game');
 const Award = require('../models/Award');
 const User = require('../models/User');
 
-function calculatePoints(awards) {
-    let points = 0;
-    if (awards.participation) points += 1;
-    if (awards.beaten) points += 3;
-    if (awards.mastered) points += 3;
-    return points;
+/**
+ * Returns the appropriate award icon based on the award object.
+ * (If you later change your schema to use an enum, you can adjust this logic.)
+ */
+function getAwardIcon(awardObj) {
+    if (awardObj.mastered) return '✨';
+    else if (awardObj.beaten) return '⭐';
+    else if (awardObj.participation) return '🏁';
+    return '';
 }
 
-function padString(str, length) {
-    return str.toString().slice(0, length).padEnd(length);
+/**
+ * Generates a table with Unicode box-drawing characters.
+ * @param {string[]} headers - An array of header strings.
+ * @param {Array<Array<string|number>>} rows - An array of rows, each row is an array of cell values.
+ * @returns {string} - The generated table as a string.
+ */
+function generateTable(headers, rows) {
+    // Determine maximum width for each column
+    const colWidths = headers.map((header, i) => {
+        return Math.max(
+            header.length,
+            ...rows.map(row => row[i].toString().length)
+        );
+    });
+
+    // Function to build a horizontal line (top, middle, bottom)
+    const horizontalLine = (left, mid, right) => {
+        let line = left;
+        colWidths.forEach((width, index) => {
+            line += '─'.repeat(width + 2);
+            line += (index < colWidths.length - 1) ? mid : right;
+        });
+        return line;
+    };
+
+    const topBorder = horizontalLine('┌', '┬', '┐');
+    const headerSeparator = horizontalLine('├', '┼', '┤');
+    const bottomBorder = horizontalLine('└', '┴', '┘');
+
+    // Function to format a single row
+    const formatRow = (row) => {
+        let rowStr = '│';
+        row.forEach((cell, index) => {
+            const cellStr = cell.toString();
+            rowStr += ' ' + cellStr.padEnd(colWidths[index]) + ' │';
+        });
+        return rowStr;
+    };
+
+    const headerRow = formatRow(headers);
+    const rowLines = rows.map(row => formatRow(row));
+
+    return [
+        topBorder,
+        headerRow,
+        headerSeparator,
+        ...rowLines,
+        bottomBorder
+    ].join('\n');
 }
 
+/**
+ * Displays the monthly leaderboard with a jazzed-up table format.
+ */
 async function displayMonthlyLeaderboard() {
     const currentDate = new Date();
     const currentMonth = currentDate.getMonth() + 1;
@@ -42,12 +95,14 @@ async function displayMonthlyLeaderboard() {
     // Group by canonical username
     const uniqueAwards = {};
     for (const award of awards) {
+        // Use a case-insensitive search to find the canonical username.
         const user = await User.findOne({
             raUsername: { $regex: new RegExp(`^${award.raUsername}$`, 'i') }
         });
-        
+
         if (user) {
             const canonicalUsername = user.raUsername;
+            // Save the award with the highest achievementCount for the user.
             if (!uniqueAwards[canonicalUsername] || 
                 award.achievementCount > uniqueAwards[canonicalUsername].achievementCount) {
                 award.raUsername = canonicalUsername;
@@ -56,11 +111,11 @@ async function displayMonthlyLeaderboard() {
         }
     }
 
-    // Sort by achievement count
+    // Sort by achievement count (descending)
     const sortedAwards = Object.values(uniqueAwards)
         .sort((a, b) => b.achievementCount - a.achievementCount);
 
-    // Handle ties
+    // Handle ties and assign ranks
     let currentRank = 1;
     let currentScore = -1;
     let increment = 0;
@@ -77,50 +132,54 @@ async function displayMonthlyLeaderboard() {
         }
     });
 
-    const embed = new EmbedBuilder()
-        .setColor('#0099ff')
-        .setTitle('Monthly Challenge:')
-        .setDescription(`**${monthlyGame.title}**`)
-        .setThumbnail('https://media.retroachievements.org/Images/022504.png');
-
+    // Split into top ten and the rest
     const topTen = sortedAwards.slice(0, 10);
     const others = sortedAwards.slice(10);
 
-    if (topTen.length > 0) {
-        let topTenText = 'Rank  Player         Progress\n';
-        topTenText += '--------------------------------\n';
-        
-        topTen.forEach(award => {
-            const rank = padString(award.rank, 4);
-            const username = padString(award.raUsername, 13);
+    // Build the table for the top ten
+    const monthlyHeaders = ['Rank', 'Player', 'Progress', 'Award'];
+    const topTenRows = topTen.map(award => {
+        const progress = `${award.achievementCount}/${award.totalAchievements}`;
+        const icon = getAwardIcon(award.awards);
+        return [award.rank, award.raUsername, progress, icon];
+    });
+    const topTenTable = generateTable(monthlyHeaders, topTenRows);
+
+    // Build a separate table for "Also Participating" if there are extra players
+    let othersTable = '';
+    if (others.length > 0) {
+        const otherHeaders = ['Player', 'Progress'];
+        const othersRows = others.map(award => {
             const progress = `${award.achievementCount}/${award.totalAchievements}`;
-            let awards = '';
-            if (award.awards.mastered) awards = ' ✨';
-            else if (award.awards.beaten) awards = ' ⭐';
-            else if (award.awards.participation) awards = ' 🏁';
-            
-            topTenText += `${rank} ${username} ${progress}${awards}\n`;
+            return [award.raUsername, progress];
         });
+        othersTable = generateTable(otherHeaders, othersRows);
+    }
 
-        embed.addFields({ 
+    // Create the embed with enhanced formatting
+    const embed = new EmbedBuilder()
+        .setColor('#0099ff')
+        .setTitle('Monthly Challenge')
+        .setDescription(`**${monthlyGame.title}**`)
+        .setThumbnail('https://media.retroachievements.org/Images/022504.png')
+        .addFields({ 
             name: 'Top Rankings', 
-            value: '```\n' + topTenText + '```' 
+            value: '```' + topTenTable + '```' 
         });
 
-        if (others.length > 0) {
-            const othersText = others
-                .map(a => `${a.raUsername}: ${a.achievementCount}/${a.totalAchievements}`)
-                .join('\n');
-            embed.addFields({ 
-                name: 'Also Participating', 
-                value: '```\n' + othersText + '```' 
-            });
-        }
+    if (othersTable) {
+        embed.addFields({ 
+            name: 'Also Participating', 
+            value: '```' + othersTable + '```' 
+        });
     }
 
     return embed;
 }
 
+/**
+ * Displays the yearly leaderboard with a jazzed-up table format.
+ */
 async function displayYearlyLeaderboard() {
     const currentYear = new Date().getFullYear();
     const awards = await Award.find({ year: currentYear });
@@ -148,7 +207,12 @@ async function displayYearlyLeaderboard() {
 
             const gameKey = `${award.gameId}-${award.month}`;
             if (!userPoints[canonicalUsername].processedGames.has(gameKey)) {
-                const points = calculatePoints(award.awards);
+                // Calculate points based on booleans
+                let points = 0;
+                if (award.awards.participation) points += 1;
+                if (award.awards.beaten) points += 3;
+                if (award.awards.mastered) points += 3;
+                
                 if (points > 0) {
                     userPoints[canonicalUsername].totalPoints += points;
                     if (award.awards.participation) userPoints[canonicalUsername].participations++;
@@ -160,13 +224,13 @@ async function displayYearlyLeaderboard() {
         }
     }
 
-    // Convert to array and sort by points
+    // Convert to array and sort by total points (descending)
     const leaderboard = Object.values(userPoints)
         .filter(user => user.totalPoints > 0)
         .map(({ processedGames, ...user }) => user)
         .sort((a, b) => b.totalPoints - a.totalPoints);
 
-    // Handle ties
+    // Handle ties and assign ranks
     let currentRank = 1;
     let currentPoints = -1;
     let increment = 0;
@@ -183,32 +247,24 @@ async function displayYearlyLeaderboard() {
         }
     });
 
+    // Build the table for the yearly leaderboard
+    const yearlyHeaders = ['Rank', 'Player', 'Pts', 'P', 'B', 'M'];
+    const leaderboardRows = leaderboard.map(user => {
+        return [
+            user.rank,
+            user.username,
+            user.totalPoints,
+            user.participations,
+            user.beaten,
+            user.mastered
+        ];
+    });
+    const leaderboardTable = generateTable(yearlyHeaders, leaderboardRows);
+
     const embed = new EmbedBuilder()
         .setColor('#0099ff')
-        .setTitle('2025 Yearly Rankings');
-
-    if (leaderboard.length > 0) {
-        let text = 'Rank  Player         Pts  P  B  M\n';
-        text += '--------------------------------\n';
-
-        leaderboard.forEach(user => {
-            const rank = padString(user.rank, 4);
-            const name = padString(user.username, 13);
-            const points = padString(user.totalPoints, 4);
-            const p = padString(user.participations, 2);
-            const b = padString(user.beaten, 2);
-            const m = padString(user.mastered, 2);
-            
-            text += `${rank} ${name} ${points} ${p} ${b} ${m}\n`;
-        });
-
-        embed.addFields({ name: 'Rankings', value: '```\n' + text + '```' });
-    } else {
-        embed.addFields({ 
-            name: 'Rankings', 
-            value: 'No points earned yet!' 
-        });
-    }
+        .setTitle(`${currentYear} Yearly Rankings`)
+        .addFields({ name: 'Rankings', value: '```' + leaderboardTable + '```' });
 
     return embed;
 }
@@ -226,7 +282,7 @@ module.exports = {
             } else if (type === 'year' || type === 'y') {
                 embed = await displayYearlyLeaderboard();
             } else {
-                return message.reply('Invalid command. Use !leaderboard month/m or !leaderboard year/y');
+                return message.reply('Invalid command. Use `!leaderboard month/m` or `!leaderboard year/y`');
             }
 
             await message.channel.send({ embeds: [embed] });
