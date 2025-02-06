@@ -2,86 +2,173 @@
 const { EmbedBuilder } = require('discord.js');
 const RetroAchievementsAPI = require('../services/retroAchievements');
 
+// Cache to store search results temporarily
+const searchCache = new Map();
+
+async function displayGameInfo(gameInfo, message, raAPI) {
+    const releaseDate = gameInfo.Released 
+        ? new Date(gameInfo.Released).toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
+          }) 
+        : 'Unknown';
+
+    const embed = new EmbedBuilder()
+        .setColor('#0099ff')
+        .setTitle(gameInfo.Title || 'Unknown Title')
+        .setURL(`https://retroachievements.org/game/${gameInfo.ID}`);
+
+    if (gameInfo.ImageIcon) {
+        embed.setThumbnail(`https://retroachievements.org${gameInfo.ImageIcon}`);
+    }
+    if (gameInfo.ImageBoxArt) {
+        embed.setImage(`https://retroachievements.org${gameInfo.ImageBoxArt}`);
+    }
+
+    const gameInfoText = [
+        `**Console:** ${gameInfo.Console || 'Unknown'}`,
+        `**Developer:** ${gameInfo.Developer || 'Unknown'}`,
+        `**Publisher:** ${gameInfo.Publisher || 'Unknown'}`,
+        `**Genre:** ${gameInfo.Genre || 'Unknown'}`,
+        `**Release Date:** ${releaseDate}`,
+        `**Game ID:** ${gameInfo.ID}`
+    ].join('\n');
+
+    embed.addFields({ name: 'Game Information', value: gameInfoText });
+
+    // Try to get achievement information
+    try {
+        const progress = await raAPI.getUserProgress(process.env.RA_USERNAME, gameInfo.ID);
+        if (progress && progress[gameInfo.ID]) {
+            const gameProgress = progress[gameInfo.ID];
+            const achievementInfo = [
+                `**Total Achievements:** ${gameProgress.numPossibleAchievements || 0}`,
+                `**Total Points:** ${gameProgress.possibleScore || 0}`
+            ].join('\n');
+            
+            embed.addFields({ name: 'Achievement Information', value: achievementInfo });
+        }
+    } catch (error) {
+        console.error('Error getting achievement info:', error);
+        embed.addFields({ 
+            name: 'Achievement Information', 
+            value: 'Achievement information currently unavailable'
+        });
+    }
+
+    await message.channel.send({ embeds: [embed] });
+}
+
+async function handleSearch(message, searchTerm, raAPI) {
+    // If it's a number, try direct ID lookup first
+    if (/^\d+$/.test(searchTerm)) {
+        try {
+            const gameInfo = await raAPI.getGameInfo(searchTerm);
+            if (gameInfo && gameInfo.Title) {
+                await displayGameInfo(gameInfo, message, raAPI);
+                return;
+            }
+        } catch (error) {
+            console.error('Error with direct ID lookup:', error);
+            // Continue to fuzzy search if ID lookup fails
+        }
+    }
+
+    // Perform fuzzy search
+    try {
+        const searchResults = await raAPI.getGameList(searchTerm);
+        
+        if (!searchResults || Object.keys(searchResults).length === 0) {
+            return message.reply(`No games found matching "${searchTerm}"`);
+        }
+
+        // Convert results to array and sort by title
+        const games = Object.entries(searchResults)
+            .map(([id, game]) => ({
+                id,
+                title: game.Title,
+                console: game.ConsoleName
+            }))
+            .sort((a, b) => a.title.localeCompare(b.title));
+
+        if (games.length === 1) {
+            // If only one result, show it directly
+            const gameInfo = await raAPI.getGameInfo(games[0].id);
+            await displayGameInfo(gameInfo, message, raAPI);
+            return;
+        }
+
+        // Create list of options
+        const optionsList = games.slice(0, 10).map((game, index) => 
+            `${index + 1}. ${game.title} (${game.console})`
+        ).join('\n');
+
+        const selectionEmbed = new EmbedBuilder()
+            .setColor('#0099ff')
+            .setTitle('Multiple Games Found')
+            .setDescription('Please select a game by number:\n\n' + optionsList + 
+                          '\n\nType the number of your selection or "cancel" to exit.')
+            .setFooter({ text: 'This search will timeout in 30 seconds' });
+
+        const selectionMessage = await message.channel.send({ embeds: [selectionEmbed] });
+
+        // Store the games in cache for the response handler
+        searchCache.set(message.author.id, {
+            games: games.slice(0, 10),
+            timestamp: Date.now()
+        });
+
+        // Set up response collector
+        const filter = m => m.author.id === message.author.id && 
+            (m.content.toLowerCase() === 'cancel' || 
+             (Number(m.content) >= 1 && Number(m.content) <= games.length));
+
+        const collector = message.channel.createMessageCollector({
+            filter,
+            time: 30000,
+            max: 1
+        });
+
+        collector.on('collect', async m => {
+            if (m.content.toLowerCase() === 'cancel') {
+                await message.reply('Search cancelled.');
+                return;
+            }
+
+            const selectedIndex = Number(m.content) - 1;
+            const selectedGame = games[selectedIndex];
+            const gameInfo = await raAPI.getGameInfo(selectedGame.id);
+            await displayGameInfo(gameInfo, message, raAPI);
+        });
+
+        collector.on('end', (collected, reason) => {
+            searchCache.delete(message.author.id);
+            if (reason === 'time') {
+                message.reply('Search timed out. Please try again.');
+            }
+        });
+
+    } catch (error) {
+        console.error('Search error:', error);
+        message.reply('An error occurred while searching. Please try again.');
+    }
+}
+
 module.exports = {
     name: 'search',
     description: 'Search for game information on RetroAchievements',
     async execute(message, args) {
-        try {
-            if (!args.length) {
-                return message.reply('Please provide a game ID or title to search for (e.g., !search 319 or !search "Chrono Trigger")');
-            }
-
-            const raAPI = new RetroAchievementsAPI(
-                process.env.RA_USERNAME,
-                process.env.RA_API_KEY
-            );
-
-            // Join args to handle titles with spaces
-            const searchTerm = args.join(' ');
-            
-            // Check if search term is a game ID
-            const isGameId = /^\d+$/.test(searchTerm);
-            
-            let gameInfo;
-            if (isGameId) {
-                try {
-                    gameInfo = await raAPI.getGameInfo(searchTerm);
-                    if (!gameInfo) {
-                        return message.reply(`No game found with ID ${searchTerm}`);
-                    }
-                } catch (error) {
-                    return message.reply(`No game found with ID ${searchTerm}`);
-                }
-            } else {
-                return message.reply('Please provide a valid game ID (e.g., !search 319). Game title search is currently not supported.');
-            }
-
-            // Format dates nicely
-            const releaseDate = gameInfo.released ? new Date(gameInfo.released).toLocaleDateString('en-US', {
-                year: 'numeric',
-                month: 'long',
-                day: 'numeric'
-            }) : 'Unknown';
-
-            const embed = new EmbedBuilder()
-                .setColor('#0099ff')
-                .setTitle(gameInfo.title || gameInfo.gameTitle)
-                .setURL(`https://retroachievements.org/game/${searchTerm}`)
-                .setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`)
-                .setImage(`https://retroachievements.org${gameInfo.imageBoxArt}`)
-                .addFields(
-                    {
-                        name: 'Game Information',
-                        value: `**Console:** ${gameInfo.console || gameInfo.consoleName}\n` +
-                               `**Developer:** ${gameInfo.developer || 'Unknown'}\n` +
-                               `**Publisher:** ${gameInfo.publisher || 'Unknown'}\n` +
-                               `**Genre:** ${gameInfo.genre || 'Unknown'}\n` +
-                               `**Release Date:** ${releaseDate}\n` +
-                               `**Game ID:** ${searchTerm}`
-                    }
-                );
-
-            // Get user progress if this game has achievements
-            try {
-                const progress = await raAPI.getUserProgress(process.env.RA_USERNAME, searchTerm);
-                if (progress && progress[searchTerm]) {
-                    const gameProgress = progress[searchTerm];
-                    embed.addFields({
-                        name: 'Achievement Information',
-                        value: `**Total Achievements:** ${gameProgress.numPossibleAchievements}\n` +
-                               `**Total Points:** ${gameProgress.possibleScore}`
-                    });
-                }
-            } catch (error) {
-                console.error('Error getting achievement info:', error);
-                // Don't fail the whole command if we can't get achievement info
-            }
-
-            await message.channel.send({ embeds: [embed] });
-
-        } catch (error) {
-            console.error('Search command error:', error);
-            await message.reply('Error searching for game information.');
+        if (!args.length) {
+            return message.reply('Please provide a game title or ID to search for (e.g., !search "Chrono Trigger" or !search 319)');
         }
+
+        const raAPI = new RetroAchievementsAPI(
+            process.env.RA_USERNAME,
+            process.env.RA_API_KEY
+        );
+
+        const searchTerm = args.join(' ');
+        await handleSearch(message, searchTerm, raAPI);
     }
 };
