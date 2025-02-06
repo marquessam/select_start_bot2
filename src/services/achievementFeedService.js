@@ -3,6 +3,7 @@ const { EmbedBuilder } = require('discord.js');
 const User = require('../models/User');
 const Game = require('../models/Game');
 const RetroAchievementsAPI = require('./retroAchievements');
+const path = require('path');
 
 class AchievementFeedService {
     constructor(client) {
@@ -13,10 +14,10 @@ class AchievementFeedService {
             process.env.RA_API_KEY
         );
         this.lastCheck = new Date();
+        this.announcementHistory = new Set();
     }
 
     async initialize() {
-        // Set initial last check time
         this.lastCheck = new Date();
         console.log('Achievement feed service initialized');
     }
@@ -39,28 +40,23 @@ class AchievementFeedService {
 
             for (const user of users) {
                 try {
-                    // Get user's recent achievements
                     const recentAchievements = await this.raAPI.getUserRecentAchievements(user.raUsername);
                     
                     if (recentAchievements && recentAchievements.length > 0) {
                         for (const achievement of recentAchievements) {
-                            // Check if achievement was earned after last check
                             const earnedDate = new Date(achievement.Date);
                             if (earnedDate > this.lastCheck) {
-                                // Find if it's a challenge game
-                                const challengeGame = challengeGames.find(g => g.gameId === achievement.GameID);
-                                
+                                const challengeGame = challengeGames.find(g => g.gameId === String(achievement.GameID));
                                 await this.announceAchievement(user.raUsername, achievement, challengeGame);
                             }
                         }
                     }
                 } catch (error) {
                     console.error(`Error checking achievements for ${user.raUsername}:`, error);
-                    continue;  // Continue with next user
+                    continue;
                 }
             }
 
-            // Update last check time
             this.lastCheck = currentDate;
             console.log('Achievement check completed');
 
@@ -70,30 +66,77 @@ class AchievementFeedService {
     }
 
     async announceAchievement(username, achievement, challengeGame) {
-        const channel = await this.client.channels.fetch(this.feedChannelId);
-        if (!channel) {
-            console.error('Achievement feed channel not found');
-            return;
+        try {
+            const channel = await this.client.channels.fetch(this.feedChannelId);
+            if (!channel) {
+                console.error('Achievement feed channel not found');
+                return;
+            }
+
+            // Create unique key for achievement
+            const achievementKey = `${username}-${achievement.ID}-${achievement.GameTitle}-${achievement.Title}`;
+            if (this.announcementHistory.has(achievementKey)) return;
+
+            // Set up badge and user icon URLs
+            const badgeUrl = achievement.BadgeName
+                ? `https://media.retroachievements.org/Badge/${achievement.BadgeName}.png`
+                : 'https://media.retroachievements.org/Badge/00000.png';
+            const userIconUrl = `https://media.retroachievements.org/UserPic/${username}.png`;
+
+            // Default embed setup
+            let authorName = '';
+            let authorIconUrl = '';
+            let files = [];
+            let color = '#00FF00'; // Default color
+
+            // Add logo file for special games
+            const logoFile = {
+                attachment: path.join(__dirname, '../../assets/logo_simple.png'),
+                name: 'game_logo.png'
+            };
+
+            // Handle special games
+            if (challengeGame) {
+                if (challengeGame.type === 'SHADOW') {
+                    authorName = 'SHADOW GAME 🌘';
+                    color = '#FFD700'; // Gold
+                } else {
+                    authorName = 'MONTHLY CHALLENGE 🏆';
+                    color = '#00BFFF'; // Blue
+                }
+                files = [logoFile];
+                authorIconUrl = 'attachment://game_logo.png';
+            }
+
+            const embed = new EmbedBuilder()
+                .setColor(color)
+                .setTitle(achievement.GameTitle)
+                .setThumbnail(badgeUrl)
+                .setDescription(
+                    `**${username}** earned **${achievement.Title}**\n\n` +
+                    `*${achievement.Description || 'No description available'}*`
+                )
+                .setFooter({
+                    text: `Points: ${achievement.Points} • ${new Date(achievement.Date).toLocaleTimeString()}`,
+                    iconURL: userIconUrl
+                })
+                .setTimestamp();
+
+            if (authorName) {
+                embed.setAuthor({ name: authorName, iconURL: authorIconUrl });
+            }
+
+            await channel.send({ embeds: [embed], files });
+            this.announcementHistory.add(achievementKey);
+
+            // Cleanup history if it gets too large
+            if (this.announcementHistory.size > 1000) {
+                this.announcementHistory.clear();
+            }
+
+        } catch (error) {
+            console.error('Error announcing achievement:', error);
         }
-
-        const embed = new EmbedBuilder()
-            .setColor('#0099ff')
-            .setAuthor({
-                name: username,
-                iconURL: `https://media.retroachievements.org/UserPic/${username}.png`
-            })
-            .setThumbnail(`https://media.retroachievements.org${achievement.BadgeURL}`);
-
-        if (challengeGame) {
-            // Set title based on challenge type
-            const challengeType = challengeGame.type === 'MONTHLY' ? 'Monthly Challenge' : 'Shadow Game';
-            embed.setTitle(`${challengeType}: ${achievement.GameTitle}`)
-                .setDescription(`**${achievement.Title}** (${achievement.Points} points)\n${achievement.Description}`);
-        } else {
-            embed.setDescription(`**${achievement.GameTitle}**\n${achievement.Title} (${achievement.Points} points)\n${achievement.Description}`);
-        }
-
-        await channel.send({ embeds: [embed] });
     }
 }
 
