@@ -39,20 +39,21 @@ async function displayMonthlyLeaderboard() {
         achievementCount: { $gt: 0 }
     });
 
-    // Group by lowercase username to handle case sensitivity
+    // Group by canonical username
     const uniqueAwards = {};
     for (const award of awards) {
-        const lowerUsername = award.raUsername.toLowerCase();
-        if (!uniqueAwards[lowerUsername] || 
-            award.achievementCount > uniqueAwards[lowerUsername].achievementCount) {
-            // Find the canonical username from User model
-            const user = await User.findOne({
-                raUsername: { $regex: new RegExp(`^${award.raUsername}$`, 'i') }
-            });
-            if (user) {
-                award.raUsername = user.raUsername; // Use canonical username
+        // Find the canonical username from User model
+        const user = await User.findOne({
+            raUsername: { $regex: new RegExp(`^${award.raUsername}$`, 'i') }
+        });
+        
+        if (user) {
+            const canonicalUsername = user.raUsername;
+            if (!uniqueAwards[canonicalUsername] || 
+                award.achievementCount > uniqueAwards[canonicalUsername].achievementCount) {
+                award.raUsername = canonicalUsername; // Use canonical username
+                uniqueAwards[canonicalUsername] = award;
             }
-            uniqueAwards[lowerUsername] = award;
         }
     }
 
@@ -81,7 +82,7 @@ async function displayMonthlyLeaderboard() {
         .setColor('#0099ff')
         .setTitle('Monthly Challenge:')
         .setDescription(`**${monthlyGame.title}**`)
-        .setThumbnail(`https://media.retroachievements.org/Images/065106.png`); // ALTTP thumbnail
+        .setThumbnail('https://media.retroachievements.org/Images/022504.png');
 
     const topTen = sortedAwards.slice(0, 10);
     const others = sortedAwards.slice(10);
@@ -93,7 +94,7 @@ async function displayMonthlyLeaderboard() {
         topTen.forEach(award => {
             const rank = padString(award.rank, 4);
             const username = padString(award.raUsername, 13);
-            const progress = `${award.achievementCount}/${monthlyGame.numAchievements}`;
+            const progress = `${award.achievementCount}/${award.totalAchievements}`;
             let awards = '';
             if (award.awards.mastered) awards = ' ✨';
             else if (award.awards.beaten) awards = ' ⭐';
@@ -109,7 +110,7 @@ async function displayMonthlyLeaderboard() {
 
         if (others.length > 0) {
             const othersText = others
-                .map(a => `${a.raUsername}: ${a.achievementCount}/${monthlyGame.numAchievements}`)
+                .map(a => `${a.raUsername}: ${a.achievementCount}/${a.totalAchievements}`)
                 .join('\n');
             embed.addFields({ 
                 name: 'Also Participating', 
@@ -127,29 +128,35 @@ async function displayYearlyLeaderboard() {
 
     const userPoints = {};
 
-    // Group by lowercase username to handle case sensitivity
+    // Group by canonical username to handle case sensitivity
     for (const award of awards) {
-        const username = award.raUsername.toLowerCase();
-        if (!userPoints[username]) {
-            userPoints[username] = {
-                username: award.raUsername,
-                totalPoints: 0,
-                participations: 0,
-                beaten: 0,
-                mastered: 0,
-                processedGames: new Set()
-            };
-        }
+        const user = await User.findOne({
+            raUsername: { $regex: new RegExp(`^${award.raUsername}$`, 'i') }
+        });
 
-        const gameKey = `${award.gameId}-${award.month}`;
-        if (!userPoints[username].processedGames.has(gameKey)) {
-            const points = calculatePoints(award.awards);
-            if (points > 0) {
-                userPoints[username].totalPoints += points;
-                if (award.awards.participation) userPoints[username].participations++;
-                if (award.awards.beaten) userPoints[username].beaten++;
-                if (award.awards.mastered) userPoints[username].mastered++;
-                userPoints[username].processedGames.add(gameKey);
+        if (user) {
+            const canonicalUsername = user.raUsername;
+            if (!userPoints[canonicalUsername]) {
+                userPoints[canonicalUsername] = {
+                    username: canonicalUsername,
+                    totalPoints: 0,
+                    participations: 0,
+                    beaten: 0,
+                    mastered: 0,
+                    processedGames: new Set()
+                };
+            }
+
+            const gameKey = `${award.gameId}-${award.month}`;
+            if (!userPoints[canonicalUsername].processedGames.has(gameKey)) {
+                const points = calculatePoints(award.awards);
+                if (points > 0) {
+                    userPoints[canonicalUsername].totalPoints += points;
+                    if (award.awards.participation) userPoints[canonicalUsername].participations++;
+                    if (award.awards.beaten) userPoints[canonicalUsername].beaten++;
+                    if (award.awards.mastered) userPoints[canonicalUsername].mastered++;
+                    userPoints[canonicalUsername].processedGames.add(gameKey);
+                }
             }
         }
     }
@@ -157,10 +164,7 @@ async function displayYearlyLeaderboard() {
     // Convert to array and sort by points
     const leaderboard = Object.values(userPoints)
         .filter(user => user.totalPoints > 0)
-        .map(user => {
-            const { processedGames, ...cleanUser } = user;
-            return cleanUser;
-        })
+        .map(({ processedGames, ...user }) => user)
         .sort((a, b) => b.totalPoints - a.totalPoints);
 
     // Handle ties
