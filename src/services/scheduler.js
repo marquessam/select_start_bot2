@@ -1,10 +1,24 @@
 // File: src/services/scheduler.js
 const cron = require('node-cron');
 const achievementTracker = require('./achievementTracker');
+const AchievementFeedService = require('./achievementFeedService');
 
 class Scheduler {
-    constructor() {
-        // Schedule achievement checks every 15 minutes
+    constructor(client) {
+        this.achievementFeedService = new AchievementFeedService(client);
+
+        // Achievement feed check every 5 minutes
+        this.achievementFeedJob = cron.schedule('*/5 * * * *', async () => {
+            console.log('Starting achievement feed check...');
+            try {
+                await this.achievementFeedService.checkRecentAchievements();
+                console.log('Achievement feed check completed');
+            } catch (error) {
+                console.error('Error in achievement feed check:', error);
+            }
+        });
+
+        // Achievement progress check every 15 minutes
         this.achievementCheckJob = cron.schedule('*/15 * * * *', async () => {
             console.log('Starting scheduled achievement check...');
             try {
@@ -15,14 +29,11 @@ class Scheduler {
             }
         });
 
-        // Schedule a daily cleanup/summary at midnight
+        // Daily cleanup/summary at midnight
         this.dailySummaryJob = cron.schedule('0 0 * * *', async () => {
             console.log('Starting daily summary...');
             try {
-                // Here we can add daily summary tasks, like:
-                // - Generating reports
-                // - Cleaning up old data
-                // - Sending daily summaries to Discord
+                // Daily summary tasks
                 console.log('Daily summary completed');
             } catch (error) {
                 console.error('Error in daily summary:', error);
@@ -30,17 +41,23 @@ class Scheduler {
         });
     }
 
+    async initialize() {
+        await this.achievementFeedService.initialize();
+    }
+
     startAll() {
+        this.achievementFeedJob.start();
         this.achievementCheckJob.start();
         this.dailySummaryJob.start();
         console.log('All scheduled jobs started');
     }
 
     stopAll() {
+        this.achievementFeedJob.stop();
         this.achievementCheckJob.stop();
         this.dailySummaryJob.stop();
         console.log('All scheduled jobs stopped');
     }
 }
 
-module.exports = new Scheduler();
+module.exports = Scheduler;
