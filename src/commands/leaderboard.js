@@ -30,19 +30,31 @@ async function displayMonthlyLeaderboard(message) {
         throw new Error('No monthly game found for current month.');
     }
 
-    const awards = await Award.find({
+   const awards = await Award.find({
         gameId: monthlyGame.gameId,
         month: currentMonth,
         year: currentYear,
         achievementCount: { $gt: 0 }
     });
 
-    // Sort by achievement count and handle ties
+    // Group by username (case insensitive) and take highest score
+    const uniqueAwards = {};
+    awards.forEach(award => {
+        const lowerUsername = award.raUsername.toLowerCase();
+        if (!uniqueAwards[lowerUsername] || 
+            award.achievementCount > uniqueAwards[lowerUsername].achievementCount) {
+            uniqueAwards[lowerUsername] = award;
+        }
+    });
+
+    // Convert back to array and sort
+    const sortedAwards = Object.values(uniqueAwards)
+        .sort((a, b) => b.achievementCount - a.achievementCount);
+
+    // Assign ranks
     let currentRank = 1;
     let currentScore = -1;
     let increment = 0;
-    
-    const sortedAwards = awards.sort((a, b) => b.achievementCount - a.achievementCount);
 
     sortedAwards.forEach(award => {
         if (award.achievementCount !== currentScore) {
@@ -107,7 +119,44 @@ async function displayYearlyLeaderboard(message) {
     const currentYear = new Date().getFullYear();
     const awards = await Award.find({ year: currentYear });
 
-    const userPoints = {};
+   const userPoints = {};
+
+    // Group by lowercase username to handle case sensitivity
+    for (const award of awards) {
+        const username = award.raUsername.toLowerCase();
+        if (!userPoints[username]) {
+            userPoints[username] = {
+                username: award.raUsername,  // Keep original case for display
+                totalPoints: 0,
+                participations: 0,
+                beaten: 0,
+                mastered: 0,
+                processedGames: new Set()  // Track processed games to avoid duplicates
+            };
+        }
+
+        const gameKey = `${award.gameId}-${award.month}`;
+        // Only process each game once per user
+        if (!userPoints[username].processedGames.has(gameKey)) {
+            const points = calculatePoints(award.awards);
+            if (points > 0) {
+                userPoints[username].totalPoints += points;
+                if (award.awards.participation) userPoints[username].participations++;
+                if (award.awards.beaten) userPoints[username].beaten++;
+                if (award.awards.mastered) userPoints[username].mastered++;
+                userPoints[username].processedGames.add(gameKey);
+            }
+        }
+    }
+
+    // Convert to array and clean up
+    const sortedUsers = Object.values(userPoints)
+        .filter(user => user.totalPoints > 0)
+        .map(user => {
+            const { processedGames, ...cleanUser } = user;  // Remove the Set before returning
+            return cleanUser;
+        })
+        .sort((a, b) => b.totalPoints - a.totalPoints);
 
     for (const award of awards) {
         const username = award.raUsername.toLowerCase();
