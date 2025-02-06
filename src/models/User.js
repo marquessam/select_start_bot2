@@ -7,12 +7,6 @@ const userSchema = new mongoose.Schema({
         required: true,
         unique: true
     },
-    raUsernameLower: {
-        type: String,
-        required: true,
-        unique: true,
-        set: v => v.toLowerCase()
-    },
     isActive: {
         type: Boolean,
         default: true
@@ -27,12 +21,10 @@ const userSchema = new mongoose.Schema({
     }
 });
 
-// Pre-save middleware to set lowercase username
-userSchema.pre('save', function(next) {
-    if (this.raUsername) {
-        this.raUsernameLower = this.raUsername.toLowerCase();
-    }
-    next();
+// Add case-insensitive index
+userSchema.index({ raUsername: 1 }, { 
+    unique: true,
+    collation: { locale: 'en', strength: 2 }
 });
 
 module.exports = mongoose.model('User', userSchema);
