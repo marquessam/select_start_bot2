@@ -6,7 +6,7 @@ const RetroAchievementsAPI = require('../services/retroAchievements');
 const games2025 = [
     {
         month: 1,
-        year: 2025,  // Fixed year
+        year: 2025,
         monthlyGame: {
             gameId: "319",
             title: "Chrono Trigger",
@@ -27,7 +27,7 @@ const games2025 = [
     },
     {
         month: 2,
-        year: 2025,  // Fixed year
+        year: 2025,
         monthlyGame: {
             gameId: "355",
             title: "The Legend of Zelda: A Link to the Past",
@@ -51,43 +51,71 @@ const games2025 = [
     }
 ];
 
+async function processGamesSequentially(games, raAPI) {
+    const results = [];
+    for (const game of games) {
+        try {
+            // Process monthly game
+            console.log(`Processing monthly game: ${game.monthlyGame.title}`);
+            const monthlyInfo = await raAPI.getGameInfo(game.monthlyGame.gameId);
+            console.log(`Got info for monthly game: ${game.monthlyGame.title}`);
+            
+            results.push({
+                ...game.monthlyGame,
+                type: 'MONTHLY',
+                month: game.month,
+                year: game.year,
+                numAchievements: monthlyInfo.NumAchievements || 0
+            });
+
+            // Add delay between requests
+            await new Promise(resolve => setTimeout(resolve, 1500));
+
+            // Process shadow game
+            console.log(`Processing shadow game: ${game.shadowGame.title}`);
+            const shadowInfo = await raAPI.getGameInfo(game.shadowGame.gameId);
+            console.log(`Got info for shadow game: ${game.shadowGame.title}`);
+            
+            results.push({
+                ...game.shadowGame,
+                type: 'SHADOW',
+                month: game.month,
+                year: game.year,
+                numAchievements: shadowInfo.NumAchievements || 0
+            });
+
+            // Add delay between requests
+            await new Promise(resolve => setTimeout(resolve, 1500));
+
+        } catch (error) {
+            console.error(`Error processing game pair for month ${game.month}:`, error);
+            throw error;
+        }
+    }
+    return results;
+}
+
 async function initializeGames() {
     try {
         console.log('Starting game initialization...');
         
         // Clear existing games
         await Game.deleteMany({});
+        console.log('Cleared existing games');
         
         const raAPI = new RetroAchievementsAPI(
             process.env.RA_USERNAME,
             process.env.RA_API_KEY
         );
 
-        for (const monthData of games2025) {
-            // Monthly Game
-            const monthlyInfo = await raAPI.getGameInfo(monthData.monthlyGame.gameId);
-            console.log(`Initializing monthly game: ${monthData.monthlyGame.title}`);
-            
-            await Game.create({
-                ...monthData.monthlyGame,
-                type: 'MONTHLY',
-                month: monthData.month,
-                year: monthData.year,
-                numAchievements: monthlyInfo.numAchievements || 0
-            });
+        // Process games sequentially to respect rate limits
+        console.log('Starting to process games...');
+        const processedGames = await processGamesSequentially(games2025, raAPI);
+        console.log(`Processed ${processedGames.length} games`);
 
-            // Shadow Game
-            const shadowInfo = await raAPI.getGameInfo(monthData.shadowGame.gameId);
-            console.log(`Initializing shadow game: ${monthData.shadowGame.title}`);
-            
-            await Game.create({
-                ...monthData.shadowGame,
-                type: 'SHADOW',
-                month: monthData.month,
-                year: monthData.year,
-                numAchievements: shadowInfo.numAchievements || 0
-            });
-        }
+        // Bulk insert all games
+        console.log('Inserting games into database...');
+        await Game.insertMany(processedGames);
 
         const finalGames = await Game.find({}).sort({ month: 1 });
         console.log('Initialized games:', finalGames.map(g => ({
@@ -98,10 +126,12 @@ async function initializeGames() {
             achievements: g.numAchievements
         })));
 
+        console.log('Game initialization completed successfully');
+
     } catch (error) {
         console.error('Error initializing games:', error);
         throw error;
     }
 }
 
-module.exports = { initializeGames };
+module.exports = { initializeGames, games2025 };
