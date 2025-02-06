@@ -42,7 +42,6 @@ async function displayMonthlyLeaderboard() {
     // Group by canonical username
     const uniqueAwards = {};
     for (const award of awards) {
-        // Find the canonical username from User model
         const user = await User.findOne({
             raUsername: { $regex: new RegExp(`^${award.raUsername}$`, 'i') }
         });
@@ -51,7 +50,7 @@ async function displayMonthlyLeaderboard() {
             const canonicalUsername = user.raUsername;
             if (!uniqueAwards[canonicalUsername] || 
                 award.achievementCount > uniqueAwards[canonicalUsername].achievementCount) {
-                award.raUsername = canonicalUsername; // Use canonical username
+                award.raUsername = canonicalUsername;
                 uniqueAwards[canonicalUsername] = award;
             }
         }
@@ -216,6 +215,7 @@ async function displayYearlyLeaderboard() {
 
 module.exports = {
     name: 'leaderboard',
+    description: 'Shows the leaderboard',
     async execute(message, args) {
         try {
             const type = args[0]?.toLowerCase() || 'month';
@@ -229,11 +229,11 @@ module.exports = {
                 return message.reply('Invalid command. Use !leaderboard month/m or !leaderboard year/y');
             }
 
-            message.channel.send({ embeds: [embed] });
+            await message.channel.send({ embeds: [embed] });
 
         } catch (error) {
             console.error('Leaderboard error:', error);
-            message.reply('Error getting leaderboard data.');
+            await message.reply('Error getting leaderboard data.');
         }
     }
 };
