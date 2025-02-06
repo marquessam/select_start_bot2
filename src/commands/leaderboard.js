@@ -15,7 +15,7 @@ function padString(str, length) {
     return str.toString().slice(0, length).padEnd(length);
 }
 
-async function getMonthlyLeaderboard() {
+async function displayMonthlyLeaderboard(message) {
     const currentDate = new Date();
     const currentMonth = currentDate.getMonth() + 1;
     const currentYear = currentDate.getFullYear();
@@ -37,11 +37,11 @@ async function getMonthlyLeaderboard() {
         achievementCount: { $gt: 0 }
     });
 
-    // Sort and rank with ties
+    // Sort by achievement count and handle ties
     let currentRank = 1;
     let currentScore = -1;
     let increment = 0;
-
+    
     const sortedAwards = awards.sort((a, b) => b.achievementCount - a.achievementCount);
 
     sortedAwards.forEach(award => {
@@ -56,14 +56,54 @@ async function getMonthlyLeaderboard() {
         }
     });
 
-    return {
-        game: monthlyGame,
-        topTen: sortedAwards.slice(0, 10),
-        others: sortedAwards.slice(10)
-    };
+    const embed = new EmbedBuilder()
+        .setColor('#0099ff')
+        .setTitle(`Monthly Challenge: ${monthlyGame.title}`);
+
+    const topTen = sortedAwards.slice(0, 10);
+    const others = sortedAwards.slice(10);
+
+    if (topTen.length > 0) {
+        let topTenText = 'Rank  Player         Progress\n';
+        topTenText += '--------------------------------\n';
+        
+        topTen.forEach(award => {
+            const rank = padString(award.rank, 4);
+            const username = padString(award.raUsername, 13);
+            const progress = `${award.achievementCount}/${monthlyGame.numAchievements}`;
+            let awards = '';
+            if (award.awards.mastered) awards = ' ✨';
+            else if (award.awards.beaten) awards = ' ⭐';
+            else if (award.awards.participation) awards = ' 🏁';
+            
+            topTenText += `${rank} ${username} ${progress}${awards}\n`;
+        });
+
+        embed.addFields({ 
+            name: 'Top Rankings', 
+            value: '```\n' + topTenText + '```' 
+        });
+
+        if (others.length > 0) {
+            const othersText = others
+                .map(a => `${a.raUsername}: ${a.achievementCount}/${monthlyGame.numAchievements}`)
+                .join('\n');
+            embed.addFields({ 
+                name: 'Also Participating', 
+                value: '```\n' + othersText + '```' 
+            });
+        }
+    } else {
+        embed.addFields({ 
+            name: 'Leaderboard', 
+            value: 'No participants yet!' 
+        });
+    }
+
+    return embed;
 }
 
-async function getYearlyLeaderboard() {
+async function displayYearlyLeaderboard(message) {
     const currentYear = new Date().getFullYear();
     const awards = await Award.find({ year: currentYear });
 
@@ -94,7 +134,7 @@ async function getYearlyLeaderboard() {
         .filter(user => user.totalPoints > 0)
         .sort((a, b) => b.totalPoints - a.totalPoints);
 
-    // Assign ranks with ties
+    // Handle ties
     let currentRank = 1;
     let currentPoints = -1;
     let increment = 0;
@@ -111,7 +151,34 @@ async function getYearlyLeaderboard() {
         }
     });
 
-    return sortedUsers;
+    const embed = new EmbedBuilder()
+        .setColor('#0099ff')
+        .setTitle('2025 Yearly Rankings');
+
+    if (sortedUsers.length > 0) {
+        let text = 'Rank  Player         Pts  P  B  M\n';
+        text += '--------------------------------\n';
+
+        sortedUsers.forEach(user => {
+            const rank = padString(user.rank, 4);
+            const name = padString(user.username, 13);
+            const points = padString(user.totalPoints, 4);
+            const p = padString(user.participations, 2);
+            const b = padString(user.beaten, 2);
+            const m = padString(user.mastered, 2);
+            
+            text += `${rank} ${name} ${points} ${p} ${b} ${m}\n`;
+        });
+
+        embed.addFields({ name: 'Rankings', value: '```\n' + text + '```' });
+    } else {
+        embed.addFields({ 
+            name: 'Rankings', 
+            value: 'No points earned yet!' 
+        });
+    }
+
+    return embed;
 }
 
 module.exports = {
@@ -119,77 +186,14 @@ module.exports = {
     async execute(message, args) {
         try {
             const type = args[0]?.toLowerCase() || 'month';
+            let embed;
 
-            if (type === 'month') {
-                const { game, topTen, others } = await getMonthlyLeaderboard();
-
-                const embed = new EmbedBuilder()
-                    .setColor('#0099ff')
-                    .setTitle(`Monthly Challenge: ${game.title}`);
-
-                if (topTen.length > 0) {
-                    let topTenText = 'Rank  Player         Progress\n';
-                    topTenText += '--------------------------------\n';
-                    
-                    topTen.forEach(award => {
-                        const rank = padString(award.rank, 4);
-                        const username = padString(award.raUsername, 13);
-                        const progress = `${award.achievementCount}/${game.numAchievements}`;
-                        let awards = '';
-                        if (award.awards.mastered) awards = ' ✨';
-                        else if (award.awards.beaten) awards = ' ⭐';
-                        else if (award.awards.participation) awards = ' 🏁';
-                        
-                        topTenText += `${rank} ${username} ${progress}${awards}\n`;
-                    });
-
-                    embed.addFields({ name: 'Leaderboard', value: '```\n' + topTenText + '```' });
-
-                    if (others.length > 0) {
-                        const othersText = others
-                            .map(a => `${a.raUsername}: ${a.achievementCount}/${game.numAchievements}`)
-                            .join('\n');
-                        embed.addFields({ 
-                            name: 'Also Participating', 
-                            value: '```\n' + othersText + '```' 
-                        });
-                    }
-                } else {
-                    embed.addFields({ 
-                        name: 'Leaderboard', 
-                        value: 'No participants yet!' 
-                    });
-                }
-
-            } else if (type === 'year') {
-                const yearlyLeaderboard = await getYearlyLeaderboard();
-
-                const embed = new EmbedBuilder()
-                    .setColor('#0099ff')
-                    .setTitle('2025 Yearly Rankings');
-
-                if (yearlyLeaderboard.length > 0) {
-                    let text = 'Rank  Player         Pts  P  B  M\n';
-                    text += '--------------------------------\n';
-
-                    yearlyLeaderboard.forEach(user => {
-                        const rank = padString(user.rank, 4);
-                        const name = padString(user.username, 13);
-                        const points = padString(user.totalPoints, 4);
-                        const p = padString(user.participations, 2);
-                        const b = padString(user.beaten, 2);
-                        const m = padString(user.mastered, 2);
-                        
-                        text += `${rank} ${name} ${points} ${p} ${b} ${m}\n`;
-                    });
-
-                    embed.addFields({ name: 'Rankings', value: '```\n' + text + '```' });
-                } else {
-                    embed.addFields({ 
-                        name: 'Rankings', 
-                        value: 'No points earned yet!' 
-                    });
-                }
+            if (type === 'month' || type === 'm') {
+                embed = await displayMonthlyLeaderboard(message);
+            } else if (type === 'year' || type === 'y') {
+                embed = await displayYearlyLeaderboard(message);
+            } else {
+                return message.reply('Invalid command. Use !leaderboard month/m or !leaderboard year/y');
             }
 
             message.channel.send({ embeds: [embed] });
