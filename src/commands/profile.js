@@ -4,6 +4,11 @@ const Game = require('../models/Game');
 const Award = require('../models/Award');
 const User = require('../models/User');
 
+/**
+ * Calculates total points from an award object.
+ * @param {object} awards - The awards object containing booleans.
+ * @returns {number} - Total points.
+ */
 function calculatePoints(awards) {
     let points = 0;
     if (awards.participation) points += 1;
@@ -12,15 +17,64 @@ function calculatePoints(awards) {
     return points;
 }
 
+/**
+ * Generates a table using Unicode box-drawing characters.
+ * @param {string[]} headers - The header titles.
+ * @param {Array<Array<string|number>>} rows - The table rows.
+ * @returns {string} - The formatted table as a string.
+ */
+function generateTable(headers, rows) {
+    // Calculate maximum width for each column
+    const colWidths = headers.map((header, i) =>
+        Math.max(
+            header.length,
+            ...rows.map(row => row[i].toString().length)
+        )
+    );
+
+    // Function to generate a horizontal line given border characters
+    const horizontalLine = (left, mid, right) => {
+        let line = left;
+        colWidths.forEach((width, index) => {
+            line += '─'.repeat(width + 2) + (index < colWidths.length - 1 ? mid : right);
+        });
+        return line;
+    };
+
+    const topBorder = horizontalLine('┌', '┬', '┐');
+    const headerSeparator = horizontalLine('├', '┼', '┤');
+    const bottomBorder = horizontalLine('└', '┴', '┘');
+
+    // Function to format a row's cells with proper padding
+    const formatRow = (row) => {
+        let rowStr = '│';
+        row.forEach((cell, index) => {
+            rowStr += ' ' + cell.toString().padEnd(colWidths[index]) + ' │';
+        });
+        return rowStr;
+    };
+
+    const headerRow = formatRow(headers);
+    const rowLines = rows.map(formatRow);
+
+    return [
+        topBorder,
+        headerRow,
+        headerSeparator,
+        ...rowLines,
+        bottomBorder
+    ].join('\n');
+}
+
 module.exports = {
     name: 'profile',
     description: 'Shows user profile information',
     async execute(message, args) {
         try {
-            // Get username for search
+            // Get username for search (defaults to "Royek" if none provided)
             let requestedUsername = args[0] || "Royek";
 
-            // Find the user with case-insensitive search
+            // Find the user using a case-insensitive search
             const user = await User.findOne({
                 raUsername: { $regex: new RegExp(`^${requestedUsername}$`, 'i') }
             });
@@ -57,22 +111,27 @@ module.exports = {
             }) : null;
 
             if (currentGame && currentAward) {
+                // Build a table for the current challenge progress
+                const currentChallengeTable = generateTable(
+                    ['Field', 'Value'],
+                    [
+                        ['Title', currentGame.title],
+                        ['Progress', `${currentAward.achievementCount}/${currentAward.totalAchievements} (${currentAward.userCompletion})`]
+                    ]
+                );
                 embed.addFields({
                     name: '🎮 Current Challenge Progress',
-                    value: '```\n' +
-                           `${currentGame.title}\n` +
-                           `Progress: ${currentAward.achievementCount}/${currentAward.totalAchievements} (${currentAward.userCompletion})\n` +
-                           '```'
+                    value: '```' + currentChallengeTable + '```'
                 });
             }
 
-            // Get all user's awards for the year
+            // Get all user's awards for the current year
             const awards = await Award.find({
                 raUsername: raUsername,
                 year: currentYear
             });
 
-            // Calculate statistics
+            // Calculate statistics and collect game titles for each award type
             const processedGames = new Set();
             let totalAchievements = 0;
             let participationCount = 0;
@@ -111,53 +170,60 @@ module.exports = {
                 }
             });
 
-            // Add Statistics Section
+            // Build a table for overall 2025 statistics
+            const statsTable = generateTable(
+                ['Metric', 'Value'],
+                [
+                    ['Achievements Earned', totalAchievements],
+                    ['Games Participated', participationCount],
+                    ['Games Beaten', beatenCount],
+                    ['Games Mastered', masteredCount]
+                ]
+            );
             embed.addFields({
                 name: '📊 2025 Statistics',
-                value: '```\n' +
-                      `Achievements Earned: ${totalAchievements}\n` +
-                      `Games Participated: ${participationCount}\n` +
-                      `Games Beaten: ${beatenCount}\n` +
-                      `Games Mastered: ${masteredCount}\n` +
-                      '```'
+                value: '```' + statsTable + '```'
             });
 
-            // Add Point Breakdown
+            // Build tables for each point breakdown category
+            const participationTable = generateTable(
+                ['Participations (1 pt each)'],
+                participationGames.length ? participationGames.map(game => [game]) : [['None']]
+            );
             embed.addFields({
-                name: '🏆 Point Breakdown',
-                value: '**Participations**\n```\nWorth 1 point each:\n' + 
-                      `${participationGames.join('\n') || 'None'}\n` +
-                      '```'
+                name: '🏆 Participations',
+                value: '```' + participationTable + '```'
             });
 
             if (beatenCount > 0) {
+                const beatenTable = generateTable(
+                    ['Games Beaten (3 pts each)'],
+                    beatenGames.map(game => [game])
+                );
                 embed.addFields({
-                    name: 'Games Beaten',
-                    value: '```\nWorth 3 points each:\n' + 
-                          `${beatenGames.join('\n')}\n` +
-                          '```'
+                    name: '⭐ Games Beaten',
+                    value: '```' + beatenTable + '```'
                 });
             }
 
             if (masteredCount > 0) {
+                const masteredTable = generateTable(
+                    ['Games Mastered (3 pts each)'],
+                    masteredGames.map(game => [game])
+                );
                 embed.addFields({
-                    name: 'Games Mastered',
-                    value: '```\nWorth 3 points each:\n' + 
-                          `${masteredGames.join('\n')}\n` +
-                          '```'
+                    name: '✨ Games Mastered',
+                    value: '```' + masteredTable + '```'
                 });
             }
 
-            // Add Total Points
+            // Add total points earned
             embed.addFields({
                 name: '💎 Total Points',
-                value: '```\n' +
-                       `${totalPoints} points earned in 2025\n` +
-                       '```'
+                value: '```' + totalPoints + ' points earned in 2025' + '```'
             });
 
             await message.channel.send({ embeds: [embed] });
-
         } catch (error) {
             console.error('Error showing profile:', error);
             await message.reply('Error getting profile data.');
