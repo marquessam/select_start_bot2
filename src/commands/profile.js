@@ -16,11 +16,11 @@ module.exports = {
     name: 'profile',
     async execute(message, args) {
         try {
-            // Get and normalize username
+            // Get and normalize username for search
             let requestedUsername = args[0] || "royek";
             requestedUsername = requestedUsername.toLowerCase();
 
-            // Find the user with case-insensitive search
+            // Find the user with case-insensitive search to get canonical username
             const user = await User.findOne({
                 raUsername: { $regex: new RegExp(`^${requestedUsername}$`, 'i') }
             });
@@ -31,11 +31,12 @@ module.exports = {
 
             // Use the canonical username from the database
             const raUsername = user.raUsername;
-            const raProfileImageUrl = `https://retroachievements.org/UserPic/${encodeURIComponent(raUsername)}.png`;
+            // Use the correct case for the RA profile image
+            const raProfileImageUrl = `https://media.retroachievements.org/UserPic/${raUsername}.png`;
 
             const embed = new EmbedBuilder()
                 .setColor('#0099ff')
-                .setTitle(`User Profile: ${raUsername.toUpperCase()}`)
+                .setTitle(`User Profile: ${raUsername}`)
                 .setThumbnail(raProfileImageUrl);
 
             // Get current month game and progress
@@ -66,7 +67,7 @@ module.exports = {
                 });
             }
 
-            // Get all user's awards for the year
+            // Get all user's awards for the year using case-insensitive search
             const awards = await Award.find({
                 raUsername: { $regex: new RegExp(`^${requestedUsername}$`, 'i') },
                 year: currentYear
