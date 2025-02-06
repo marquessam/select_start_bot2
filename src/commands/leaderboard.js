@@ -76,7 +76,7 @@ async function displayMonthlyLeaderboard() {
     const topTen = sortedAwards.slice(0, 10);
     const others = sortedAwards.slice(10);
 
-    if (topTen.length > 0) {
+ if (topTen.length > 0) {
         let topTenText = 'Rank  Player         Progress\n';
         topTenText += '--------------------------------\n';
         
@@ -107,7 +107,7 @@ async function displayMonthlyLeaderboard() {
             });
         }
     }
-
+    
     return embed;
 }
 
