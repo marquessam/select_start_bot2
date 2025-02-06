@@ -8,7 +8,7 @@ module.exports = {
     async execute(message, args) {
         try {
             if (!args.length) {
-                return message.reply('Please provide a game title to search for (e.g., !search "Chrono Trigger")');
+                return message.reply('Please provide a game ID or title to search for (e.g., !search 319 or !search "Chrono Trigger")');
             }
 
             const raAPI = new RetroAchievementsAPI(
@@ -19,18 +19,25 @@ module.exports = {
             // Join args to handle titles with spaces
             const searchTerm = args.join(' ');
             
-            // Search for games
-            const searchResults = await raAPI.searchGame(searchTerm);
+            // Check if search term is a game ID
+            const isGameId = /^\d+$/.test(searchTerm);
             
-            if (!searchResults || searchResults.length === 0) {
-                return message.reply(`No games found matching "${searchTerm}"`);
+            let gameInfo;
+            if (isGameId) {
+                try {
+                    gameInfo = await raAPI.getGameInfo(searchTerm);
+                    if (!gameInfo) {
+                        return message.reply(`No game found with ID ${searchTerm}`);
+                    }
+                } catch (error) {
+                    return message.reply(`No game found with ID ${searchTerm}`);
+                }
+            } else {
+                return message.reply('Please provide a valid game ID (e.g., !search 319). Game title search is currently not supported.');
             }
 
-            // Get full info for the first result
-            const gameInfo = await raAPI.getGameInfo(searchResults[0].gameId);
-
             // Format dates nicely
-            const releaseDate = gameInfo.Released ? new Date(gameInfo.Released).toLocaleDateString('en-US', {
+            const releaseDate = gameInfo.released ? new Date(gameInfo.released).toLocaleDateString('en-US', {
                 year: 'numeric',
                 month: 'long',
                 day: 'numeric'
@@ -38,46 +45,36 @@ module.exports = {
 
             const embed = new EmbedBuilder()
                 .setColor('#0099ff')
-                .setTitle(gameInfo.Title)
-                .setURL(`https://retroachievements.org/game/${gameInfo.ID}`)
-                .setThumbnail(`https://media.retroachievements.org${gameInfo.ImageIcon}`)
-                .setImage(`https://media.retroachievements.org${gameInfo.ImageBoxArt}`)
+                .setTitle(gameInfo.title || gameInfo.gameTitle)
+                .setURL(`https://retroachievements.org/game/${searchTerm}`)
+                .setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`)
+                .setImage(`https://retroachievements.org${gameInfo.imageBoxArt}`)
                 .addFields(
                     {
                         name: 'Game Information',
-                        value: `**Console:** ${gameInfo.Console}\n` +
-                               `**Developer:** ${gameInfo.Developer || 'Unknown'}\n` +
-                               `**Publisher:** ${gameInfo.Publisher || 'Unknown'}\n` +
-                               `**Genre:** ${gameInfo.Genre || 'Unknown'}\n` +
+                        value: `**Console:** ${gameInfo.console || gameInfo.consoleName}\n` +
+                               `**Developer:** ${gameInfo.developer || 'Unknown'}\n` +
+                               `**Publisher:** ${gameInfo.publisher || 'Unknown'}\n` +
+                               `**Genre:** ${gameInfo.genre || 'Unknown'}\n` +
                                `**Release Date:** ${releaseDate}\n` +
-                               `**Total Achievements:** ${gameInfo.NumAchievements}\n` +
-                               `**Game ID:** ${gameInfo.ID}`
+                               `**Game ID:** ${searchTerm}`
                     }
                 );
 
-            // If there are achievements, add some stats
-            if (gameInfo.NumAchievements > 0) {
-                let pointStats = '```\n';
-                pointStats += `Total Points: ${gameInfo.Points || 0}\n`;
-                if (gameInfo.RetroPoints) pointStats += `Retro Points: ${gameInfo.RetroPoints}\n`;
-                pointStats += '```';
-                
-                embed.addFields({
-                    name: 'Achievement Stats',
-                    value: pointStats
-                });
-            }
-
-            // If there were multiple results, mention them
-            if (searchResults.length > 1) {
-                const otherGames = searchResults.slice(1, 4).map(game => 
-                    `• ${game.title} (${game.consoleName}) - ID: ${game.gameId}`
-                ).join('\n');
-
-                embed.addFields({
-                    name: 'Other Matches',
-                    value: otherGames + (searchResults.length > 4 ? '\n*(and more...)*' : '')
-                });
+            // Get user progress if this game has achievements
+            try {
+                const progress = await raAPI.getUserProgress(process.env.RA_USERNAME, searchTerm);
+                if (progress && progress[searchTerm]) {
+                    const gameProgress = progress[searchTerm];
+                    embed.addFields({
+                        name: 'Achievement Information',
+                        value: `**Total Achievements:** ${gameProgress.numPossibleAchievements}\n` +
+                               `**Total Points:** ${gameProgress.possibleScore}`
+                    });
+                }
+            } catch (error) {
+                console.error('Error getting achievement info:', error);
+                // Don't fail the whole command if we can't get achievement info
             }
 
             await message.channel.send({ embeds: [embed] });
