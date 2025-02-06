@@ -8,7 +8,7 @@ module.exports = {
     async execute(message, args) {
         try {
             if (!args.length) {
-                return message.reply('Please provide a game ID or title to search for (e.g., !search "Chrono Trigger" or !search 319)');
+                return message.reply('Please provide a game title to search for (e.g., !search "Chrono Trigger")');
             }
 
             const raAPI = new RetroAchievementsAPI(
@@ -19,26 +19,15 @@ module.exports = {
             // Join args to handle titles with spaces
             const searchTerm = args.join(' ');
             
-            // Check if search term is a game ID
-            const isGameId = /^\d+$/.test(searchTerm);
+            // Search for games
+            const searchResults = await raAPI.searchGame(searchTerm);
             
-            let gameInfo;
-            if (isGameId) {
-                gameInfo = await raAPI.getGameInfo(searchTerm);
-            } else {
-                // First we need to search for the game to get its ID
-                const searchResults = await raAPI.searchGame(searchTerm);
-                if (!searchResults || searchResults.length === 0) {
-                    return message.reply(`No games found matching "${searchTerm}"`);
-                }
-                
-                // Get full info for the first result
-                gameInfo = await raAPI.getGameInfo(searchResults[0].gameId);
+            if (!searchResults || searchResults.length === 0) {
+                return message.reply(`No games found matching "${searchTerm}"`);
             }
 
-            if (!gameInfo) {
-                return message.reply('No game information found.');
-            }
+            // Get full info for the first result
+            const gameInfo = await raAPI.getGameInfo(searchResults[0].gameId);
 
             // Format dates nicely
             const releaseDate = gameInfo.Released ? new Date(gameInfo.Released).toLocaleDateString('en-US', {
@@ -70,7 +59,7 @@ module.exports = {
             if (gameInfo.NumAchievements > 0) {
                 let pointStats = '```\n';
                 pointStats += `Total Points: ${gameInfo.Points || 0}\n`;
-                pointStats += `Completion Estimate: ${gameInfo.CompletionEstimate || 'Unknown'}\n`;
+                if (gameInfo.RetroPoints) pointStats += `Retro Points: ${gameInfo.RetroPoints}\n`;
                 pointStats += '```';
                 
                 embed.addFields({
@@ -79,11 +68,15 @@ module.exports = {
                 });
             }
 
-            // Add rich presence script if available
-            if (gameInfo.RichPresencePatch) {
+            // If there were multiple results, mention them
+            if (searchResults.length > 1) {
+                const otherGames = searchResults.slice(1, 4).map(game => 
+                    `• ${game.title} (${game.consoleName}) - ID: ${game.gameId}`
+                ).join('\n');
+
                 embed.addFields({
-                    name: 'Rich Presence',
-                    value: 'This game supports rich presence tracking'
+                    name: 'Other Matches',
+                    value: otherGames + (searchResults.length > 4 ? '\n*(and more...)*' : '')
                 });
             }
 
