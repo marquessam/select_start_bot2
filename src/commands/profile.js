@@ -12,12 +12,6 @@ function calculatePoints(awards) {
     return points;
 }
 
-function sortGames(a, b) {
-    if (a.month !== b.month) return a.month - b.month;
-    if (a.type !== b.type) return a.type === 'MONTHLY' ? -1 : 1;
-    return 0;
-}
-
 module.exports = {
     name: 'profile',
     async execute(message, args) {
@@ -35,48 +29,89 @@ module.exports = {
                 return message.reply(`User ${requestedUsername} not found.`);
             }
 
-            // Use the exact username from the database
+            // Use the canonical username from the database
             const raUsername = user.raUsername;
+            const raProfileImageUrl = `https://retroachievements.org/UserPic/${encodeURIComponent(raUsername)}.png`;
 
             const embed = new EmbedBuilder()
                 .setColor('#0099ff')
                 .setTitle(`User Profile: ${raUsername.toUpperCase()}`)
-                .setThumbnail(`https://retroachievements.org/UserPic/${raUsername}.png`);
+                .setThumbnail(raProfileImageUrl);
 
-            const games = await Game.find({ year: 2025 }).sort({ month: 1 });
-            const awards = await Award.find({ 
-                raUsername: { $regex: new RegExp(`^${requestedUsername}$`, 'i') }, 
-                year: 2025 
+            // Get current month game and progress
+            const currentDate = new Date();
+            const currentMonth = currentDate.getMonth() + 1;
+            const currentYear = currentDate.getFullYear();
+
+            const currentGame = await Game.findOne({
+                month: currentMonth,
+                year: currentYear,
+                type: 'MONTHLY'
             });
 
-            // Current Challenge Section
-            const currentMonth = new Date().getMonth() + 1;
-            const currentGame = games.find(g => g.month === currentMonth && g.type === 'MONTHLY');
-            const currentAward = currentGame ? awards.find(a => a.gameId === currentGame.gameId) : null;
+            const currentAward = currentGame ? await Award.findOne({
+                raUsername: { $regex: new RegExp(`^${requestedUsername}$`, 'i') },
+                gameId: currentGame.gameId,
+                month: currentMonth,
+                year: currentYear
+            }) : null;
 
             if (currentGame && currentAward) {
                 embed.addFields({
                     name: '🎮 Current Challenge Progress',
                     value: '```\n' +
                            `${currentGame.title}\n` +
-                           `Progress: ${currentAward.achievementCount}/${currentAward.totalAchievements} (${currentAward.userCompletion})\n` +
+                           `Progress: ${currentAward.achievementCount}/${currentGame.numAchievements} (${currentAward.userCompletion})\n` +
                            '```'
                 });
             }
 
-            // Stats Section
+            // Get all user's awards for the year
+            const awards = await Award.find({
+                raUsername: { $regex: new RegExp(`^${requestedUsername}$`, 'i') },
+                year: currentYear
+            });
+
+            // Calculate statistics
+            const processedGames = new Set();
             let totalAchievements = 0;
             let participationCount = 0;
             let beatenCount = 0;
             let masteredCount = 0;
+            let participationGames = [];
+            let beatenGames = [];
+            let masteredGames = [];
+            let totalPoints = 0;
 
-            awards.forEach(award => {
-                totalAchievements += award.achievementCount;
-                if (award.awards.participation) participationCount++;
-                if (award.awards.beaten) beatenCount++;
-                if (award.awards.mastered) masteredCount++;
+            const games = await Game.find({ year: currentYear }).sort({ month: 1, type: 1 });
+
+            games.forEach(game => {
+                const award = awards.find(a => a.gameId === game.gameId);
+                if (award) {
+                    const gameKey = `${game.gameId}-${game.month}`;
+                    if (!processedGames.has(gameKey)) {
+                        processedGames.add(gameKey);
+                        totalAchievements += award.achievementCount;
+
+                        if (award.awards.participation) {
+                            participationCount++;
+                            participationGames.push(game.title);
+                        }
+                        if (award.awards.beaten) {
+                            beatenCount++;
+                            beatenGames.push(game.title);
+                        }
+                        if (award.awards.mastered) {
+                            masteredCount++;
+                            masteredGames.push(game.title);
+                        }
+
+                        totalPoints += calculatePoints(award.awards);
+                    }
+                }
             });
 
+            // Add Statistics Section
             embed.addFields({
                 name: '📊 2025 Statistics',
                 value: '```\n' +
@@ -87,60 +122,33 @@ module.exports = {
                       '```'
             });
 
-            // Get sorted list of games
-            const sortedGames = games.slice().sort(sortGames);
-
-            // Participations Section
-            let participationsText = 'Worth 1 point each:\n';
-            sortedGames.forEach(game => {
-                const award = awards.find(a => a.gameId === game.gameId);
-                if (award?.awards.participation) {
-                    participationsText += `${game.title}\n`;
-                }
+            // Add Point Breakdown
+            embed.addFields({
+                name: '🏆 Point Breakdown',
+                value: '**Participations**\n```\nWorth 1 point each:\n' + 
+                      `${participationGames.join('\n')}\n` +
+                      '```'
             });
-
-            // Beaten Games Section
-            let beatenText = 'Worth 3 points each:\n';
-            sortedGames.forEach(game => {
-                const award = awards.find(a => a.gameId === game.gameId);
-                if (award?.awards.beaten) {
-                    beatenText += `${game.title}\n`;
-                }
-            });
-
-            // Mastered Games Section
-            let masteredText = 'Worth 3 points each:\n';
-            sortedGames.forEach(game => {
-                const award = awards.find(a => a.gameId === game.gameId);
-                if (award?.awards.mastered) {
-                    masteredText += `${game.title}\n`;
-                }
-            });
-
-            if (participationCount > 0) {
-                embed.addFields({
-                    name: '🏆 Point Breakdown',
-                    value: '**Participations**\n```\n' + participationsText + '```'
-                });
-            }
 
             if (beatenCount > 0) {
                 embed.addFields({
                     name: 'Games Beaten',
-                    value: '```\n' + beatenText + '```'
+                    value: '```\nWorth 3 points each:\n' + 
+                          `${beatenGames.join('\n')}\n` +
+                          '```'
                 });
             }
 
             if (masteredCount > 0) {
                 embed.addFields({
                     name: 'Games Mastered',
-                    value: '```\n' + masteredText + '```'
+                    value: '```\nWorth 3 points each:\n' + 
+                          `${masteredGames.join('\n')}\n` +
+                          '```'
                 });
             }
 
-            // Total Points Section
-            let totalPoints = awards.reduce((sum, award) => sum + calculatePoints(award.awards), 0);
-
+            // Add Total Points
             embed.addFields({
                 name: '💎 Total Points',
                 value: '```\n' +
