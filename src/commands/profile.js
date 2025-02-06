@@ -5,9 +5,9 @@ const Award = require('../models/Award');
 
 function calculatePoints(awards) {
     let points = 0;
-    if (awards.participation) points += 1;  // Participation
-    if (awards.beaten) points += 3;         // Beaten
-    if (awards.mastered) points += 3;       // Mastery
+    if (awards.participation) points += 1;
+    if (awards.beaten) points += 3;
+    if (awards.mastered) points += 3;
     return points;
 }
 
@@ -19,68 +19,90 @@ module.exports = {
             
             const embed = new EmbedBuilder()
                 .setColor('#0099ff')
-                .setTitle(`Profile for ${raUsername}`)
+                .setTitle(`User Profile: ${raUsername.toUpperCase()}`)
                 .setThumbnail(`https://retroachievements.org/UserPic/${raUsername}.png`);
 
             const games = await Game.find({ year: 2025 }).sort({ month: 1 });
-            const awards = await Award.find({ 
-                raUsername, 
-                year: 2025 
-            }).sort({ month: 1 });
+            const awards = await Award.find({ raUsername, year: 2025 });
 
-            let currentMonth = null;
-            let monthText = '';
-            let totalPoints = 0;
+            // Current Challenge Progress
+            const currentMonth = new Date().getMonth() + 1;
+            const currentGame = games.find(g => g.month === currentMonth && g.type === 'MONTHLY');
+            const currentAward = currentGame ? awards.find(a => a.gameId === currentGame.gameId) : null;
 
-            // Process all awards
-            for (const award of awards) {
-                const month = award.month;
-                // If we're starting a new month, add the previous month's text
-                if (currentMonth !== month) {
-                    if (monthText) {
-                        embed.addFields({ 
-                            name: currentMonth === 1 ? 'January' : 'February', 
-                            value: monthText 
-                        });
-                    }
-                    currentMonth = month;
-                    monthText = '';
-                }
-
-                // Find the corresponding game to get type
-                const game = games.find(g => g.gameId === award.gameId);
-                if (!game) continue;
-
-                monthText += `**${game.title}** (${game.type})\n`;
-                monthText += `▫️ Progress: ${award.achievementCount}/${award.totalAchievements} (${award.userCompletion})\n`;
-                
-                // Build award display
-                let awardText = [];
-                if (award.awards.participation) awardText.push("🏁P");
-                if (award.awards.beaten) awardText.push("⭐B");
-                if (award.awards.mastered) awardText.push("✨M");
-                
-                const points = calculatePoints(award.awards);
-                totalPoints += points;
-                monthText += `▫️ ${awardText.join(" + ")} = ${points}pts\n\n`;
-            }
-
-            // Add the last month's text if any
-            if (monthText) {
-                embed.addFields({ 
-                    name: currentMonth === 1 ? 'January' : 'February', 
-                    value: monthText 
+            if (currentGame && currentAward) {
+                embed.addFields({
+                    name: '🎮 Current Challenge Progress',
+                    value: `**${currentGame.title}**\n` +
+                          `Progress: ${currentAward.achievementCount}/${currentAward.totalAchievements} (${currentAward.userCompletion})\n`
                 });
             }
 
-            // Add total points
-            embed.addFields({
-                name: 'Total Points',
-                value: `**${totalPoints}** points earned in 2025`,
-                inline: false
+            // Stats Section
+            let totalAchievements = 0;
+            let participationCount = 0;
+            let beatenCount = 0;
+            let masteredCount = 0;
+
+            awards.forEach(award => {
+                totalAchievements += award.achievementCount;
+                if (award.awards.participation) participationCount++;
+                if (award.awards.beaten) beatenCount++;
+                if (award.awards.mastered) masteredCount++;
             });
 
-            // Send the embed
+            embed.addFields({
+                name: '📊 2025 Statistics',
+                value: `Achievements Earned: ${totalAchievements}\n` +
+                      `Games Participated: ${participationCount}\n` +
+                      `Games Beaten: ${beatenCount}\n` +
+                      `Games Mastered: ${masteredCount}\n`
+            });
+
+            // Point Breakdown
+            let breakdownText = '';
+            
+            // Participations
+            breakdownText += '**Participations:**\n';
+            awards.filter(a => a.awards.participation)
+                .forEach(award => {
+                    const game = games.find(g => g.gameId === award.gameId);
+                    breakdownText += `${game.title} - Participation: 1pt\n`;
+                });
+
+            // Beaten Games
+            if (beatenCount > 0) {
+                breakdownText += '\n**Games Beaten:**\n';
+                awards.filter(a => a.awards.beaten)
+                    .forEach(award => {
+                        const game = games.find(g => g.gameId === award.gameId);
+                        breakdownText += `${game.title} - Game Beaten: 3pts\n`;
+                    });
+            }
+
+            // Mastered Games
+            if (masteredCount > 0) {
+                breakdownText += '\n**Games Mastered:**\n';
+                awards.filter(a => a.awards.mastered)
+                    .forEach(award => {
+                        const game = games.find(g => g.gameId === award.gameId);
+                        breakdownText += `${game.title} - Game Mastered: 3pts\n`;
+                    });
+            }
+
+            embed.addFields({
+                name: '🏆 Point Breakdown',
+                value: breakdownText
+            });
+
+            // Calculate Total Points
+            let totalPoints = awards.reduce((sum, award) => sum + calculatePoints(award.awards), 0);
+
+            embed.addFields({
+                name: '💎 Total Points',
+                value: `**${totalPoints}** points earned in 2025`
+            });
+
             message.channel.send({ embeds: [embed] });
 
         } catch (error) {
