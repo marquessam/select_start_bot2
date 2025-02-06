@@ -5,9 +5,9 @@ class RetroAchievementsAPI {
     constructor(username, apiKey) {
         this.username = username;
         this.apiKey = apiKey;
-        this.baseUrl = 'https://retroachievements.org/API';
+        this.baseUrl = 'https://retroachievements.org';
         this.lastRequestTime = 0;
-        this.minRequestInterval = 1000; // Minimum 1 second between requests
+        this.minRequestInterval = 2000; // Minimum 2 seconds between requests
         this.maxRetries = 3;
     }
 
@@ -32,7 +32,7 @@ class RetroAchievementsAPI {
         try {
             await this.waitForRateLimit();
 
-            const url = `${this.baseUrl}/${endpoint}`;
+            const url = `${this.baseUrl}/API/${endpoint}`;
             console.log(`Making request to: ${url}`);
             
             const response = await axios.get(url, {
@@ -40,6 +40,9 @@ class RetroAchievementsAPI {
                     z: this.username,
                     y: this.apiKey,
                     ...params
+                },
+                headers: {
+                    'Accept': 'application/json'
                 },
                 timeout: 10000 // 10 second timeout
             });
@@ -51,6 +54,8 @@ class RetroAchievementsAPI {
             return response.data;
         } catch (error) {
             console.error(`API request error (attempt ${retryCount + 1}/${this.maxRetries}):`, error.message);
+            console.error('Failed URL:', error.config?.url);
+            console.error('Error response:', error.response?.data);
 
             // Handle rate limiting specifically
             if (error.response && error.response.status === 429) {
@@ -62,7 +67,7 @@ class RetroAchievementsAPI {
             // Retry logic
             if (retryCount < this.maxRetries) {
                 console.log(`Retrying request (attempt ${retryCount + 1}/${this.maxRetries})`);
-                await this.sleep(1000 * (retryCount + 1)); // Progressive backoff
+                await this.sleep(2000 * (retryCount + 1)); // Progressive backoff
                 return this.makeRequest(endpoint, params, retryCount + 1);
             }
 
@@ -72,17 +77,17 @@ class RetroAchievementsAPI {
 
     async getGameInfo(gameId) {
         console.log(`Fetching game info for game ${gameId}`);
-        return this.makeRequest('GetGame.php', { i: gameId });
+        return this.makeRequest('API_GetGame.php', { i: gameId });
     }
 
     async getGameInfoExtended(gameId) {
         console.log(`Fetching extended game info for game ${gameId}`);
-        return this.makeRequest('GetGameExtended.php', { i: gameId });
+        return this.makeRequest('API_GetGameExtended.php', { i: gameId });
     }
 
     async searchGame(searchTerm) {
         console.log(`Searching for game: ${searchTerm}`);
-        const data = await this.makeRequest('GetGameList.php', { 
+        const data = await this.makeRequest('API_GetGameList.php', { 
             f: searchTerm,
             h: 1
         });
@@ -104,7 +109,7 @@ class RetroAchievementsAPI {
 
     async getUserProgress(raUsername, gameId) {
         console.log(`Fetching progress for ${raUsername} in game ${gameId}`);
-        const data = await this.makeRequest('GetGameInfoAndUserProgress.php', {
+        const data = await this.makeRequest('API_GetGameInfoAndUserProgress.php', {
             u: raUsername,
             g: gameId
         });
@@ -120,7 +125,7 @@ class RetroAchievementsAPI {
 
     async getUserRecentAchievements(raUsername, count = 50) {
         console.log(`Fetching recent achievements for ${raUsername}`);
-        return this.makeRequest('GetUserRecentAchievements.php', {
+        return this.makeRequest('API_GetUserRecentAchievements.php', {
             u: raUsername,
             c: count
         });
@@ -128,21 +133,21 @@ class RetroAchievementsAPI {
 
     async getUserCompletedGames(raUsername) {
         console.log(`Fetching completed games for ${raUsername}`);
-        return this.makeRequest('GetUserCompletedGames.php', {
+        return this.makeRequest('API_GetUserCompletedGames.php', {
             u: raUsername
         });
     }
 
     async getUserSummary(raUsername) {
         console.log(`Fetching user summary for ${raUsername}`);
-        return this.makeRequest('GetUserSummary.php', {
+        return this.makeRequest('API_GetUserSummary.php', {
             u: raUsername
         });
     }
 
     async getGameAchievementDistribution(gameId) {
         console.log(`Fetching achievement distribution for game ${gameId}`);
-        return this.makeRequest('GetAchievementDistribution.php', {
+        return this.makeRequest('API_GetAchievementDistribution.php', {
             i: gameId
         });
     }
