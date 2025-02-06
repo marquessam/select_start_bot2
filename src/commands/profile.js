@@ -17,62 +17,13 @@ function calculatePoints(awards) {
     return points;
 }
 
-/**
- * Generates a table using Unicode box-drawing characters.
- * @param {string[]} headers - The header titles.
- * @param {Array<Array<string|number>>} rows - The table rows.
- * @returns {string} - The formatted table as a string.
- */
-function generateTable(headers, rows) {
-    // Calculate maximum width for each column
-    const colWidths = headers.map((header, i) =>
-        Math.max(
-            header.length,
-            ...rows.map(row => row[i].toString().length)
-        )
-    );
-
-    // Function to generate a horizontal line given border characters
-    const horizontalLine = (left, mid, right) => {
-        let line = left;
-        colWidths.forEach((width, index) => {
-            line += '─'.repeat(width + 2) + (index < colWidths.length - 1 ? mid : right);
-        });
-        return line;
-    };
-
-    const topBorder = horizontalLine('┌', '┬', '┐');
-    const headerSeparator = horizontalLine('├', '┼', '┤');
-    const bottomBorder = horizontalLine('└', '┴', '┘');
-
-    // Function to format a row's cells with proper padding
-    const formatRow = (row) => {
-        let rowStr = '│';
-        row.forEach((cell, index) => {
-            rowStr += ' ' + cell.toString().padEnd(colWidths[index]) + ' │';
-        });
-        return rowStr;
-    };
-
-    const headerRow = formatRow(headers);
-    const rowLines = rows.map(formatRow);
-
-    return [
-        topBorder,
-        headerRow,
-        headerSeparator,
-        ...rowLines,
-        bottomBorder
-    ].join('\n');
-}
-
 module.exports = {
     name: 'profile',
     description: 'Shows user profile information',
     async execute(message, args) {
         try {
             // Get username for search (defaults to "Royek" if none provided)
-            let requestedUsername = args[0] || "Royek";
+            const requestedUsername = args[0] || "Royek";
 
             // Find the user using a case-insensitive search
             const user = await User.findOne({
@@ -80,13 +31,14 @@ module.exports = {
             });
 
             if (!user) {
-                return message.reply(`User ${requestedUsername} not found.`);
+                return message.reply(`User **${requestedUsername}** not found.`);
             }
 
             // Use the canonical username from the database
             const raUsername = user.raUsername;
             const raProfileImageUrl = `https://media.retroachievements.org/UserPic/${raUsername}.png`;
 
+            // Create the embed
             const embed = new EmbedBuilder()
                 .setColor('#0099ff')
                 .setTitle(`User Profile: ${raUsername}`)
@@ -111,17 +63,13 @@ module.exports = {
             }) : null;
 
             if (currentGame && currentAward) {
-                // Build a table for the current challenge progress
-                const currentChallengeTable = generateTable(
-                    ['Field', 'Value'],
-                    [
-                        ['Title', currentGame.title],
-                        ['Progress', `${currentAward.achievementCount}/${currentAward.totalAchievements} (${currentAward.userCompletion})`]
-                    ]
-                );
+                // Display current challenge progress using simple text formatting
+                const currentChallengeText = 
+                    `**Title:** ${currentGame.title}\n` +
+                    `**Progress:** ${currentAward.achievementCount}/${currentAward.totalAchievements} (${currentAward.userCompletion})`;
                 embed.addFields({
                     name: '🎮 Current Challenge Progress',
-                    value: '```' + currentChallengeTable + '```'
+                    value: currentChallengeText
                 });
             }
 
@@ -143,7 +91,6 @@ module.exports = {
             let totalPoints = 0;
 
             const games = await Game.find({ year: currentYear }).sort({ month: 1, type: 1 });
-
             games.forEach(game => {
                 const award = awards.find(a => a.gameId === game.gameId);
                 if (award) {
@@ -164,63 +111,47 @@ module.exports = {
                             masteredCount++;
                             masteredGames.push(game.title);
                         }
-
                         totalPoints += calculatePoints(award.awards);
                     }
                 }
             });
 
-            // Build a table for overall 2025 statistics
-            const statsTable = generateTable(
-                ['Metric', 'Value'],
-                [
-                    ['Achievements Earned', totalAchievements],
-                    ['Games Participated', participationCount],
-                    ['Games Beaten', beatenCount],
-                    ['Games Mastered', masteredCount]
-                ]
-            );
+            // Display overall statistics as plain text
+            const statsText =
+                `**Achievements Earned:** ${totalAchievements}\n` +
+                `**Games Participated:** ${participationCount}\n` +
+                `**Games Beaten:** ${beatenCount}\n` +
+                `**Games Mastered:** ${masteredCount}`;
             embed.addFields({
                 name: '📊 2025 Statistics',
-                value: '```' + statsTable + '```'
+                value: statsText
             });
 
-            // Build tables for each point breakdown category
-            const participationTable = generateTable(
-                ['Participations (1 pt each)'],
-                participationGames.length ? participationGames.map(game => [game]) : [['None']]
-            );
+            // Helper function for bullet list formatting
+            const formatList = (list) => list.length ? list.map(item => `• ${item}`).join('\n') : 'None';
+
+            // Show breakdown of point categories using bullet lists
             embed.addFields({
-                name: '🏆 Participations',
-                value: '```' + participationTable + '```'
+                name: '🏆 Participations (1 pt each)',
+                value: formatList(participationGames)
             });
-
             if (beatenCount > 0) {
-                const beatenTable = generateTable(
-                    ['Games Beaten (3 pts each)'],
-                    beatenGames.map(game => [game])
-                );
                 embed.addFields({
-                    name: '⭐ Games Beaten',
-                    value: '```' + beatenTable + '```'
+                    name: '⭐ Games Beaten (3 pts each)',
+                    value: formatList(beatenGames)
                 });
             }
-
             if (masteredCount > 0) {
-                const masteredTable = generateTable(
-                    ['Games Mastered (3 pts each)'],
-                    masteredGames.map(game => [game])
-                );
                 embed.addFields({
-                    name: '✨ Games Mastered',
-                    value: '```' + masteredTable + '```'
+                    name: '✨ Games Mastered (3 pts each)',
+                    value: formatList(masteredGames)
                 });
             }
 
-            // Add total points earned
+            // Display total points earned
             embed.addFields({
                 name: '💎 Total Points',
-                value: '```' + totalPoints + ' points earned in 2025' + '```'
+                value: `**${totalPoints} points earned in 2025**`
             });
 
             await message.channel.send({ embeds: [embed] });
