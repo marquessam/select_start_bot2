@@ -25,7 +25,7 @@ module.exports = {
             const games = await Game.find({ year: 2025 }).sort({ month: 1 });
             const awards = await Award.find({ raUsername, year: 2025 });
 
-            // Current Challenge Progress
+            // Current Challenge Section
             const currentMonth = new Date().getMonth() + 1;
             const currentGame = games.find(g => g.month === currentMonth && g.type === 'MONTHLY');
             const currentAward = currentGame ? awards.find(a => a.gameId === currentGame.gameId) : null;
@@ -33,8 +33,7 @@ module.exports = {
             if (currentGame && currentAward) {
                 embed.addFields({
                     name: '🎮 Current Challenge Progress',
-                    value: `**${currentGame.title}**\n` +
-                          `Progress: ${currentAward.achievementCount}/${currentAward.totalAchievements} (${currentAward.userCompletion})\n`
+                    value: `**${currentGame.title}**\nProgress: ${currentAward.achievementCount}/${currentAward.totalAchievements} (${currentAward.userCompletion})`,
                 });
             }
 
@@ -53,54 +52,62 @@ module.exports = {
 
             embed.addFields({
                 name: '📊 2025 Statistics',
-                value: `Achievements Earned: ${totalAchievements}\n` +
+                value: '```\n' +
+                      `Achievements Earned: ${totalAchievements}\n` +
                       `Games Participated: ${participationCount}\n` +
                       `Games Beaten: ${beatenCount}\n` +
-                      `Games Mastered: ${masteredCount}\n`
+                      `Games Mastered: ${masteredCount}\n` +
+                      '```'
             });
 
-            // Point Breakdown
-            let breakdownText = '';
-            
-            // Participations
-            breakdownText += '**Participations:**\n';
-            awards.filter(a => a.awards.participation)
-                .forEach(award => {
-                    const game = games.find(g => g.gameId === award.gameId);
-                    breakdownText += `${game.title} - Participation: 1pt\n`;
-                });
+            // Participations Section
+            let participationsText = '';
+            awards.filter(a => a.awards.participation).forEach(award => {
+                const game = games.find(g => g.gameId === award.gameId);
+                participationsText += `${game.title} - Participation: 1pt\n`;
+            });
 
-            // Beaten Games
-            if (beatenCount > 0) {
-                breakdownText += '\n**Games Beaten:**\n';
-                awards.filter(a => a.awards.beaten)
-                    .forEach(award => {
-                        const game = games.find(g => g.gameId === award.gameId);
-                        breakdownText += `${game.title} - Game Beaten: 3pts\n`;
-                    });
-            }
+            // Beaten Games Section
+            let beatenText = '';
+            awards.filter(a => a.awards.beaten).forEach(award => {
+                const game = games.find(g => g.gameId === award.gameId);
+                beatenText += `${game.title} - Game Beaten: 3pts\n`;
+            });
 
-            // Mastered Games
-            if (masteredCount > 0) {
-                breakdownText += '\n**Games Mastered:**\n';
-                awards.filter(a => a.awards.mastered)
-                    .forEach(award => {
-                        const game = games.find(g => g.gameId === award.gameId);
-                        breakdownText += `${game.title} - Game Mastered: 3pts\n`;
-                    });
-            }
+            // Mastered Games Section
+            let masteredText = '';
+            awards.filter(a => a.awards.mastered).forEach(award => {
+                const game = games.find(g => g.gameId === award.gameId);
+                masteredText += `${game.title} - Game Mastered: 3pts\n`;
+            });
 
             embed.addFields({
                 name: '🏆 Point Breakdown',
-                value: breakdownText
+                value: '```\nParticipations:\n' + participationsText + '```'
             });
 
-            // Calculate Total Points
+            if (beatenText) {
+                embed.addFields({
+                    name: 'Games Beaten:',
+                    value: '```\n' + beatenText + '```'
+                });
+            }
+
+            if (masteredText) {
+                embed.addFields({
+                    name: 'Games Mastered:',
+                    value: '```\n' + masteredText + '```'
+                });
+            }
+
+            // Total Points Section
             let totalPoints = awards.reduce((sum, award) => sum + calculatePoints(award.awards), 0);
 
             embed.addFields({
                 name: '💎 Total Points',
-                value: `**${totalPoints}** points earned in 2025`
+                value: '```\n' +
+                       `${totalPoints} points earned in 2025\n` +
+                       '```'
             });
 
             message.channel.send({ embeds: [embed] });
