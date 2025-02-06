@@ -14,6 +14,7 @@ function calculatePoints(awards) {
 
 module.exports = {
     name: 'profile',
+    description: 'Shows user profile information',
     async execute(message, args) {
         try {
             // Get username for search
@@ -125,7 +126,7 @@ module.exports = {
             embed.addFields({
                 name: '🏆 Point Breakdown',
                 value: '**Participations**\n```\nWorth 1 point each:\n' + 
-                      `${participationGames.join('\n')}\n` +
+                      `${participationGames.join('\n') || 'None'}\n` +
                       '```'
             });
 
@@ -155,11 +156,11 @@ module.exports = {
                        '```'
             });
 
-            message.channel.send({ embeds: [embed] });
+            await message.channel.send({ embeds: [embed] });
 
         } catch (error) {
             console.error('Error showing profile:', error);
-            message.reply('Error getting profile data.');
+            await message.reply('Error getting profile data.');
         }
     }
 };
