@@ -27,7 +27,7 @@ class AchievementTracker {
                 const game = await Game.findOne({ gameId });
                 console.log(`\nProcessing ${game.title} (${game.type}) from month ${game.month}`);
                 
-                const progress = await this.raAPI.getUserProgress(raUsername, gameId);
+                const progress = await this.raAPI.getUserGameProgress(raUsername, gameId);
                 await this.processGameProgress(raUsername, game, progress);
             }
 
@@ -43,9 +43,9 @@ class AchievementTracker {
             console.log(`Processing ${game.title} progress for ${raUsername}`);
             
             // Get the achievement numbers from progress data
-            const earnedCount = progress.earnedAchievements;
-            const totalCount = progress.numAchievements;
-            const userCompletion = progress.userCompletion;
+            const earnedCount = progress.earnedAchievements || 0;
+            const totalCount = progress.totalAchievements || 0;
+            const userCompletion = progress.userCompletion || "0.00%";
             
             console.log(`Progress data: ${earnedCount}/${totalCount} achievements (${userCompletion})`);
 
@@ -62,8 +62,10 @@ class AchievementTracker {
 
             // Check beaten status
             if (earnedCount > 0 && game.winCondition) {
-                const earnedAchievements = Object.keys(progress.achievements || {})
-                    .filter(id => progress.achievements[id].DateEarned || progress.achievements[id].dateEarned);
+                const earnedAchievements = progress.achievements ? 
+                    Object.entries(progress.achievements)
+                        .filter(([_, ach]) => ach.DateEarned || ach.dateEarned)
+                        .map(([id]) => id) : [];
 
                 let progressionMet = !game.requireProgression;
                 if (game.requireProgression && game.progression) {
