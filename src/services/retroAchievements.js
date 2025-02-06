@@ -6,235 +6,145 @@ class RetroAchievementsAPI {
         this.username = username;
         this.apiKey = apiKey;
         this.baseUrl = 'https://retroachievements.org/API';
+        this.lastRequestTime = 0;
+        this.minRequestInterval = 1000; // Minimum 1 second between requests
+        this.maxRetries = 3;
     }
 
-    /**
-     * Get game information by ID
-     */
+    async sleep(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    async waitForRateLimit() {
+        const now = Date.now();
+        const timeSinceLastRequest = now - this.lastRequestTime;
+        
+        if (timeSinceLastRequest < this.minRequestInterval) {
+            const waitTime = this.minRequestInterval - timeSinceLastRequest;
+            console.log(`Rate limiting: waiting ${waitTime}ms before next request`);
+            await this.sleep(waitTime);
+        }
+        
+        this.lastRequestTime = Date.now();
+    }
+
+    async makeRequest(endpoint, params, retryCount = 0) {
+        try {
+            await this.waitForRateLimit();
+
+            const url = `${this.baseUrl}/${endpoint}`;
+            console.log(`Making request to: ${url}`);
+            
+            const response = await axios.get(url, {
+                params: {
+                    z: this.username,
+                    y: this.apiKey,
+                    ...params
+                },
+                timeout: 10000 // 10 second timeout
+            });
+
+            if (!response.data) {
+                throw new Error('No data received from API');
+            }
+
+            return response.data;
+        } catch (error) {
+            console.error(`API request error (attempt ${retryCount + 1}/${this.maxRetries}):`, error.message);
+
+            // Handle rate limiting specifically
+            if (error.response && error.response.status === 429) {
+                const waitTime = 5000 * (retryCount + 1); // Progressive backoff
+                console.log(`Rate limit hit, waiting ${waitTime}ms before retry`);
+                await this.sleep(waitTime);
+            }
+
+            // Retry logic
+            if (retryCount < this.maxRetries) {
+                console.log(`Retrying request (attempt ${retryCount + 1}/${this.maxRetries})`);
+                await this.sleep(1000 * (retryCount + 1)); // Progressive backoff
+                return this.makeRequest(endpoint, params, retryCount + 1);
+            }
+
+            throw error;
+        }
+    }
+
     async getGameInfo(gameId) {
-        try {
-            console.log(`Fetching game info for game ${gameId}`);
-            
-            const response = await axios.get(`${this.baseUrl}/GetGame.php`, {
-                params: {
-                    z: this.username,
-                    y: this.apiKey,
-                    i: gameId
-                },
-            });
-
-            console.log('API Response:', response.data);
-            
-            if (!response.data) {
-                throw new Error(`No data received for game ${gameId}`);
-            }
-
-            return response.data;
-        } catch (error) {
-            console.error('Error fetching game info:', error);
-            throw error;
-        }
+        console.log(`Fetching game info for game ${gameId}`);
+        return this.makeRequest('GetGame.php', { i: gameId });
     }
 
-    /**
-     * Get extended game information including rich presence and other metadata
-     */
     async getGameInfoExtended(gameId) {
-        try {
-            console.log(`Fetching extended game info for game ${gameId}`);
-            
-            const response = await axios.get(`${this.baseUrl}/GetGameExtended.php`, {
-                params: {
-                    z: this.username,
-                    y: this.apiKey,
-                    i: gameId
-                },
-            });
-
-            if (!response.data) {
-                throw new Error(`No extended data received for game ${gameId}`);
-            }
-
-            return response.data;
-        } catch (error) {
-            console.error('Error fetching extended game info:', error);
-            throw error;
-        }
+        console.log(`Fetching extended game info for game ${gameId}`);
+        return this.makeRequest('GetGameExtended.php', { i: gameId });
     }
 
-    /**
-     * Search for games by name
-     */
     async searchGame(searchTerm) {
-        try {
-            console.log(`Searching for game: ${searchTerm}`);
-            const response = await axios.get(`${this.baseUrl}/GetGameList.php`, {
-                params: {
-                    z: this.username,
-                    y: this.apiKey,
-                    f: searchTerm,
-                    h: 1  // Return metadata
-                },
-            });
-            
-            if (!response.data) {
-                throw new Error(`No search results for "${searchTerm}"`);
-            }
+        console.log(`Searching for game: ${searchTerm}`);
+        const data = await this.makeRequest('GetGameList.php', { 
+            f: searchTerm,
+            h: 1
+        });
 
-            console.log(`Found ${Object.keys(response.data).length} results`);
-            
-            // Convert the object response to an array of games
-            const games = Object.entries(response.data).map(([id, game]) => ({
-                gameId: id,
-                title: game.Title,
-                consoleId: game.ConsoleID,
-                consoleName: game.ConsoleName,
-                imageIcon: game.ImageIcon,
-                numAchievements: game.NumAchievements
-            }));
-
-            return games;
-        } catch (error) {
-            console.error('Error searching for game:', error);
-            throw error;
+        if (!data) {
+            return [];
         }
+
+        // Convert the object response to an array of games
+        return Object.entries(data).map(([id, game]) => ({
+            gameId: id,
+            title: game.Title,
+            consoleId: game.ConsoleID,
+            consoleName: game.ConsoleName,
+            imageIcon: game.ImageIcon,
+            numAchievements: game.NumAchievements
+        }));
     }
 
-    /**
-     * Get user's progress for a specific game
-     */
     async getUserProgress(raUsername, gameId) {
-        try {
-            console.log(`Fetching progress for ${raUsername} in game ${gameId}`);
-            const response = await axios.get(`${this.baseUrl}/GetGameInfoAndUserProgress.php`, {
-                params: {
-                    z: this.username,
-                    y: this.apiKey,
-                    u: raUsername,
-                    g: gameId
-                },
-            });
-            
-            if (!response.data) {
-                throw new Error(`No data received for user ${raUsername} game ${gameId}`);
-            }
+        console.log(`Fetching progress for ${raUsername} in game ${gameId}`);
+        const data = await this.makeRequest('GetGameInfoAndUserProgress.php', {
+            u: raUsername,
+            g: gameId
+        });
 
-            console.log(`User completion: ${response.data.UserCompletion}`);
-            console.log(`Achievements earned: ${response.data.NumAwardedToUser}/${response.data.NumAchievements}`);
-
-            return {
-                numAchievements: response.data.NumAchievements,
-                earnedAchievements: response.data.NumAwardedToUser,
-                achievements: response.data.Achievements || {},
-                userCompletion: response.data.UserCompletion,
-                highestAwardKind: response.data.HighestAwardKind
-            };
-        } catch (error) {
-            console.error(`Error fetching user progress for ${raUsername} game ${gameId}:`, error);
-            throw error;
-        }
+        return {
+            numAchievements: data.NumAchievements,
+            earnedAchievements: data.NumAwardedToUser,
+            achievements: data.Achievements || {},
+            userCompletion: data.UserCompletion,
+            highestAwardKind: data.HighestAwardKind
+        };
     }
 
-    /**
-     * Get user's recent achievements
-     */
     async getUserRecentAchievements(raUsername, count = 50) {
-        try {
-            console.log(`Fetching recent achievements for ${raUsername}`);
-            const response = await axios.get(`${this.baseUrl}/GetUserRecentAchievements.php`, {
-                params: {
-                    z: this.username,
-                    y: this.apiKey,
-                    u: raUsername,
-                    c: count
-                },
-            });
-            
-            if (!response.data) {
-                throw new Error(`No achievements data received for user ${raUsername}`);
-            }
-
-            console.log(`Found ${response.data.length} recent achievements for ${raUsername}`);
-            return response.data;
-        } catch (error) {
-            console.error(`Error fetching recent achievements for ${raUsername}:`, error);
-            throw error;
-        }
+        console.log(`Fetching recent achievements for ${raUsername}`);
+        return this.makeRequest('GetUserRecentAchievements.php', {
+            u: raUsername,
+            c: count
+        });
     }
 
-    /**
-     * Get user's completed games
-     */
     async getUserCompletedGames(raUsername) {
-        try {
-            console.log(`Fetching completed games for ${raUsername}`);
-            const response = await axios.get(`${this.baseUrl}/GetUserCompletedGames.php`, {
-                params: {
-                    z: this.username,
-                    y: this.apiKey,
-                    u: raUsername
-                },
-            });
-            
-            if (!response.data) {
-                throw new Error(`No completed games data received for user ${raUsername}`);
-            }
-
-            return response.data;
-        } catch (error) {
-            console.error(`Error fetching completed games for ${raUsername}:`, error);
-            throw error;
-        }
+        console.log(`Fetching completed games for ${raUsername}`);
+        return this.makeRequest('GetUserCompletedGames.php', {
+            u: raUsername
+        });
     }
 
-    /**
-     * Get user's summary information
-     */
     async getUserSummary(raUsername) {
-        try {
-            console.log(`Fetching user summary for ${raUsername}`);
-            const response = await axios.get(`${this.baseUrl}/GetUserSummary.php`, {
-                params: {
-                    z: this.username,
-                    y: this.apiKey,
-                    u: raUsername
-                },
-            });
-            
-            if (!response.data) {
-                throw new Error(`No summary data received for user ${raUsername}`);
-            }
-
-            return response.data;
-        } catch (error) {
-            console.error(`Error fetching user summary for ${raUsername}:`, error);
-            throw error;
-        }
+        console.log(`Fetching user summary for ${raUsername}`);
+        return this.makeRequest('GetUserSummary.php', {
+            u: raUsername
+        });
     }
 
-    /**
-     * Get game's achievement distribution
-     */
     async getGameAchievementDistribution(gameId) {
-        try {
-            console.log(`Fetching achievement distribution for game ${gameId}`);
-            const response = await axios.get(`${this.baseUrl}/GetAchievementDistribution.php`, {
-                params: {
-                    z: this.username,
-                    y: this.apiKey,
-                    i: gameId
-                },
-            });
-            
-            if (!response.data) {
-                throw new Error(`No achievement distribution data received for game ${gameId}`);
-            }
-
-            return response.data;
-        } catch (error) {
-            console.error(`Error fetching achievement distribution for game ${gameId}:`, error);
-            throw error;
-        }
+        console.log(`Fetching achievement distribution for game ${gameId}`);
+        return this.makeRequest('GetAchievementDistribution.php', {
+            i: gameId
+        });
     }
 }
 
