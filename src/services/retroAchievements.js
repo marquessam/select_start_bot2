@@ -5,10 +5,9 @@ class RetroAchievementsAPI {
     constructor(username, apiKey) {
         this.username = username;
         this.apiKey = apiKey;
-        this.baseUrl = 'https://retroachievements.org';
+        this.baseUrl = 'https://retroachievements.org/API';
         this.lastRequestTime = 0;
         this.minRequestInterval = 2000; // Minimum 2 seconds between requests
-        this.maxRetries = 3;
     }
 
     async sleep(ms) {
@@ -21,56 +20,30 @@ class RetroAchievementsAPI {
         
         if (timeSinceLastRequest < this.minRequestInterval) {
             const waitTime = this.minRequestInterval - timeSinceLastRequest;
-            console.log(`Rate limiting: waiting ${waitTime}ms before next request`);
             await this.sleep(waitTime);
         }
         
         this.lastRequestTime = Date.now();
     }
 
-    async makeRequest(endpoint, params, retryCount = 0) {
-        try {
-            await this.waitForRateLimit();
+    async makeRequest(endpoint, params) {
+        await this.waitForRateLimit();
 
-            const url = `${this.baseUrl}/API/${endpoint}`;
-            console.log(`Making request to: ${url}`);
+        try {
+            const url = `${this.baseUrl}/${endpoint}`;
+            console.log(`Making request to: ${url} with params:`, params);
             
             const response = await axios.get(url, {
                 params: {
                     z: this.username,
                     y: this.apiKey,
                     ...params
-                },
-                headers: {
-                    'Accept': 'application/json'
-                },
-                timeout: 10000 // 10 second timeout
+                }
             });
-
-            if (!response.data) {
-                throw new Error('No data received from API');
-            }
 
             return response.data;
         } catch (error) {
-            console.error(`API request error (attempt ${retryCount + 1}/${this.maxRetries}):`, error.message);
-            console.error('Failed URL:', error.config?.url);
-            console.error('Error response:', error.response?.data);
-
-            // Handle rate limiting specifically
-            if (error.response && error.response.status === 429) {
-                const waitTime = 5000 * (retryCount + 1); // Progressive backoff
-                console.log(`Rate limit hit, waiting ${waitTime}ms before retry`);
-                await this.sleep(waitTime);
-            }
-
-            // Retry logic
-            if (retryCount < this.maxRetries) {
-                console.log(`Retrying request (attempt ${retryCount + 1}/${this.maxRetries})`);
-                await this.sleep(2000 * (retryCount + 1)); // Progressive backoff
-                return this.makeRequest(endpoint, params, retryCount + 1);
-            }
-
+            console.error('API request error:', error.message);
             throw error;
         }
     }
@@ -80,76 +53,99 @@ class RetroAchievementsAPI {
         return this.makeRequest('API_GetGame.php', { i: gameId });
     }
 
-    async getGameInfoExtended(gameId) {
-        console.log(`Fetching extended game info for game ${gameId}`);
-        return this.makeRequest('API_GetGameExtended.php', { i: gameId });
-    }
-
-    async searchGame(searchTerm) {
-        console.log(`Searching for game: ${searchTerm}`);
-        const data = await this.makeRequest('API_GetGameList.php', { 
-            f: searchTerm,
-            h: 1
+    async getUserProgress(username, gameIds) {
+        // Convert single gameId to array if necessary
+        const ids = Array.isArray(gameIds) ? gameIds : [gameIds];
+        console.log(`Fetching progress for ${username} in games: ${ids.join(', ')}`);
+        
+        return this.makeRequest('API_GetUserProgress.php', {
+            u: username,
+            i: ids.join(',')
         });
-
-        if (!data) {
-            return [];
-        }
-
-        // Convert the object response to an array of games
-        return Object.entries(data).map(([id, game]) => ({
-            gameId: id,
-            title: game.Title,
-            consoleId: game.ConsoleID,
-            consoleName: game.ConsoleName,
-            imageIcon: game.ImageIcon,
-            numAchievements: game.NumAchievements
-        }));
     }
 
-    async getUserProgress(raUsername, gameId) {
-        console.log(`Fetching progress for ${raUsername} in game ${gameId}`);
-        const data = await this.makeRequest('API_GetGameInfoAndUserProgress.php', {
-            u: raUsername,
+    async getUserProfile(username) {
+        console.log(`Fetching profile for ${username}`);
+        return this.makeRequest('API_GetUserProfile.php', {
+            u: username
+        });
+    }
+
+    async getGameInfoAndUserProgress(username, gameId) {
+        console.log(`Fetching game info and progress for ${username} in game ${gameId}`);
+        return this.makeRequest('API_GetGameInfoAndUserProgress.php', {
+            u: username,
             g: gameId
         });
-
-        return {
-            numAchievements: data.NumAchievements,
-            earnedAchievements: data.NumAwardedToUser,
-            achievements: data.Achievements || {},
-            userCompletion: data.UserCompletion,
-            highestAwardKind: data.HighestAwardKind
-        };
     }
 
-    async getUserRecentAchievements(raUsername, count = 50) {
-        console.log(`Fetching recent achievements for ${raUsername}`);
+    async getUserRecentAchievements(username, count = 50) {
+        console.log(`Fetching recent achievements for ${username}`);
         return this.makeRequest('API_GetUserRecentAchievements.php', {
-            u: raUsername,
+            u: username,
             c: count
         });
     }
 
-    async getUserCompletedGames(raUsername) {
-        console.log(`Fetching completed games for ${raUsername}`);
-        return this.makeRequest('API_GetUserCompletedGames.php', {
-            u: raUsername
-        });
+    /**
+     * Utility method to get formatted user progress for a game
+     */
+    async getFormattedUserProgress(username, gameId) {
+        const progress = await this.getUserProgress(username, gameId);
+        const gameProgress = progress[gameId];
+        
+        if (!gameProgress) {
+            return {
+                achievementCount: 0,
+                totalAchievements: 0,
+                userCompletion: "0.00%",
+                hardcoreCompletion: "0.00%"
+            };
+        }
+
+        const completion = ((gameProgress.numAchieved / gameProgress.numPossibleAchievements) * 100).toFixed(2);
+        const hardcoreCompletion = ((gameProgress.numAchievedHardcore / gameProgress.numPossibleAchievements) * 100).toFixed(2);
+
+        return {
+            achievementCount: gameProgress.numAchieved,
+            totalAchievements: gameProgress.numPossibleAchievements,
+            userCompletion: `${completion}%`,
+            hardcoreCompletion: `${hardcoreCompletion}%`,
+            scoreAchieved: gameProgress.scoreAchieved,
+            possibleScore: gameProgress.possibleScore
+        };
     }
 
-    async getUserSummary(raUsername) {
-        console.log(`Fetching user summary for ${raUsername}`);
-        return this.makeRequest('API_GetUserSummary.php', {
-            u: raUsername
-        });
+    /**
+     * Utility method to check if a game exists
+     */
+    async gameExists(gameId) {
+        try {
+            const game = await this.getGameInfo(gameId);
+            return !!game && !!game.title;
+        } catch (error) {
+            return false;
+        }
     }
 
-    async getGameAchievementDistribution(gameId) {
-        console.log(`Fetching achievement distribution for game ${gameId}`);
-        return this.makeRequest('API_GetAchievementDistribution.php', {
-            i: gameId
-        });
+    /**
+     * Utility method to format game info
+     */
+    formatGameInfo(gameInfo) {
+        return {
+            title: gameInfo.title || gameInfo.gameTitle,
+            gameId: gameInfo.id,
+            console: gameInfo.console || gameInfo.consoleName,
+            consoleId: gameInfo.consoleId,
+            developer: gameInfo.developer,
+            publisher: gameInfo.publisher,
+            genre: gameInfo.genre,
+            released: gameInfo.released,
+            imageIcon: gameInfo.imageIcon,
+            imageTitle: gameInfo.imageTitle,
+            imageIngame: gameInfo.imageIngame,
+            imageBoxArt: gameInfo.imageBoxArt
+        };
     }
 }
 
