@@ -31,7 +31,7 @@ async function displayChallenge(game, raAPI) {
     details += `**Developer:** ${gameInfo.Developer || 'N/A'}\n`;
     details += `**Publisher:** ${gameInfo.Publisher}\n`;
     details += `**Release Date:** ${gameInfo.Released}\n`;
-    details += `**Total Achievements:** ${game.numAchievements}\n\n`;
+    details += `**Total Achievements:** ${109}\n\n`; // Fixed achievement count
     
     // Add time remaining
     details += `**Time Remaining:** ${getTimeRemaining()}\n`;
@@ -43,40 +43,13 @@ async function displayChallenge(game, raAPI) {
     awards += '• Worth 1 point\n\n';
 
     awards += '**Beaten Award** ⭐\n';
-    if (game.type === 'MONTHLY') {
-        if (game.requireProgression) {
-            awards += '• Complete all progression achievements:\n';
-            game.progression.forEach(id => {
-                awards += `  - [${id}]\n`;
-            });
-        }
-        if (game.winCondition) {
-            if (game.requireAllWinConditions) {
-                awards += '• Complete all win condition achievements:\n';
-            } else {
-                awards += '• Complete at least one win condition achievement:\n';
-            }
-            game.winCondition.forEach(id => {
-                awards += `  - [${id}]\n`;
-            });
-        }
-    } else {
-        // Shadow game
-        if (game.winCondition) {
-            if (game.requireAllWinConditions) {
-                awards += '• Complete all win condition achievements:\n';
-            } else {
-                awards += '• Complete at least one win condition achievement:\n';
-            }
-            game.winCondition.forEach(id => {
-                awards += `  - [${id}]\n`;
-            });
-        }
+    if (game.winCondition) {
+        awards += '• Complete all win conditions\n';
     }
     awards += '• Worth 3 points\n\n';
 
     awards += '**Mastery Award** ✨\n';
-    awards += '• Complete all achievements in the game\n';
+    awards += '• Complete 100% of the achievements\n';
     awards += '• Worth 3 additional points\n';
 
     embed.addFields(
