@@ -36,25 +36,52 @@ async function displayChallenge(game, raAPI) {
     // Add time remaining
     details += `**Time Remaining:** ${getTimeRemaining()}\n`;
 
-    // Add completion requirements
-    let requirements = '**Requirements:**\n';
-    if (game.requireProgression) {
-        requirements += '• Complete all progression achievements\n';
-    }
-    if (game.winCondition && game.winCondition.length > 0) {
-        if (game.requireAllWinConditions) {
-            requirements += '• Complete all win condition achievements\n';
-        } else {
-            requirements += '• Complete at least one win condition achievement\n';
+    // Add awards explanation
+    let awards = '';
+    awards += '**Participation Award** 🏁\n';
+    awards += '• Earn at least 1 achievement\n';
+    awards += '• Worth 1 point\n\n';
+
+    awards += '**Beaten Award** ⭐\n';
+    if (game.type === 'MONTHLY') {
+        if (game.requireProgression) {
+            awards += '• Complete all progression achievements:\n';
+            game.progression.forEach(id => {
+                awards += `  - [${id}]\n`;
+            });
+        }
+        if (game.winCondition) {
+            if (game.requireAllWinConditions) {
+                awards += '• Complete all win condition achievements:\n';
+            } else {
+                awards += '• Complete at least one win condition achievement:\n';
+            }
+            game.winCondition.forEach(id => {
+                awards += `  - [${id}]\n`;
+            });
+        }
+    } else {
+        // Shadow game
+        if (game.winCondition) {
+            if (game.requireAllWinConditions) {
+                awards += '• Complete all win condition achievements:\n';
+            } else {
+                awards += '• Complete at least one win condition achievement:\n';
+            }
+            game.winCondition.forEach(id => {
+                awards += `  - [${id}]\n`;
+            });
         }
     }
-    if (game.masteryCheck) {
-        requirements += '• Optional: Master all achievements for bonus points\n';
-    }
+    awards += '• Worth 3 points\n\n';
+
+    awards += '**Mastery Award** ✨\n';
+    awards += '• Complete all achievements in the game\n';
+    awards += '• Worth 3 additional points\n';
 
     embed.addFields(
         { name: 'Game Information', value: details },
-        { name: 'Challenge Requirements', value: requirements }
+        { name: 'Awards and Points', value: awards }
     );
 
     return embed;
@@ -62,16 +89,18 @@ async function displayChallenge(game, raAPI) {
 
 module.exports = {
     name: 'challenge',
+    description: 'Shows current challenge information',
     async execute(message, args) {
         try {
-            const currentDate = new Date();
-            const currentMonth = currentDate.getMonth() + 1;
-            const currentYear = currentDate.getFullYear();
-
             const type = args[0]?.toLowerCase() || 'monthly';
+            
             if (!['monthly', 'shadow'].includes(type)) {
                 return message.reply('Please specify either "monthly" or "shadow" (e.g., !challenge monthly)');
             }
+
+            const currentDate = new Date();
+            const currentMonth = currentDate.getMonth() + 1;
+            const currentYear = currentDate.getFullYear();
 
             const game = await Game.findOne({
                 month: currentMonth,
@@ -89,11 +118,11 @@ module.exports = {
             );
 
             const embed = await displayChallenge(game, raAPI);
-            message.channel.send({ embeds: [embed] });
+            await message.channel.send({ embeds: [embed] });
 
         } catch (error) {
-            console.error('Error displaying challenge:', error);
-            message.reply('Error getting challenge information.');
+            console.error('Error in challenge command:', error);
+            await message.reply('Error getting challenge information.');
         }
     }
 };
