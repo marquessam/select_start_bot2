@@ -1,20 +1,33 @@
 // File: src/utils/initializeUsers.js
 const User = require('../models/User');
 
-const validUsers = ["royek"];
+const validUsers = [
+    "SirVaelion", "jvmunduruca", "xelxlolox", "EmsiRG", "Dangeel",
+    "hyperlincs", "BlackZWolf", "punchdrunkpengin", "Shigarui", "RuySan",
+    "LucasTheBeard", "royek", "NiterZ7", "thardwardy", "nxsnexus",
+    "Newtim", "R3dEagle", "JRevo", "MuttonchopMac", "joebobdead",
+    "zckttck", "tragicnostalgic", "Magus508", "ShminalShmantasy", "lowaims",
+    "ParanoidPunky", "Audex", "Xsiverx", "Marquessam", "Dest404",
+    "wastelanderone", "Lyubphim", "DearYou"
+];
 
 async function initializeUsers() {
     try {
         console.log('Starting user initialization...');
-        await User.deleteMany({}); // Clear all users
         
-        // Just add Royek
-        await User.create({
-            raUsername: "royek",
+        // Clear existing users
+        await User.deleteMany({});
+        
+        // Create all users
+        const users = validUsers.map(username => ({
+            raUsername: username,
             isActive: true
-        });
+        }));
+
+        await User.insertMany(users);
         
-        console.log('User initialization complete!');
+        const totalUsers = await User.countDocuments();
+        console.log(`Initialized ${totalUsers} users successfully`);
     } catch (error) {
         console.error('Error initializing users:', error);
         throw error;
