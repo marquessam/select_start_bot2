@@ -16,11 +16,10 @@ module.exports = {
     name: 'profile',
     async execute(message, args) {
         try {
-            // Get and normalize username for search
-            let requestedUsername = args[0] || "royek";
-            requestedUsername = requestedUsername.toLowerCase();
+            // Get username for search
+            let requestedUsername = args[0] || "Royek";
 
-            // Find the user with case-insensitive search to get canonical username
+            // Find the user with case-insensitive search
             const user = await User.findOne({
                 raUsername: { $regex: new RegExp(`^${requestedUsername}$`, 'i') }
             });
@@ -31,7 +30,6 @@ module.exports = {
 
             // Use the canonical username from the database
             const raUsername = user.raUsername;
-            // Use the correct case for the RA profile image
             const raProfileImageUrl = `https://media.retroachievements.org/UserPic/${raUsername}.png`;
 
             const embed = new EmbedBuilder()
@@ -51,7 +49,7 @@ module.exports = {
             });
 
             const currentAward = currentGame ? await Award.findOne({
-                raUsername: { $regex: new RegExp(`^${requestedUsername}$`, 'i') },
+                raUsername: raUsername,
                 gameId: currentGame.gameId,
                 month: currentMonth,
                 year: currentYear
@@ -62,14 +60,14 @@ module.exports = {
                     name: '🎮 Current Challenge Progress',
                     value: '```\n' +
                            `${currentGame.title}\n` +
-                           `Progress: ${currentAward.achievementCount}/${currentGame.numAchievements} (${currentAward.userCompletion})\n` +
+                           `Progress: ${currentAward.achievementCount}/${currentAward.totalAchievements} (${currentAward.userCompletion})\n` +
                            '```'
                 });
             }
 
-            // Get all user's awards for the year using case-insensitive search
+            // Get all user's awards for the year
             const awards = await Award.find({
-                raUsername: { $regex: new RegExp(`^${requestedUsername}$`, 'i') },
+                raUsername: raUsername,
                 year: currentYear
             });
 
