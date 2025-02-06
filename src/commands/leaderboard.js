@@ -2,6 +2,7 @@
 const { EmbedBuilder } = require('discord.js');
 const Game = require('../models/Game');
 const Award = require('../models/Award');
+const User = require('../models/User');
 
 function calculatePoints(awards) {
     let points = 0;
@@ -40,13 +41,20 @@ async function displayMonthlyLeaderboard() {
 
     // Group by lowercase username to handle case sensitivity
     const uniqueAwards = {};
-    awards.forEach(award => {
+    for (const award of awards) {
         const lowerUsername = award.raUsername.toLowerCase();
         if (!uniqueAwards[lowerUsername] || 
             award.achievementCount > uniqueAwards[lowerUsername].achievementCount) {
+            // Find the canonical username from User model
+            const user = await User.findOne({
+                raUsername: { $regex: new RegExp(`^${award.raUsername}$`, 'i') }
+            });
+            if (user) {
+                award.raUsername = user.raUsername; // Use canonical username
+            }
             uniqueAwards[lowerUsername] = award;
         }
-    });
+    }
 
     // Sort by achievement count
     const sortedAwards = Object.values(uniqueAwards)
@@ -71,12 +79,14 @@ async function displayMonthlyLeaderboard() {
 
     const embed = new EmbedBuilder()
         .setColor('#0099ff')
-        .setTitle(`Monthly Challenge: ${monthlyGame.title}`);
+        .setTitle('Monthly Challenge:')
+        .setDescription(`**${monthlyGame.title}**`)
+        .setThumbnail(`https://media.retroachievements.org/Images/065106.png`); // ALTTP thumbnail
 
     const topTen = sortedAwards.slice(0, 10);
     const others = sortedAwards.slice(10);
 
- if (topTen.length > 0) {
+    if (topTen.length > 0) {
         let topTenText = 'Rank  Player         Progress\n';
         topTenText += '--------------------------------\n';
         
@@ -107,7 +117,7 @@ async function displayMonthlyLeaderboard() {
             });
         }
     }
-    
+
     return embed;
 }
 
