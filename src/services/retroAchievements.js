@@ -16,7 +16,7 @@ class RetroAchievementsAPI {
                 params: {
                     z: this.username,
                     y: this.apiKey,
-                    i: gameId  // Changed from 'g' to 'i'
+                    i: gameId
                 },
             });
 
@@ -62,6 +62,54 @@ class RetroAchievementsAPI {
             };
         } catch (error) {
             console.error(`Error fetching user progress for ${raUsername} game ${gameId}:`, error);
+            throw error;
+        }
+    }
+
+    async getUserRecentAchievements(raUsername) {
+        try {
+            console.log(`Fetching recent achievements for ${raUsername}`);
+            const response = await axios.get(`${this.baseUrl}/API_GetUserRecentAchievements.php`, {
+                params: {
+                    z: this.username,
+                    y: this.apiKey,
+                    u: raUsername,
+                    c: 50  // Get last 50 achievements
+                },
+            });
+            
+            if (!response.data) {
+                throw new Error(`No data received for user ${raUsername}`);
+            }
+
+            console.log(`Found ${response.data.length} recent achievements for ${raUsername}`);
+            return response.data;
+
+        } catch (error) {
+            console.error(`Error fetching recent achievements for ${raUsername}:`, error);
+            throw error;
+        }
+    }
+
+    async getGameInfoFull(gameId) {
+        try {
+            console.log(`Fetching full game info for game ${gameId}`);
+            
+            const response = await axios.get(`${this.baseUrl}/API_GetGameExtended.php`, {
+                params: {
+                    z: this.username,
+                    y: this.apiKey,
+                    i: gameId
+                },
+            });
+
+            if (!response.data) {
+                throw new Error(`No extended data received for game ${gameId}`);
+            }
+
+            return response.data;
+        } catch (error) {
+            console.error('Error fetching extended game info:', error);
             throw error;
         }
     }
