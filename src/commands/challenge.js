@@ -1,6 +1,7 @@
 // File: src/commands/challenge.js
 const { EmbedBuilder } = require('discord.js');
 const Game = require('../models/Game');
+const Award = require('../models/Award');
 const RetroAchievementsAPI = require('../services/retroAchievements');
 
 function getTimeRemaining() {
@@ -18,6 +19,15 @@ function getTimeRemaining() {
 async function displayChallenge(game, raAPI) {
     const gameInfo = await raAPI.getGameInfo(game.gameId);
     
+    // Get a sample award to get the total achievements (any user's award will have the correct total)
+    const sampleAward = await Award.findOne({
+        gameId: game.gameId,
+        month: game.month,
+        year: game.year
+    });
+
+    const totalAchievements = sampleAward ? sampleAward.totalAchievements : game.numAchievements;
+    
     const embed = new EmbedBuilder()
         .setColor('#0099ff')
         .setTitle(game.title)
@@ -31,7 +41,7 @@ async function displayChallenge(game, raAPI) {
     details += `**Developer:** ${gameInfo.Developer || 'N/A'}\n`;
     details += `**Publisher:** ${gameInfo.Publisher}\n`;
     details += `**Release Date:** ${gameInfo.Released}\n`;
-    details += `**Total Achievements:** ${109}\n\n`; // Fixed achievement count
+    details += `**Total Achievements:** ${totalAchievements}\n\n`;
     
     // Add time remaining
     details += `**Time Remaining:** ${getTimeRemaining()}\n`;
@@ -43,9 +53,7 @@ async function displayChallenge(game, raAPI) {
     awards += '• Worth 1 point\n\n';
 
     awards += '**Beaten Award** ⭐\n';
-    if (game.winCondition) {
-        awards += '• Complete all win conditions\n';
-    }
+    awards += '• Complete all win conditions\n';
     awards += '• Worth 3 points\n\n';
 
     awards += '**Mastery Award** ✨\n';
