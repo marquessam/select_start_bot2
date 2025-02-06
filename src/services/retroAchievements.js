@@ -15,7 +15,7 @@ class RetroAchievementsAPI {
         try {
             console.log(`Fetching game info for game ${gameId}`);
             
-            const response = await axios.get(`${this.baseUrl}/API_GetGame.php`, {
+            const response = await axios.get(`${this.baseUrl}/GetGame.php`, {
                 params: {
                     z: this.username,
                     y: this.apiKey,
@@ -43,7 +43,7 @@ class RetroAchievementsAPI {
         try {
             console.log(`Fetching extended game info for game ${gameId}`);
             
-            const response = await axios.get(`${this.baseUrl}/API_GetGameExtended.php`, {
+            const response = await axios.get(`${this.baseUrl}/GetGameExtended.php`, {
                 params: {
                     z: this.username,
                     y: this.apiKey,
@@ -68,11 +68,12 @@ class RetroAchievementsAPI {
     async searchGame(searchTerm) {
         try {
             console.log(`Searching for game: ${searchTerm}`);
-            const response = await axios.get(`${this.baseUrl}/API_SearchGame.php`, {
+            const response = await axios.get(`${this.baseUrl}/GetGameList.php`, {
                 params: {
                     z: this.username,
                     y: this.apiKey,
-                    q: searchTerm
+                    f: searchTerm,
+                    h: 1  // Return metadata
                 },
             });
             
@@ -80,8 +81,19 @@ class RetroAchievementsAPI {
                 throw new Error(`No search results for "${searchTerm}"`);
             }
 
-            console.log(`Found ${response.data.length} results`);
-            return response.data;
+            console.log(`Found ${Object.keys(response.data).length} results`);
+            
+            // Convert the object response to an array of games
+            const games = Object.entries(response.data).map(([id, game]) => ({
+                gameId: id,
+                title: game.Title,
+                consoleId: game.ConsoleID,
+                consoleName: game.ConsoleName,
+                imageIcon: game.ImageIcon,
+                numAchievements: game.NumAchievements
+            }));
+
+            return games;
         } catch (error) {
             console.error('Error searching for game:', error);
             throw error;
@@ -94,7 +106,7 @@ class RetroAchievementsAPI {
     async getUserProgress(raUsername, gameId) {
         try {
             console.log(`Fetching progress for ${raUsername} in game ${gameId}`);
-            const response = await axios.get(`${this.baseUrl}/API_GetGameInfoAndUserProgress.php`, {
+            const response = await axios.get(`${this.baseUrl}/GetGameInfoAndUserProgress.php`, {
                 params: {
                     z: this.username,
                     y: this.apiKey,
@@ -107,7 +119,6 @@ class RetroAchievementsAPI {
                 throw new Error(`No data received for user ${raUsername} game ${gameId}`);
             }
 
-            // Log useful information
             console.log(`User completion: ${response.data.UserCompletion}`);
             console.log(`Achievements earned: ${response.data.NumAwardedToUser}/${response.data.NumAchievements}`);
 
@@ -130,7 +141,7 @@ class RetroAchievementsAPI {
     async getUserRecentAchievements(raUsername, count = 50) {
         try {
             console.log(`Fetching recent achievements for ${raUsername}`);
-            const response = await axios.get(`${this.baseUrl}/API_GetUserRecentAchievements.php`, {
+            const response = await axios.get(`${this.baseUrl}/GetUserRecentAchievements.php`, {
                 params: {
                     z: this.username,
                     y: this.apiKey,
@@ -157,7 +168,7 @@ class RetroAchievementsAPI {
     async getUserCompletedGames(raUsername) {
         try {
             console.log(`Fetching completed games for ${raUsername}`);
-            const response = await axios.get(`${this.baseUrl}/API_GetUserCompletedGames.php`, {
+            const response = await axios.get(`${this.baseUrl}/GetUserCompletedGames.php`, {
                 params: {
                     z: this.username,
                     y: this.apiKey,
@@ -182,7 +193,7 @@ class RetroAchievementsAPI {
     async getUserSummary(raUsername) {
         try {
             console.log(`Fetching user summary for ${raUsername}`);
-            const response = await axios.get(`${this.baseUrl}/API_GetUserSummary.php`, {
+            const response = await axios.get(`${this.baseUrl}/GetUserSummary.php`, {
                 params: {
                     z: this.username,
                     y: this.apiKey,
@@ -207,7 +218,7 @@ class RetroAchievementsAPI {
     async getGameAchievementDistribution(gameId) {
         try {
             console.log(`Fetching achievement distribution for game ${gameId}`);
-            const response = await axios.get(`${this.baseUrl}/API_GetAchievementDistribution.php`, {
+            const response = await axios.get(`${this.baseUrl}/GetAchievementDistribution.php`, {
                 params: {
                     z: this.username,
                     y: this.apiKey,
@@ -222,31 +233,6 @@ class RetroAchievementsAPI {
             return response.data;
         } catch (error) {
             console.error(`Error fetching achievement distribution for game ${gameId}:`, error);
-            throw error;
-        }
-    }
-
-    /**
-     * Get achievement info by ID
-     */
-    async getAchievementInfo(achievementId) {
-        try {
-            console.log(`Fetching achievement info for ID ${achievementId}`);
-            const response = await axios.get(`${this.baseUrl}/API_GetAchievement.php`, {
-                params: {
-                    z: this.username,
-                    y: this.apiKey,
-                    a: achievementId
-                },
-            });
-            
-            if (!response.data) {
-                throw new Error(`No data received for achievement ${achievementId}`);
-            }
-
-            return response.data;
-        } catch (error) {
-            console.error(`Error fetching achievement info for ${achievementId}:`, error);
             throw error;
         }
     }
