@@ -1,5 +1,6 @@
 // File: src/utils/initializeUsers.js
 const User = require('../models/User');
+const { cleanupDatabase } = require('./cleanupDatabase');
 
 const validUsers = [
     "SirVaelion", "jvmunduruca", "xelxlolox", "EmsiRG", "Dangeel",
@@ -15,16 +16,22 @@ async function initializeUsers() {
     try {
         console.log('Starting user initialization...');
         
-        // Clear existing users
-        await User.deleteMany({});
+        // Clean up any existing duplicates first
+        await cleanupDatabase();
         
-        // Create all users
-        const users = validUsers.map(username => ({
-            raUsername: username,
-            isActive: true
-        }));
+        // Create or update users
+        const userPromises = validUsers.map(username => {
+            return User.findOneAndUpdate(
+                { raUsername: { $regex: new RegExp(`^${username}$`, 'i') } },
+                { 
+                    raUsername: username,  // Keep original case
+                    isActive: true 
+                },
+                { upsert: true }
+            );
+        });
 
-        await User.insertMany(users);
+        await Promise.all(userPromises);
         
         const totalUsers = await User.countDocuments();
         console.log(`Initialized ${totalUsers} users successfully`);
