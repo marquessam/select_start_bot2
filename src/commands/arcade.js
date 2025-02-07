@@ -3,18 +3,18 @@ const { EmbedBuilder } = require('discord.js');
 const RetroAchievementsAPI = require('../services/retroAchievements');
 const User = require('../models/User');
 
-// Updated arcade configuration with correct game IDs.
+// Arcade configuration: each entry defines a known leaderboard.
 const arcadeConfigs = [
   {
-    id: 533,
+    id: 1143,
     name: "Mario Kart: Super Circuit (GBA) - Mario Circuit",
   },
   {
-    id: 11331,
+    id: 18937,
     name: "Tony Hawk's Pro Skater (PSX) - Warehouse, Woodland Hills",
   },
   {
-    id: 508,
+    id: 24,
     name: "Tetris (GB) - A-Type Challenge",
   },
 ];
