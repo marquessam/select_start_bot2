@@ -1,10 +1,9 @@
 // File: src/commands/arcade.js
 const { EmbedBuilder } = require('discord.js');
-const axios = require('axios');
+const RetroAchievementsAPI = require('../services/retroAchievements');
 const User = require('../models/User');
 
 // Arcade configuration: each entry defines a known leaderboard.
-// You can add more entries as needed.
 const arcadeConfigs = [
   {
     id: 1143,
@@ -21,57 +20,30 @@ const arcadeConfigs = [
 ];
 
 /**
- * Fetches leaderboard entries for a given game from RetroAchievements.
- * This method includes RA credentials as query parameters and logs the raw
- * API response for debugging.
- *
+ * Fetches leaderboard entries for a given game using the RetroAchievementsAPI service.
  * @param {string|number} gameId - The game ID to look up.
  * @returns {Promise<Array>} - Returns an array of leaderboard entries.
  */
 async function fetchLeaderboardEntries(gameId) {
-  const raUsername = process.env.RA_USERNAME;
-  const raAPIKey = process.env.RA_API_KEY;
-  const url = `https://retroachievements.org/API/API_GetLeaderboardEntries.php?i=${gameId}&z=${raUsername}&y=${raAPIKey}`;
+  // Create an instance of your API service.
+  const raAPI = new RetroAchievementsAPI(process.env.RA_USERNAME, process.env.RA_API_KEY);
+  const data = await raAPI.getLeaderboardEntries(gameId);
+  console.log('API response data:', data); // Debug logging
 
-  try {
-    const response = await axios.get(url, { responseType: 'json' });
-    console.log('API response data:', response.data); // Debug logging
-    let data = response.data;
-
-    // If the data is not an array, try to recover.
-    if (!Array.isArray(data)) {
-      if (typeof data === 'string') {
-        try {
-          data = JSON.parse(data);
-        } catch (e) {
-          throw new Error('Failed to parse API response as JSON.');
-        }
-        if (!Array.isArray(data)) {
-          throw new Error('Unexpected data format from the leaderboard API after parsing.');
-        }
-      } else if (data && typeof data === 'object') {
-        if (Array.isArray(data.leaderboard)) {
-          data = data.leaderboard;
-        } else if (data.message) {
-          throw new Error(`API error: ${data.message}`);
-        } else {
-          throw new Error('Unexpected data format from the leaderboard API.');
-        }
-      } else {
-        throw new Error('Unexpected data format from the leaderboard API.');
-      }
+  // Check if the API returned an array.
+  if (!Array.isArray(data)) {
+    if (data && data.message) {
+      throw new Error(`API error: ${data.message}`);
+    } else {
+      throw new Error('Unexpected data format from the leaderboard API.');
     }
-    return data;
-  } catch (error) {
-    console.error('Error fetching leaderboard entries:', error.response?.data || error.message);
-    throw error;
   }
+  return data;
 }
 
 /**
- * Formats a single leaderboard entry.
+ * Formats a single leaderboard entry line.
  * Adds a crown emoji for 1st, second medal for 2nd, and third medal for 3rd.
- *
  * @param {object} entry - A leaderboard entry.
  * @returns {string} - The formatted string.
  */
@@ -107,14 +79,14 @@ module.exports = {
         return message.channel.send({ embeds: [embed] });
       }
 
-      // Otherwise, interpret the first argument as a selection number.
+      // Parse the selection number.
       const selection = parseInt(args[0]);
       if (isNaN(selection) || selection < 1 || selection > arcadeConfigs.length) {
         return message.reply(`Invalid selection. Please choose a number between 1 and ${arcadeConfigs.length}.`);
       }
       const selectedConfig = arcadeConfigs[selection - 1];
 
-      // Fetch leaderboard entries for the selected game.
+      // Fetch leaderboard entries using your API service.
       let leaderboardEntries = await fetchLeaderboardEntries(selectedConfig.id);
       if (!Array.isArray(leaderboardEntries)) {
         return message.reply('Unexpected data format from the leaderboard API.');
@@ -123,7 +95,7 @@ module.exports = {
       // Sort entries by Rank (ascending).
       leaderboardEntries.sort((a, b) => a.Rank - b.Rank);
 
-      // Retrieve registered users from the database.
+      // Retrieve registered users from your database.
       const users = await User.find({});
       const registeredUserSet = new Set(users.map(u => u.raUsername.toLowerCase()));
 
