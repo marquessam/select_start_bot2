@@ -21,8 +21,6 @@ const arcadeConfigs = [
 
 /**
  * Fetches leaderboard entries for a given game using the RetroAchievementsAPI service.
- * If the API returns an object instead of an array, it converts it to an array.
- *
  * @param {string|number} gameId - The game ID to look up.
  * @returns {Promise<Array>} - Returns an array of leaderboard entries.
  */
@@ -37,7 +35,6 @@ async function fetchLeaderboardEntries(gameId) {
     entries = Object.values(entries);
   }
 
-  // If after conversion we still don't have an array, check for error message.
   if (!Array.isArray(entries)) {
     if (entries && entries.message) {
       throw new Error(`API error: ${entries.message}`);
@@ -51,7 +48,6 @@ async function fetchLeaderboardEntries(gameId) {
 /**
  * Formats a single leaderboard entry line.
  * Adds a crown emoji for 1st, second medal for 2nd, and third medal for 3rd.
- *
  * @param {object} entry - A leaderboard entry.
  * @returns {string} - The formatted string.
  */
@@ -64,7 +60,8 @@ function formatEntry(entry) {
   } else if (entry.Rank === 3) {
     rankEmoji = '🥉';
   }
-  return `${rankEmoji} Rank #${entry.Rank} - ${entry.Username}: ${entry.Score}`;
+  // Use entry.User (instead of Username) since that's what the API returns.
+  return `${rankEmoji} Rank #${entry.Rank} - ${entry.User}: ${entry.Score}`;
 }
 
 module.exports = {
@@ -100,17 +97,17 @@ module.exports = {
         return message.reply('Unexpected data format from the leaderboard API.');
       }
 
-      // Sort entries by Rank (ascending).
-      leaderboardEntries.sort((a, b) => a.Rank - b.Rank);
-
       // Retrieve registered users from the database.
       const users = await User.find({});
       const registeredUserSet = new Set(users.map(u => u.raUsername.toLowerCase()));
 
       // Filter entries to only include those from registered users.
       leaderboardEntries = leaderboardEntries.filter(entry => {
-        return registeredUserSet.has(entry.Username.toLowerCase());
+        return registeredUserSet.has(entry.User.toLowerCase());
       });
+
+      // Sort entries by Rank (ascending).
+      leaderboardEntries.sort((a, b) => a.Rank - b.Rank);
 
       // Build the output text.
       let output = `**${selectedConfig.name}**\n`;
