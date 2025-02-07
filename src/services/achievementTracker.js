@@ -26,7 +26,12 @@ class AchievementTracker {
             console.log(`Found ${games.length} active games for 2025`);
 
             for (const game of games) {
-                await this.processGameProgress(raUsername, game);
+                try {
+                    await this.processGameProgress(raUsername, game);
+                } catch (error) {
+                    console.error(`Error processing game ${game.title} for ${raUsername}:`, error);
+                    continue; // Continue with next game even if one fails
+                }
             }
 
             console.log(`Completed all progress checks for ${raUsername}`);
@@ -41,13 +46,13 @@ class AchievementTracker {
             console.log(`Processing ${game.title} progress for ${raUsername}`);
             
             // Get player's progress record or create new one
-            let progress = await PlayerProgress.findOne({
+            let progressRecord = await PlayerProgress.findOne({
                 raUsername,
                 gameId: game.gameId
             });
 
-            if (!progress) {
-                progress = new PlayerProgress({
+            if (!progressRecord) {
+                progressRecord = new PlayerProgress({
                     raUsername,
                     gameId: game.gameId,
                     lastAchievementTimestamp: new Date(0),
@@ -55,9 +60,11 @@ class AchievementTracker {
                 });
             }
 
-            // Get achievements since last check
-            const newAchievements = await this.raAPI.getUserGameProgress(raUsername, game.gameId);
-            const earnedAchievements = Object.entries(newAchievements.achievements || {})
+            // Get progress from cached API
+            const progress = await this.raAPI.getUserGameProgress(raUsername, game.gameId);
+            
+            // Extract earned achievements
+            const earnedAchievements = Object.entries(progress.achievements || {})
                 .filter(([_, ach]) => ach.DateEarned || ach.dateEarned)
                 .map(([id]) => id);
 
@@ -95,32 +102,55 @@ class AchievementTracker {
 
                 // Check mastery
                 if (game.type === 'MONTHLY' && 
-                    newAchievements.userCompletion === "100.00%" && 
+                    progress.userCompletion === "100.00%" && 
                     game.masteryCheck) {
                     awardLevel = AwardType.MASTERED;
                 }
             }
 
-            // Update award in database
-            await Award.findOneAndUpdate(
-                {
-                    raUsername,
-                    gameId: game.gameId,
-                    month: game.month,
-                    year: game.year
-                },
-                {
-                    $set: {
-                        award: awardLevel,
-                        lastChecked: new Date()
-                    }
-                },
-                { upsert: true }
-            );
+            // Get existing award or create new one
+            const existingAward = await Award.findOne({
+                raUsername,
+                gameId: game.gameId,
+                month: game.month,
+                year: game.year
+            });
 
-            // Update player progress
-            progress.lastAchievementTimestamp = new Date();
-            await progress.save();
+            // Only update if there are changes
+            if (!existingAward || 
+                existingAward.award !== awardLevel || 
+                existingAward.achievementCount !== progress.earnedAchievements) {
+                
+                // Store both award level and progress data
+                await Award.findOneAndUpdate(
+                    {
+                        raUsername,
+                        gameId: game.gameId,
+                        month: game.month,
+                        year: game.year
+                    },
+                    {
+                        $set: {
+                            award: awardLevel,
+                            achievementCount: progress.earnedAchievements || 0,
+                            totalAchievements: progress.totalAchievements || 0,
+                            userCompletion: progress.userCompletion || "0.00%",
+                            lastChecked: new Date()
+                        }
+                    },
+                    { upsert: true }
+                );
+
+                console.log(`Updated award for ${raUsername} in ${game.title}:`, {
+                    award: awardLevel,
+                    achievements: `${progress.earnedAchievements}/${progress.totalAchievements}`,
+                    completion: progress.userCompletion
+                });
+            }
+
+            // Update progress record
+            progressRecord.lastAchievementTimestamp = new Date();
+            await progressRecord.save();
 
         } catch (error) {
             console.error(`Error processing progress for ${raUsername} in ${game.title}:`, error);
