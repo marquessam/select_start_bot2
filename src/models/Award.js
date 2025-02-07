@@ -20,11 +20,28 @@ const awardSchema = new mongoose.Schema({
         type: Number,
         required: true
     },
+    // New enum-based award
     award: {
         type: Number,
         enum: Object.values(AwardType),
         default: AwardType.NONE,
         required: true
+    },
+    // Keep achievement counts for leaderboard display
+    achievementCount: {
+        type: Number,
+        required: true,
+        default: 0
+    },
+    totalAchievements: {
+        type: Number,
+        required: true,
+        default: 0
+    },
+    userCompletion: {
+        type: String,
+        required: true,
+        default: "0.00%"
     },
     lastChecked: {
         type: Date,
