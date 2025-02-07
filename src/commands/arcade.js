@@ -3,28 +3,31 @@ const { EmbedBuilder } = require('discord.js');
 const RetroAchievementsAPI = require('../services/retroAchievements');
 const User = require('../models/User');
 
-// Arcade configuration: each entry defines a known leaderboard
+// Arcade configuration: each entry defines a known leaderboard and game association.
 const arcadeConfigs = [
   {
-    leaderboardId: 1143,
+    leaderboardId: 1143, // For example, using API_GetLeaderboardEntries.php
     gameId: 533,
     name: "Mario Kart: Super Circuit (GBA) - Mario Circuit",
   },
   {
-    leaderboardId: 18937,
+    leaderboardId: 18937, // For example, using API_GetLeaderboardEntries.php
     gameId: 146,
     name: "Tony Hawk's Pro Skater (PSX) - Warehouse, Woodland Hills",
   },
   {
-    leaderboardId: 24,
+    leaderboardId: 24, // For example, using API_GetLeaderboardEntries.php
     gameId: 7,
     name: "Tetris (GB) - A-Type Challenge",
   }
 ];
 
 /**
- * Normalizes and processes leaderboard entries.
- * This version adds debugging logs to trace the parsing steps.
+ * Fetch and normalize leaderboard entries.
+ * This function handles both response formats:
+ *   - Format A: Top-level array or an "Entries" property (API_GetLeaderboardEntries.php).
+ *   - Format B: A "Results" object, where each element includes a nested "UserEntry"
+ *              (from getUserGameLeaderboards).
  */
 async function fetchLeaderboardEntries(leaderboardId) {
   const raAPI = new RetroAchievementsAPI(process.env.RA_USERNAME, process.env.RA_API_KEY);
@@ -38,25 +41,28 @@ async function fetchLeaderboardEntries(leaderboardId) {
       return [];
     }
     
-    // Determine the format of the data.
     let entries = [];
-    if (Array.isArray(data)) {
+    if (data.Results && Array.isArray(data.Results)) {
+      // Response from getUserGameLeaderboards-style endpoint:
+      // Each element has a nested "UserEntry".
+      entries = data.Results.map(result => result.UserEntry);
+      console.log('Data has Results key. Extracted entries length:', entries.length);
+    } else if (Array.isArray(data)) {
       entries = data;
       console.log('Data is an array, length:', entries.length);
     } else if (data.Entries && Array.isArray(data.Entries)) {
       entries = data.Entries;
       console.log('Data has Entries key, length:', entries.length);
     } else if (typeof data === 'object') {
+      // In case response is an object and we need to convert values to an array.
       entries = Object.values(data);
-      console.log('Data is an object converted to array, length:', entries.length);
+      console.log('Converted object to array, length:', entries.length);
     } else {
       console.log('Unexpected data format:', typeof data);
     }
-
-    // Log each raw entry before processing.
+    
     console.log('Raw entries:', entries);
-
-    // Process and sanitize each entry.
+    
     const validEntries = entries
       .filter(entry => {
         const hasUser = Boolean(entry && (entry.User || entry.user));
@@ -70,7 +76,6 @@ async function fetchLeaderboardEntries(leaderboardId) {
         const rawUser = entry.User || entry.user || '';
         const rankValue = entry.Rank || entry.rank || '0';
         const scoreValue = entry.Score || entry.score || '0';
-        // Log conversion details for debugging.
         console.log('Mapping entry:', { rawUser, rankValue, scoreValue });
         return {
           Rank: parseInt(rankValue, 10),
@@ -86,8 +91,7 @@ async function fetchLeaderboardEntries(leaderboardId) {
         }
         return valid;
       });
-
-    // Sort by rank.
+    
     validEntries.sort((a, b) => a.Rank - b.Rank);
     console.log(`Processed ${validEntries.length} valid leaderboard entries:`, validEntries.map(e => e.User));
     return validEntries;
@@ -115,7 +119,6 @@ module.exports = {
   description: 'Displays highscore lists for preset arcade games (for registered users only)',
   async execute(message, args) {
     try {
-      // If no argument is provided, list available leaderboards.
       if (!args[0]) {
         let listText = '**Available Arcade Leaderboards:**\n\n';
         arcadeConfigs.forEach((config, index) => {
@@ -128,38 +131,35 @@ module.exports = {
           .setTitle('Arcade Leaderboards')
           .setDescription(listText)
           .setFooter({ text: 'Data provided by RetroAchievements.org' });
-
         return message.channel.send({ embeds: [embed] });
       }
-
-      // Parse the selection number.
+      
       const selection = parseInt(args[0], 10);
       if (isNaN(selection) || selection < 1 || selection > arcadeConfigs.length) {
         return message.reply(`Invalid selection. Please choose a number between 1 and ${arcadeConfigs.length}.`);
       }
-
+      
       const selectedConfig = arcadeConfigs[selection - 1];
       const loadingMessage = await message.channel.send('Fetching leaderboard data...');
-
+      
       // Retrieve and normalize leaderboard entries.
       let leaderboardEntries = await fetchLeaderboardEntries(selectedConfig.leaderboardId);
-
+      
       // Retrieve registered users from the database.
       const users = await User.find({});
       const registeredUsers = users.map(u => u.raUsername.trim());
       console.log('Registered Users from DB:', registeredUsers);
       const registeredUserSet = new Set(registeredUsers.map(u => u.toLowerCase()));
-
+      
       console.log('Leaderboard entries before filtering:', leaderboardEntries.map(e => e.User));
-      // Filter to only include entries that have a matching registered user.
       leaderboardEntries = leaderboardEntries.filter(entry => {
         return entry.User && registeredUserSet.has(entry.User.toLowerCase());
       });
       console.log('Leaderboard entries after filtering:', leaderboardEntries.map(e => e.User));
-
+      
       let output = `**${selectedConfig.name}**\n\n`;
       output += '**User Highscores:**\n\n';
-
+      
       if (leaderboardEntries.length > 0) {
         const displayEntries = leaderboardEntries.slice(0, 15);
         for (const entry of displayEntries) {
@@ -168,21 +168,20 @@ module.exports = {
       } else {
         output += 'No leaderboard entries found for your users.';
       }
-
-      // Fetch game info for thumbnail using the actual game ID.
+      
+      // Fetch game info for thumbnail using the game ID.
       const raAPI = new RetroAchievementsAPI(process.env.RA_USERNAME, process.env.RA_API_KEY);
       const gameInfo = await raAPI.getGameInfo(selectedConfig.gameId);
-
+      
       const embed = new EmbedBuilder()
         .setColor('#0099ff')
         .setTitle('Arcade Highscores')
         .setDescription(output)
         .setFooter({ text: 'Data provided by RetroAchievements.org' });
-
       if (gameInfo?.ImageIcon) {
         embed.setThumbnail(`https://retroachievements.org${gameInfo.ImageIcon}`);
       }
-
+      
       await loadingMessage.delete();
       await message.channel.send({ embeds: [embed] });
     } catch (error) {
