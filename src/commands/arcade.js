@@ -3,7 +3,7 @@ const { EmbedBuilder } = require('discord.js');
 const RetroAchievementsAPI = require('../services/retroAchievements');
 const User = require('../models/User');
 
-// Arcade configuration: each entry defines a known leaderboard.
+// Arcade configuration: each entry defines a known leaderboard
 const arcadeConfigs = [
     {
         leaderboardId: 1143,     // Specific leaderboard ID
@@ -29,18 +29,21 @@ async function fetchLeaderboardEntries(leaderboardId) {
         const data = await raAPI.getLeaderboardInfo(leaderboardId);
         console.log('Raw leaderboard response:', data);
         
-        if (!data || !data.Entries || !Array.isArray(data.Entries)) {
+        if (!data || !Array.isArray(data)) {
             console.log('No valid leaderboard entries received');
             return [];
         }
 
         // Process the entries
-        const entries = data.Entries.map(entry => ({
-            Rank: entry.Rank,
+        const entries = data.map(entry => ({
+            Rank: parseInt(entry.Rank),
             User: entry.User,
-            Score: entry.Score,
+            Score: parseInt(entry.Score),
             DateSubmitted: entry.DateSubmitted
-        }));
+        })).filter(entry => !isNaN(entry.Rank) && !isNaN(entry.Score));
+
+        // Sort by rank just in case
+        entries.sort((a, b) => a.Rank - b.Rank);
 
         console.log(`Processed ${entries.length} leaderboard entries`);
         return entries;
@@ -60,7 +63,7 @@ function formatEntry(entry) {
         rankEmoji = '🥉';
     }
     
-    // Format the score nicely (you might want to adjust this based on the specific leaderboard)
+    // Format the score nicely
     const score = Number(entry.Score).toLocaleString();
     return `${rankEmoji} Rank #${entry.Rank} - ${entry.User}: ${score}`;
 }
@@ -136,16 +139,4 @@ module.exports = {
                 .setFooter({ text: 'Data provided by RetroAchievements.org' });
 
             if (gameInfo?.ImageIcon) {
-                embed.setThumbnail(`https://retroachievements.org${gameInfo.ImageIcon}`);
-            }
-
-            // Delete loading message and send results
-            await loadingMessage.delete();
-            await message.channel.send({ embeds: [embed] });
-
-        } catch (error) {
-            console.error('Arcade command error:', error);
-            await message.reply('Error fetching arcade leaderboard. The game or leaderboard might not be available.');
-        }
-    }
-};
+                embed.setThumbnail(`https://retroachievements.org${gameInfo.Image
