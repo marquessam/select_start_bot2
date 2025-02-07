@@ -4,36 +4,34 @@ const mongoose = require('mongoose');
 const gameSchema = new mongoose.Schema({
     gameId: {
         type: String,
-        required: true,
+        required: true
     },
     title: {
         type: String,
-        required: true,
+        required: true
     },
     type: {
         type: String,
         enum: ['MONTHLY', 'SHADOW'],
-        required: true,
+        required: true
     },
     month: {
         type: Number,
         required: true,
         min: 1,
-        max: 12,
+        max: 12
     },
     year: {
         type: Number,
-        required: true,
-    },
-    numAchievements: {
-        type: Number,
-        required: true,
+        required: true
     },
     progression: [{
         type: String,  // Achievement IDs for progression
+        required: true
     }],
     winCondition: [{
         type: String,  // Achievement IDs for win conditions
+        required: true
     }],
     requireProgression: {
         type: Boolean,
@@ -49,7 +47,7 @@ const gameSchema = new mongoose.Schema({
     },
     active: {
         type: Boolean,
-        default: true,
+        default: true
     }
 });
 
