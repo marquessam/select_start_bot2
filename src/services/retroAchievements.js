@@ -190,20 +190,13 @@ class RetroAchievementsAPI {
         }
 
         console.info(`Fetching leaderboard info for ID ${leaderboardId}`);
-        const data = await this.makeRequest('API_GetLeaderboardInfo.php', {
-            i: leaderboardId
+        const data = await this.makeRequest('API_GetLBEntries.php', {
+            i: leaderboardId,
+            c: 50  // Get top 50 entries
         });
 
-        // Validate and structure the data
-        if (data && data.LeaderboardData) {
-            const structuredData = {
-                Title: data.LeaderboardData.Title,
-                Description: data.LeaderboardData.Description,
-                Format: data.LeaderboardData.Format,
-                Entries: data.Entries || []
-            };
-            this.leaderboardCache.set(cacheKey, structuredData);
-            return structuredData;
+        if (data) {
+            this.leaderboardCache.set(cacheKey, data);
         }
 
         return data;
