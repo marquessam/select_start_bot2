@@ -21,23 +21,65 @@ const arcadeConfigs = [
 
 /**
  * Fetches leaderboard entries for a given game using the RetroAchievementsAPI service.
+ * Uses your RA credentials and logs the raw API response for debugging.
+ *
  * @param {string|number} gameId - The game ID to look up.
  * @returns {Promise<Array>} - Returns an array of leaderboard entries.
  */
 async function fetchLeaderboardEntries(gameId) {
-  // Create an instance of your API service.
-  const raAPI = new RetroAchievementsAPI(process.env.RA_USERNAME, process.env.RA_API_KEY);
-  const data = await raAPI.getLeaderboardEntries(gameId);
-  console.log('API response data:', data); // Debug logging
+  const raUsername = process.env.RA_USERNAME;
+  const raAPIKey = process.env.RA_API_KEY;
+  const url = `https://retroachievements.org/API/API_GetLeaderboardEntries.php?i=${gameId}&z=${raUsername}&y=${raAPIKey}`;
 
-  // Check if the API returned an array.
-  if (!Array.isArray(data)) {
-    if (data && data.message) {
-      throw new Error(`API error: ${data.message}`);
-    } else {
-      throw new Error('Unexpected data format from the leaderboard API.');
+  try {
+    const response = await axios.get(url, { responseType: 'json' });
+    
+    // Log the raw response data for debugging
+    console.log('Raw API response:', JSON.stringify(response.data, null, 2));
+
+    let data = response.data;
+
+    // If the API returns an array, we're done.
+    if (Array.isArray(data)) {
+      return data;
     }
+
+    // Otherwise, try to see if the data is nested in a property.
+    if (data && typeof data === 'object') {
+      // Check common properties that might hold the leaderboard.
+      if (Array.isArray(data.leaderboard)) {
+        return data.leaderboard;
+      } else if (Array.isArray(data.entries)) {
+        return data.entries;
+      } else if (Array.isArray(data.Result)) {
+        return data.Result;
+      } else if (data.message) {
+        throw new Error(`API error: ${data.message}`);
+      } else {
+        throw new Error('Unexpected data format from the leaderboard API.');
+      }
+    }
+
+    // If the data is a string, try parsing it.
+    if (typeof data === 'string') {
+      try {
+        data = JSON.parse(data);
+        if (Array.isArray(data)) {
+          return data;
+        } else {
+          throw new Error('Unexpected data format after parsing string response.');
+        }
+      } catch (e) {
+        throw new Error('Failed to parse API response as JSON.');
+      }
+    }
+
+    throw new Error('Unexpected data format from the leaderboard API.');
+  } catch (error) {
+    console.error('Error fetching leaderboard entries:', error.response?.data || error.message);
+    throw error;
   }
+}
   return data;
 }
 
