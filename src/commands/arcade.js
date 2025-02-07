@@ -6,7 +6,7 @@ const User = require('../models/User');
 // Arcade configuration: each entry defines a known leaderboard
 const arcadeConfigs = [
     {
-        leaderboardId: 1143,     // Specific leaderboard ID
+        leaderboardId: 1143,     // Specific leaderboard ID for Mario Circuit
         gameId: 533,            // Game ID for Mario Kart Super Circuit
         name: "Mario Kart: Super Circuit (GBA) - Mario Circuit",
     },
