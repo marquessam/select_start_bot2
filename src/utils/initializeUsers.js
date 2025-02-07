@@ -2,9 +2,10 @@
 const User = require('../models/User');
 const { cleanupDatabase } = require('./cleanupDatabase');
 
+// Test group only
 const validUsers = [
-    "royek",
-    "Marquessam",
+    "royek",             // Make sure these match exactly the case 
+    "Marquessam",        // you want to use for announcements
     "lowaims",
     "xelxlolox",
     "hyperlincs"
@@ -12,12 +13,13 @@ const validUsers = [
 
 async function initializeUsers() {
     try {
-        console.log('Starting user initialization...');
+        console.log('Starting user initialization with test group...');
         
-        // Clean up any existing duplicates first
-        await cleanupDatabase();
+        // First, remove ALL existing users
+        await User.deleteMany({});
+        console.log('Cleared existing users');
         
-        // Create or update users
+        // Create our test users
         const userPromises = validUsers.map(username => {
             return User.findOneAndUpdate(
                 { raUsername: { $regex: new RegExp(`^${username}$`, 'i') } },
@@ -32,7 +34,7 @@ async function initializeUsers() {
         await Promise.all(userPromises);
         
         const totalUsers = await User.countDocuments();
-        console.log(`Initialized ${totalUsers} users successfully`);
+        console.log(`Initialized ${totalUsers} test users successfully`);
     } catch (error) {
         console.error('Error initializing users:', error);
         throw error;
