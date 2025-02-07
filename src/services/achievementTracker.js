@@ -12,31 +12,48 @@ class AchievementTracker {
             process.env.RA_USERNAME,
             process.env.RA_API_KEY
         );
+        this.maxConcurrent = 3;  // Maximum concurrent API requests
+        this.checkInterval = 15 * 60 * 1000;  // 15 minutes between checks
     }
 
-    async checkUserProgress(raUsername) {
+    async processBatch(users, games) {
         try {
-            console.log(`\nChecking progress for user ${raUsername}...`);
+            const batch = [];
             
-            const games = await Game.find({
-                year: 2025,
-                active: true
-            });
+            // Build batch of needed checks
+            for (const user of users) {
+                for (const game of games) {
+                    const award = await Award.findOne({
+                        raUsername: user.raUsername,
+                        gameId: game.gameId
+                    });
 
-            console.log(`Found ${games.length} active games for 2025`);
-
-            for (const game of games) {
-                try {
-                    await this.processGameProgress(raUsername, game);
-                } catch (error) {
-                    console.error(`Error processing game ${game.title} for ${raUsername}:`, error);
-                    continue; // Continue with next game even if one fails
+                    // Check if this needs processing
+                    if (!award || 
+                        Date.now() - award.lastChecked.getTime() > this.checkInterval) {
+                        batch.push({ user, game, priority: award?.checkPriority || 0 });
+                    }
                 }
             }
 
-            console.log(`Completed all progress checks for ${raUsername}`);
+            // Sort by priority (higher numbers first)
+            batch.sort((a, b) => b.priority - a.priority);
+
+            // Process in parallel with rate limiting
+            const chunks = [];
+            for (let i = 0; i < batch.length; i += this.maxConcurrent) {
+                chunks.push(batch.slice(i, i + this.maxConcurrent));
+            }
+
+            for (const chunk of chunks) {
+                await Promise.all(
+                    chunk.map(({ user, game }) => 
+                        this.processGameProgress(user.raUsername, game)
+                    )
+                );
+            }
         } catch (error) {
-            console.error(`Error checking progress for ${raUsername}:`, error);
+            console.error('Error processing batch:', error);
             throw error;
         }
     }
@@ -135,7 +152,9 @@ class AchievementTracker {
                             achievementCount: progress.earnedAchievements || 0,
                             totalAchievements: progress.totalAchievements || 0,
                             userCompletion: progress.userCompletion || "0.00%",
-                            lastChecked: new Date()
+                            lastChecked: new Date(),
+                            // Increase priority for users who are actively earning achievements
+                            checkPriority: (existingAward?.achievementCount || 0) < progress.earnedAchievements ? 1 : 0
                         }
                     },
                     { upsert: true }
@@ -146,6 +165,23 @@ class AchievementTracker {
                     achievements: `${progress.earnedAchievements}/${progress.totalAchievements}`,
                     completion: progress.userCompletion
                 });
+            } else {
+                // Update last checked time even if no changes
+                await Award.findOneAndUpdate(
+                    {
+                        raUsername,
+                        gameId: game.gameId,
+                        month: game.month,
+                        year: game.year
+                    },
+                    {
+                        $set: {
+                            lastChecked: new Date(),
+                            // Decrease priority for inactive users
+                            checkPriority: Math.max(0, (existingAward.checkPriority || 0) - 1)
+                        }
+                    }
+                );
             }
 
             // Update progress record
@@ -158,21 +194,46 @@ class AchievementTracker {
         }
     }
 
-    async checkAllUsers() {
+    async checkUserProgress(raUsername) {
         try {
-            const users = await User.find({ isActive: true });
-            console.log(`Starting achievement check for ${users.length} users`);
+            console.log(`\nChecking progress for user ${raUsername}...`);
+            
+            const games = await Game.find({
+                year: 2025,
+                active: true
+            });
 
-            for (const user of users) {
+            console.log(`Found ${games.length} active games for 2025`);
+
+            for (const game of games) {
                 try {
-                    await this.checkUserProgress(user.raUsername);
+                    await this.processGameProgress(raUsername, game);
                 } catch (error) {
-                    console.error(`Error checking user ${user.raUsername}:`, error);
-                    continue;  // Continue with next user even if one fails
+                    console.error(`Error processing game ${game.title} for ${raUsername}:`, error);
+                    continue; // Continue with next game even if one fails
                 }
             }
 
-            console.log('Completed checking all users');
+            console.log(`Completed all progress checks for ${raUsername}`);
+        } catch (error) {
+            console.error(`Error checking progress for ${raUsername}:`, error);
+            throw error;
+        }
+    }
+
+    async checkAllUsers() {
+        try {
+            const users = await User.find({ isActive: true });
+            const games = await Game.find({ 
+                year: 2025,
+                active: true
+            });
+
+            console.log(`Starting optimized check for ${users.length} users and ${games.length} games`);
+
+            await this.processBatch(users, games);
+
+            console.log('Completed optimized check');
         } catch (error) {
             console.error('Error in checkAllUsers:', error);
             throw error;
