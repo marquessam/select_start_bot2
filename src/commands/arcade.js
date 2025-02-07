@@ -6,41 +6,49 @@ const User = require('../models/User');
 // Arcade configuration: each entry defines a known leaderboard.
 const arcadeConfigs = [
     {
-        id: 1143,
+        id: 1143,           // Leaderboard ID
+        gameId: 291,        // Actual Game ID for Mario Kart Super Circuit
         name: "Mario Kart: Super Circuit (GBA) - Mario Circuit",
         leaderboardId: 1
     },
     {
-        id: 18937,
+        id: 18937,          // Leaderboard ID
+        gameId: 1,          // Game ID for THPS
         name: "Tony Hawk's Pro Skater (PSX) - Warehouse, Woodland Hills",
         leaderboardId: 1
     },
     {
-        id: 24,
+        id: 24,             // Leaderboard ID
+        gameId: 2,          // Game ID for Tetris
         name: "Tetris (GB) - A-Type Challenge",
         leaderboardId: 1
-    },
+    }
 ];
 
 async function fetchLeaderboardEntries(gameId, leaderboardId = 1) {
     const raAPI = new RetroAchievementsAPI(process.env.RA_USERNAME, process.env.RA_API_KEY);
     try {
+        console.log(`Fetching leaderboard data for game ${gameId}, leaderboard ${leaderboardId}`);
         const data = await raAPI.getLeaderboardEntries(gameId, leaderboardId);
+        console.log('Raw leaderboard response:', data);
         
         // Handle the response format
         if (!data || typeof data !== 'object') {
-            throw new Error('No leaderboard data received');
+            console.log('No leaderboard data received or invalid format');
+            return [];
         }
 
         // Convert the response into an array format we can use
         const entries = Object.entries(data).map(([rank, entry]) => ({
             Rank: parseInt(rank),
-            User: entry.user,
-            Score: entry.score
+            User: entry.user || entry.User,  // Handle both possible field names
+            Score: entry.score || entry.Score
         })).filter(entry => entry.User && entry.Score);
 
         // Sort by rank
-        return entries.sort((a, b) => a.Rank - b.Rank);
+        const sortedEntries = entries.sort((a, b) => a.Rank - b.Rank);
+        console.log('Processed entries:', sortedEntries);
+        return sortedEntries;
     } catch (error) {
         console.error('Error fetching leaderboard:', error);
         throw error;
@@ -92,9 +100,9 @@ module.exports = {
             // Show loading message
             const loadingMessage = await message.channel.send('Fetching leaderboard data...');
 
-            // Fetch leaderboard entries
+            // Fetch leaderboard entries using the leaderboard ID
             let leaderboardEntries = await fetchLeaderboardEntries(
-                selectedConfig.id, 
+                selectedConfig.id,  // Use the leaderboard ID for fetching entries
                 selectedConfig.leaderboardId
             );
 
@@ -103,9 +111,10 @@ module.exports = {
             const registeredUserSet = new Set(users.map(u => u.raUsername.toLowerCase()));
 
             // Filter entries to only include registered users
-            leaderboardEntries = leaderboardEntries.filter(entry => 
-                registeredUserSet.has(entry.User.toLowerCase())
-            );
+            leaderboardEntries = leaderboardEntries.filter(entry => {
+                const username = entry.User?.toLowerCase();
+                return username && registeredUserSet.has(username);
+            });
 
             // Build the output text
             let output = `**${selectedConfig.name}**\n`;
@@ -114,17 +123,17 @@ module.exports = {
 
             // Display up to the top 15 entries
             const displayEntries = leaderboardEntries.slice(0, 15);
-            for (const entry of displayEntries) {
-                output += formatEntry(entry) + '\n';
-            }
-            
-            if (displayEntries.length === 0) {
+            if (displayEntries.length > 0) {
+                for (const entry of displayEntries) {
+                    output += formatEntry(entry) + '\n';
+                }
+            } else {
                 output += 'No leaderboard entries found for your users.';
             }
 
-            // Fetch game info for thumbnail
+            // Fetch game info for thumbnail using the actual game ID
             const raAPI = new RetroAchievementsAPI(process.env.RA_USERNAME, process.env.RA_API_KEY);
-            const gameInfo = await raAPI.getGameInfo(selectedConfig.id);
+            const gameInfo = await raAPI.getGameInfo(selectedConfig.gameId);  // Use gameId here
             
             const embed = new EmbedBuilder()
                 .setColor('#0099ff')
