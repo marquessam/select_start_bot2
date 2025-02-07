@@ -17,9 +17,9 @@ class RetroAchievementsAPI {
 
         // Initialize caches with different TTLs
         this.progressCache = new Cache(300000);    // 5 minutes for progress
-        this.gameInfoCache = new Cache(3600000);   // 1 hour for game info
-        this.achievementCache = new Cache(60000);  // 1 minute for achievements
-        this.leaderboardCache = new Cache(300000); // 5 minutes for leaderboards
+        this.gameInfoCache = new Cache(3600000);     // 1 hour for game info
+        this.achievementCache = new Cache(60000);    // 1 minute for achievements
+        this.leaderboardCache = new Cache(300000);     // 5 minutes for leaderboards
 
         this.axiosInstance = axios.create({
             baseURL: this.baseUrl,
