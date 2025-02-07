@@ -95,7 +95,7 @@ module.exports = {
       // Sort entries by Rank (ascending).
       leaderboardEntries.sort((a, b) => a.Rank - b.Rank);
 
-      // Retrieve registered users from your database.
+      // Retrieve registered users from the database.
       const users = await User.find({});
       const registeredUserSet = new Set(users.map(u => u.raUsername.toLowerCase()));
 
