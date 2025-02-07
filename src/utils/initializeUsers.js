@@ -3,13 +3,11 @@ const User = require('../models/User');
 const { cleanupDatabase } = require('./cleanupDatabase');
 
 const validUsers = [
-    "SirVaelion", "jvmunduruca", "xelxlolox", "EmsiRG", "Dangeel",
-    "hyperlincs", "BlackZWolf", "punchdrunkpengin", "Shigarui", "RuySan",
-    "LucasTheBeard", "royek", "NiterZ7", "thardwardy", "nxsnexus",
-    "Newtim", "R3dEagle", "JRevo", "MuttonchopMac", "joebobdead",
-    "zckttck", "tragicnostalgic", "Magus508", "ShminalShmantasy", "lowaims",
-    "ParanoidPunky", "Audex", "Xsiverx", "Marquessam", "Dest404",
-    "wastelanderone", "Lyubphim", "DearYou"
+    "royek",
+    "Marquessam",
+    "lowaims",
+    "xelxlolox",
+    "hyperlincs"
 ];
 
 async function initializeUsers() {
