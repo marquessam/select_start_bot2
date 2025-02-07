@@ -1,109 +1,142 @@
-// File: src/commands/challenge.js
+// File: src/commands/arcade.js
 const { EmbedBuilder } = require('discord.js');
-const Game = require('../models/Game');
-const Award = require('../models/Award');
 const RetroAchievementsAPI = require('../services/retroAchievements');
+const User = require('../models/User');
 
-function getTimeRemaining() {
-    const now = new Date();
-    const endDate = new Date(now.getFullYear(), now.getMonth() + 1, 1);
-    const diff = endDate - now;
+// Arcade configuration: each entry defines a known leaderboard
+const arcadeConfigs = [
+    {
+        leaderboardId: 1143,     // Specific leaderboard ID
+        gameId: 533,            // Game ID for Mario Kart Super Circuit
+        name: "Mario Kart: Super Circuit (GBA) - Mario Circuit",
+    },
+    {
+        leaderboardId: 18937,    // Leaderboard ID for THPS warehouse
+        gameId: 146,            // Game ID for THPS
+        name: "Tony Hawk's Pro Skater (PSX) - Warehouse, Woodland Hills",
+    },
+    {
+        leaderboardId: 24,       // Leaderboard ID for Tetris
+        gameId: 7,              // Game ID for Tetris
+        name: "Tetris (GB) - A-Type Challenge",
+    }
+];
 
-    const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-    const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-    const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+async function fetchLeaderboardEntries(leaderboardId) {
+    const raAPI = new RetroAchievementsAPI(process.env.RA_USERNAME, process.env.RA_API_KEY);
+    try {
+        console.log(`Fetching leaderboard data for leaderboard ID: ${leaderboardId}`);
+        const data = await raAPI.getLeaderboardInfo(leaderboardId);
+        console.log('Raw leaderboard response:', data);
+        
+        if (!data || !Array.isArray(data)) {
+            console.log('No valid leaderboard entries received');
+            return [];
+        }
 
-    return `${days}d ${hours}h ${minutes}m`;
+        // Process the entries
+        const entries = data.map(entry => ({
+            Rank: parseInt(entry.Rank),
+            User: entry.User,
+            Score: parseInt(entry.Score),
+            DateSubmitted: entry.DateSubmitted
+        })).filter(entry => !isNaN(entry.Rank) && !isNaN(entry.Score));
+
+        // Sort by rank just in case
+        entries.sort((a, b) => a.Rank - b.Rank);
+
+        console.log(`Processed ${entries.length} leaderboard entries`);
+        return entries;
+    } catch (error) {
+        console.error('Error fetching leaderboard:', error);
+        throw error;
+    }
 }
 
-async function displayChallenge(game, raAPI) {
-    const gameInfo = await raAPI.getGameInfo(game.gameId);
+function formatEntry(entry) {
+    let rankEmoji = '';
+    if (entry.Rank === 1) {
+        rankEmoji = '👑';
+    } else if (entry.Rank === 2) {
+        rankEmoji = '🥈';
+    } else if (entry.Rank === 3) {
+        rankEmoji = '🥉';
+    }
     
-    // Get a sample award to get the total achievements (any user's award will have the correct total)
-    const sampleAward = await Award.findOne({
-        gameId: game.gameId,
-        month: game.month,
-        year: game.year
-    });
-
-    const totalAchievements = sampleAward ? sampleAward.totalAchievements : game.numAchievements;
-    
-    const embed = new EmbedBuilder()
-        .setColor('#0099ff')
-        .setTitle(game.title)
-        .setThumbnail(`https://media.retroachievements.org${gameInfo.ImageIcon}`)
-        .setImage(`https://media.retroachievements.org${gameInfo.ImageBoxArt}`);
-
-    // Add game details
-    let details = '';
-    details += `**Console:** ${gameInfo.Console}\n`;
-    details += `**Genre:** ${gameInfo.Genre}\n`;
-    details += `**Developer:** ${gameInfo.Developer || 'N/A'}\n`;
-    details += `**Publisher:** ${gameInfo.Publisher}\n`;
-    details += `**Release Date:** ${gameInfo.Released}\n`;
-    details += `**Total Achievements:** ${totalAchievements}\n\n`;
-    
-    // Add time remaining
-    details += `**Time Remaining:** ${getTimeRemaining()}\n`;
-
-    // Add awards explanation
-    let awards = '';
-    awards += '**Participation Award** 🏁\n';
-    awards += '• Earn at least 1 achievement\n';
-    awards += '• Worth 1 point\n\n';
-
-    awards += '**Beaten Award** ⭐\n';
-    awards += '• Complete all win conditions\n';
-    awards += '• Worth 3 points\n\n';
-
-    awards += '**Mastery Award** ✨\n';
-    awards += '• Complete 100% of the achievements\n';
-    awards += '• Worth 3 additional points\n';
-
-    embed.addFields(
-        { name: 'Game Information', value: details },
-        { name: 'Awards and Points', value: awards }
-    );
-
-    return embed;
+    // Format the score nicely
+    const score = Number(entry.Score).toLocaleString();
+    return `${rankEmoji} Rank #${entry.Rank} - ${entry.User}: ${score}`;
 }
 
 module.exports = {
-    name: 'challenge',
-    description: 'Shows current challenge information',
+    name: 'arcade',
+    description: 'Displays highscore lists for preset arcade games (for registered users only)',
     async execute(message, args) {
         try {
-            const type = args[0]?.toLowerCase() || 'monthly';
-            
-            if (!['monthly', 'shadow'].includes(type)) {
-                return message.reply('Please specify either "monthly" or "shadow" (e.g., !challenge monthly)');
+            // If no argument is provided, list available leaderboards
+            if (!args[0]) {
+                let listText = '**Available Arcade Leaderboards:**\n\n';
+                arcadeConfigs.forEach((config, index) => {
+                    listText += `${index + 1}. ${config.name}\n`;
+                });
+                listText += `\nType \`!arcade <number>\` to view that leaderboard.`;
+                
+                const embed = new EmbedBuilder()
+                    .setColor('#0099ff')
+                    .setTitle('Arcade Leaderboards')
+                    .setDescription(listText)
+                    .setFooter({ text: 'Data provided by RetroAchievements.org' });
+                
+                return message.channel.send({ embeds: [embed] });
             }
 
-            const currentDate = new Date();
-            const currentMonth = currentDate.getMonth() + 1;
-            const currentYear = currentDate.getFullYear();
-
-            const game = await Game.findOne({
-                month: currentMonth,
-                year: currentYear,
-                type: type.toUpperCase()
-            });
-
-            if (!game) {
-                return message.reply(`No ${type} game found for the current month.`);
+            // Parse the selection number
+            const selection = parseInt(args[0]);
+            if (isNaN(selection) || selection < 1 || selection > arcadeConfigs.length) {
+                return message.reply(`Invalid selection. Please choose a number between 1 and ${arcadeConfigs.length}.`);
             }
 
-            const raAPI = new RetroAchievementsAPI(
-                process.env.RA_USERNAME,
-                process.env.RA_API_KEY
+            const selectedConfig = arcadeConfigs[selection - 1];
+
+            // Show loading message
+            const loadingMessage = await message.channel.send('Fetching leaderboard data...');
+
+            // Fetch leaderboard entries using the leaderboard ID
+            let leaderboardEntries = await fetchLeaderboardEntries(selectedConfig.leaderboardId);
+
+            // Retrieve registered users from database
+            const users = await User.find({});
+            const registeredUserSet = new Set(users.map(u => u.raUsername.toLowerCase()));
+
+            // Filter entries to only include registered users
+            leaderboardEntries = leaderboardEntries.filter(entry => 
+                entry.User && registeredUserSet.has(entry.User.toLowerCase())
             );
 
-            const embed = await displayChallenge(game, raAPI);
-            await message.channel.send({ embeds: [embed] });
+            // Build the output text
+            let output = `**${selectedConfig.name}**\n`;
+            output += `**Leaderboard ID:** ${selectedConfig.leaderboardId}\n\n`;
+            output += '**User Highscores:**\n\n';
 
-        } catch (error) {
-            console.error('Error in challenge command:', error);
-            await message.reply('Error getting challenge information.');
-        }
-    }
-};
+            // Display entries
+            if (leaderboardEntries.length > 0) {
+                const displayEntries = leaderboardEntries.slice(0, 15);
+                for (const entry of displayEntries) {
+                    output += formatEntry(entry) + '\n';
+                }
+            } else {
+                output += 'No leaderboard entries found for your users.';
+            }
+
+            // Fetch game info for thumbnail using the actual game ID
+            const raAPI = new RetroAchievementsAPI(process.env.RA_USERNAME, process.env.RA_API_KEY);
+            const gameInfo = await raAPI.getGameInfo(selectedConfig.gameId);
+            
+            const embed = new EmbedBuilder()
+                .setColor('#0099ff')
+                .setTitle('Arcade Highscores')
+                .setDescription(output)
+                .setFooter({ text: 'Data provided by RetroAchievements.org' });
+
+            if (gameInfo?.ImageIcon) {
+                embed.setThumbnail(`https://retroachievements.org${gameInfo.Image
