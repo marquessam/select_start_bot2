@@ -16,7 +16,8 @@ function padString(str, length) {
 }
 
 /**
- * Formats the monthly leaderboard output to mimic the old display.
+ * Formats the monthly leaderboard output in plain text,
+ * including crown/medal emojis for the top three.
  */
 async function displayMonthlyLeaderboard() {
   const currentDate = new Date();
@@ -33,7 +34,7 @@ async function displayMonthlyLeaderboard() {
     throw new Error('No monthly game found for current month.');
   }
 
-  // Retrieve all awards for the current game that have progress.
+  // Get all awards for the current game with progress.
   const awards = await Award.find({
     gameId: monthlyGame.gameId,
     month: currentMonth,
@@ -49,7 +50,8 @@ async function displayMonthlyLeaderboard() {
     });
     if (user) {
       const canonicalUsername = user.raUsername;
-      if (!uniqueAwards[canonicalUsername] || award.achievementCount > uniqueAwards[canonicalUsername].achievementCount) {
+      if (!uniqueAwards[canonicalUsername] ||
+          award.achievementCount > uniqueAwards[canonicalUsername].achievementCount) {
         award.raUsername = canonicalUsername;
         uniqueAwards[canonicalUsername] = award;
       }
@@ -59,7 +61,7 @@ async function displayMonthlyLeaderboard() {
   // Sort awards descending by achievement count.
   const sortedAwards = Object.values(uniqueAwards).sort((a, b) => b.achievementCount - a.achievementCount);
 
-  // Handle ties and assign rank numbers.
+  // Handle ties and assign ranks.
   let currentRank = 1;
   let currentScore = -1;
   let increment = 0;
@@ -75,22 +77,31 @@ async function displayMonthlyLeaderboard() {
     }
   });
 
-  // Split into top performers and others.
-  const topPerformers = sortedAwards.slice(0, 3); // show top 3 as "CURRENT CHALLENGE"
+  // Split into top performers and additional participants.
+  const topPerformers = sortedAwards.slice(0, 3);
   const additional = sortedAwards.slice(3);
 
-  // Build the header for the current challenge.
+  // Build header for current challenge.
   const headerText =
     `CURRENT CHALLENGE\n` +
     `GAME: ${monthlyGame.title}\n` +
     `TOTAL ACHIEVEMENTS: ${monthlyGame.numAchievements}\n\n`;
 
-  // Build current challenge text.
+  // Build current challenge text with crown/medal emojis.
   let currentText = '';
   topPerformers.forEach(award => {
-    currentText += `RANK #${award.rank} - ${award.raUsername}\n`;
+    let rankDisplay;
+    if (award.rank === 1) {
+      rankDisplay = "👑";
+    } else if (award.rank === 2) {
+      rankDisplay = "🥈";
+    } else if (award.rank === 3) {
+      rankDisplay = "🥉";
+    } else {
+      rankDisplay = `RANK #${award.rank}`;
+    }
+    currentText += `${rankDisplay} - ${award.raUsername}\n`;
     currentText += `ACHIEVEMENTS: ${award.achievementCount}/${award.totalAchievements}\n`;
-    // Calculate progress percentage.
     const progressPercent = ((award.achievementCount / award.totalAchievements) * 100).toFixed(2);
     currentText += `PROGRESS: ${progressPercent}%\n\n`;
   });
@@ -105,8 +116,7 @@ async function displayMonthlyLeaderboard() {
     });
   }
 
-  // Combine all text sections.
-  const fullText = headerText + "```" + currentText + "```" + (additionalText ? "\n```" + additionalText + "```" : "");
+  const fullText = headerText + "```\n" + currentText + "```" + (additionalText ? "\n```\n" + additionalText + "```" : "");
 
   const embed = new EmbedBuilder()
     .setColor('#0099ff')
@@ -117,7 +127,7 @@ async function displayMonthlyLeaderboard() {
 }
 
 /**
- * Formats the yearly leaderboard in a plain text table.
+ * Formats the yearly leaderboard in a plain text table with crown/medal emojis.
  */
 async function displayYearlyLeaderboard() {
   const currentYear = new Date().getFullYear();
@@ -156,7 +166,7 @@ async function displayYearlyLeaderboard() {
     }
   }
 
-  // Convert to an array and sort by total points.
+  // Convert to an array, filter and sort by total points descending.
   const leaderboard = Object.values(userPoints)
     .filter(user => user.totalPoints > 0)
     .sort((a, b) => b.totalPoints - a.totalPoints);
@@ -177,17 +187,24 @@ async function displayYearlyLeaderboard() {
     }
   });
 
-  // Build the plain text table.
+  // Build the plain text table header.
   let tableText = 'Rank  Player         Pts  P  B  M\n';
   tableText += '--------------------------------\n';
   leaderboard.forEach(user => {
-    const rank = padString(user.rank, 4);
+    let rankDisplay = padString(user.rank, 4);
+    if (user.rank === 1) {
+      rankDisplay = "👑".padEnd(4);
+    } else if (user.rank === 2) {
+      rankDisplay = "🥈".padEnd(4);
+    } else if (user.rank === 3) {
+      rankDisplay = "🥉".padEnd(4);
+    }
     const name = padString(user.username, 13);
     const points = padString(user.totalPoints, 4);
     const p = padString(user.participations, 2);
     const b = padString(user.beaten, 2);
     const m = padString(user.mastered, 2);
-    tableText += `${rank} ${name} ${points} ${p} ${b} ${m}\n`;
+    tableText += `${rankDisplay} ${name} ${points} ${p} ${b} ${m}\n`;
   });
 
   const embed = new EmbedBuilder()
