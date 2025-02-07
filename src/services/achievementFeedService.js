@@ -1,3 +1,4 @@
+// File: src/services/achievementFeedService.js
 const { EmbedBuilder } = require('discord.js');
 const User = require('../models/User');
 const Game = require('../models/Game');
@@ -12,80 +13,97 @@ class AchievementFeedService {
             process.env.RA_USERNAME,
             process.env.RA_API_KEY
         );
+        this.lastCheck = new Date();
+        this.checkInterval = 5 * 60 * 1000; // 5 minutes in milliseconds
     }
 
     async initialize() {
+        this.lastCheck = new Date();
         console.log('Achievement feed service initialized');
     }
 
     async checkRecentAchievements() {
         try {
             console.log('Checking for recent achievements...');
-            const users = await User.find({ isActive: true });
-            
-            // Get current month's challenge games
             const currentDate = new Date();
+            const users = await User.find({ isActive: true });
+
+            // Get current month and year
             const currentMonth = currentDate.getMonth() + 1;
             const currentYear = currentDate.getFullYear();
-            
+
+            // Get current monthly and shadow games
             const challengeGames = await Game.find({
                 month: currentMonth,
-                year: currentYear
+                year: currentYear,
+                type: { $in: ['MONTHLY', 'SHADOW'] }
             });
 
-            // Check each user's progress
+            // Process achievements for each user
             for (const user of users) {
-                for (const game of challengeGames) {
-                    await this.checkUserGameAchievements(user.raUsername, game);
+                try {
+                    await this.checkUserAchievements(user, challengeGames);
+                } catch (error) {
+                    console.error(`Error checking achievements for ${user.raUsername}:`, error);
+                    // Continue to next user if an error occurs
                 }
             }
 
+            // Update the last check timestamp
+            this.lastCheck = currentDate;
+            console.log('Achievement check completed');
         } catch (error) {
             console.error('Error in achievement feed service:', error);
         }
     }
 
-    async checkUserGameAchievements(username, game) {
+    async checkUserAchievements(user, challengeGames) {
         try {
-            // Get or create progress tracking
-            let progress = await PlayerProgress.findOne({
-                raUsername: username,
-                gameId: game.gameId
-            });
+            // Get user's recent achievements
+            const recentAchievements = await this.raAPI.getUserRecentAchievements(user.raUsername);
+            if (!recentAchievements || !Array.isArray(recentAchievements)) {
+                console.log(`No recent achievements for ${user.raUsername}`);
+                return;
+            }
 
-            if (!progress) {
-                progress = new PlayerProgress({
-                    raUsername: username,
-                    gameId: game.gameId,
-                    lastAchievementTimestamp: new Date(0),
-                    announcedAchievements: []
+            // Get or create progress record
+            for (const game of challengeGames) {
+                let progress = await PlayerProgress.findOne({
+                    raUsername: user.raUsername,
+                    gameId: game.gameId
                 });
+
+                if (!progress) {
+                    progress = new PlayerProgress({
+                        raUsername: user.raUsername,
+                        gameId: game.gameId,
+                        lastAchievementTimestamp: new Date(0),
+                        announcedAchievements: []
+                    });
+                }
+
+                // Filter achievements for this game
+                const gameAchievements = recentAchievements.filter(ach => 
+                    String(ach.GameID) === String(game.gameId) &&
+                    new Date(ach.Date) > progress.lastAchievementTimestamp &&
+                    !progress.announcedAchievements.includes(ach.ID)
+                );
+
+                // Announce new achievements
+                for (const achievement of gameAchievements) {
+                    await this.announceAchievement(user.raUsername, achievement, game);
+                    progress.announcedAchievements.push(achievement.ID);
+                }
+
+                // Update progress if new achievements were found
+                if (gameAchievements.length > 0) {
+                    progress.lastAchievementTimestamp = new Date();
+                    await progress.save();
+                }
             }
-
-            // Get recent achievements since last check
-            const recentAchievements = await this.raAPI.getUserRecentAchievements(username);
-            
-            // Filter achievements for this game earned since last check
-            const gameAchievements = recentAchievements.filter(ach => 
-                ach.GameID === game.gameId &&
-                new Date(ach.Date) > progress.lastAchievementTimestamp &&
-                !progress.announcedAchievements.includes(ach.ID)
-            );
-
-            // Announce new achievements
-            for (const achievement of gameAchievements) {
-                await this.announceAchievement(username, achievement, game);
-                progress.announcedAchievements.push(achievement.ID);
-            }
-
-            // Update last check time and save
-            if (gameAchievements.length > 0) {
-                progress.lastAchievementTimestamp = new Date();
-                await progress.save();
-            }
-
         } catch (error) {
-            console.error(`Error checking achievements for ${username} in ${game.title}:`, error);
+            console.error(`Error processing achievements for ${user.raUsername}:`, error);
+            throw error;
         }
     }
 
@@ -97,16 +115,18 @@ class AchievementFeedService {
                 return;
             }
 
-            // Build the embed
+            // Create badge URL (use fall back if needed)
             const badgeUrl = achievement.BadgeName
                 ? `https://media.retroachievements.org/Badge/${achievement.BadgeName}.png`
                 : 'https://media.retroachievements.org/Badge/00000.png';
-            
+
+            // Get user icon URL
             const userIconUrl = `https://media.retroachievements.org/UserPic/${username}.png`;
 
+            // Create embed
             const embed = new EmbedBuilder()
                 .setColor(challengeGame.type === 'SHADOW' ? '#FFD700' : '#00BFFF')
-                .setTitle(achievement.GameTitle)
+                .setTitle(achievement.GameTitle || challengeGame.title)
                 .setAuthor({
                     name: challengeGame.type === 'SHADOW' ? 'SHADOW GAME 🌘' : 'MONTHLY CHALLENGE 🏆',
                     iconURL: 'attachment://game_logo.png'
@@ -122,6 +142,7 @@ class AchievementFeedService {
                 })
                 .setTimestamp();
 
+            // Send the announcement
             await channel.send({ 
                 embeds: [embed],
                 files: [{
