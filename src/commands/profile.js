@@ -25,7 +25,7 @@ module.exports = {
       const raUsername = user.raUsername;
       const raAPI = new RetroAchievementsAPI(process.env.RA_USERNAME, process.env.RA_API_KEY);
 
-      // Create base embed with profile header and thumbnail.
+      // Create base embed
       const embed = new EmbedBuilder()
         .setColor('#0099ff')
         .setTitle(`Profile: ${raUsername}`)
@@ -36,23 +36,20 @@ module.exports = {
       const currentMonth = currentDate.getMonth() + 1;
       const currentYear = currentDate.getFullYear();
 
-      // Get current games (both monthly and possibly shadow) for this month.
+      // Get current games for this month.
       const currentGames = await Game.find({
         month: currentMonth,
         year: currentYear
       });
 
-      // For each current game, add a field with the live progress.
+      // Add a field for each active game with live progress.
       for (const game of currentGames) {
-        // Find any stored award for this user & game.
         const award = await Award.findOne({
           raUsername,
           gameId: game.gameId,
           month: currentMonth,
           year: currentYear
         });
-
-        // Get live progress from API.
         const progress = await raAPI.getUserGameProgress(raUsername, game.gameId);
         const gameProgress = {
           title: game.title,
@@ -62,12 +59,10 @@ module.exports = {
           completion: progress.userCompletion || "0.00%",
           award: award ? award.award : AwardType.NONE
         };
-
         // If the award is participation, show only the emoji.
         const awardDisplay = (gameProgress.award === AwardType.PARTICIPATION)
           ? `${AwardFunctions.getEmoji(gameProgress.award)}`
           : `${AwardFunctions.getEmoji(gameProgress.award)} ${AwardFunctions.getName(gameProgress.award)}`;
-
         embed.addFields({
           name: `${game.type === 'SHADOW' ? '🌘' : '🏆'} ${gameProgress.title}`,
           value:
@@ -77,16 +72,18 @@ module.exports = {
         });
       }
 
-      // Add a divider field to separate current challenge progress from yearly stats.
+      // Insert a divider and a Community Awards section.
       embed.addFields({ name: '\u200b', value: '━━━━━━━━━━━━━━━━━━━━━━', inline: false });
+      embed.addFields({ name: '🏆 Community Awards', value: 'None', inline: false });
 
-      // Process yearly awards.
+      // Add the game lists (breakdown by award type).
+      const formatGameList = games => games.length ? games.map(g => `• ${g}`).join('\n') : 'None';
+      
+      // Prepare yearly awards breakdown.
       const yearlyAwards = await Award.find({
         raUsername,
         year: currentYear
       });
-
-      // Initialize yearly statistics.
       const yearStats = {
         totalPoints: 0,
         participationCount: 0,
@@ -95,34 +92,31 @@ module.exports = {
         monthlyGames: 0,
         shadowGames: 0
       };
-
-      // Create arrays to hold game titles by award type.
       const participationGames = [];
       const beatenGames = [];
       const masteredGames = [];
 
       for (const award of yearlyAwards) {
-        // Get the game info from the database.
-        const game = await Game.findOne({ gameId: award.gameId, year: currentYear });
+        const game = await Game.findOne({
+          gameId: award.gameId,
+          year: currentYear
+        });
         if (!game) continue;
-
         yearStats.totalPoints += AwardFunctions.getPoints(award.award);
         if (game.type === 'MONTHLY') {
           yearStats.monthlyGames++;
         } else {
           yearStats.shadowGames++;
         }
-
-        // Use a switch statement to count and list games.
         switch (award.award) {
           case AwardType.MASTERED:
             yearStats.masteredCount++;
             masteredGames.push(game.title);
-            // Note: fall through intended
+            // Fall through intended.
           case AwardType.BEATEN:
             yearStats.beatenCount++;
             beatenGames.push(game.title);
-            // Note: fall through intended
+            // Fall through intended.
           case AwardType.PARTICIPATION:
             yearStats.participationCount++;
             participationGames.push(game.title);
@@ -130,13 +124,7 @@ module.exports = {
         }
       }
 
-      // Add a divider before showing game lists.
-      embed.addFields({ name: '\u200b', value: '━━━━━━━━━━━━━━━━━━━━━━', inline: false });
-
-      // Helper to format game lists.
-      const formatGameList = games => games.length ? games.map(g => `• ${g}`).join('\n') : 'None';
-
-      // Add game lists for each award type.
+      // Add game lists for award breakdown.
       embed.addFields({
         name: '🏁 Games Participated (1pt)',
         value: formatGameList(participationGames)
@@ -150,7 +138,7 @@ module.exports = {
         value: formatGameList(masteredGames)
       });
 
-      // Add another divider before the overall statistics.
+      // Insert a divider before overall statistics.
       embed.addFields({ name: '\u200b', value: '━━━━━━━━━━━━━━━━━━━━━━', inline: false });
 
       // Add yearly statistics.
@@ -165,7 +153,7 @@ module.exports = {
         value: statsText
       });
 
-      // Finally, add total points at the very bottom.
+      // Finally, add total points.
       embed.addFields({
         name: '💎 Total Points',
         value: `**${yearStats.totalPoints} points earned in 2025**`
