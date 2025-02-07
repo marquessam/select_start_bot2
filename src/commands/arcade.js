@@ -23,8 +23,8 @@ const arcadeConfigs = [
 ];
 
 /**
- * Normalize leaderboard entries.
- * Ensures that usernames are trimmed and converted to lowercase.
+ * Normalizes and processes leaderboard entries.
+ * Ensures that usernames are trimmed and converted to lowercase so that filtering works correctly.
  */
 async function fetchLeaderboardEntries(leaderboardId) {
     const raAPI = new RetroAchievementsAPI(process.env.RA_USERNAME, process.env.RA_API_KEY);
@@ -50,10 +50,7 @@ async function fetchLeaderboardEntries(leaderboardId) {
 
         // Process and sanitize each entry.
         const validEntries = entries
-            .filter(entry => {
-                // Only include entries that have a defined user and score.
-                return entry && (entry.User || entry.user) && (entry.Score || entry.score);
-            })
+            .filter(entry => entry && (entry.User || entry.user) && (entry.Score || entry.score))
             .map(entry => {
                 const rawUser = entry.User || entry.user || '';
                 return {
@@ -70,7 +67,10 @@ async function fetchLeaderboardEntries(leaderboardId) {
         // Sort by rank.
         validEntries.sort((a, b) => a.Rank - b.Rank);
 
-        console.log(`Processed ${validEntries.length} valid leaderboard entries:`, validEntries.map(e => e.User));
+        console.log(
+            `Processed ${validEntries.length} valid leaderboard entries:`,
+            validEntries.map(e => e.User)
+        );
         return validEntries;
     } catch (error) {
         console.error('Error fetching leaderboard:', error);
@@ -133,11 +133,18 @@ module.exports = {
             console.log('Registered Users from DB:', registeredUsers);
             const registeredUserSet = new Set(registeredUsers.map(u => u.toLowerCase()));
 
-            console.log('Leaderboard entries before filtering:', leaderboardEntries.map(e => e.User));
+            console.log(
+                'Leaderboard entries before filtering:',
+                leaderboardEntries.map(e => e.User)
+            );
+            // Filter to only include leaderboard entries that have a matching registered user.
             leaderboardEntries = leaderboardEntries.filter(entry => {
                 return entry.User && registeredUserSet.has(entry.User.toLowerCase());
             });
-            console.log('Leaderboard entries after filtering:', leaderboardEntries.map(e => e.User));
+            console.log(
+                'Leaderboard entries after filtering:',
+                leaderboardEntries.map(e => e.User)
+            );
 
             let output = `**${selectedConfig.name}**\n\n`;
             output += '**User Highscores:**\n\n';
