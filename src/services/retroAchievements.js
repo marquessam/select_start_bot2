@@ -180,22 +180,32 @@ class RetroAchievementsAPI {
         return data;
     }
 
-    async getLeaderboardEntries(gameId, leaderboardId = 1) {
-        const cacheKey = `leaderboard-${gameId}-${leaderboardId}`;
+    async getLeaderboardInfo(leaderboardId) {
+        const cacheKey = `leaderboard-${leaderboardId}`;
         const cachedData = this.leaderboardCache.get(cacheKey);
         
         if (cachedData) {
-            console.log(`Using cached leaderboard data for game ${gameId}`);
+            console.log(`Using cached leaderboard data for ID ${leaderboardId}`);
             return cachedData;
         }
 
-        console.info(`Fetching leaderboard entries for game ${gameId}`);
-        const data = await this.makeRequest('API_GetGameRankAndScore.php', {
-            g: gameId,
-            t: leaderboardId
+        console.info(`Fetching leaderboard info for ID ${leaderboardId}`);
+        const data = await this.makeRequest('API_GetLeaderboardInfo.php', {
+            i: leaderboardId
         });
 
-        this.leaderboardCache.set(cacheKey, data);
+        // Validate and structure the data
+        if (data && data.LeaderboardData) {
+            const structuredData = {
+                Title: data.LeaderboardData.Title,
+                Description: data.LeaderboardData.Description,
+                Format: data.LeaderboardData.Format,
+                Entries: data.Entries || []
+            };
+            this.leaderboardCache.set(cacheKey, structuredData);
+            return structuredData;
+        }
+
         return data;
     }
 
@@ -218,10 +228,10 @@ class RetroAchievementsAPI {
         return this.getUserProfile(username);
     }
 
-    async refreshLeaderboard(gameId, leaderboardId = 1) {
-        const cacheKey = `leaderboard-${gameId}-${leaderboardId}`;
+    async refreshLeaderboard(leaderboardId) {
+        const cacheKey = `leaderboard-${leaderboardId}`;
         this.leaderboardCache.delete(cacheKey);
-        return this.getLeaderboardEntries(gameId, leaderboardId);
+        return this.getLeaderboardInfo(leaderboardId);
     }
 }
 
