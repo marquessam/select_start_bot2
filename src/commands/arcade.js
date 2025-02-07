@@ -82,10 +82,8 @@ function formatEntry(entry) {
 }
 
 module.exports = {
-    data: {
-        name: 'arcade',
-        description: 'Displays highscore lists for preset arcade games (for registered users only)'
-    },
+    name: 'arcade',
+    description: 'Displays highscore lists for preset arcade games (for registered users only)',
     async execute(message, args) {
         try {
             // If no argument is provided, list available leaderboards
