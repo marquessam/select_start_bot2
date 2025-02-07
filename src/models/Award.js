@@ -1,53 +1,35 @@
 // File: src/models/Award.js
 const mongoose = require('mongoose');
+const { AwardType } = require('../enums/AwardType');
 
 const awardSchema = new mongoose.Schema({
     raUsername: {
         type: String,
         required: true,
-        set: v => v.toLowerCase(),  // Normalize username on save
+        set: v => v.toLowerCase()  // Normalize username on save
     },
     gameId: {
         type: String,
-        required: true,
+        required: true
     },
     month: {
         type: Number,
-        required: true,
+        required: true
     },
     year: {
         type: Number,
-        required: true,
+        required: true
     },
-    achievementCount: {
+    award: {
         type: Number,
-        required: true,
+        enum: Object.values(AwardType),
+        default: AwardType.NONE,
+        required: true
     },
-    totalAchievements: {
-        type: Number,
-        required: true,
-    },
-    userCompletion: {
-        type: String,
-        required: true,
-    },
-    awards: {
-        participation: {
-            type: Boolean,
-            default: false
-        },
-        beaten: {
-            type: Boolean,
-            default: false
-        },
-        mastered: {
-            type: Boolean,
-            default: false
-        }
-    },
-    lastUpdated: {
+    lastChecked: {
         type: Date,
-        default: Date.now,
+        required: true,
+        default: Date.now
     }
 });
 
