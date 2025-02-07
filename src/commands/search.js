@@ -6,58 +6,19 @@ const RetroAchievementsAPI = require('../services/retroAchievements');
 const searchCache = new Map();
 
 /**
- * Generates a table using Unicode box-drawing characters.
- * Safely handles undefined or null cell values.
- *
- * @param {string[]} headers - Array of header titles.
- * @param {Array<Array<string|number>>} rows - Array of rows (each row is an array of cell values).
- * @returns {string} - The formatted table.
- */
-function generateTable(headers, rows) {
-  // Determine maximum width for each column, safely handling undefined/null values.
-  const colWidths = headers.map((header, i) =>
-    Math.max(header.length, ...rows.map(row => ((row[i] === undefined || row[i] === null) ? "" : row[i]).toString().length))
-  );
-
-  const horizontalLine = (left, mid, right) => {
-    let line = left;
-    colWidths.forEach((width, index) => {
-      line += "─".repeat(width + 2) + (index < colWidths.length - 1 ? mid : right);
-    });
-    return line;
-  };
-
-  const topBorder = horizontalLine("┌", "┬", "┐");
-  const headerSeparator = horizontalLine("├", "┼", "┤");
-  const bottomBorder = horizontalLine("└", "┴", "┘");
-
-  const formatRow = (row) => {
-    let rowStr = "│";
-    row.forEach((cell, index) => {
-      // If the cell is undefined or null, convert it to an empty string.
-      cell = (cell === undefined || cell === null) ? "" : cell;
-      rowStr += " " + cell.toString().padEnd(colWidths[index]) + " │";
-    });
-    return rowStr;
-  };
-
-  const headerRow = formatRow(headers);
-  const rowLines = rows.map(formatRow);
-
-  return [topBorder, headerRow, headerSeparator, ...rowLines, bottomBorder].join("\n");
-}
-
-/**
- * Displays detailed game information in an embed.
+ * Displays detailed game information in an embed using clean, plain text formatting.
+ * @param {object} gameInfo - The game information object returned from the API.
+ * @param {Message} message - The Discord message object.
+ * @param {RetroAchievementsAPI} raAPI - An instance of the RetroAchievementsAPI.
  */
 async function displayGameInfo(gameInfo, message, raAPI) {
-  // Format release date, if available.
-  const releaseDate = gameInfo.Released 
+  // Format the release date, if available.
+  const releaseDate = gameInfo.Released
     ? new Date(gameInfo.Released).toLocaleDateString('en-US', {
         year: 'numeric',
         month: 'long',
         day: 'numeric'
-      }) 
+      })
     : "Unknown";
 
   const embed = new EmbedBuilder()
@@ -72,38 +33,33 @@ async function displayGameInfo(gameInfo, message, raAPI) {
     embed.setImage(`https://retroachievements.org${gameInfo.ImageBoxArt}`);
   }
 
-  // Format game details as a table.
-  const infoTable = generateTable(
-    ["Field", "Value"],
-    [
-      ["Console", gameInfo.Console || "Unknown"],
-      ["Developer", gameInfo.Developer || "Unknown"],
-      ["Publisher", gameInfo.Publisher || "Unknown"],
-      ["Genre", gameInfo.Genre || "Unknown"],
-      ["Release Date", releaseDate],
-      ["Game ID", gameInfo.ID]
-    ]
-  );
-  embed.addFields({ name: "Game Information", value: "```" + infoTable + "```" });
+  // Format game details as plain text with Markdown.
+  const gameInfoText =
+    `**Console:** ${gameInfo.Console || "Unknown"}\n` +
+    `**Developer:** ${gameInfo.Developer || "Unknown"}\n` +
+    `**Publisher:** ${gameInfo.Publisher || "Unknown"}\n` +
+    `**Genre:** ${gameInfo.Genre || "Unknown"}\n` +
+    `**Release Date:** ${releaseDate}\n` +
+    `**Game ID:** ${gameInfo.ID}`;
 
-  // Try to get achievement information.
+  embed.addFields({ name: "Game Information", value: gameInfoText });
+
+  // Attempt to get achievement information.
   try {
     const progress = await raAPI.getUserProgress(process.env.RA_USERNAME, gameInfo.ID);
     if (progress && progress[gameInfo.ID]) {
       const gameProgress = progress[gameInfo.ID];
-      // Format achievement info as a table.
-      const achievementTable = generateTable(
-        ["Metric", "Value"],
-        [
-          ["Total Achievements", gameProgress.numPossibleAchievements || 0],
-          ["Total Points", gameProgress.possibleScore || 0]
-        ]
-      );
-      embed.addFields({ name: "Achievement Information", value: "```" + achievementTable + "```" });
+      const achievementInfoText =
+        `**Total Achievements:** ${gameProgress.numPossibleAchievements || 0}\n` +
+        `**Total Points:** ${gameProgress.possibleScore || 0}`;
+      embed.addFields({ name: "Achievement Information", value: achievementInfoText });
     }
   } catch (error) {
     console.error("Error getting achievement info:", error);
-    embed.addFields({ name: "Achievement Information", value: "Achievement information currently unavailable" });
+    embed.addFields({
+      name: "Achievement Information",
+      value: "Achievement information currently unavailable"
+    });
   }
 
   await message.channel.send({ embeds: [embed] });
@@ -111,6 +67,12 @@ async function displayGameInfo(gameInfo, message, raAPI) {
 
 /**
  * Handles a game search based on a search term.
+ * If the search term is numeric, it first attempts a direct ID lookup.
+ * Otherwise, it performs a fuzzy search and lets the user select from up to 10 options.
+ *
+ * @param {Message} message - The Discord message object.
+ * @param {string} searchTerm - The search term provided by the user.
+ * @param {RetroAchievementsAPI} raAPI - An instance of the RetroAchievementsAPI.
  */
 async function handleSearch(message, searchTerm, raAPI) {
   // If searchTerm is a number, attempt direct ID lookup.
@@ -151,10 +113,10 @@ async function handleSearch(message, searchTerm, raAPI) {
       return;
     }
 
-    // Create list of options (limit to top 10).
-    const optionsList = games.slice(0, 10).map((game, index) => 
-      `${index + 1}. ${game.title} (${game.console})`
-    ).join("\n");
+    // Create a numbered list of options (limit to top 10).
+    const optionsList = games.slice(0, 10)
+      .map((game, index) => `${index + 1}. ${game.title} (${game.console})`)
+      .join("\n");
 
     const selectionEmbed = new EmbedBuilder()
       .setColor("#0099ff")
@@ -164,15 +126,16 @@ async function handleSearch(message, searchTerm, raAPI) {
 
     await message.channel.send({ embeds: [selectionEmbed] });
 
-    // Store the games in cache for the response handler.
+    // Cache the search results for later retrieval.
     searchCache.set(message.author.id, {
       games: games.slice(0, 10),
       timestamp: Date.now()
     });
 
     // Set up a message collector to capture the user’s selection.
-    const filter = m => m.author.id === message.author.id && 
-      (m.content.toLowerCase() === "cancel" || (Number(m.content) >= 1 && Number(m.content) <= games.length));
+    const filter = m => m.author.id === message.author.id &&
+      (m.content.toLowerCase() === "cancel" ||
+       (Number(m.content) >= 1 && Number(m.content) <= games.length));
 
     const collector = message.channel.createMessageCollector({
       filter,
