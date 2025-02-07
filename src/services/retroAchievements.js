@@ -1,5 +1,6 @@
 // File: src/services/retroAchievements.js
 const axios = require('axios');
+const Cache = require('../utils/cache');
 
 class RetroAchievementsAPI {
     constructor(username, apiKey) {
@@ -10,9 +11,14 @@ class RetroAchievementsAPI {
         this.apiKey = apiKey;
         this.baseUrl = 'https://retroachievements.org/API';
         this.lastRequestTime = Date.now();
-        this.minRequestInterval = 3000; // Increased to 3 seconds
-        this.retryDelay = 5000; // 5 seconds before retry
+        this.minRequestInterval = 3000; // 3 seconds between requests
+        this.retryDelay = 5000; // 5 seconds before retry on rate limit
         this.maxRetries = 3;
+
+        // Initialize cache with 5-minute TTL
+        this.progressCache = new Cache(300000);
+        this.gameInfoCache = new Cache(3600000); // 1 hour for game info
+        this.achievementCache = new Cache(60000); // 1 minute for recent achievements
 
         this.axiosInstance = axios.create({
             baseURL: this.baseUrl,
@@ -66,22 +72,44 @@ class RetroAchievementsAPI {
             }
             
             console.error(`API request to ${endpoint} failed: ${error.message}`);
+            if (error.response) {
+                console.error('Response status:', error.response.status);
+            }
             throw error;
         }
     }
 
-    // Rest of your methods remain the same
     async getGameInfo(gameId) {
-        return this.makeRequest('API_GetGame.php', { i: gameId });
+        const cacheKey = `game-${gameId}`;
+        const cachedData = this.gameInfoCache.get(cacheKey);
+        
+        if (cachedData) {
+            console.log(`Using cached game info for game ${gameId}`);
+            return cachedData;
+        }
+
+        console.info(`Fetching game info for game ${gameId}`);
+        const data = await this.makeRequest('API_GetGame.php', { i: gameId });
+        this.gameInfoCache.set(cacheKey, data);
+        return data;
     }
 
     async getUserGameProgress(username, gameId) {
+        const cacheKey = `progress-${username}-${gameId}`;
+        const cachedData = this.progressCache.get(cacheKey);
+        
+        if (cachedData) {
+            console.log(`Using cached progress data for ${username} in game ${gameId}`);
+            return cachedData;
+        }
+
+        console.info(`Fetching progress for ${username} in game ${gameId}`);
         const data = await this.makeRequest('API_GetGameInfoAndUserProgress.php', {
             u: username,
             g: gameId,
         });
 
-        return {
+        const progressData = {
             numAchievements: data.NumAchievements,
             earnedAchievements: data.NumAwardedToUser,
             totalAchievements: data.NumAchievements,
@@ -93,24 +121,81 @@ class RetroAchievementsAPI {
             points: data.Points,
             possibleScore: data.PossibleScore,
         };
-    }
 
-    async getGameList(searchTerm) {
-        return this.makeRequest('API_GetGameList.php', {
-            f: searchTerm,
-            h: 1,
-        });
+        this.progressCache.set(cacheKey, progressData);
+        return progressData;
     }
 
     async getUserRecentAchievements(username, count = 50) {
-        return this.makeRequest('API_GetUserRecentAchievements.php', {
+        const cacheKey = `recent-${username}`;
+        const cachedData = this.achievementCache.get(cacheKey);
+        
+        if (cachedData) {
+            console.log(`Using cached recent achievements for ${username}`);
+            return cachedData;
+        }
+
+        console.info(`Fetching recent achievements for ${username}`);
+        const data = await this.makeRequest('API_GetUserRecentAchievements.php', {
             u: username,
             c: count,
         });
+
+        this.achievementCache.set(cacheKey, data);
+        return data;
+    }
+
+    async getGameList(searchTerm) {
+        const cacheKey = `search-${searchTerm}`;
+        const cachedData = this.gameInfoCache.get(cacheKey);
+        
+        if (cachedData) {
+            console.log(`Using cached search results for "${searchTerm}"`);
+            return cachedData;
+        }
+
+        console.info(`Searching for games matching: ${searchTerm}`);
+        const data = await this.makeRequest('API_GetGameList.php', {
+            f: searchTerm,
+            h: 1,
+        });
+
+        this.gameInfoCache.set(cacheKey, data);
+        return data;
     }
 
     async getUserProfile(username) {
-        return this.makeRequest('API_GetUserProfile.php', { u: username });
+        const cacheKey = `profile-${username}`;
+        const cachedData = this.progressCache.get(cacheKey);
+        
+        if (cachedData) {
+            console.log(`Using cached profile data for ${username}`);
+            return cachedData;
+        }
+
+        console.info(`Fetching profile for ${username}`);
+        const data = await this.makeRequest('API_GetUserProfile.php', { u: username });
+        this.progressCache.set(cacheKey, data);
+        return data;
+    }
+
+    // Force refresh methods to bypass cache
+    async refreshUserGameProgress(username, gameId) {
+        const cacheKey = `progress-${username}-${gameId}`;
+        this.progressCache.delete(cacheKey);
+        return this.getUserGameProgress(username, gameId);
+    }
+
+    async refreshGameInfo(gameId) {
+        const cacheKey = `game-${gameId}`;
+        this.gameInfoCache.delete(cacheKey);
+        return this.getGameInfo(gameId);
+    }
+
+    async refreshUserProfile(username) {
+        const cacheKey = `profile-${username}`;
+        this.progressCache.delete(cacheKey);
+        return this.getUserProfile(username);
     }
 }
 
