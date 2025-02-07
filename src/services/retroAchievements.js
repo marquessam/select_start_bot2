@@ -16,15 +16,10 @@ class RetroAchievementsAPI {
         this.maxRetries = 3;
 
         // Initialize caches with different TTLs
-        this.progressCache = new Cache(300000);    // 5 minutes for progress
+        this.progressCache = new Cache(300000);    // 5 minutes for progress and similar data
         this.gameInfoCache = new Cache(3600000);     // 1 hour for game info
         this.achievementCache = new Cache(60000);    // 1 minute for achievements
-        this.leaderboardCache = new Cache(300000);     // 5 minutes for leaderboards
-
-        this.axiosInstance = axios.create({
-            baseURL: this.baseUrl,
-            timeout: 10000,
-        });
+        this.leaderboardCache = new Cache(300000);   // 5 minutes for leaderboards
     }
 
     sleep(ms) {
@@ -34,13 +29,13 @@ class RetroAchievementsAPI {
     async waitForRateLimit() {
         const now = Date.now();
         const timeSinceLastRequest = now - this.lastRequestTime;
-        
+
         if (timeSinceLastRequest < this.minRequestInterval) {
             const waitTime = this.minRequestInterval - timeSinceLastRequest;
             console.info(`Rate limiting: waiting ${waitTime}ms before next request`);
             await this.sleep(waitTime);
         }
-        
+
         this.lastRequestTime = Date.now();
     }
 
@@ -56,11 +51,9 @@ class RetroAchievementsAPI {
         try {
             // Log request without sensitive data
             const safeParams = { ...params };
-            delete safeParams.z;
-            delete safeParams.y;
             console.info(`Making request to ${endpoint} with params:`, safeParams);
 
-            const response = await this.axiosInstance.get(`/${endpoint}`, { params: fullParams });
+            const response = await axios.get(`${this.baseUrl}/${endpoint}`, { params: fullParams });
             return response.data;
         } catch (error) {
             // Handle rate limiting
@@ -71,7 +64,7 @@ class RetroAchievementsAPI {
                     return this.makeRequest(endpoint, params, retryCount + 1);
                 }
             }
-            
+
             console.error(`API request to ${endpoint} failed: ${error.message}`);
             if (error.response) {
                 console.error('Response status:', error.response.status);
@@ -83,7 +76,7 @@ class RetroAchievementsAPI {
     async getGameInfo(gameId) {
         const cacheKey = `game-${gameId}`;
         const cachedData = this.gameInfoCache.get(cacheKey);
-        
+
         if (cachedData) {
             console.log(`Using cached game info for game ${gameId}`);
             return cachedData;
@@ -98,7 +91,7 @@ class RetroAchievementsAPI {
     async getUserGameProgress(username, gameId) {
         const cacheKey = `progress-${username}-${gameId}`;
         const cachedData = this.progressCache.get(cacheKey);
-        
+
         if (cachedData) {
             console.log(`Using cached progress data for ${username} in game ${gameId}`);
             return cachedData;
@@ -130,7 +123,7 @@ class RetroAchievementsAPI {
     async getUserRecentAchievements(username, count = 50) {
         const cacheKey = `recent-${username}`;
         const cachedData = this.achievementCache.get(cacheKey);
-        
+
         if (cachedData) {
             console.log(`Using cached recent achievements for ${username}`);
             return cachedData;
@@ -145,11 +138,11 @@ class RetroAchievementsAPI {
         this.achievementCache.set(cacheKey, data);
         return data;
     }
-
+    
     async getGameList(searchTerm) {
         const cacheKey = `search-${searchTerm}`;
         const cachedData = this.gameInfoCache.get(cacheKey);
-        
+
         if (cachedData) {
             console.log(`Using cached search results for "${searchTerm}"`);
             return cachedData;
@@ -168,7 +161,7 @@ class RetroAchievementsAPI {
     async getUserProfile(username) {
         const cacheKey = `profile-${username}`;
         const cachedData = this.progressCache.get(cacheKey);
-        
+
         if (cachedData) {
             console.log(`Using cached profile data for ${username}`);
             return cachedData;
@@ -183,7 +176,7 @@ class RetroAchievementsAPI {
     async getLeaderboardInfo(leaderboardId) {
         const cacheKey = `leaderboard-${leaderboardId}`;
         const cachedData = this.leaderboardCache.get(cacheKey);
-        
+
         if (cachedData) {
             console.log(`Using cached leaderboard data for ID ${leaderboardId}`);
             return cachedData;
@@ -198,7 +191,7 @@ class RetroAchievementsAPI {
 
             if (data) {
                 this.leaderboardCache.set(cacheKey, data);
-                console.log(`Successfully fetched leaderboard ${leaderboardId} with ${data.length || 0} entries`);
+                console.log(`Successfully fetched leaderboard ${leaderboardId}`);
             }
 
             return data;
@@ -208,7 +201,52 @@ class RetroAchievementsAPI {
         }
     }
 
-    // Force refresh methods to bypass cache
+    // New method for retrieving a user's game leaderboards.
+    // This endpoint returns the leaderboards for the given game that the user has submitted scores for.
+    async getUserGameLeaderboards(gameId, username, count = 200, offset = 0) {
+        const cacheKey = `userLeaderboards-${username}-${gameId}-${count}-${offset}`;
+        const cachedData = this.progressCache.get(cacheKey);
+
+        if (cachedData) {
+            console.log(`Using cached user game leaderboards for ${username} and game ${gameId}`);
+            return cachedData;
+        }
+
+        console.info(`Fetching user game leaderboards for user ${username}, game ${gameId}`);
+        const data = await this.makeRequest('API_GetUserGameLeaderboards.php', {
+            i: gameId,
+            u: username,
+            c: count,
+            o: offset,
+        });
+        
+        // The expected response is a JSON object:
+        // {
+        //   "Count": <number>,
+        //   "Total": <number>,
+        //   "Results": [
+        //     {
+        //       "ID": <number>,
+        //       "RankAsc": <boolean>,
+        //       "Title": <string>,
+        //       "Description": <string>,
+        //       "Format": <string>,
+        //       "UserEntry": {
+        //         "User": <string>,
+        //         "Score": <number>,
+        //         "FormattedScore": <string>,
+        //         "Rank": <number>,
+        //         "DateSubmitted": <string>
+        //       }
+        //     },
+        //     ...
+        //   ]
+        // }
+        this.progressCache.set(cacheKey, data);
+        return data;
+    }
+
+    // Force refresh methods to bypass cache.
     async refreshUserGameProgress(username, gameId) {
         const cacheKey = `progress-${username}-${gameId}`;
         this.progressCache.delete(cacheKey);
