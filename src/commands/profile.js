@@ -2,10 +2,6 @@
 const { EmbedBuilder } = require('discord.js');
 const Game = require('../models/Game');
 const Award = require('../models/Award');
-const User = require('../models// File: src/commands/profile.js
-const { EmbedBuilder } = require('discord.js');
-const Game = require('../models/Game');
-const Award = require('../models/Award');
 const User = require('../models/User');
 const { AwardType, AwardFunctions } = require('../enums/AwardType');
 
