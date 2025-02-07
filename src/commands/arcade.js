@@ -20,6 +20,46 @@ const arcadeConfigs = [
 ];
 
 /**
+ * Converts a number to an ordinal string (1 -> "1st", 2 -> "2nd", etc.).
+ * @param {number} i 
+ * @returns {string}
+ */
+function ordinalSuffixOf(i) {
+  let j = i % 10,
+      k = i % 100;
+  if (j === 1 && k !== 11) {
+    return i + "st";
+  }
+  if (j === 2 && k !== 12) {
+    return i + "nd";
+  }
+  if (j === 3 && k !== 13) {
+    return i + "rd";
+  }
+  return i + "th";
+}
+
+/**
+ * Formats a Date string into "DD MMM YYYY, HH:mm" format.
+ * @param {string} dateStr 
+ * @returns {string}
+ */
+function formatDate(dateStr) {
+  const date = new Date(dateStr);
+  // Options for formatting (adjust as needed)
+  const options = {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    timeZone: 'UTC' // Adjust if needed
+  };
+  return date.toLocaleString('en-GB', options).replace(',', '');
+}
+
+/**
  * Fetches leaderboard entries for a given game using the RetroAchievementsAPI service.
  * @param {string|number} gameId - The game ID to look up.
  * @returns {Promise<Array>} - Returns an array of leaderboard entries.
@@ -41,26 +81,22 @@ async function fetchLeaderboardEntries(gameId) {
 }
 
 /**
- * Formats a single leaderboard entry line.
- * Adds a crown emoji for 1st, second medal for 2nd, and third medal for 3rd.
- * @param {object} entry - A leaderboard entry.
- * @returns {string} - The formatted string.
+ * Formats a leaderboard entry line as:
+ * "<ordinal> <Username>: <FormattedScore>\t<FormattedDate>"
+ * Example: "1st ShminalShmantasy: 1:02.91   05 Feb 2025, 13:13"
+ * @param {object} entry 
+ * @returns {string}
  */
 function formatEntry(entry) {
-  let rankEmoji = '';
-  if (entry.Rank === 1) {
-    rankEmoji = '👑';
-  } else if (entry.Rank === 2) {
-    rankEmoji = '🥈';
-  } else if (entry.Rank === 3) {
-    rankEmoji = '🥉';
-  }
-  return `${rankEmoji} Rank #${entry.Rank} - ${entry.Username}: ${entry.Score}`;
+  const ordinal = ordinalSuffixOf(entry.Rank);
+  const score = entry.FormattedScore || entry.Score; // Use FormattedScore if available.
+  const date = formatDate(entry.DateSubmitted);
+  return `${ordinal} ${entry.User}: ${score}\t${date}`;
 }
 
 module.exports = {
   name: 'arcade',
-  description: 'Displays highscore lists for preset arcade games',
+  description: 'Displays highscore lists for preset arcade games (for registered users only)',
   async execute(message, args) {
     try {
       // If no argument is provided, list available leaderboards.
@@ -91,32 +127,30 @@ module.exports = {
         return message.reply('Unexpected data format from the leaderboard API.');
       }
 
-      // Sort entries by Rank (ascending).
-      leaderboardEntries.sort((a, b) => a.Rank - b.Rank);
-
       // Retrieve registered users from the database.
       const users = await User.find({});
       const registeredUserSet = new Set(users.map(u => u.raUsername.toLowerCase()));
 
-      // Mark each entry if the user is registered.
-      leaderboardEntries = leaderboardEntries.map(entry => {
-        const isRegistered = registeredUserSet.has(entry.Username.toLowerCase());
-        return { ...entry, Registered: isRegistered };
+      // Filter entries to only include those from registered users.
+      leaderboardEntries = leaderboardEntries.filter(entry => {
+        return registeredUserSet.has(entry.User.toLowerCase());
       });
+
+      // Sort entries by Rank (ascending).
+      leaderboardEntries.sort((a, b) => a.Rank - b.Rank);
 
       // Build the output text.
       let output = `**${selectedConfig.name}**\n`;
       output += `**Game ID:** ${selectedConfig.id}\n\n`;
       output += '**User Highscores:**\n\n';
 
-      // Display up to the top 15 entries.
+      // Display each entry (for up to the top 15, if desired).
       const displayEntries = leaderboardEntries.slice(0, 15);
       for (const entry of displayEntries) {
-        const line = formatEntry(entry);
-        output += entry.Registered ? `**${line}**\n` : `${line}\n`;
+        output += formatEntry(entry) + '\n';
       }
       if (displayEntries.length === 0) {
-        output += 'No leaderboard entries found.';
+        output += 'No leaderboard entries found for your users.';
       }
 
       const embed = new EmbedBuilder()
