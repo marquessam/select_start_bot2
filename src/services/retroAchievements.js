@@ -58,7 +58,7 @@ class RetroAchievementsAPI {
             const safeParams = { ...params };
             delete safeParams.z;
             delete safeParams.y;
-            console.info(`Making request to ${endpoint}`);
+            console.info(`Making request to ${endpoint} with params:`, safeParams);
 
             const response = await this.axiosInstance.get(`/${endpoint}`, { params: fullParams });
             return response.data;
@@ -190,16 +190,22 @@ class RetroAchievementsAPI {
         }
 
         console.info(`Fetching leaderboard info for ID ${leaderboardId}`);
-        const data = await this.makeRequest('API_GetLBEntries.php', {
-            i: leaderboardId,
-            c: 50  // Get top 50 entries
-        });
+        try {
+            const data = await this.makeRequest('API_GetLeaderboardEntries.php', {
+                i: leaderboardId,
+                c: 50  // Get top 50 entries
+            });
 
-        if (data) {
-            this.leaderboardCache.set(cacheKey, data);
+            if (data) {
+                this.leaderboardCache.set(cacheKey, data);
+                console.log(`Successfully fetched leaderboard ${leaderboardId} with ${data.length || 0} entries`);
+            }
+
+            return data;
+        } catch (error) {
+            console.error(`Error fetching leaderboard ${leaderboardId}:`, error);
+            throw error;
         }
-
-        return data;
     }
 
     // Force refresh methods to bypass cache
