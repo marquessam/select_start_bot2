@@ -30,10 +30,11 @@ async function fetchLeaderboardEntries(gameId) {
   console.log('API response data:', data); // Debug logging
 
   let entries = data;
-  // If the data is not an array but is an object, convert its values to an array.
+  // If data is an object but not an array, convert its values to an array.
   if (!Array.isArray(entries) && entries && typeof entries === 'object') {
     entries = Object.values(entries);
   }
+
   if (!Array.isArray(entries)) {
     if (entries && entries.message) {
       throw new Error(`API error: ${entries.message}`);
@@ -59,12 +60,14 @@ function formatEntry(entry) {
   } else if (entry.Rank === 3) {
     rankEmoji = '🥉';
   }
-  return `${rankEmoji} Rank #${entry.Rank} - ${entry.User}: ${entry.Score}`;
+  // Use entry.User or fallback to entry.Username
+  const username = (entry.User || entry.Username) || 'Unknown';
+  return `${rankEmoji} Rank #${entry.Rank} - ${username}: ${entry.Score}`;
 }
 
 module.exports = {
   name: 'arcade',
-  description: 'Displays highscore lists for preset arcade games',
+  description: 'Displays highscore lists for preset arcade games (for registered users only)',
   async execute(message, args) {
     try {
       // If no argument is provided, list available leaderboards.
@@ -89,6 +92,17 @@ module.exports = {
       }
       const selectedConfig = arcadeConfigs[selection - 1];
 
+      // Create an instance of the API service.
+      const raAPI = new RetroAchievementsAPI(process.env.RA_USERNAME, process.env.RA_API_KEY);
+
+      // Fetch game info to get the game icon.
+      const gameInfo = await raAPI.getGameInfo(selectedConfig.id);
+      let thumbnailUrl = null;
+      if (gameInfo && gameInfo.ImageIcon) {
+        // Construct the full URL for the game icon.
+        thumbnailUrl = `https://retroachievements.org${gameInfo.ImageIcon}`;
+      }
+
       // Fetch leaderboard entries using your API service.
       let leaderboardEntries = await fetchLeaderboardEntries(selectedConfig.id);
       if (!Array.isArray(leaderboardEntries)) {
@@ -99,13 +113,14 @@ module.exports = {
       const users = await User.find({});
       const registeredUserSet = new Set(users.map(u => u.raUsername.toLowerCase()));
 
-      // Filter entries to only include those with a defined 'User' property and that are registered.
+      // Filter entries: use entry.User or entry.Username (if available).
       leaderboardEntries = leaderboardEntries.filter(entry => {
-        if (typeof entry.User !== 'string') {
-          console.warn('Skipping entry with missing User property:', entry);
+        const username = (entry.User || entry.Username);
+        if (typeof username !== 'string') {
+          console.warn('Skipping entry with missing username property:', entry);
           return false;
         }
-        return registeredUserSet.has(entry.User.toLowerCase());
+        return registeredUserSet.has(username.toLowerCase());
       });
 
       // Sort entries by Rank (ascending).
@@ -119,8 +134,7 @@ module.exports = {
       // Display up to the top 15 entries.
       const displayEntries = leaderboardEntries.slice(0, 15);
       for (const entry of displayEntries) {
-        const line = formatEntry(entry);
-        output += `**${line}**\n`;
+        output += formatEntry(entry) + '\n';
       }
       if (displayEntries.length === 0) {
         output += 'No leaderboard entries found for your users.';
@@ -131,6 +145,11 @@ module.exports = {
         .setTitle('Arcade Highscores')
         .setDescription(output)
         .setFooter({ text: 'Data provided by RetroAchievements.org' });
+
+      // Set thumbnail if available.
+      if (thumbnailUrl) {
+        embed.setThumbnail(thumbnailUrl);
+      }
 
       await message.channel.send({ embeds: [embed] });
     } catch (error) {
