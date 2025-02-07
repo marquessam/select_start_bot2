@@ -73,23 +73,37 @@ async function getCurrentMonthLeaderboard(raAPI) {
         year: currentYear
     });
 
-    // Get current progress for each user
-    const progressList = await Promise.all(
-        awards.map(async award => {
+    // Get current progress for each user, with rate limiting
+    const progressList = [];
+    for (const award of awards) {
+        try {
             const progress = await raAPI.getUserGameProgress(
                 award.raUsername,
                 monthlyGame.gameId
             );
-            return {
+            
+            progressList.push({
                 username: award.raUsername,
                 award: award.award,
                 awardName: AwardFunctions.getName(award.award),
                 progress: progress.userCompletion || "0.00%",
                 achievements: progress.earnedAchievements || 0,
                 total: progress.totalAchievements || 0
-            };
-        })
-    );
+            });
+            
+        } catch (error) {
+            console.error(`Error getting progress for ${award.raUsername}:`, error.message);
+            // Add user with just their award data if API call fails
+            progressList.push({
+                username: award.raUsername,
+                award: award.award,
+                awardName: AwardFunctions.getName(award.award),
+                progress: "?.??%",
+                achievements: 0,
+                total: 0
+            });
+        }
+    }
 
     // Sort by award level (highest first) then by achievement count
     progressList.sort((a, b) => {
