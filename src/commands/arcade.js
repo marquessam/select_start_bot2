@@ -139,4 +139,16 @@ module.exports = {
                 .setFooter({ text: 'Data provided by RetroAchievements.org' });
 
             if (gameInfo?.ImageIcon) {
-                embed.setThumbnail(`https://retroachievements.org${gameInfo.Image
+                embed.setThumbnail(`https://retroachievements.org${gameInfo.ImageIcon}`);
+            }
+
+            // Delete loading message and send results
+            await loadingMessage.delete();
+            await message.channel.send({ embeds: [embed] });
+
+        } catch (error) {
+            console.error('Arcade command error:', error);
+            await message.reply('Error fetching arcade leaderboard. The game or leaderboard might not be available.');
+        }
+    }
+};
