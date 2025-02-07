@@ -34,7 +34,6 @@ async function fetchLeaderboardEntries(gameId) {
   if (!Array.isArray(entries) && entries && typeof entries === 'object') {
     entries = Object.values(entries);
   }
-
   if (!Array.isArray(entries)) {
     if (entries && entries.message) {
       throw new Error(`API error: ${entries.message}`);
@@ -60,7 +59,6 @@ function formatEntry(entry) {
   } else if (entry.Rank === 3) {
     rankEmoji = '🥉';
   }
-  // Use entry.User (instead of Username) since that's what the API returns.
   return `${rankEmoji} Rank #${entry.Rank} - ${entry.User}: ${entry.Score}`;
 }
 
@@ -101,8 +99,12 @@ module.exports = {
       const users = await User.find({});
       const registeredUserSet = new Set(users.map(u => u.raUsername.toLowerCase()));
 
-      // Filter entries to only include those from registered users.
+      // Filter entries to only include those with a defined 'User' property and that are registered.
       leaderboardEntries = leaderboardEntries.filter(entry => {
+        if (typeof entry.User !== 'string') {
+          console.warn('Skipping entry with missing User property:', entry);
+          return false;
+        }
         return registeredUserSet.has(entry.User.toLowerCase());
       });
 
