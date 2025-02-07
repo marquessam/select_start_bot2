@@ -24,9 +24,7 @@ const arcadeConfigs = [
 
 /**
  * Normalize leaderboard entries.
- * Since duplicate keys are possible, this function ensures:
- *  - We use a single, trimmed user string with consistent casing.
- *  - We ensure that the numeric fields are valid.
+ * Ensures that usernames are trimmed and converted to lowercase.
  */
 async function fetchLeaderboardEntries(leaderboardId) {
     const raAPI = new RetroAchievementsAPI(process.env.RA_USERNAME, process.env.RA_API_KEY);
@@ -51,14 +49,12 @@ async function fetchLeaderboardEntries(leaderboardId) {
         }
 
         // Process and sanitize each entry.
-        // We explicitly convert values to string, trim, and convert usernames to lowercase.
         const validEntries = entries
             .filter(entry => {
                 // Only include entries that have a defined user and score.
                 return entry && (entry.User || entry.user) && (entry.Score || entry.score);
             })
             .map(entry => {
-                // Here the last occurrence of duplicate keys is used.
                 const rawUser = entry.User || entry.user || '';
                 return {
                     Rank: parseInt(entry.Rank || entry.rank || '0'),
@@ -74,7 +70,7 @@ async function fetchLeaderboardEntries(leaderboardId) {
         // Sort by rank.
         validEntries.sort((a, b) => a.Rank - b.Rank);
 
-        console.log(`Processed ${validEntries.length} valid leaderboard entries`);
+        console.log(`Processed ${validEntries.length} valid leaderboard entries:`, validEntries.map(e => e.User));
         return validEntries;
     } catch (error) {
         console.error('Error fetching leaderboard:', error);
@@ -101,14 +97,14 @@ module.exports = {
     description: 'Displays highscore lists for preset arcade games (for registered users only)',
     async execute(message, args) {
         try {
-            // List available leaderboards if no argument provided.
+            // If no argument is provided, list available leaderboards.
             if (!args[0]) {
                 let listText = '**Available Arcade Leaderboards:**\n\n';
                 arcadeConfigs.forEach((config, index) => {
                     listText += `${index + 1}. ${config.name}\n`;
                 });
                 listText += `\nType \`!arcade <number>\` to view that leaderboard.`;
-                
+
                 const embed = new EmbedBuilder()
                     .setColor('#0099ff')
                     .setTitle('Arcade Leaderboards')
@@ -118,6 +114,7 @@ module.exports = {
                 return message.channel.send({ embeds: [embed] });
             }
 
+            // Parse the selection number.
             const selection = parseInt(args[0]);
             if (isNaN(selection) || selection < 1 || selection > arcadeConfigs.length) {
                 return message.reply(`Invalid selection. Please choose a number between 1 and ${arcadeConfigs.length}.`);
@@ -131,8 +128,10 @@ module.exports = {
 
             // Retrieve registered users from the database.
             const users = await User.find({});
-            console.log('Registered Users:', users.map(u => u.raUsername));
-            const registeredUserSet = new Set(users.map(u => u.raUsername.toLowerCase()));
+            // Log the registered usernames from the DB.
+            const registeredUsers = users.map(u => u.raUsername.trim());
+            console.log('Registered Users from DB:', registeredUsers);
+            const registeredUserSet = new Set(registeredUsers.map(u => u.toLowerCase()));
 
             console.log('Leaderboard entries before filtering:', leaderboardEntries.map(e => e.User));
             leaderboardEntries = leaderboardEntries.filter(entry => {
@@ -152,7 +151,7 @@ module.exports = {
                 output += 'No leaderboard entries found for your users.';
             }
 
-            // Fetch game info for thumbnail.
+            // Fetch game info for thumbnail using the actual game ID.
             const raAPI = new RetroAchievementsAPI(process.env.RA_USERNAME, process.env.RA_API_KEY);
             const gameInfo = await raAPI.getGameInfo(selectedConfig.gameId);
             
