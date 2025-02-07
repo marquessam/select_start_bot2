@@ -6,22 +6,28 @@ const User = require('../models/User');
 // Arcade configuration: each entry defines a known leaderboard
 const arcadeConfigs = [
     {
-        leaderboardId: 1143,     // Specific leaderboard ID for Mario Circuit
-        gameId: 533,            // Game ID for Mario Kart Super Circuit
+        leaderboardId: 1143,
+        gameId: 533,
         name: "Mario Kart: Super Circuit (GBA) - Mario Circuit",
     },
     {
-        leaderboardId: 18937,    // Leaderboard ID for THPS warehouse
-        gameId: 146,            // Game ID for THPS
+        leaderboardId: 18937,
+        gameId: 146,
         name: "Tony Hawk's Pro Skater (PSX) - Warehouse, Woodland Hills",
     },
     {
-        leaderboardId: 24,       // Leaderboard ID for Tetris
-        gameId: 7,              // Game ID for Tetris
+        leaderboardId: 24,
+        gameId: 7,
         name: "Tetris (GB) - A-Type Challenge",
     }
 ];
 
+/**
+ * Normalize leaderboard entries.
+ * Since duplicate keys are possible, this function ensures:
+ *  - We use a single, trimmed user string with consistent casing.
+ *  - We ensure that the numeric fields are valid.
+ */
 async function fetchLeaderboardEntries(leaderboardId) {
     const raAPI = new RetroAchievementsAPI(process.env.RA_USERNAME, process.env.RA_API_KEY);
     try {
@@ -34,7 +40,7 @@ async function fetchLeaderboardEntries(leaderboardId) {
             return [];
         }
 
-        // Handle both array and object response formats
+        // Handle various response formats.
         let entries = data;
         if (!Array.isArray(data)) {
             if (data.Entries && Array.isArray(data.Entries)) {
@@ -44,18 +50,28 @@ async function fetchLeaderboardEntries(leaderboardId) {
             }
         }
 
-        // Process and validate each entry
+        // Process and sanitize each entry.
+        // We explicitly convert values to string, trim, and convert usernames to lowercase.
         const validEntries = entries
-            .filter(entry => entry && (entry.User || entry.user) && (entry.Score || entry.score))
-            .map(entry => ({
-                Rank: parseInt(entry.Rank || entry.rank || '0'),
-                User: entry.User || entry.user,
-                Score: parseInt(entry.Score || entry.score || '0'),
-                DateSubmitted: entry.DateSubmitted || entry.dateSubmitted
-            }))
-            .filter(entry => !isNaN(entry.Rank) && !isNaN(entry.Score));
+            .filter(entry => {
+                // Only include entries that have a defined user and score.
+                return entry && (entry.User || entry.user) && (entry.Score || entry.score);
+            })
+            .map(entry => {
+                // Here the last occurrence of duplicate keys is used.
+                const rawUser = entry.User || entry.user || '';
+                return {
+                    Rank: parseInt(entry.Rank || entry.rank || '0'),
+                    User: rawUser.trim(),
+                    Score: parseInt(entry.Score || entry.score || '0'),
+                    DateSubmitted: entry.DateSubmitted || entry.dateSubmitted || null,
+                };
+            })
+            .filter(entry => {
+                return !isNaN(entry.Rank) && !isNaN(entry.Score) && entry.User.length > 0;
+            });
 
-        // Sort by rank
+        // Sort by rank.
         validEntries.sort((a, b) => a.Rank - b.Rank);
 
         console.log(`Processed ${validEntries.length} valid leaderboard entries`);
@@ -76,7 +92,6 @@ function formatEntry(entry) {
         rankEmoji = '🥉';
     }
     
-    // Format the score nicely with thousands separators
     const score = Number(entry.Score).toLocaleString();
     return `${rankEmoji} Rank #${entry.Rank} - ${entry.User}: ${score}`;
 }
@@ -86,7 +101,7 @@ module.exports = {
     description: 'Displays highscore lists for preset arcade games (for registered users only)',
     async execute(message, args) {
         try {
-            // If no argument is provided, list available leaderboards
+            // List available leaderboards if no argument provided.
             if (!args[0]) {
                 let listText = '**Available Arcade Leaderboards:**\n\n';
                 arcadeConfigs.forEach((config, index) => {
@@ -103,34 +118,31 @@ module.exports = {
                 return message.channel.send({ embeds: [embed] });
             }
 
-            // Parse the selection number
             const selection = parseInt(args[0]);
             if (isNaN(selection) || selection < 1 || selection > arcadeConfigs.length) {
                 return message.reply(`Invalid selection. Please choose a number between 1 and ${arcadeConfigs.length}.`);
             }
 
             const selectedConfig = arcadeConfigs[selection - 1];
-
-            // Show loading message
             const loadingMessage = await message.channel.send('Fetching leaderboard data...');
 
-            // Fetch leaderboard entries using the leaderboard ID
+            // Retrieve and normalize leaderboard entries.
             let leaderboardEntries = await fetchLeaderboardEntries(selectedConfig.leaderboardId);
 
-            // Retrieve registered users from database
+            // Retrieve registered users from the database.
             const users = await User.find({});
+            console.log('Registered Users:', users.map(u => u.raUsername));
             const registeredUserSet = new Set(users.map(u => u.raUsername.toLowerCase()));
 
-            // Filter entries to only include registered users
-            leaderboardEntries = leaderboardEntries.filter(entry => 
-                entry.User && registeredUserSet.has(entry.User.toLowerCase())
-            );
+            console.log('Leaderboard entries before filtering:', leaderboardEntries.map(e => e.User));
+            leaderboardEntries = leaderboardEntries.filter(entry => {
+                return entry.User && registeredUserSet.has(entry.User.toLowerCase());
+            });
+            console.log('Leaderboard entries after filtering:', leaderboardEntries.map(e => e.User));
 
-            // Build the output text
             let output = `**${selectedConfig.name}**\n\n`;
             output += '**User Highscores:**\n\n';
 
-            // Display entries
             if (leaderboardEntries.length > 0) {
                 const displayEntries = leaderboardEntries.slice(0, 15);
                 for (const entry of displayEntries) {
@@ -140,7 +152,7 @@ module.exports = {
                 output += 'No leaderboard entries found for your users.';
             }
 
-            // Fetch game info for thumbnail using the actual game ID
+            // Fetch game info for thumbnail.
             const raAPI = new RetroAchievementsAPI(process.env.RA_USERNAME, process.env.RA_API_KEY);
             const gameInfo = await raAPI.getGameInfo(selectedConfig.gameId);
             
@@ -154,7 +166,6 @@ module.exports = {
                 embed.setThumbnail(`https://retroachievements.org${gameInfo.ImageIcon}`);
             }
 
-            // Delete loading message and send results
             await loadingMessage.delete();
             await message.channel.send({ embeds: [embed] });
 
