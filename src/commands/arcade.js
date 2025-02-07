@@ -3,18 +3,18 @@ const { EmbedBuilder } = require('discord.js');
 const RetroAchievementsAPI = require('../services/retroAchievements');
 const User = require('../models/User');
 
-// Arcade configuration: each entry defines a known leaderboard.
+// Updated arcade configuration with correct game IDs.
 const arcadeConfigs = [
   {
-    id: 1143,
+    id: 533,
     name: "Mario Kart: Super Circuit (GBA) - Mario Circuit",
   },
   {
-    id: 18937,
+    id: 11331,
     name: "Tony Hawk's Pro Skater (PSX) - Warehouse, Woodland Hills",
   },
   {
-    id: 24,
+    id: 508,
     name: "Tetris (GB) - A-Type Challenge",
   },
 ];
@@ -30,11 +30,10 @@ async function fetchLeaderboardEntries(gameId) {
   console.log('API response data:', data); // Debug logging
 
   let entries = data;
-  // If data is an object but not an array, convert its values to an array.
+  // If the data is an object but not an array, convert its values to an array.
   if (!Array.isArray(entries) && entries && typeof entries === 'object') {
     entries = Object.values(entries);
   }
-
   if (!Array.isArray(entries)) {
     if (entries && entries.message) {
       throw new Error(`API error: ${entries.message}`);
@@ -60,7 +59,7 @@ function formatEntry(entry) {
   } else if (entry.Rank === 3) {
     rankEmoji = '🥉';
   }
-  // Use entry.User or fallback to entry.Username
+  // Use entry.User or fallback to entry.Username; if missing, use "Unknown"
   const username = (entry.User || entry.Username) || 'Unknown';
   return `${rankEmoji} Rank #${entry.Rank} - ${username}: ${entry.Score}`;
 }
@@ -92,17 +91,6 @@ module.exports = {
       }
       const selectedConfig = arcadeConfigs[selection - 1];
 
-      // Create an instance of the API service.
-      const raAPI = new RetroAchievementsAPI(process.env.RA_USERNAME, process.env.RA_API_KEY);
-
-      // Fetch game info to get the game icon.
-      const gameInfo = await raAPI.getGameInfo(selectedConfig.id);
-      let thumbnailUrl = null;
-      if (gameInfo && gameInfo.ImageIcon) {
-        // Construct the full URL for the game icon.
-        thumbnailUrl = `https://retroachievements.org${gameInfo.ImageIcon}`;
-      }
-
       // Fetch leaderboard entries using your API service.
       let leaderboardEntries = await fetchLeaderboardEntries(selectedConfig.id);
       if (!Array.isArray(leaderboardEntries)) {
@@ -113,7 +101,7 @@ module.exports = {
       const users = await User.find({});
       const registeredUserSet = new Set(users.map(u => u.raUsername.toLowerCase()));
 
-      // Filter entries: use entry.User or entry.Username (if available).
+      // Filter entries to only include those with a valid username and that are registered.
       leaderboardEntries = leaderboardEntries.filter(entry => {
         const username = (entry.User || entry.Username);
         if (typeof username !== 'string') {
@@ -140,13 +128,20 @@ module.exports = {
         output += 'No leaderboard entries found for your users.';
       }
 
+      // Fetch game info to display the game icon as thumbnail.
+      const raAPI = new RetroAchievementsAPI(process.env.RA_USERNAME, process.env.RA_API_KEY);
+      const gameInfo = await raAPI.getGameInfo(selectedConfig.id);
+      let thumbnailUrl = null;
+      if (gameInfo && gameInfo.ImageIcon) {
+        thumbnailUrl = `https://retroachievements.org${gameInfo.ImageIcon}`;
+      }
+
       const embed = new EmbedBuilder()
         .setColor('#0099ff')
         .setTitle('Arcade Highscores')
         .setDescription(output)
         .setFooter({ text: 'Data provided by RetroAchievements.org' });
 
-      // Set thumbnail if available.
       if (thumbnailUrl) {
         embed.setThumbnail(thumbnailUrl);
       }
