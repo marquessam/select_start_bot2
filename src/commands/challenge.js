@@ -19,14 +19,14 @@ function getTimeRemaining() {
 async function displayChallenge(game, raAPI) {
     const gameInfo = await raAPI.getGameInfo(game.gameId);
     
-    // Get a sample award to get the total achievements (any user's award will have the correct total)
+    // Get a sample award to get the total achievements
     const sampleAward = await Award.findOne({
         gameId: game.gameId,
         month: game.month,
         year: game.year
     });
 
-    const totalAchievements = sampleAward ? sampleAward.totalAchievements : gameInfo.NumAchievements;
+    const totalAchievements = sampleAward ? sampleAward.totalAchievements : game.numAchievements;
     
     const embed = new EmbedBuilder()
         .setColor('#0099ff')
@@ -49,11 +49,15 @@ async function displayChallenge(game, raAPI) {
     // Add progression requirements if any
     if (game.progression && game.progression.length > 0) {
         details += `\n**Progression Required:** ${game.requireProgression ? 'Yes' : 'No'}\n`;
+        if (game.requireProgression) {
+            details += `• Must complete ${game.progression.length} progression achievements in order\n`;
+        }
     }
 
     // Add win conditions
     if (game.winCondition && game.winCondition.length > 0) {
         details += `**Win Conditions Required:** ${game.requireAllWinConditions ? 'All' : 'Any'}\n`;
+        details += `• Must complete ${game.requireAllWinConditions ? 'all' : 'at least one of'} ${game.winCondition.length} win condition achievement(s)\n`;
     }
 
     // Add awards explanation
@@ -69,7 +73,7 @@ async function displayChallenge(game, raAPI) {
     awards += `• Complete ${game.requireAllWinConditions ? 'all' : 'any'} win condition achievement(s)\n`;
     awards += '• Worth 3 points\n\n';
 
-    if (game.type === 'MONTHLY') {
+    if (game.type === 'MONTHLY' && game.masteryCheck) {
         awards += '**Mastery Award** ✨\n';
         awards += '• Complete 100% of the achievements\n';
         awards += '• Worth 3 additional points\n';
@@ -113,7 +117,9 @@ module.exports = {
                 process.env.RA_API_KEY
             );
 
+            const loadingMsg = await message.channel.send('Fetching challenge information...');
             const embed = await displayChallenge(game, raAPI);
+            await loadingMsg.delete();
             await message.channel.send({ embeds: [embed] });
 
         } catch (error) {
