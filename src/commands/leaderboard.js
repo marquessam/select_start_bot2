@@ -1,158 +1,231 @@
 // File: src/commands/leaderboard.js
 const { EmbedBuilder } = require('discord.js');
-const leaderboardService = require('../services/leaderboardService');
+const Game = require('../models/Game');
+const Award = require('../models/Award');
+const User = require('../models/User');
+const RetroAchievementsAPI = require('../services/retroAchievements');
+const { AwardType, AwardFunctions } = require('../enums/AwardType');
 
-/**
- * Generates a table using Unicode box-drawing characters.
- * Safely handles undefined or null cell values.
- * @param {string[]} headers - Array of header titles.
- * @param {Array<Array<string|number>>} rows - Array of rows (each row is an array of cell values).
- * @returns {string} - The formatted table.
- */
 function generateTable(headers, rows) {
-  // Calculate maximum width for each column.
-  const colWidths = headers.map((header, i) =>
-    Math.max(header.length, ...rows.map(row => ((row[i] == null) ? '' : row[i]).toString().length))
-  );
+    // Calculate column widths
+    const colWidths = headers.map((header, i) =>
+        Math.max(
+            header.length,
+            ...rows.map(row => String(row[i] || '').length)
+        )
+    );
 
-  const horizontalLine = (left, mid, right) => {
-    let line = left;
-    colWidths.forEach((width, index) => {
-      line += "─".repeat(width + 2) + (index < colWidths.length - 1 ? mid : right);
-    });
-    return line;
-  };
+    // Create table borders
+    const createLine = (left, mid, right, horizontal) =>
+        left + colWidths.map(w => horizontal.repeat(w + 2)).join(mid) + right;
 
-  const topBorder = horizontalLine("┌", "┬", "┐");
-  const headerSeparator = horizontalLine("├", "┼", "┤");
-  const bottomBorder = horizontalLine("└", "┴", "┘");
+    const topLine = createLine('┌', '┬', '┐', '─');
+    const midLine = createLine('├', '┼', '┤', '─');
+    const bottomLine = createLine('└', '┴', '┘', '─');
 
-  const formatRow = (row) => {
-    let rowStr = "│";
-    row.forEach((cell, index) => {
-      cell = (cell == null) ? "" : cell;
-      rowStr += " " + cell.toString().padEnd(colWidths[index]) + " │";
-    });
-    return rowStr;
-  };
+    // Format a row
+    const formatRow = (items) =>
+        '│' + items.map((item, i) =>
+            ` ${String(item || '').padEnd(colWidths[i])} `
+        ).join('│') + '│';
 
-  const headerRow = formatRow(headers);
-  const rowLines = rows.map(formatRow);
-
-  return [topBorder, headerRow, headerSeparator, ...rowLines, bottomBorder].join("\n");
-}
-
-/**
- * Wraps text in a code block and truncates it if it exceeds Discord's 1024-character limit.
- * @param {string} text - The text to wrap.
- * @param {number} maxLength - Maximum allowed length (default 1024).
- * @returns {string} - The wrapped (and possibly truncated) text.
- */
-function wrapInCodeBlockTruncate(text, maxLength = 1024) {
-  const codeBlockWrapperLength = 6; // "```" at beginning and end.
-  let codeText = "```" + text + "```";
-  if (codeText.length > maxLength) {
-    const allowedTextLength = maxLength - codeBlockWrapperLength - 3; // leave room for ellipsis
-    text = text.slice(0, allowedTextLength) + "...";
-    codeText = "```" + text + "```";
-  }
-  return codeText;
-}
-
-/**
- * Displays the monthly leaderboard using the leaderboard service.
- * @returns {Promise<EmbedBuilder>}
- */
-async function displayMonthlyLeaderboard() {
-  const monthlyData = await leaderboardService.getCurrentMonthlyProgress();
-  const gameTitle = monthlyData.game;
-  const entries = monthlyData.leaderboard;
-
-  // Compute ranks with ties.
-  let currentRank = 0;
-  let previousAchievements = null;
-  const tableRows = entries.map((entry, index) => {
-    if (previousAchievements === null || entry.achievements < previousAchievements) {
-      currentRank = index + 1;
-      previousAchievements = entry.achievements;
-    }
-    return [
-      currentRank,
-      entry.username,
-      entry.achievements,
-      entry.totalAchievements,
-      entry.percentage + "%"
+    // Build table
+    const lines = [
+        topLine,
+        formatRow(headers),
+        midLine,
+        ...rows.map(row => formatRow(row)),
+        bottomLine
     ];
-  });
 
-  const headers = ["Rank", "Player", "Ach.", "Total", "%"];
-  const table = generateTable(headers, tableRows);
-
-  const embed = new EmbedBuilder()
-    .setColor("#0099ff")
-    .setTitle(`Monthly Challenge: ${gameTitle}`)
-    .addFields({
-      name: "Top Rankings",
-      value: wrapInCodeBlockTruncate(table)
-    });
-  return embed;
+    return lines.join('\n');
 }
 
-/**
- * Displays the yearly leaderboard using the leaderboard service.
- * @returns {Promise<EmbedBuilder>}
- */
-async function displayYearlyLeaderboard() {
-  const entries = await leaderboardService.getYearlyPoints();
-
-  // Compute ranks with ties.
-  let currentRank = 0;
-  let previousPoints = null;
-  const tableRows = entries.map((entry, index) => {
-    if (previousPoints === null || entry.totalPoints < previousPoints) {
-      currentRank = index + 1;
-      previousPoints = entry.totalPoints;
+function wrapInCodeBlock(text) {
+    const wrapped = '```\n' + text + '\n```';
+    if (wrapped.length > 1024) {
+        const truncated = text.slice(0, 900) + '...\n';
+        return '```\n' + truncated + '```';
     }
-    return [
-      currentRank,
-      entry.username,
-      entry.totalPoints,
-      entry.monthlyGames,
-      entry.shadowGames
-    ];
-  });
+    return wrapped;
+}
 
-  const headers = ["Rank", "Player", "Points", "Monthly", "Shadow"];
-  const table = generateTable(headers, tableRows);
+async function getCurrentMonthLeaderboard(raAPI) {
+    // Get current month's game
+    const currentDate = new Date();
+    const currentMonth = currentDate.getMonth() + 1;
+    const currentYear = currentDate.getFullYear();
 
-  const embed = new EmbedBuilder()
-    .setColor("#0099ff")
-    .setTitle("Yearly Rankings")
-    .addFields({
-      name: "Rankings",
-      value: wrapInCodeBlockTruncate(table)
+    const monthlyGame = await Game.findOne({
+        month: currentMonth,
+        year: currentYear,
+        type: 'MONTHLY'
     });
-  return embed;
+
+    if (!monthlyGame) {
+        throw new Error('No monthly game found for current month');
+    }
+
+    // Get all awards for this game
+    const awards = await Award.find({
+        gameId: monthlyGame.gameId,
+        month: currentMonth,
+        year: currentYear
+    });
+
+    // Get current progress for each user
+    const progressList = await Promise.all(
+        awards.map(async award => {
+            const progress = await raAPI.getUserGameProgress(
+                award.raUsername,
+                monthlyGame.gameId
+            );
+            return {
+                username: award.raUsername,
+                award: award.award,
+                awardName: AwardFunctions.getName(award.award),
+                progress: progress.userCompletion || "0.00%",
+                achievements: progress.earnedAchievements || 0,
+                total: progress.totalAchievements || 0
+            };
+        })
+    );
+
+    // Sort by award level (highest first) then by achievement count
+    progressList.sort((a, b) => {
+        if (b.award !== a.award) return b.award - a.award;
+        return b.achievements - a.achievements;
+    });
+
+    // Generate table rows
+    let currentRank = 0;
+    let previousScore = null;
+    const rows = progressList.map((entry, index) => {
+        if (previousScore === null || entry.award !== previousScore) {
+            currentRank = index + 1;
+            previousScore = entry.award;
+        }
+        return [
+            currentRank,
+            entry.username,
+            entry.awardName,
+            `${entry.achievements}/${entry.total}`,
+            entry.progress
+        ];
+    });
+
+    return {
+        game: monthlyGame.title,
+        rows,
+        headers: ['Rank', 'Player', 'Award', 'Progress', 'Completion']
+    };
+}
+
+async function getYearlyLeaderboard() {
+    const currentYear = new Date().getFullYear();
+    const awards = await Award.find({ year: currentYear });
+
+    // Group awards by user and calculate points
+    const userPoints = {};
+    
+    for (const award of awards) {
+        if (!userPoints[award.raUsername]) {
+            userPoints[award.raUsername] = {
+                username: award.raUsername,
+                totalPoints: 0,
+                monthlyGames: 0,
+                shadowGames: 0
+            };
+        }
+
+        const points = AwardFunctions.getPoints(award.award);
+        userPoints[award.raUsername].totalPoints += points;
+
+        const game = await Game.findOne({ 
+            gameId: award.gameId,
+            year: currentYear
+        });
+
+        if (game) {
+            if (game.type === 'MONTHLY') {
+                userPoints[award.raUsername].monthlyGames++;
+            } else {
+                userPoints[award.raUsername].shadowGames++;
+            }
+        }
+    }
+
+    // Convert to array and sort
+    const leaderboard = Object.values(userPoints)
+        .sort((a, b) => b.totalPoints - a.totalPoints);
+
+    // Generate table rows
+    let currentRank = 0;
+    let previousPoints = null;
+    const rows = leaderboard.map((entry, index) => {
+        if (previousPoints === null || entry.totalPoints !== previousPoints) {
+            currentRank = index + 1;
+            previousPoints = entry.totalPoints;
+        }
+        return [
+            currentRank,
+            entry.username,
+            entry.totalPoints,
+            entry.monthlyGames,
+            entry.shadowGames
+        ];
+    });
+
+    return {
+        rows,
+        headers: ['Rank', 'Player', 'Points', 'Monthly', 'Shadow']
+    };
 }
 
 module.exports = {
-  name: "leaderboard",
-  description: "Shows the leaderboard",
-  async execute(message, args) {
-    try {
-      const type = args[0]?.toLowerCase() || "month";
-      let embed;
-      if (type === "month" || type === "m") {
-        embed = await displayMonthlyLeaderboard();
-      } else if (type === "year" || type === "y") {
-        embed = await displayYearlyLeaderboard();
-      } else {
-        return message.reply("Invalid command. Use `!leaderboard month/m` or `!leaderboard year/y`");
-      }
-      await message.channel.send({ embeds: [embed] });
-    } catch (error) {
-      console.error("Leaderboard error:", error);
-      await message.reply("Error retrieving leaderboard data.");
+    name: 'leaderboard',
+    description: 'Shows the leaderboard',
+    async execute(message, args) {
+        try {
+            const type = args[0]?.toLowerCase() || 'month';
+            const raAPI = new RetroAchievementsAPI(
+                process.env.RA_USERNAME,
+                process.env.RA_API_KEY
+            );
+
+            let embed = new EmbedBuilder().setColor('#0099ff');
+
+            if (type === 'month' || type === 'm') {
+                const monthlyData = await getCurrentMonthLeaderboard(raAPI);
+                const table = generateTable(monthlyData.headers, monthlyData.rows);
+                
+                embed
+                    .setTitle(`Monthly Challenge: ${monthlyData.game}`)
+                    .addFields({
+                        name: 'Current Rankings',
+                        value: wrapInCodeBlock(table)
+                    });
+
+            } else if (type === 'year' || type === 'y') {
+                const yearlyData = await getYearlyLeaderboard();
+                const table = generateTable(yearlyData.headers, yearlyData.rows);
+
+                embed
+                    .setTitle(`Yearly Rankings ${new Date().getFullYear()}`)
+                    .addFields({
+                        name: 'Overall Rankings',
+                        value: wrapInCodeBlock(table)
+                    });
+
+            } else {
+                return message.reply('Invalid command. Use `!leaderboard month/m` or `!leaderboard year/y`');
+            }
+
+            await message.channel.send({ embeds: [embed] });
+
+        } catch (error) {
+            console.error('Leaderboard error:', error);
+            await message.reply('Error retrieving leaderboard data.');
+        }
     }
-  }
 };
