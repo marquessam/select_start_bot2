@@ -5,15 +5,15 @@ const User = require('../models/User');
 
 /**
  * Fetches leaderboard entries for a given game from RetroAchievements.
+ * Note: We now include your RA username and API key for authentication.
  * @param {string|number} gameId - The game ID to look up.
  * @returns {Promise<Array>} - Returns an array of leaderboard entries.
  */
 async function fetchLeaderboardEntries(gameId) {
-  // Using the API_GetLeaderboardEntries endpoint.
-  // Example URL: https://retroachievements.org/API/API_GetLeaderboardEntries.php?i=104370
-  const url = `https://retroachievements.org/API/API_GetLeaderboardEntries.php?i=${gameId}`;
+  const raUsername = process.env.RA_USERNAME;
+  const raAPIKey = process.env.RA_API_KEY;
+  const url = `https://retroachievements.org/API/API_GetLeaderboardEntries.php?i=${gameId}&z=${raUsername}&y=${raAPIKey}`;
   const response = await axios.get(url);
-  // Assume the API returns an array of entries in JSON.
   return response.data;
 }
 
@@ -41,11 +41,11 @@ module.exports = {
     try {
       // Require a game ID argument.
       if (!args[0]) {
-        return message.reply('Please provide a game ID. Example: `!arcade 104370`');
+        return message.reply('Please provide a game ID. Example: `!arcade 1143`');
       }
       const gameId = args[0];
 
-      // Fetch leaderboard data from RetroAchievements.
+      // Fetch leaderboard data from RetroAchievements with proper authentication.
       let leaderboardEntries = await fetchLeaderboardEntries(gameId);
       if (!Array.isArray(leaderboardEntries)) {
         return message.reply('Unexpected data format from the leaderboard API.');
@@ -59,8 +59,7 @@ module.exports = {
       // Create a set of lower-case usernames for quick lookup.
       const registeredUserSet = new Set(users.map(u => u.raUsername.toLowerCase()));
 
-      // Optionally, mark or filter entries based on whether they are in your user list.
-      // In this example, we'll add a note for entries that are from your registered users.
+      // Mark or filter entries based on whether they are in your user list.
       leaderboardEntries = leaderboardEntries.map(entry => {
         const isRegistered = registeredUserSet.has(entry.Username.toLowerCase());
         return {
@@ -76,9 +75,8 @@ module.exports = {
       // We'll list the top 15 entries (or fewer if there aren’t that many)
       const displayEntries = leaderboardEntries.slice(0, 15);
       for (const entry of displayEntries) {
-        // Format each entry.
         const line = formatEntry(entry);
-        // Optionally, if the user is registered, add an asterisk or bold their name.
+        // Bold the entry if the user is registered.
         if (entry.Registered) {
           output += `**${line}**\n`;
         } else {
