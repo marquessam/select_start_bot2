@@ -1,36 +1,37 @@
 // File: src/commands/nominations.js
 const Nomination = require('../models/Nomination');
 
-// Helper to get the current month formatted as "YYYY-MM"
-function getCurrentMonth() {
-  const now = new Date();
-  const month = (now.getMonth() + 1).toString().padStart(2, '0');
-  return `${now.getFullYear()}-${month}`;
-}
-
 module.exports = {
   name: 'nominations',
-  description: 'View your nominations for the current month.',
+  description: 'View the entire nomination list (all history). Each nomination shows the game title, platform (if provided), who nominated it, and the vote month.',
   async execute(message) {
     try {
-      const currentMonth = getCurrentMonth();
-      const userId = message.author.id;
-      const nominations = await Nomination.find({ userId, voteMonth: currentMonth });
+      // Fetch all nominations sorted by date of nomination in ascending order.
+      const nominations = await Nomination.find({}).sort({ dateNominated: 1 });
       
       if (!nominations || nominations.length === 0) {
-        return message.reply('You have not nominated any games for this month.');
+        return message.reply('There are no nominations in the list yet.');
       }
       
-      let output = `**Your Nominations for ${currentMonth}:**\n\n`;
+      let output = '**Entire Nomination List:**\n\n';
       nominations.forEach((nom, index) => {
         output += `${index + 1}. ${nom.gameTitle}`;
-        if (nom.platform) output += ` (Platform: ${nom.platform})`;
-        output += ` (Nominated by: ${nom.nominatedBy})\n`;
+        if (nom.platform) {
+          output += ` (Platform: ${nom.platform})`;
+        }
+        if (nom.nominatedBy) {
+          output += ` - Nominated by: ${nom.nominatedBy}`;
+        }
+        if (nom.voteMonth) {
+          output += ` [${nom.voteMonth}]`;
+        }
+        output += '\n';
       });
-      message.channel.send(output);
+      
+      return message.channel.send(output);
     } catch (error) {
       console.error('Error fetching nominations:', error);
-      message.reply('There was an error retrieving your nominations. Please try again later.');
+      return message.reply('There was an error retrieving the nomination list. Please try again later.');
     }
   }
 };
