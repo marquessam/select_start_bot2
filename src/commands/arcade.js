@@ -43,9 +43,8 @@ async function fetchLeaderboardEntries(leaderboardId) {
     
     let entries = [];
     if (data.Results && Array.isArray(data.Results)) {
-      // Response from getUserGameLeaderboards-style endpoint:
-      // Each element has a nested "UserEntry".
-      entries = data.Results.map(result => result.UserEntry);
+      // Each element might have a nested "UserEntry". If missing, return the element itself.
+      entries = data.Results.map(result => result.UserEntry || result);
       console.log('Data has Results key. Extracted entries length:', entries.length);
     } else if (Array.isArray(data)) {
       entries = data;
@@ -54,7 +53,7 @@ async function fetchLeaderboardEntries(leaderboardId) {
       entries = data.Entries;
       console.log('Data has Entries key, length:', entries.length);
     } else if (typeof data === 'object') {
-      // In case response is an object and we need to convert values to an array.
+      // In case response is an object we convert values to an array.
       entries = Object.values(data);
       console.log('Converted object to array, length:', entries.length);
     } else {
