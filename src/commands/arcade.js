@@ -144,19 +144,25 @@ module.exports = {
       
       // Retrieve and normalize leaderboard entries.
       let leaderboardEntries = await fetchLeaderboardEntries(selectedConfig.leaderboardId);
-      
+      console.log('Number of entries before user filtering:', leaderboardEntries.length);
+
       // Retrieve registered users from the database.
       const users = await User.find({});
-      const registeredUsers = users.map(u => u.raUsername.trim());
+      const registeredUsers = users.map(u => u.raUsername.trim().toLowerCase());
       console.log('Registered Users from DB:', registeredUsers);
-      const registeredUserSet = new Set(registeredUsers.map(u => u.toLowerCase()));
-      
+      const registeredUserSet = new Set(registeredUsers);
+
       console.log('Leaderboard entries before filtering:', leaderboardEntries.map(e => e.User));
       leaderboardEntries = leaderboardEntries.filter(entry => {
-        return entry.User && registeredUserSet.has(entry.User.toLowerCase());
+        const username = (entry.User || '').trim().toLowerCase();
+        const isRegistered = registeredUserSet.has(username);
+        if (!isRegistered) {
+          console.log(`Filtering out entry for user ${entry.User} (lowercase: ${username}) - not in registered users`);
+        }
+        return isRegistered;
       });
       console.log('Leaderboard entries after filtering:', leaderboardEntries.map(e => e.User));
-      
+
       let output = `**${selectedConfig.name}**\n\n`;
       output += '**User Highscores:**\n\n';
       
