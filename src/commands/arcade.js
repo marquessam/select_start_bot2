@@ -23,6 +23,17 @@ const arcadeConfigs = [
 ];
 
 /**
+ * Convert a number to its ordinal representation (e.g., 1 -> "1st")
+ * @param {number} n 
+ * @returns {string} 
+ */
+function ordinal(n) {
+  const s = ["th", "st", "nd", "rd"],
+    v = n % 100;
+  return n + (s[(v - 20) % 10] || s[v] || s[0]);
+}
+
+/**
  * Fetch and normalize leaderboard entries.
  * This function handles both response formats:
  *   - Format A: Top-level array or an "Entries" property (API_GetLeaderboardEntries.php).
@@ -65,33 +76,34 @@ async function fetchLeaderboardEntries(leaderboardId) {
     const validEntries = entries
       .filter(entry => {
         const hasUser = Boolean(entry && (entry.User || entry.user));
-        const hasScore = Boolean(entry && (entry.Score || entry.score));
-        if (!hasUser || !hasScore) {
+        const hasTime = Boolean(entry && (entry.Score || entry.score));
+        if (!hasUser || !hasTime) {
           console.log('Filtered out entry due to missing User/Score:', entry);
         }
-        return hasUser && hasScore;
+        return hasUser && hasTime;
       })
       .map(entry => {
         const rawUser = entry.User || entry.user || '';
-        const rankValue = entry.Rank || entry.rank || '0';
-        const scoreValue = entry.Score || entry.score || '0';
-        console.log('Mapping entry:', { rawUser, rankValue, scoreValue });
+        const apiRank = entry.Rank || entry.rank || '0';
+        const trackTime = entry.Score || entry.score || '0';
+        console.log('Mapping entry:', { rawUser, apiRank, trackTime });
         return {
-          Rank: parseInt(rankValue, 10),
+          ApiRank: parseInt(apiRank, 10),
           User: rawUser.trim(),
-          Score: parseInt(scoreValue, 10),
+          TrackTime: parseInt(trackTime, 10),
           DateSubmitted: entry.DateSubmitted || entry.dateSubmitted || null,
         };
       })
       .filter(entry => {
-        const valid = !isNaN(entry.Rank) && !isNaN(entry.Score) && entry.User.length > 0;
+        const valid = !isNaN(entry.ApiRank) && !isNaN(entry.TrackTime) && entry.User.length > 0;
         if (!valid) {
           console.log('Filtered out entry after mapping (invalid values):', entry);
         }
         return valid;
       });
     
-    validEntries.sort((a, b) => a.Rank - b.Rank);
+    // Sort by score (ascending: lower times or scores are better)
+    validEntries.sort((a, b) => a.TrackTime - b.TrackTime);
     console.log(`Processed ${validEntries.length} valid leaderboard entries:`, validEntries.map(e => e.User));
     return validEntries;
   } catch (error) {
@@ -100,17 +112,11 @@ async function fetchLeaderboardEntries(leaderboardId) {
   }
 }
 
-function formatEntry(entry) {
-  let rankEmoji = '';
-  if (entry.Rank === 1) {
-    rankEmoji = '👑';
-  } else if (entry.Rank === 2) {
-    rankEmoji = '🥈';
-  } else if (entry.Rank === 3) {
-    rankEmoji = '🥉';
-  }
-  const score = Number(entry.Score).toLocaleString();
-  return `${rankEmoji} Rank #${entry.Rank} - ${entry.User}: ${score}`;
+function formatEntry(displayRank, entry) {
+  const ordinalRank = ordinal(displayRank);
+  // Show the API provided rank in parentheses.
+  const formattedTime = Number(entry.TrackTime).toLocaleString();
+  return `${ordinalRank} (Rank #${entry.ApiRank}) - ${entry.User}: ${formattedTime}`;
 }
 
 module.exports = {
@@ -167,9 +173,9 @@ module.exports = {
       
       if (leaderboardEntries.length > 0) {
         const displayEntries = leaderboardEntries.slice(0, 15);
-        for (const entry of displayEntries) {
-          output += formatEntry(entry) + '\n';
-        }
+        displayEntries.forEach((entry, index) => {
+          output += formatEntry(index + 1, entry) + '\n';
+        });
       } else {
         output += 'No leaderboard entries found for your users.';
       }
