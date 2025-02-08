@@ -6,17 +6,17 @@ const User = require('../models/User');
 // Arcade configuration: each entry defines a known leaderboard and game association.
 const arcadeConfigs = [
   {
-    leaderboardId: 1143, // For example, using API_GetLeaderboardEntries.php
+    leaderboardId: 1143, // Example: using API_GetLeaderboardEntries.php
     gameId: 533,
     name: "Mario Kart: Super Circuit (GBA) - Mario Circuit",
   },
   {
-    leaderboardId: 18937, // For example, using API_GetLeaderboardEntries.php
+    leaderboardId: 18937, // Example: using API_GetLeaderboardEntries.php
     gameId: 146,
     name: "Tony Hawk's Pro Skater (PSX) - Warehouse, Woodland Hills",
   },
   {
-    leaderboardId: 24, // For example, using API_GetLeaderboardEntries.php
+    leaderboardId: 24, // Example: using API_GetLeaderboardEntries.php
     gameId: 7,
     name: "Tetris (GB) - A-Type Challenge",
   }
@@ -46,15 +46,14 @@ async function fetchLeaderboardEntries(leaderboardId) {
     console.log(`Fetching leaderboard data for leaderboard ID: ${leaderboardId}`);
     const data = await raAPI.getLeaderboardInfo(leaderboardId);
     console.log('Raw leaderboard response:', data);
-    
+
     if (!data) {
       console.log('No leaderboard data received');
       return [];
     }
-    
+
     let entries = [];
     if (data.Results && Array.isArray(data.Results)) {
-      // Each element might have a nested "UserEntry". If missing, return the element itself.
       entries = data.Results.map(result => result.UserEntry || result);
       console.log('Data has Results key. Extracted entries length:', entries.length);
     } else if (Array.isArray(data)) {
@@ -64,46 +63,51 @@ async function fetchLeaderboardEntries(leaderboardId) {
       entries = data.Entries;
       console.log('Data has Entries key, length:', entries.length);
     } else if (typeof data === 'object') {
-      // In case response is an object we convert values to an array.
       entries = Object.values(data);
       console.log('Converted object to array, length:', entries.length);
     } else {
       console.log('Unexpected data format:', typeof data);
     }
-    
+
     console.log('Raw entries:', entries);
-    
+
     const validEntries = entries
       .filter(entry => {
         const hasUser = Boolean(entry && (entry.User || entry.user));
-        const hasTime = Boolean(entry && (entry.Score || entry.score));
-        if (!hasUser || !hasTime) {
+        // Ensure either Score or FormattedScore exists.
+        const hasScore = Boolean(entry && (entry.Score || entry.score || entry.FormattedScore || entry.formattedScore));
+        if (!hasUser || !hasScore) {
           console.log('Filtered out entry due to missing User/Score:', entry);
         }
-        return hasUser && hasTime;
+        return hasUser && hasScore;
       })
       .map(entry => {
         const rawUser = entry.User || entry.user || '';
         const apiRank = entry.Rank || entry.rank || '0';
-        const trackTime = entry.Score || entry.score || '0';
+        // Prefer the formattedScore property if present. Some entries may use different casing.
+        const formattedScore = entry.FormattedScore || entry.formattedScore;
+        const fallbackScore = entry.Score || entry.score || '0';
+
+        // Use the formatted score as trackTime if available.
+        const trackTime = formattedScore ? formattedScore.trim() : fallbackScore.toString();
         console.log('Mapping entry:', { rawUser, apiRank, trackTime });
         return {
           ApiRank: parseInt(apiRank, 10),
           User: rawUser.trim(),
-          TrackTime: parseInt(trackTime, 10),
+          TrackTime: trackTime,
           DateSubmitted: entry.DateSubmitted || entry.dateSubmitted || null,
         };
       })
       .filter(entry => {
-        const valid = !isNaN(entry.ApiRank) && !isNaN(entry.TrackTime) && entry.User.length > 0;
+        const valid = !isNaN(entry.ApiRank) && entry.User.length > 0;
         if (!valid) {
           console.log('Filtered out entry after mapping (invalid values):', entry);
         }
         return valid;
       });
-    
-    // Sort by score (ascending: lower times or scores are better)
-    validEntries.sort((a, b) => a.TrackTime - b.TrackTime);
+
+    // For racing games, a better track time is lower. But since we're using a string formatted score, we'll keep the original API order.
+    // If sorting is required based on time, then conversion of formatted time to a comparable value should be done.
     console.log(`Processed ${validEntries.length} valid leaderboard entries:`, validEntries.map(e => e.User));
     return validEntries;
   } catch (error) {
@@ -114,9 +118,8 @@ async function fetchLeaderboardEntries(leaderboardId) {
 
 function formatEntry(displayRank, entry) {
   const ordinalRank = ordinal(displayRank);
-  // Show the API provided rank in parentheses.
-  const formattedTime = Number(entry.TrackTime).toLocaleString();
-  return `${ordinalRank} (Rank #${entry.ApiRank}) - ${entry.User}: ${formattedTime}`;
+  // Display the track time which is derived mostly from formattedScore.
+  return `${ordinalRank} (Rank #${entry.ApiRank}) - ${entry.User}: ${entry.TrackTime}`;
 }
 
 module.exports = {
@@ -138,15 +141,15 @@ module.exports = {
           .setFooter({ text: 'Data provided by RetroAchievements.org' });
         return message.channel.send({ embeds: [embed] });
       }
-      
+
       const selection = parseInt(args[0], 10);
       if (isNaN(selection) || selection < 1 || selection > arcadeConfigs.length) {
         return message.reply(`Invalid selection. Please choose a number between 1 and ${arcadeConfigs.length}.`);
       }
-      
+
       const selectedConfig = arcadeConfigs[selection - 1];
       const loadingMessage = await message.channel.send('Fetching leaderboard data...');
-      
+
       // Retrieve and normalize leaderboard entries.
       let leaderboardEntries = await fetchLeaderboardEntries(selectedConfig.leaderboardId);
       console.log('Number of entries before user filtering:', leaderboardEntries.length);
@@ -170,7 +173,7 @@ module.exports = {
 
       let output = `**${selectedConfig.name}**\n\n`;
       output += '**User Highscores:**\n\n';
-      
+
       if (leaderboardEntries.length > 0) {
         const displayEntries = leaderboardEntries.slice(0, 15);
         displayEntries.forEach((entry, index) => {
@@ -179,11 +182,11 @@ module.exports = {
       } else {
         output += 'No leaderboard entries found for your users.';
       }
-      
+
       // Fetch game info for thumbnail using the game ID.
       const raAPI = new RetroAchievementsAPI(process.env.RA_USERNAME, process.env.RA_API_KEY);
       const gameInfo = await raAPI.getGameInfo(selectedConfig.gameId);
-      
+
       const embed = new EmbedBuilder()
         .setColor('#0099ff')
         .setTitle('Arcade Highscores')
@@ -192,7 +195,7 @@ module.exports = {
       if (gameInfo?.ImageIcon) {
         embed.setThumbnail(`https://retroachievements.org${gameInfo.ImageIcon}`);
       }
-      
+
       await loadingMessage.delete();
       await message.channel.send({ embeds: [embed] });
     } catch (error) {
