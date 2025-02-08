@@ -1,33 +1,21 @@
-// File: src/commands/importLegacy.js
+// File: src/commands/importlegacy.js
 // ONE-TIME COMMAND: This command imports legacy nomination data into the database.
-// Once you've run this command and verified the legacy nominations have been added,
-// you may safely remove this file.
-//
-// IMPORTANT: Limit the execution of this command to trusted users only.
-// You might want to restrict it to the bot owner or use your own permissions logic.
+// Restrict this command to trusted users as needed.
+// Once the legacy nominations are imported and verified, you can safely remove this file.
 
 const Nomination = require('../models/Nomination');
-const moment = require('moment');
 
 module.exports = {
   name: 'importlegacy',
-  description: 'One-time command to import legacy nomination data. (Do not use again.)',
-  async execute(message, args) {
+  description: 'One-time command to import legacy nomination data into the database. (Do not use again.)',
+  async execute(message) {
     try {
-      // OPTIONAL: Check if the message author is an administrator or the bot owner.
-      // For example, if your bot has a config.ownerId, you could compare:
-      // if (message.author.id !== process.env.OWNER_ID) {
-      //   return message.reply("You don't have permission to run this command.");
-      // }
+      // OPTIONAL: Add permission checks for trusted users.
       
-      // Ensure that the command is only run once.
-      // For this example, we simply inform the user and allow the command to run.
-      // You can add further confirmation prompts if desired.
-      
-      // Set the voteMonth to "legacy" to separate these nominations.
+      // Set the legacy voteMonth value.
       const voteMonth = 'legacy';
 
-      // Create an array of legacy nomination objects based on your historical data.
+      // Array of legacy nomination objects based on your historical data.
       const legacyNominations = [
         // PLATFORM: GB
         { platform: 'GB', gameTitle: 'Pokemon Red/Blue', nominatedBy: 'Legacy Import', voteMonth },
@@ -44,7 +32,7 @@ module.exports = {
         { platform: 'GENESIS', gameTitle: 'Castlevania: Bloodlines', nominatedBy: 'Legacy Import', voteMonth },
         // PLATFORM: N64
         { platform: 'N64', gameTitle: 'Zelda: Ocarina of Time', nominatedBy: 'Legacy Import', voteMonth },
-        { platform: 'N64', gameTitle: `Zelda: Majora's Mask`, nominatedBy: 'Legacy Import', voteMonth },
+        { platform: 'N64', gameTitle: "Zelda: Majora's Mask", nominatedBy: 'Legacy Import', voteMonth },
         { platform: 'N64', gameTitle: 'Banjo-Kazooie', nominatedBy: 'Legacy Import', voteMonth },
         { platform: 'N64', gameTitle: 'Star Wars Episode 1: Racer', nominatedBy: '.royalsam', voteMonth },
         // PLATFORM: NES
