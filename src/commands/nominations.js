@@ -6,10 +6,11 @@ const Nomination = require('../models/Nomination');
 const platformNames = {
   'gb': 'Gameboy',
   'gbc': 'Gameboy Color',
+  'gba': 'Gameboy Advance',
   'snes': 'Super Nintendo',
   'nes': 'Nintendo Entertainment System',
   'n64': 'Nintendo 64',
-  'ps': 'PlayStation',
+  'psx': 'PlayStation',
   'ps2': 'PlayStation 2',
   'xbox': 'Xbox',
   'wii': 'Wii',
@@ -94,7 +95,7 @@ module.exports = {
       const embed = new EmbedBuilder()
         .setColor('#0099ff')
         .setTitle('Nomination List')
-        .setDescription('All nominations organized by platform (full names)')
+        .setDescription('!nominate to add 3 titles per month. 10 will be chosen at random for the vote. The 10 chosen are dropped from the list, and will need to be added back to the list again.')
         .setTimestamp();
 
       if (fields.length > 0) {
