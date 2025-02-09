@@ -162,14 +162,15 @@ module.exports = {
             if (currentProgress.length > 0) {
                 let progressText = '';
                 for (const progress of currentProgress) {
-                    const emoji = progress.type === 'SHADOW' ? '🌑' : '☀️';
-                    progressText += `${emoji} **${progress.title}**\n`;
-                    progressText += `┌─────────────────────\n`;
-                    progressText += `│ Progress: ${progress.progress} (${progress.completion})\n`;
+                    // Use a simple emoji for the challenge type (if you wish to remove it entirely, just remove the variable)
+                    const typeEmoji = progress.type === 'SHADOW' ? '🌑' : '☀️';
+                    // Remove box-drawing characters and award emojis.
+                    progressText += `${typeEmoji} ${progress.title}\n`;
+                    progressText += `Progress: ${progress.progress} (${progress.completion})\n`;
                     if (progress.award) {
-                        progressText += `│ Award: ${AwardFunctions.getEmoji(progress.award)} ${AwardFunctions.getName(progress.award)}\n`;
+                        progressText += `Award: ${AwardFunctions.getName(progress.award)}\n`;
                     }
-                    progressText += `└─────────────────────\n\n`;
+                    progressText += `\n`;
                 }
                 embed.addFields({ name: '🎮 Current Challenges', value: progressText });
             }
@@ -180,88 +181,76 @@ module.exports = {
             const manualPoints = manualAwards.reduce((sum, award) => sum + (award.totalAchievements || 0), 0);
             const totalPoints = yearlyStats.totalPoints + manualPoints;
 
-            // Add statistics section
+            // Build statistics text without box-drawing characters
             const statsText = [
-                '```ml',
-                '┌─ Points ──────────────┐',
-                `│ Total: ${totalPoints}`,
-                `│ • Challenge: ${yearlyStats.totalPoints}`,
-                `│ • Bonus: ${manualPoints}`,
-                '└────────────────────────┘',
-                '',
-                '┌─ Progress ────────────┐',
-                `│ Achievements: ${yearlyStats.totalAchievements}`,
-                `│ Monthly Games: ${yearlyStats.monthlyGames}`,
-                `│ Shadow Games: ${yearlyStats.shadowGames}`,
-                '└────────────────────────┘',
-                '',
-                '┌─ Completion ──────────┐',
-                `│ Participated: ${yearlyStats.gamesParticipated}`,
-                `│ Beaten: ${yearlyStats.gamesBeaten}`,
-                `│ Mastered: ${yearlyStats.gamesMastered}`,
-                '└────────────────────────┘',
-                '```'
+                `Points:`,
+                ` Total: ${totalPoints}`,
+                ` • Challenge: ${yearlyStats.totalPoints}`,
+                ` • Bonus: ${manualPoints}`,
+                ``,
+                `Progress:`,
+                ` Achievements: ${yearlyStats.totalAchievements}`,
+                ` Monthly Games: ${yearlyStats.monthlyGames}`,
+                ` Shadow Games: ${yearlyStats.shadowGames}`,
+                ``,
+                `Completion:`,
+                ` Participated: ${yearlyStats.gamesParticipated}`,
+                ` Beaten: ${yearlyStats.gamesBeaten}`,
+                ` Mastered: ${yearlyStats.gamesMastered}`,
             ].join('\n');
 
-            embed.addFields({ name: '📊 2025 Statistics', value: statsText });
+            embed.addFields({ name: '📊 2025 Statistics', value: `\`\`\`\n${statsText}\n\`\`\`` });
 
             // Add games sections
             if (yearlyStats.participationGames.length > 0) {
                 const participationText = [
-                    '```ml',
-                    yearlyStats.participationGames.map(g => `• ${g}`).join('\n'),
-                    '```'
+                    `Games Participated (1pt):`,
+                    yearlyStats.participationGames.map(g => `• ${g}`).join('\n')
                 ].join('\n');
                 embed.addFields({
                     name: '🏁 Games Participated (1pt)',
-                    value: participationText
+                    value: `\`\`\`\n${participationText}\n\`\`\``
                 });
             }
 
             if (yearlyStats.beatenGames.length > 0) {
                 const beatenText = [
-                    '```ml',
-                    yearlyStats.beatenGames.map(g => `• ${g}`).join('\n'),
-                    '```'
+                    `Games Beaten (+3pts):`,
+                    yearlyStats.beatenGames.map(g => `• ${g}`).join('\n')
                 ].join('\n');
                 embed.addFields({
                     name: '⭐ Games Beaten (+3pts)',
-                    value: beatenText
+                    value: `\`\`\`\n${beatenText}\n\`\`\``
                 });
             }
 
             if (yearlyStats.masteredGames.length > 0) {
                 const masteredText = [
-                    '```ml',
-                    yearlyStats.masteredGames.map(g => `• ${g}`).join('\n'),
-                    '```'
+                    `Games Mastered (+3pts):`,
+                    yearlyStats.masteredGames.map(g => `• ${g}`).join('\n')
                 ].join('\n');
                 embed.addFields({
                     name: '✨ Games Mastered (+3pts)',
-                    value: masteredText
+                    value: `\`\`\`\n${masteredText}\n\`\`\``
                 });
             }
 
             // Add community awards section
             if (manualAwards.length > 0) {
                 const awardsText = [
-                    '```ml',
                     `Total Extra Points: ${manualPoints}`,
-                    '',
-                    manualAwards.map(award => 
-                        `• ${award.reason}: ${award.totalAchievements} point${award.totalAchievements !== 1 ? 's' : ''}`
-                    ).join('\n'),
-                    '```'
+                    ``,
+                    manualAwards.map(award => `• ${award.reason}: ${award.totalAchievements} point${award.totalAchievements !== 1 ? 's' : ''}`).join('\n')
                 ].join('\n');
                 
                 embed.addFields({
                     name: '🫂 Community Awards',
-                    value: awardsText
+                    value: `\`\`\`\n${awardsText}\n\`\`\``
                 });
             } else {
                 embed.addFields({
                     name: '🫂 Community Awards',
-                    value: '```ml\nNone\n```'
+                    value: '```\nNone\n```'
                 });
             }
 
