@@ -63,13 +63,14 @@ class AchievementFeedService {
             const currentMonth = currentDate.getMonth() + 1;
             const currentYear = currentDate.getFullYear();
 
+            // Fetch current challenge games (Monthly or Shadow) for labeling
             const challengeGames = await Game.find({
                 month: currentMonth,
                 year: currentYear,
                 type: { $in: ['MONTHLY', 'SHADOW'] }
             });
 
-            console.log(`Found ${users.length} active users and ${challengeGames.length} current games`);
+            console.log(`Found ${users.length} active users and ${challengeGames.length} challenge games`);
 
             for (const user of users) {
                 try {
@@ -86,6 +87,12 @@ class AchievementFeedService {
         }
     }
 
+    /**
+     * Processes all recent achievements for a given user.
+     * For each achievement, it checks if it has been announced before (using PlayerProgress).
+     * If not, it announces the achievement.
+     * If the achievement's game is a challenge (Monthly/Shadow), it passes along the game details so the announcement gets a label.
+     */
     async checkUserAchievements(user, challengeGames) {
         try {
             const recentAchievements = await this.raAPI.getUserRecentAchievements(user.raUsername);
@@ -95,51 +102,52 @@ class AchievementFeedService {
                 return;
             }
 
-            // Sort achievements by date
+            // Sort achievements by date (oldest first)
             const sortedAchievements = recentAchievements.sort((a, b) => 
                 new Date(a.Date) - new Date(b.Date)
             );
 
             console.log(`Processing ${sortedAchievements.length} achievements for ${user.raUsername}`);
 
-            for (const game of challengeGames) {
+            // Process each achievement regardless of game type.
+            for (const achievement of sortedAchievements) {
+                const achievementDate = new Date(achievement.Date);
+                
+                // Retrieve progress for this specific game
                 let progress = await PlayerProgress.findOne({
                     raUsername: user.raUsername,
-                    gameId: game.gameId
+                    gameId: achievement.GameID
                 });
-
                 if (!progress) {
                     progress = new PlayerProgress({
                         raUsername: user.raUsername,
-                        gameId: game.gameId,
+                        gameId: achievement.GameID,
                         lastAchievementTimestamp: new Date(0),
                         announcedAchievements: []
                     });
                 }
 
-                const gameAchievements = sortedAchievements.filter(ach => {
-                    const achievementDate = new Date(ach.Date);
-                    const isNew = achievementDate > progress.lastAchievementTimestamp;
-                    const isUnannounced = !progress.announcedAchievements.includes(ach.ID);
-                    const isForGame = String(ach.GameID) === String(game.gameId);
-                    
-                    return isNew && isUnannounced && isForGame;
-                });
-
-                console.log(`Found ${gameAchievements.length} new achievements for ${user.raUsername} in ${game.title}`);
-
-                for (const achievement of gameAchievements) {
-                    await this.announceAchievement(user.raUsername, achievement, game);
-                    progress.announcedAchievements.push(achievement.ID);
-                    const achDate = new Date(achievement.Date);
-                    if (achDate > progress.lastAchievementTimestamp) {
-                        progress.lastAchievementTimestamp = achDate;
-                    }
+                // Skip if already processed.
+                if (achievementDate <= progress.lastAchievementTimestamp ||
+                    progress.announcedAchievements.includes(achievement.ID)) {
+                    continue;
                 }
 
-                if (gameAchievements.length > 0) {
-                    await progress.save();
+                // Determine if this achievement is for a challenge game.
+                // Look for a matching game in our pre-fetched challengeGames.
+                let game = challengeGames.find(g => String(g.gameId) === String(achievement.GameID));
+                // If not found, you may optionally attempt to fetch from DB:
+                // if (!game) game = await Game.findOne({ gameId: achievement.GameID });
+
+                // Announce the achievement.
+                await this.announceAchievement(user.raUsername, achievement, game);
+
+                // Mark achievement as announced.
+                progress.announcedAchievements.push(achievement.ID);
+                if (achievementDate > progress.lastAchievementTimestamp) {
+                    progress.lastAchievementTimestamp = achievementDate;
                 }
+                await progress.save();
             }
         } catch (error) {
             console.error(`Error checking achievements for ${user.raUsername}:`, error);
@@ -177,6 +185,11 @@ class AchievementFeedService {
         }
     }
 
+    /**
+     * Announces a single achievement.
+     * If the achievement belongs to a challenge game (Monthly or Shadow), the embed gets a label.
+     * Otherwise, it is announced without a label.
+     */
     async announceAchievement(raUsername, achievement, game) {
         try {
             const announcementKey = `${raUsername}-${achievement.ID}-${achievement.Date}`;
@@ -193,37 +206,47 @@ class AchievementFeedService {
 
             const userIconUrl = `https://retroachievements.org/UserPic/${raUsername}.png`;
 
-            const embed = new EmbedBuilder()
-                .setColor(game.type === 'SHADOW' ? '#FFD700' : '#00BFFF')
-                .setAuthor({
-                    name: game.type === 'SHADOW' ? 'SHADOW GAME 🌑' : 'MONTHLY CHALLENGE ☀️',
-                    iconURL: 'attachment://game_logo.png'
-                })
-                .setTitle(achievement.GameTitle)
-                .setThumbnail(badgeUrl)
-                .setDescription(
-                    `**${raUsername}** earned **${achievement.Title}**\n\n` +
-                    `*${achievement.Description || 'No description available'}*`
-                )
-                .setFooter({
-                    text: `Points: ${achievement.Points} • ${new Date(achievement.Date).toLocaleTimeString()}`,
-                    iconURL: userIconUrl
-                })
-                .setTimestamp();
+            // Build the embed.
+            const embed = new EmbedBuilder();
+            if (game && (game.type === 'SHADOW' || game.type === 'MONTHLY')) {
+                // For challenge games, set a label in the author field.
+                embed.setColor(game.type === 'SHADOW' ? '#FFD700' : '#00BFFF')
+                     .setAuthor({
+                         name: game.type === 'SHADOW' ? 'SHADOW GAME 🌑' : 'MONTHLY CHALLENGE ☀️',
+                         iconURL: 'attachment://game_logo.png'
+                     });
+            } else {
+                // For non-challenge games, use a default color and omit the label.
+                embed.setColor('#00BFFF');
+            }
+            embed.setTitle(achievement.GameTitle)
+                 .setThumbnail(badgeUrl)
+                 .setDescription(
+                     `**${raUsername}** earned **${achievement.Title}**\n\n` +
+                     `*${achievement.Description || 'No description available'}*`
+                 )
+                 .setFooter({
+                     text: `Points: ${achievement.Points} • ${new Date(achievement.Date).toLocaleTimeString()}`,
+                     iconURL: userIconUrl
+                 })
+                 .setTimestamp();
 
-            const files = [{
-                attachment: './assets/logo_simple.png',
-                name: 'game_logo.png'
-            }];
+            // If the achievement is for a challenge game, include the logo attachment for the author icon.
+            const files = (game && (game.type === 'SHADOW' || game.type === 'MONTHLY'))
+                ? [{
+                    attachment: './assets/logo_simple.png',
+                    name: 'game_logo.png'
+                  }]
+                : [];
 
             await this.queueAnnouncement({ embeds: [embed], files });
             this.announcementHistory.add(announcementKey);
 
-           // Clear old history entries if the set gets too large
-                if (this.announcementHistory.size > 1000) {
-                    const oldEntries = Array.from(this.announcementHistory).slice(0, 500);
-                    oldEntries.forEach(entry => this.announcementHistory.delete(entry));
-                }
+            // Clear old history entries if the set gets too large
+            if (this.announcementHistory.size > 1000) {
+                const oldEntries = Array.from(this.announcementHistory).slice(0, 500);
+                oldEntries.forEach(entry => this.announcementHistory.delete(entry));
+            }
             
         } catch (error) {
             console.error('Error announcing achievement:', error);
