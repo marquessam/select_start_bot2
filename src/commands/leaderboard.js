@@ -5,6 +5,33 @@ const Award = require('../models/Award');
 const { AwardFunctions, AwardType } = require('../enums/AwardType');
 
 /**
+ * Splits a text string into chunks that are each no longer than maxLength.
+ * Splitting is done on newline boundaries.
+ * @param {string} text - The text to split.
+ * @param {number} maxLength - The maximum length per chunk (default 1024).
+ * @returns {string[]} - An array of text chunks.
+ */
+function splitIntoChunks(text, maxLength = 1024) {
+    const lines = text.split('\n');
+    const chunks = [];
+    let currentChunk = '';
+
+    for (const line of lines) {
+        // If adding this line would exceed the max length, push the current chunk and start a new one.
+        if (currentChunk.length + line.length + 1 > maxLength) {
+            chunks.push(currentChunk);
+            currentChunk = line;
+        } else {
+            currentChunk = currentChunk ? currentChunk + '\n' + line : line;
+        }
+    }
+    if (currentChunk.length > 0) {
+        chunks.push(currentChunk);
+    }
+    return chunks;
+}
+
+/**
  * Gets the monthly leaderboard data.
  * For the current monthly challenge, returns each user's progress:
  *   - Percentage (achievementCount / totalAchievements)
@@ -37,7 +64,7 @@ async function getMonthlyLeaderboard() {
         const percentage = Math.floor((award.achievementCount / award.totalAchievements) * 100);
         const progress = `${award.achievementCount}/${award.totalAchievements}`;
 
-        // Assume award.award already reflects the highest level achieved.
+        // The award.award already reflects the highest level achieved.
         // (Mastery > Beaten > Participation)
         const emoji = AwardFunctions.getEmoji(award.award);
         return {
@@ -121,9 +148,10 @@ module.exports = {
     description: 'Displays the monthly and yearly leaderboards',
     async execute(message, args) {
         try {
-            // If a subcommand is provided, show that leaderboard; otherwise show both.
+            // Determine which leaderboard(s) to display.
             const subcommand = args[0] ? args[0].toLowerCase() : 'both';
 
+            // --- Monthly Leaderboard ---
             if (subcommand === 'monthly' || subcommand === 'both') {
                 const monthlyData = await getMonthlyLeaderboard();
                 let monthlyDisplay = '';
@@ -136,19 +164,30 @@ module.exports = {
                     monthlyDisplay = 'No monthly challenge data available.';
                 }
 
-                const embed = new EmbedBuilder()
-                    .setColor('#0099ff')
-                    .setTitle('Monthly Leaderboard')
-                    .setDescription(`**Challenge:** ${monthlyData.gameTitle}`)
-                    .addFields({
-                        name: 'Progress',
-                        value: '```ml\n' + monthlyDisplay + '\n```'
-                    })
-                    .setTimestamp();
+                // Split the monthly display into chunks that do not exceed 1024 characters.
+                const monthlyChunks = splitIntoChunks(monthlyDisplay, 1024);
 
-                await message.channel.send({ embeds: [embed] });
+                // Send one embed per chunk.
+                for (let i = 0; i < monthlyChunks.length; i++) {
+                    const embed = new EmbedBuilder()
+                        .setColor('#0099ff')
+                        .setTitle(i === 0 ? 'Monthly Leaderboard' : `Monthly Leaderboard (Part ${i + 1})`)
+                        .setTimestamp();
+                    
+                    // Add the challenge name only on the first embed.
+                    if (i === 0) {
+                        embed.setDescription(`**Challenge:** ${monthlyData.gameTitle}`);
+                    }
+                    
+                    embed.addFields({
+                        name: 'Progress',
+                        value: '```ml\n' + monthlyChunks[i] + '\n```'
+                    });
+                    await message.channel.send({ embeds: [embed] });
+                }
             }
 
+            // --- Yearly Leaderboard ---
             if (subcommand === 'yearly' || subcommand === 'both') {
                 const yearlyData = await getYearlyLeaderboard();
                 let yearlyDisplay = '';
@@ -161,16 +200,22 @@ module.exports = {
                     yearlyDisplay = 'No yearly points data available.';
                 }
 
-                const embed = new EmbedBuilder()
-                    .setColor('#0099ff')
-                    .setTitle('Yearly Leaderboard')
-                    .addFields({
-                        name: 'Rankings',
-                        value: '```ml\n' + yearlyDisplay + '\n```'
-                    })
-                    .setTimestamp();
+                // Split the yearly display into chunks.
+                const yearlyChunks = splitIntoChunks(yearlyDisplay, 1024);
 
-                await message.channel.send({ embeds: [embed] });
+                // Send one embed per chunk.
+                for (let i = 0; i < yearlyChunks.length; i++) {
+                    const embed = new EmbedBuilder()
+                        .setColor('#0099ff')
+                        .setTitle(i === 0 ? 'Yearly Leaderboard' : `Yearly Leaderboard (Part ${i + 1})`)
+                        .setTimestamp();
+
+                    embed.addFields({
+                        name: 'Rankings',
+                        value: '```ml\n' + yearlyChunks[i] + '\n```'
+                    });
+                    await message.channel.send({ embeds: [embed] });
+                }
             }
         } catch (error) {
             console.error('Leaderboard Command Error:', error);
