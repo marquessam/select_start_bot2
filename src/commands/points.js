@@ -11,7 +11,6 @@ module.exports = {
       if (message.channel && message.channel.send) {
         return await message.channel.send(content, options);
       }
-      // Fallback to reply if channel isn't available
       if (message.reply) {
         return await message.reply(content, options);
       }
@@ -65,7 +64,7 @@ module.exports = {
           `Reason: **${reason}**\n\n` +
           `Type \`confirm\` to proceed or anything else to cancel.`
         )
-        .setColor("BLUE");
+        .setColor(0x0000FF); // Using a hex code for blue
       await sendMessage({ embeds: [confirmEmbed] });
 
       const confirmCollected = await message.channel.awaitMessages({
@@ -89,7 +88,7 @@ module.exports = {
         gameId: "manual",
         month,
         year,
-        award: AwardType.MANUAL || AwardType.NONE, // Use MANUAL if defined, else fallback to NONE.
+        award: AwardType.MANUAL || AwardType.NONE,
         achievementCount: 0,
         totalAchievements: pointAmount,
         reason: reason, // Using a dedicated "reason" field now.
