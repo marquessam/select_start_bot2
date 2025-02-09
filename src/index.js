@@ -112,12 +112,15 @@ async function initializeServices() {
         // Initialize scheduler and achievement service
         scheduler = new Scheduler(client);
         await scheduler.initialize();
+        
+        // Start all scheduled jobs
         scheduler.startAll();
         console.log('Scheduler and achievement service initialized');
 
         // Store services on client for global access
         client.userTracker = userTracker;
         client.scheduler = scheduler;
+        client.achievementService = scheduler.achievementService;
 
         // Initialize games and users
         await initializeUsers();
