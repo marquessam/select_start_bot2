@@ -1,7 +1,6 @@
 // File: src/services/scheduler.js
 const cron = require('node-cron');
-const achievementTracker = require('./achievementTracker');
-const AchievementFeedService = require('./achievementFeedService');
+const AchievementService = require('./achievementService');
 
 class Scheduler {
     constructor(client) {
@@ -10,46 +9,64 @@ class Scheduler {
         }
         
         this.client = client;
-        this.achievementFeedService = new AchievementFeedService(client);
+        this.achievementService = new AchievementService(client);
+        this.jobs = new Map();
 
-        // Achievement feed check every 5 minutes
-        this.achievementFeedJob = cron.schedule('*/5 * * * *', async () => {
-            console.log('Starting achievement feed check...');
-            try {
-                await this.achievementFeedService.checkRecentAchievements();
-                console.log('Achievement feed check completed');
-            } catch (error) {
-                console.error('Error in achievement feed check:', error);
-            }
-        }, {
-            scheduled: false // Don't start automatically
-        });
-
-        // Achievement progress check every 15 minutes
-        this.achievementCheckJob = cron.schedule('*/15 * * * *', async () => {
+        // Achievement check every 5 minutes
+        this.jobs.set('achievementCheck', cron.schedule('*/5 * * * *', async () => {
             console.log('Starting scheduled achievement check...');
             try {
-                await achievementTracker.checkAllUsers();
+                await this.achievementService.checkAchievements();
                 console.log('Scheduled achievement check completed');
             } catch (error) {
                 console.error('Error in scheduled achievement check:', error);
             }
         }, {
             scheduled: false // Don't start automatically
-        });
+        }));
 
-        // Daily cleanup/summary at midnight
-        this.dailySummaryJob = cron.schedule('0 0 * * *', async () => {
-            console.log('Starting daily summary...');
+        // Daily cleanup at midnight
+        this.jobs.set('dailyCleanup', cron.schedule('0 0 * * *', async () => {
+            console.log('Starting daily cleanup...');
             try {
-                // Daily summary tasks
-                console.log('Daily summary completed');
+                // Clear caches
+                this.achievementService.clearCache();
+                console.log('Daily cleanup completed');
             } catch (error) {
-                console.error('Error in daily summary:', error);
+                console.error('Error in daily cleanup:', error);
             }
         }, {
-            scheduled: false // Don't start automatically
-        });
+            scheduled: false
+        }));
+
+        // Weekly maintenance tasks (Sunday at 2 AM)
+        this.jobs.set('weeklyMaintenance', cron.schedule('0 2 * * 0', async () => {
+            console.log('Starting weekly maintenance...');
+            try {
+                // Add any weekly maintenance tasks here
+                console.log('Weekly maintenance completed');
+            } catch (error) {
+                console.error('Error in weekly maintenance:', error);
+            }
+        }, {
+            scheduled: false
+        }));
+
+        // Monthly rollover (1st of each month at 0:05 AM)
+        this.jobs.set('monthlyRollover', cron.schedule('5 0 1 * *', async () => {
+            console.log('Starting monthly rollover...');
+            try {
+                // Add monthly rollover tasks here
+                console.log('Monthly rollover completed');
+            } catch (error) {
+                console.error('Error in monthly rollover:', error);
+            }
+        }, {
+            scheduled: false
+        }));
+
+        console.log('Scheduler constructed with the following jobs:', 
+            Array.from(this.jobs.keys()).join(', '));
     }
 
     async initialize() {
@@ -59,9 +76,12 @@ class Scheduler {
                 throw new Error('Discord client not ready');
             }
 
-            // Initialize achievement feed service
-            await this.achievementFeedService.initialize();
-            console.log('Achievement feed service initialized');
+            // Initialize achievement service
+            await this.achievementService.initialize();
+            console.log('Achievement service initialized');
+
+            // Store service on client for global access
+            this.client.achievementService = this.achievementService;
             
             return true;
         } catch (error) {
@@ -72,9 +92,10 @@ class Scheduler {
 
     startAll() {
         try {
-            this.achievementFeedJob.start();
-            this.achievementCheckJob.start();
-            this.dailySummaryJob.start();
+            for (const [jobName, job] of this.jobs) {
+                job.start();
+                console.log(`Started ${jobName} job`);
+            }
             console.log('All scheduled jobs started');
         } catch (error) {
             console.error('Error starting scheduled jobs:', error);
@@ -84,12 +105,91 @@ class Scheduler {
 
     stopAll() {
         try {
-            this.achievementFeedJob.stop();
-            this.achievementCheckJob.stop();
-            this.dailySummaryJob.stop();
+            for (const [jobName, job] of this.jobs) {
+                job.stop();
+                console.log(`Stopped ${jobName} job`);
+            }
             console.log('All scheduled jobs stopped');
         } catch (error) {
             console.error('Error stopping scheduled jobs:', error);
+        }
+    }
+
+    /**
+     * Start a specific job by name
+     * @param {string} jobName - Name of the job to start
+     */
+    startJob(jobName) {
+        const job = this.jobs.get(jobName);
+        if (job) {
+            job.start();
+            console.log(`Started ${jobName} job`);
+        } else {
+            console.error(`Job ${jobName} not found`);
+        }
+    }
+
+    /**
+     * Stop a specific job by name
+     * @param {string} jobName - Name of the job to stop
+     */
+    stopJob(jobName) {
+        const job = this.jobs.get(jobName);
+        if (job) {
+            job.stop();
+            console.log(`Stopped ${jobName} job`);
+        } else {
+            console.error(`Job ${jobName} not found`);
+        }
+    }
+
+    /**
+     * Get the status of all jobs
+     * @returns {Object} Object containing status of each job
+     */
+    getStatus() {
+        const status = {};
+        for (const [jobName, job] of this.jobs) {
+            status[jobName] = {
+                running: job.getStatus() === 'scheduled',
+                lastRun: job.lastRun,
+                nextRun: job.nextRun
+            };
+        }
+        return status;
+    }
+
+    /**
+     * Run a job immediately, regardless of its schedule
+     * @param {string} jobName - Name of the job to run
+     */
+    async runJobNow(jobName) {
+        console.log(`Manually running ${jobName} job`);
+        try {
+            switch (jobName) {
+                case 'achievementCheck':
+                    await this.achievementService.checkAchievements();
+                    break;
+                case 'dailyCleanup':
+                    this.achievementService.clearCache();
+                    break;
+                // Add cases for other jobs as needed
+                default:
+                    console.error(`Job ${jobName} not found or cannot be run manually`);
+            }
+        } catch (error) {
+            console.error(`Error running ${jobName} job:`, error);
+        }
+    }
+
+    /**
+     * Clean up resources when shutting down
+     */
+    async shutdown() {
+        console.log('Shutting down scheduler...');
+        this.stopAll();
+        if (this.achievementService) {
+            this.achievementService.setPaused(true);
         }
     }
 }
