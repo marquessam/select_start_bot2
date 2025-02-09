@@ -1,5 +1,4 @@
 // File: src/commands/help.js
-
 const { EmbedBuilder } = require('discord.js');
 
 const commands = [
@@ -53,6 +52,14 @@ const commands = [
     }
 ];
 
+// Mapping of category names to their corresponding emojis
+const categoryEmojis = {
+    'Stats': '📊',
+    'Challenges': '⚔️',
+    'Info': 'ℹ️',
+    'Arcade': '🕹️'
+};
+
 module.exports = {
     name: 'help',
     description: 'Shows all available commands and their usage',
@@ -64,7 +71,7 @@ module.exports = {
                 .setDescription('Here are all the commands you can use:')
                 .setFooter({ text: 'Tip: Use !help to see this message again' });
 
-            // Group commands by category
+            // Group commands by category.
             const categories = {};
             commands.forEach(cmd => {
                 if (!categories[cmd.category]) {
@@ -73,14 +80,16 @@ module.exports = {
                 categories[cmd.category].push(cmd);
             });
 
-            // Add each category as a field
+            // Add each category as a field using our emoji mapping.
             for (const [category, categoryCommands] of Object.entries(categories)) {
                 let fieldText = '';
                 categoryCommands.forEach(cmd => {
                     fieldText += `**${cmd.syntax}**\n`;
-                    fieldText += `└ ${cmd.description}\n\n`;
+                    fieldText += `   ${cmd.description}\n\n`;
                 });
-                embed.addFields({ name: `📌 ${category}`, value: fieldText });
+                // Use the mapped emoji (or empty string if not found) with the category name.
+                const emoji = categoryEmojis[category] || '';
+                embed.addFields({ name: `${emoji} ${category}`, value: fieldText });
             }
 
             await message.channel.send({ embeds: [embed] });
