@@ -24,20 +24,25 @@ class AchievementFeedService {
         this.announcementHistory = new Set();
         this.isProcessingQueue = false;
         this.isPaused = false;
+
+        // Log configuration
+        console.log('Achievement Feed Service initialized with:', {
+            channelId: this.feedChannelId,
+            lastCheck: this.lastCheck,
+            checkInterval: this.checkInterval
+        });
     }
 
     async initialize() {
         try {
-            // Verify the channel exists and bot has permissions
+            // Verify channel exists and bot has permissions
             const channel = await this.client.channels.fetch(this.feedChannelId);
             if (!channel) {
                 throw new Error('Feed channel not found');
             }
             console.log('Achievement feed initialized with channel:', channel.name);
-            
-            // Start checking for achievements
             this.startPeriodicCheck();
-            console.log('Achievement feed service initialized');
+            return true;
         } catch (error) {
             console.error('Error initializing achievement feed:', error);
             throw error;
@@ -51,22 +56,20 @@ class AchievementFeedService {
 
     async checkRecentAchievements() {
         try {
-            console.log('Checking for recent achievements...');
+            console.log('\nStarting achievement check...');
             const currentDate = new Date();
             const users = await User.find({ isActive: true });
 
-            // Get current month and year
             const currentMonth = currentDate.getMonth() + 1;
             const currentYear = currentDate.getFullYear();
 
-            // Get current monthly and shadow games
             const challengeGames = await Game.find({
                 month: currentMonth,
                 year: currentYear,
                 type: { $in: ['MONTHLY', 'SHADOW'] }
             });
 
-            console.log(`Processing ${users.length} users for ${challengeGames.length} games`);
+            console.log(`Found ${users.length} active users and ${challengeGames.length} current games`);
 
             for (const user of users) {
                 try {
@@ -85,7 +88,6 @@ class AchievementFeedService {
 
     async checkUserAchievements(user, challengeGames) {
         try {
-            console.log(`Checking achievements for ${user.raUsername}`);
             const recentAchievements = await this.raAPI.getUserRecentAchievements(user.raUsername);
             
             if (!recentAchievements || !Array.isArray(recentAchievements)) {
@@ -97,6 +99,8 @@ class AchievementFeedService {
             const sortedAchievements = recentAchievements.sort((a, b) => 
                 new Date(a.Date) - new Date(b.Date)
             );
+
+            console.log(`Processing ${sortedAchievements.length} achievements for ${user.raUsername}`);
 
             for (const game of challengeGames) {
                 let progress = await PlayerProgress.findOne({
@@ -113,20 +117,11 @@ class AchievementFeedService {
                     });
                 }
 
-                // Filter achievements for this game
                 const gameAchievements = sortedAchievements.filter(ach => {
                     const achievementDate = new Date(ach.Date);
                     const isNew = achievementDate > progress.lastAchievementTimestamp;
                     const isUnannounced = !progress.announcedAchievements.includes(ach.ID);
                     const isForGame = String(ach.GameID) === String(game.gameId);
-                    
-                    console.log(`Achievement ${ach.ID} for ${user.raUsername}:`, {
-                        isNew,
-                        isUnannounced,
-                        isForGame,
-                        achievementDate,
-                        lastCheck: progress.lastAchievementTimestamp
-                    });
                     
                     return isNew && isUnannounced && isForGame;
                 });
@@ -144,7 +139,6 @@ class AchievementFeedService {
 
                 if (gameAchievements.length > 0) {
                     await progress.save();
-                    console.log(`Updated progress for ${user.raUsername} in ${game.title}`);
                 }
             }
         } catch (error) {
@@ -185,8 +179,6 @@ class AchievementFeedService {
 
     async announceAchievement(raUsername, achievement, game) {
         try {
-            if (this.isPaused) return;
-
             const announcementKey = `${raUsername}-${achievement.ID}-${achievement.Date}`;
             if (this.announcementHistory.has(announcementKey)) {
                 console.log(`Skipping duplicate announcement: ${announcementKey}`);
@@ -203,7 +195,7 @@ class AchievementFeedService {
 
             const embed = new EmbedBuilder()
                 .setColor(game.type === 'SHADOW' ? '#FFD700' : '#00BFFF')
-                .setAuthor({ 
+                .setAuthor({
                     name: game.type === 'SHADOW' ? 'SHADOW GAME 🌑' : 'MONTHLY CHALLENGE ☀️',
                     iconURL: 'attachment://game_logo.png'
                 })
@@ -213,9 +205,9 @@ class AchievementFeedService {
                     `**${raUsername}** earned **${achievement.Title}**\n\n` +
                     `*${achievement.Description || 'No description available'}*`
                 )
-                .setFooter({ 
+                .setFooter({
                     text: `Points: ${achievement.Points} • ${new Date(achievement.Date).toLocaleTimeString()}`,
-                    iconURL: userIconUrl 
+                    iconURL: userIconUrl
                 })
                 .setTimestamp();
 
@@ -227,11 +219,12 @@ class AchievementFeedService {
             await this.queueAnnouncement({ embeds: [embed], files });
             this.announcementHistory.add(announcementKey);
 
-            // Clear old history entries if the set gets too large
-            if (this.announcementHistory.size > 1000) {
-                const oldEntries = Array.from(this.announcementHistory).slice(0, 500);
-                oldEntries.forEach(entry => this.announcementHistory.delete(entry));
-            }
+           // Clear old history entries if the set gets too large
+                if (this.announcementHistory.size > 1000) {
+                    const oldEntries = Array.from(this.announcementHistory).slice(0, 500);
+                    oldEntries.forEach(entry => this.announcementHistory.delete(entry));
+                }
+            
         } catch (error) {
             console.error('Error announcing achievement:', error);
         }
@@ -265,9 +258,28 @@ class AchievementFeedService {
 
             await this.queueAnnouncement({ embeds: [embed] });
             this.announcementHistory.add(awardKey);
+            console.log(`Points announcement queued for ${raUsername}: ${points} points (${reason})`);
         } catch (error) {
             console.error('Error announcing points award:', error);
         }
+    }
+
+    // Utility method to force a check (useful for testing)
+    async forceCheck() {
+        console.log('Forcing achievement check...');
+        await this.checkRecentAchievements();
+    }
+
+    // Method to clear announcement history (useful if needed)
+    clearHistory() {
+        this.announcementHistory.clear();
+        console.log('Announcement history cleared');
+    }
+
+    // Method to pause/unpause the feed
+    setPaused(paused) {
+        this.isPaused = paused;
+        console.log(`Achievement feed ${paused ? 'paused' : 'resumed'}`);
     }
 }
 
