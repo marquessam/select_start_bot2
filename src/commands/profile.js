@@ -56,7 +56,7 @@ async function getYearlyStats(username) {
     const awards = await Award.find({
         raUsername: username,
         year: currentYear,
-        gameId: { $ne: 'manual' } // Exclude manual awards
+        gameId: { $ne: 'manual' }
     });
 
     const stats = {
@@ -93,7 +93,6 @@ async function getYearlyStats(username) {
             stats.shadowGames++;
         }
 
-        // Track award levels and points
         switch (award.award) {
             case AwardType.MASTERED:
                 stats.totalPoints += AwardFunctions.getPoints(AwardType.MASTERED);
@@ -138,24 +137,6 @@ async function getManualAwards(username) {
     return manualAwards;
 }
 
-function formatGameList(games) {
-    if (!games.length) return 'None';
-    return games.map(g => `• ${g}`).join('\n');
-}
-
-function formatManualAwards(manualAwards) {
-    if (!manualAwards.length) return 'None';
-    
-    let totalExtraPoints = 0;
-    const awardStrings = manualAwards.map(award => {
-        const points = award.totalAchievements || 0;
-        totalExtraPoints += points;
-        return `• **${award.reason}**: ${points} point${points !== 1 ? 's' : ''}`;
-    });
-
-    return `Total Extra Points: **${totalExtraPoints}**\n\n${awardStrings.join('\n')}`;
-}
-
 module.exports = {
     name: 'profile',
     description: 'Shows user profile information with detailed statistics',
@@ -176,70 +157,113 @@ module.exports = {
                 .setURL(`https://retroachievements.org/user/${raUsername}`)
                 .setTimestamp();
 
-            // Get and display current progress
+            // Get current progress
             const currentProgress = await getCurrentProgress(raUsername);
             if (currentProgress.length > 0) {
                 let progressText = '';
                 for (const progress of currentProgress) {
-                    const emoji = progress.type === 'SHADOW' ? '🌘' : '🏆';
+                    const emoji = progress.type === 'SHADOW' ? '🌑' : '☀️';
                     progressText += `${emoji} **${progress.title}**\n`;
-                    progressText += `Progress: ${progress.progress} (${progress.completion})\n`;
+                    progressText += `┌─────────────────────\n`;
+                    progressText += `│ Progress: ${progress.progress} (${progress.completion})\n`;
                     if (progress.award) {
-                        progressText += `Award: ${AwardFunctions.getEmoji(progress.award)} ${AwardFunctions.getName(progress.award)}\n`;
+                        progressText += `│ Award: ${AwardFunctions.getEmoji(progress.award)} ${AwardFunctions.getName(progress.award)}\n`;
                     }
-                    progressText += '\n';
+                    progressText += `└─────────────────────\n\n`;
                 }
-                embed.addFields({ name: '**Current Challenges**', value: progressText });
+                embed.addFields({ name: '🎮 Current Challenges', value: progressText });
             }
 
-            // Get and display yearly stats
+            // Get yearly stats and manual awards
             const yearlyStats = await getYearlyStats(raUsername);
             const manualAwards = await getManualAwards(raUsername);
-            
-            // Calculate total points including manual awards
             const manualPoints = manualAwards.reduce((sum, award) => sum + (award.totalAchievements || 0), 0);
             const totalPoints = yearlyStats.totalPoints + manualPoints;
-            
-            // Add overall statistics
-            const statsText = 
-                `**Total Points:** ${totalPoints} (${yearlyStats.totalPoints} + ${manualPoints} bonus)\n` +
-                `**Achievements Earned:** ${yearlyStats.totalAchievements}\n` +
-                `**Monthly Games:** ${yearlyStats.monthlyGames}\n` +
-                `**Shadow Games:** ${yearlyStats.shadowGames}\n` +
-                `**Games Participated:** ${yearlyStats.gamesParticipated}\n` +
-                `**Games Beaten:** ${yearlyStats.gamesBeaten}\n` +
-                `**Games Mastered:** ${yearlyStats.gamesMastered}`;
-            
-            embed.addFields({ name: '**2025 Statistics**', value: statsText });
 
-            // Add game lists
+            // Add statistics section
+            const statsText = [
+                '```ml',
+                '┌─ Points ──────────────┐',
+                `│ Total: ${totalPoints}`,
+                `│ • Challenge: ${yearlyStats.totalPoints}`,
+                `│ • Bonus: ${manualPoints}`,
+                '└────────────────────────┘',
+                '',
+                '┌─ Progress ────────────┐',
+                `│ Achievements: ${yearlyStats.totalAchievements}`,
+                `│ Monthly Games: ${yearlyStats.monthlyGames}`,
+                `│ Shadow Games: ${yearlyStats.shadowGames}`,
+                '└────────────────────────┘',
+                '',
+                '┌─ Completion ──────────┐',
+                `│ Participated: ${yearlyStats.gamesParticipated}`,
+                `│ Beaten: ${yearlyStats.gamesBeaten}`,
+                `│ Mastered: ${yearlyStats.gamesMastered}`,
+                '└────────────────────────┘',
+                '```'
+            ].join('\n');
+
+            embed.addFields({ name: '📊 2025 Statistics', value: statsText });
+
+            // Add games sections
             if (yearlyStats.participationGames.length > 0) {
+                const participationText = [
+                    '```ml',
+                    yearlyStats.participationGames.map(g => `• ${g}`).join('\n'),
+                    '```'
+                ].join('\n');
                 embed.addFields({
-                    name: '🏁 **Games Participated (1pt)**',
-                    value: formatGameList(yearlyStats.participationGames)
+                    name: '🏁 Games Participated (1pt)',
+                    value: participationText
                 });
             }
 
             if (yearlyStats.beatenGames.length > 0) {
+                const beatenText = [
+                    '```ml',
+                    yearlyStats.beatenGames.map(g => `• ${g}`).join('\n'),
+                    '```'
+                ].join('\n');
                 embed.addFields({
-                    name: '⭐ **Games Beaten (+3pts)**',
-                    value: formatGameList(yearlyStats.beatenGames)
+                    name: '⭐ Games Beaten (+3pts)',
+                    value: beatenText
                 });
             }
 
             if (yearlyStats.masteredGames.length > 0) {
+                const masteredText = [
+                    '```ml',
+                    yearlyStats.masteredGames.map(g => `• ${g}`).join('\n'),
+                    '```'
+                ].join('\n');
                 embed.addFields({
-                    name: '✨ **Games Mastered (+3pts)**',
-                    value: formatGameList(yearlyStats.masteredGames)
+                    name: '✨ Games Mastered (+3pts)',
+                    value: masteredText
                 });
             }
 
-            // Add manual awards with improved formatting
-            const manualAwardsText = formatManualAwards(manualAwards);
-            embed.addFields({
-                name: '🎖️ **Community Awards**',
-                value: manualAwardsText
-            });
+            // Add community awards section
+            if (manualAwards.length > 0) {
+                const awardsText = [
+                    '```ml',
+                    `Total Extra Points: ${manualPoints}`,
+                    '',
+                    manualAwards.map(award => 
+                        `• ${award.reason}: ${award.totalAchievements} point${award.totalAchievements !== 1 ? 's' : ''}`
+                    ).join('\n'),
+                    '```'
+                ].join('\n');
+                
+                embed.addFields({
+                    name: '🫂 Community Awards',
+                    value: awardsText
+                });
+            } else {
+                embed.addFields({
+                    name: '🫂 Community Awards',
+                    value: '```ml\nNone\n```'
+                });
+            }
 
             // Send the profile embed
             await loadingMsg.delete();
