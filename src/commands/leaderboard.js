@@ -4,6 +4,7 @@ const Game = require('../models/Game');
 const Award = require('../models/Award');
 const { AwardFunctions, AwardType } = require('../enums/AwardType');
 const RetroAchievementsAPI = require('../services/retroAchievements');
+const UsernameUtils = require('../utils/usernameUtils');
 
 // Helper to get time remaining until the end of the month
 function getTimeRemaining() {
@@ -19,43 +20,58 @@ function getTimeRemaining() {
 }
 
 /**
- * Splits a text string into chunks that are each no longer than maxLength.
- * Splitting is done on newline boundaries.
- * @param {string} text - The text to split.
- * @param {number} maxLength - The maximum length per chunk.
- * @returns {string[]} - An array of text chunks.
+ * Create a compact box with title
  */
-function splitIntoChunks(text, maxLength = 1024) {
-    const lines = text.split('\n');
-    const chunks = [];
-    let currentChunk = '';
-    for (const line of lines) {
-        // +1 accounts for the newline character.
-        if (currentChunk.length + line.length + 1 > maxLength) {
-            chunks.push(currentChunk);
-            currentChunk = line;
-        } else {
-            currentChunk = currentChunk ? currentChunk + '\n' + line : line;
-        }
-    }
-    if (currentChunk.length > 0) {
-        chunks.push(currentChunk);
-    }
-    return chunks;
+function createCompactBox(title, content) {
+    return [
+        `─${title}─`,
+        content,
+        '─'.repeat(Math.max(...content.split('\n').map(line => line.length)) + 2)
+    ].join('\n');
 }
 
 /**
- * Retrieves the monthly leaderboard data.
- * Finds the current monthly challenge and combines awards by normalized usernames.
- * Only users with progress greater than 0% are included.
- * @returns {Promise<{game: Object, gameTitle: string, leaderboardData: Array}>}
+ * Format game title with colored words
  */
-async function getMonthlyLeaderboard() {
+function getColoredGameTitle(title) {
+    const joiners = /\b(to|the|and|or|of|in|on|at|by|for|with)\b/gi;
+    return title.split(joiners).map((part, index) => {
+        part = part.trim();
+        if (!part) return '';
+        if (joiners.test(part.toLowerCase())) {
+            return part; // Keep joiner words white
+        }
+        return `[${part}]`; // Color other words
+    }).join(' ');
+}
+
+/**
+ * Format leaderboard entries with consistent spacing
+ */
+function formatLeaderboardEntries(entries, showProgress = false) {
+    // Find the longest username for padding
+    const maxUsernameLength = Math.max(...entries.map(e => e.username.length));
+    
+    return entries.map((entry, index) => {
+        const position = (index + 1).toString().padStart(2, ' ');
+        const username = entry.username.padEnd(maxUsernameLength, ' ');
+        if (showProgress) {
+            return `${position}. ${username} - ${entry.progress} (${entry.percentage}%)`;
+        } else {
+            const points = entry.points.toString().padStart(2, ' ');
+            return `${position}. ${username} - ${points} point${entry.points !== 1 ? 's' : ''}`;
+        }
+    }).join('\n');
+}
+
+/**
+ * Retrieves the monthly leaderboard data
+ */
+async function getMonthlyLeaderboard(usernameUtils) {
     const currentDate = new Date();
     const currentMonth = currentDate.getMonth() + 1;
     const currentYear = currentDate.getFullYear();
 
-    // Find the active monthly challenge for the current month and year.
     const game = await Game.findOne({
         month: currentMonth,
         year: currentYear,
@@ -63,85 +79,92 @@ async function getMonthlyLeaderboard() {
     });
     if (!game) return { game: null, gameTitle: 'No Monthly Challenge', leaderboardData: [] };
 
-    // Find all awards for this monthly challenge.
     const awards = await Award.find({
         gameId: game.gameId,
         month: currentMonth,
         year: currentYear
     });
 
-    // Use a Map keyed by normalized (lowercase) username to combine duplicates.
     const leaderboardMap = new Map();
     for (const award of awards) {
-        // Skip if the achievement count is missing or zero.
         if (!award.achievementCount || award.achievementCount <= 0) continue;
         const percentage = Math.floor((award.achievementCount / award.totalAchievements) * 100);
-        if (percentage === 0) continue; // Skip 0% progress.
-        const norm = award.raUsername.toLowerCase();
+        if (percentage === 0) continue;
+
+        const normalizedUsername = award.raUsername.toLowerCase();
+        const canonicalUsername = await usernameUtils.getCanonicalUsername(award.raUsername);
         const progress = `${award.achievementCount}/${award.totalAchievements}`;
-        // (award.emoji is no longer used)
-        if (!leaderboardMap.has(norm)) {
-            leaderboardMap.set(norm, { username: award.raUsername, percentage, progress });
+
+        if (!leaderboardMap.has(normalizedUsername)) {
+            leaderboardMap.set(normalizedUsername, { username: canonicalUsername, percentage, progress });
         } else {
-            // Update if this entry has a higher percentage.
-            const current = leaderboardMap.get(norm);
+            const current = leaderboardMap.get(normalizedUsername);
             if (percentage > current.percentage) {
-                leaderboardMap.set(norm, { username: award.raUsername, percentage, progress });
+                leaderboardMap.set(normalizedUsername, { username: canonicalUsername, percentage, progress });
             }
         }
     }
 
     const leaderboardData = Array.from(leaderboardMap.values());
-    // Sort descending by percentage.
     leaderboardData.sort((a, b) => b.percentage - a.percentage);
     return { game, gameTitle: game.title, leaderboardData };
 }
 
 /**
- * Retrieves the yearly leaderboard data.
- * Aggregates points from challenge awards and manual awards by normalized usernames.
- * Only users with more than 0 points are included.
- * @returns {Promise<Array>}
+ * Retrieves the yearly leaderboard data
  */
-async function getYearlyLeaderboard() {
+async function getYearlyLeaderboard(usernameUtils) {
     const currentYear = new Date().getFullYear();
-
-    // Get challenge awards (excluding manual awards).
     const awards = await Award.find({
         year: currentYear,
         gameId: { $ne: 'manual' }
     });
 
-    // Get manual awards.
     const manualAwards = await Award.find({
         year: currentYear,
         gameId: 'manual'
     });
 
-    // Use a Map keyed by normalized username.
     const leaderboardMap = new Map();
+
+    // Process challenge awards
     for (const award of awards) {
-        const norm = award.raUsername.toLowerCase();
         const points = AwardFunctions.getPoints(award.award);
         if (points <= 0) continue;
-        if (!leaderboardMap.has(norm)) {
-            leaderboardMap.set(norm, { username: award.raUsername, points });
+
+        const normalizedUsername = award.raUsername.toLowerCase();
+        const canonicalUsername = await usernameUtils.getCanonicalUsername(award.raUsername);
+
+        if (!leaderboardMap.has(normalizedUsername)) {
+            leaderboardMap.set(normalizedUsername, { username: canonicalUsername, points });
         } else {
-            const current = leaderboardMap.get(norm);
-            leaderboardMap.set(norm, { username: current.username, points: current.points + points });
+            const current = leaderboardMap.get(normalizedUsername);
+            leaderboardMap.set(normalizedUsername, { 
+                username: canonicalUsername,
+                points: current.points + points 
+            });
         }
     }
+
+    // Process manual awards
     for (const award of manualAwards) {
-        const norm = award.raUsername.toLowerCase();
         const points = award.totalAchievements || 0;
         if (points <= 0) continue;
-        if (!leaderboardMap.has(norm)) {
-            leaderboardMap.set(norm, { username: award.raUsername, points });
+
+        const normalizedUsername = award.raUsername.toLowerCase();
+        const canonicalUsername = await usernameUtils.getCanonicalUsername(award.raUsername);
+
+        if (!leaderboardMap.has(normalizedUsername)) {
+            leaderboardMap.set(normalizedUsername, { username: canonicalUsername, points });
         } else {
-            const current = leaderboardMap.get(norm);
-            leaderboardMap.set(norm, { username: current.username, points: current.points + points });
+            const current = leaderboardMap.get(normalizedUsername);
+            leaderboardMap.set(normalizedUsername, { 
+                username: canonicalUsername,
+                points: current.points + points 
+            });
         }
     }
+
     const leaderboardArray = Array.from(leaderboardMap.values()).filter(entry => entry.points > 0);
     leaderboardArray.sort((a, b) => b.points - a.points);
     return leaderboardArray;
@@ -149,17 +172,24 @@ async function getYearlyLeaderboard() {
 
 module.exports = {
     name: 'leaderboard',
-    description:
-        'Displays the leaderboard menu, monthly leaderboard, or yearly leaderboard based on subcommands',
+    description: 'Displays monthly or yearly leaderboards',
     async execute(message, args) {
         try {
-            // If no subcommand is provided, show the menu.
+            // Initialize API and username utilities
+            const raAPI = new RetroAchievementsAPI(
+                process.env.RA_USERNAME,
+                process.env.RA_API_KEY
+            );
+            const usernameUtils = new UsernameUtils(raAPI);
+
+            // Show menu if no arguments
             if (!args[0]) {
                 const menuEmbed = new EmbedBuilder()
                     .setColor('#0099ff')
                     .setTitle('Leaderboard Menu')
                     .setDescription(
-                        'Use `!leaderboard month` to view the monthly leaderboard, or `!leaderboard year` to view the yearly leaderboard.'
+                        'Use `!leaderboard month` to view the monthly leaderboard\n' +
+                        'Use `!leaderboard year` to view the yearly leaderboard'
                     )
                     .setTimestamp();
                 return message.channel.send({ embeds: [menuEmbed] });
@@ -167,115 +197,96 @@ module.exports = {
 
             const subcommand = args[0].toLowerCase();
 
-            // --- Monthly Leaderboard ---
             if (subcommand === 'month' || subcommand === 'm') {
-                const monthlyData = await getMonthlyLeaderboard();
-
-                // Create an instance of the RA API to fetch game info for the monthly challenge.
+                const monthlyData = await getMonthlyLeaderboard(usernameUtils);
+                
                 let headerDetails = '';
                 let gameInfo = null;
-                const raAPI = new RetroAchievementsAPI(process.env.RA_USERNAME, process.env.RA_API_KEY);
+                
                 if (monthlyData.game) {
                     gameInfo = await raAPI.getGameInfo(monthlyData.game.gameId);
-                    // Bold the game name and time remaining.
-                    headerDetails = `**${gameInfo.GameTitle}**\n\nGame Information\n` +
+                    const gameTitle = getColoredGameTitle(gameInfo.GameTitle);
+                    headerDetails = createCompactBox('Game Information',
+                        `[${gameTitle}]\n` +
                         `Console: ${gameInfo.Console}\n` +
                         `Genre: ${gameInfo.Genre}\n` +
                         `Developer: ${gameInfo.Developer || 'N/A'}\n` +
                         `Publisher: ${gameInfo.Publisher}\n` +
                         `Release Date: ${gameInfo.Released}\n` +
                         `Total Achievements: ${monthlyData.game.numAchievements || 'N/A'}\n\n` +
-                        `**Time Remaining:** ${getTimeRemaining()}`;
+                        `Time Remaining: ${getTimeRemaining()}`
+                    );
                 }
 
-                let monthlyDisplay = '';
-                if (monthlyData.leaderboardData.length > 0) {
-                    const entries = monthlyData.leaderboardData;
-                    const maxNameLength = Math.max(...entries.map(e => e.username.toLowerCase().length));
-                    let rank = 0;
-                    let lastPercentage = null;
-                    entries.forEach((entry, index) => {
-                        if (lastPercentage === null || entry.percentage !== lastPercentage) {
-                            rank = index + 1;
-                        }
-                        const name = entry.username.toLowerCase().padEnd(maxNameLength, ' ');
-                        monthlyDisplay += `${rank}. ${name} – ${entry.percentage}% (${entry.progress})\n`;
-                        lastPercentage = entry.percentage;
-                    });
-                } else {
-                    monthlyDisplay = 'No monthly challenge data available.';
-                }
+                // Create monthly leaderboard
+                const entries = monthlyData.leaderboardData.map(entry => ({
+                    username: entry.username,
+                    progress: entry.progress,
+                    percentage: entry.percentage
+                }));
 
-                // Split leaderboard text into chunks.
-                const monthlyChunks = splitIntoChunks(monthlyDisplay, 1013);
+                const leaderboardText = formatLeaderboardEntries(entries, true);
 
-                // Send one embed per chunk. The first embed includes header details and the game thumbnail.
-                for (let i = 0; i < monthlyChunks.length; i++) {
-                    const embed = new EmbedBuilder()
-                        .setColor('#0099ff')
-                        .setTitle(i === 0 ? 'Monthly Leaderboard' : `Monthly Leaderboard (Part ${i + 1})`)
-                        .setTimestamp();
-                    if (i === 0) {
-                        embed.setDescription(headerDetails);
-                        if (gameInfo && gameInfo.ImageIcon) {
-                            embed.setThumbnail(`https://retroachievements.org${gameInfo.ImageIcon}`);
-                        }
-                        embed.addFields({
-                            name: 'Progress',
-                            value: '```ml\n' + monthlyChunks[i] + '\n```'
-                        });
-                    } else {
-                        embed.addFields({
-                            name: 'Progress',
-                            value: '```ml\n' + monthlyChunks[i] + '\n```'
-                        });
-                    }
-                    await message.channel.send({ embeds: [embed] });
-                }
-            }
-            // --- Yearly Leaderboard ---
-            else if (subcommand === 'year' || subcommand === 'y') {
-                const yearlyData = await getYearlyLeaderboard();
-                let yearlyDisplay = '';
-                if (yearlyData.length > 0) {
-                    const entries = yearlyData;
-                    const maxNameLength = Math.max(...entries.map(e => e.username.toLowerCase().length));
-                    let rank = 0;
-                    let lastPoints = null;
-                    entries.forEach((entry, index) => {
-                        if (lastPoints === null || entry.points !== lastPoints) {
-                            rank = index + 1;
-                        }
-                        const name = entry.username.toLowerCase().padEnd(maxNameLength, ' ');
-                        yearlyDisplay += `${rank}. ${name} – ${entry.points} point${entry.points !== 1 ? 's' : ''}\n`;
-                        lastPoints = entry.points;
-                    });
-                } else {
-                    yearlyDisplay = 'No yearly points data available.';
-                }
-
-                const yearlyChunks = splitIntoChunks(yearlyDisplay, 1013);
-                for (let i = 0; i < yearlyChunks.length; i++) {
-                    const embed = new EmbedBuilder()
-                        .setColor('#0099ff')
-                        .setTitle(i === 0 ? 'Yearly Leaderboard' : `Yearly Leaderboard (Part ${i + 1})`)
-                        .setTimestamp();
-                    embed.addFields({
-                        name: 'Rankings',
-                        value: '```ml\n' + yearlyChunks[i] + '\n```'
-                    });
-                    await message.channel.send({ embeds: [embed] });
-                }
-            } else {
-                // If subcommand is unrecognized, show the menu.
-                const menuEmbed = new EmbedBuilder()
+                const embed = new EmbedBuilder()
                     .setColor('#0099ff')
-                    .setTitle('Leaderboard Menu')
-                    .setDescription(
-                        'Use `!leaderboard month` to view the monthly leaderboard, or `!leaderboard year` to view the yearly leaderboard.'
-                    )
+                    .setTitle('Monthly Leaderboard')
                     .setTimestamp();
-                return message.channel.send({ embeds: [menuEmbed] });
+
+                if (gameInfo?.ImageIcon) {
+                    embed.setThumbnail(`https://retroachievements.org${gameInfo.ImageIcon}`);
+                }
+
+                if (headerDetails) {
+                    embed.setDescription('```ml\n' + headerDetails + '\n```');
+                }
+
+                if (leaderboardText) {
+                    embed.addFields({
+                        name: '📊 Rankings',
+                        value: '```ml\n' + leaderboardText + '\n```'
+                    });
+                } else {
+                    embed.addFields({
+                        name: '📊 Rankings',
+                        value: '```ml\nNo entries yet\n```'
+                    });
+                }
+
+                await message.channel.send({ embeds: [embed] });
+            }
+            else if (subcommand === 'year' || subcommand === 'y') {
+                const yearlyData = await getYearlyLeaderboard(usernameUtils);
+                
+                // Create yearly leaderboard
+                const leaderboardText = formatLeaderboardEntries(yearlyData);
+
+                const yearlyInfo = createCompactBox('2025 Total Points',
+                    `Active Players: ${yearlyData.length}\n` +
+                    `Total Points: ${yearlyData.reduce((sum, entry) => sum + entry.points, 0)}`
+                );
+
+                const embed = new EmbedBuilder()
+                    .setColor('#0099ff')
+                    .setTitle('Yearly Leaderboard')
+                    .setDescription('```ml\n' + yearlyInfo + '\n```')
+                    .setTimestamp();
+
+                if (leaderboardText) {
+                    embed.addFields({
+                        name: '🏆 Rankings',
+                        value: '```ml\n' + leaderboardText + '\n```'
+                    });
+                } else {
+                    embed.addFields({
+                        name: '🏆 Rankings',
+                        value: '```ml\nNo entries yet\n```'
+                    });
+                }
+
+                await message.channel.send({ embeds: [embed] });
+            }
+            else {
+                await message.reply('Please specify either "month" or "year" (e.g., !leaderboard month)');
             }
         } catch (error) {
             console.error('Leaderboard Command Error:', error);
