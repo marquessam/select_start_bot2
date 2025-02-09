@@ -10,18 +10,37 @@ const games2025 = [
         monthlyGame: {
             gameId: "319",
             title: "Chrono Trigger",
-            progression: ['2080', '2081', '2085', '2090', '2191', '2100', '2108', '2129', '2133'],
-            winCondition: ['2266', '2281'],
-            requireProgression: true,
-            requireAllWinConditions: false,
+            // Story progression achievements that must be done in order
+            progression: [
+                '2080',  // Guardia Castle
+                '2081',  // The Queen Returns
+                '2085',  // A Trap is Sprung
+                '2090',  // The Trial
+                '2191',  // Beyond the Ruins
+                '2100',  // The Factory Ruins
+                '2108',  // The End of Time
+                '2129',  // Magus' Castle
+                '2133'   // Forward to the Past
+            ],
+            winCondition: [
+                '2266',  // The Final Battle
+                '2281'   // Dream's End
+            ],
+            requireProgression: true,     // Must follow story in order
+            requireAllWinConditions: false, // Need either ending
             masteryCheck: true
         },
         shadowGame: {
             gameId: "10024",
             title: "Mario Tennis",
-            winCondition: ['48411', '48412'],
+            // No progression because it's not a story-based game
+            progression: [],  
+            winCondition: [
+                '48411',  // Tournament Victory
+                '48412'   // Another Tournament Victory
+            ],
             requireProgression: false,
-            requireAllWinConditions: false,
+            requireAllWinConditions: false,  // Need either tournament win
             masteryCheck: false
         }
     },
@@ -31,20 +50,52 @@ const games2025 = [
         monthlyGame: {
             gameId: "355",
             title: "The Legend of Zelda: A Link to the Past",
-            progression: ['944', '2192', '2282', '980', '2288', '2291', '2292', '2296', '2315', 
-                         '2336', '2351', '2357', '2359', '2361', '2365', '2334', '2354', '2368', 
-                         '2350', '2372', '2387'],
-            winCondition: ['2389'],
-            requireProgression: true,
+            // All dungeon achievements needed but can be done in different orders
+            progression: [
+                '944',   // Eastern Palace
+                '2192',  // Desert Palace
+                '2282',  // Tower of Hera
+                '980',   // Agahnim's Tower
+                '2288',  // Palace of Darkness
+                '2291',  // Swamp Palace
+                '2292',  // Skull Woods
+                '2296',  // Thieves' Town
+                '2315',  // Ice Palace
+                '2336',  // Misery Mire
+                '2351',  // Turtle Rock
+                '2357',  // Ganon's Tower Floor 1
+                '2359',  // Ganon's Tower Floor 2
+                '2361',  // Ganon's Tower Floor 3
+                '2365',  // Agahnim 2
+                '2334',  // Crystal 1
+                '2354',  // Crystal 2
+                '2368',  // Crystal 3
+                '2350',  // Crystal 4
+                '2372',  // Crystal 5
+                '2387'   // Crystal 6
+            ],
+            winCondition: ['2389'],  // Defeat Ganon
+            requireProgression: false,  // Dungeons can be done in any order
             requireAllWinConditions: true,
             masteryCheck: true
         },
         shadowGame: {
             gameId: "274",
             title: "UN Squadron",
-            progression: ['6413', '6414', '6415', '6416', '6417', '6418', '6419', '6420', '6421'],
-            winCondition: ['6422'],
-            requireProgression: true,
+            // Missions must be completed in order
+            progression: [
+                '6413',  // Mission 1
+                '6414',  // Mission 2
+                '6415',  // Mission 3
+                '6416',  // Mission 4
+                '6417',  // Mission 5
+                '6418',  // Mission 6
+                '6419',  // Mission 7
+                '6420',  // Mission 8
+                '6421'   // Mission 9
+            ],
+            winCondition: ['6422'],  // Final Mission
+            requireProgression: true,  // Must complete missions in order
             requireAllWinConditions: true,
             masteryCheck: false
         }
@@ -60,15 +111,22 @@ async function processGamesSequentially(games, raAPI) {
             const monthlyInfo = await raAPI.getGameInfo(game.monthlyGame.gameId);
             console.log(`Got info for monthly game: ${game.monthlyGame.title}`);
             
+            // Add active flag and ensure all fields are present
             results.push({
-                ...game.monthlyGame,
+                gameId: game.monthlyGame.gameId,
+                title: game.monthlyGame.title,
                 type: 'MONTHLY',
                 month: game.month,
                 year: game.year,
-                numAchievements: monthlyInfo.NumAchievements || 0
+                progression: game.monthlyGame.progression || [],
+                winCondition: game.monthlyGame.winCondition || [],
+                requireProgression: game.monthlyGame.requireProgression || false,
+                requireAllWinConditions: game.monthlyGame.requireAllWinConditions || false,
+                masteryCheck: game.monthlyGame.masteryCheck || false,
+                numAchievements: monthlyInfo.NumAchievements || 0,
+                active: true
             });
 
-            // Add delay between requests
             await new Promise(resolve => setTimeout(resolve, 1500));
 
             // Process shadow game
@@ -77,14 +135,20 @@ async function processGamesSequentially(games, raAPI) {
             console.log(`Got info for shadow game: ${game.shadowGame.title}`);
             
             results.push({
-                ...game.shadowGame,
+                gameId: game.shadowGame.gameId,
+                title: game.shadowGame.title,
                 type: 'SHADOW',
                 month: game.month,
                 year: game.year,
-                numAchievements: shadowInfo.NumAchievements || 0
+                progression: game.shadowGame.progression || [],
+                winCondition: game.shadowGame.winCondition || [],
+                requireProgression: game.shadowGame.requireProgression || false,
+                requireAllWinConditions: game.shadowGame.requireAllWinConditions || false,
+                masteryCheck: game.shadowGame.masteryCheck || false,
+                numAchievements: shadowInfo.NumAchievements || 0,
+                active: true
             });
 
-            // Add delay between requests
             await new Promise(resolve => setTimeout(resolve, 1500));
 
         } catch (error) {
@@ -123,7 +187,11 @@ async function initializeGames() {
             type: g.type,
             month: g.month,
             year: g.year,
-            achievements: g.numAchievements
+            achievements: g.numAchievements,
+            progressionRequired: g.requireProgression,
+            progressionCount: g.progression.length,
+            winConditions: g.winCondition.length,
+            requireAllWins: g.requireAllWinConditions
         })));
 
         console.log('Game initialization completed successfully');
