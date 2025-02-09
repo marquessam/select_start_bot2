@@ -3,7 +3,6 @@ const User = require('../models/User');
 const Game = require('../models/Game');
 const PlayerProgress = require('../models/PlayerProgress');
 const RetroAchievementsAPI = require('./retroAchievements');
-const DataService = require('../services/dataService');
 
 class AchievementFeedService {
   constructor(client) {
@@ -164,8 +163,8 @@ class AchievementFeedService {
         ? `https://media.retroachievements.org/Badge/${achievement.BadgeName}.png`
         : 'https://media.retroachievements.org/Badge/00000.png';
 
-      const userIconUrl = await DataService.getRAProfileImage(raUsername) ||
-        `https://retroachievements.org/UserPic/${raUsername}.png`;
+      // Directly construct the user icon URL without DataService
+      const userIconUrl = `https://retroachievements.org/UserPic/${raUsername}.png`;
 
       let authorName = '';
       let authorIconUrl = '';
@@ -231,12 +230,12 @@ class AchievementFeedService {
       }
       this.announcementHistory.add(awardKey);
 
-      const userProfile = await DataService.getRAProfileImage(raUsername);
+      const userProfileUrl = `https://retroachievements.org/UserPic/${raUsername}.png`;
       const embed = new EmbedBuilder()
         .setColor('#FFD700')
         .setAuthor({
           name: raUsername,
-          iconURL: userProfile || `https://retroachievements.org/UserPic/${raUsername}.png`,
+          iconURL: userProfileUrl,
           url: `https://retroachievements.org/user/${raUsername}`
         })
         .setTitle('🏆 Points Awarded!')
@@ -262,8 +261,7 @@ class AchievementFeedService {
       }
       this.announcementHistory.add(awardKey);
 
-      const userIconUrl = await DataService.getRAProfileImage(raUsername) ||
-        `https://retroachievements.org/UserPic/${raUsername}.png`;
+      const userIconUrl = `https://retroachievements.org/UserPic/${raUsername}.png`;
 
       const embed = new EmbedBuilder()
         .setColor('#FF4500')
