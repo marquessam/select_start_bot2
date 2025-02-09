@@ -80,16 +80,15 @@ module.exports = {
                 categories[cmd.category].push(cmd);
             });
 
-            // Add each category as a field using our emoji mapping.
+            // Add each category as a field, with its text wrapped in a colored code block.
             for (const [category, categoryCommands] of Object.entries(categories)) {
                 let fieldText = '';
                 categoryCommands.forEach(cmd => {
-                    fieldText += `**${cmd.syntax}**\n`;
+                    fieldText += `${cmd.syntax}\n`;
                     fieldText += `   ${cmd.description}\n\n`;
                 });
-                // Use the mapped emoji (or empty string if not found) with the category name.
                 const emoji = categoryEmojis[category] || '';
-                embed.addFields({ name: `${emoji} ${category}`, value: fieldText });
+                embed.addFields({ name: `${emoji} ${category}`, value: "```ml\n" + fieldText + "\n```" });
             }
 
             await message.channel.send({ embeds: [embed] });
