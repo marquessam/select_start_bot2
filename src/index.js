@@ -7,7 +7,8 @@ const path = require('path');
 const { initializeGames } = require('./utils/initializeGames');
 const { initializeUsers } = require('./utils/initializeUsers');
 const Scheduler = require('./services/scheduler');
-const achievementTracker = require('./services/achievementTracker');
+const AchievementTracker = require('./services/achievementTracker');
+const achievementTracker = new AchievementTracker(); // Create an instance
 
 // Load .env for achievement feed channel
 require('dotenv').config();
@@ -125,7 +126,7 @@ async function main() {
         console.log('Waiting before initial achievement check...');
         await new Promise(resolve => setTimeout(resolve, 5000));
 
-        // Perform initial achievement check
+        // Perform initial achievement check using the instance method
         console.log('Starting initial achievement check...');
         try {
             await achievementTracker.checkAllUsers();
