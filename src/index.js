@@ -22,7 +22,7 @@ const requiredEnvVars = [
 
 const missingEnvVars = requiredEnvVars.filter(varName => !process.env[varName]);
 if (missingEnvVars.length > 0) {
-    console.error('Missing required Railway environment variables:', missingEnvVars.join(', '));
+    console.error('Missing required environment variables:', missingEnvVars.join(', '));
     process.exit(1);
 }
 
@@ -87,7 +87,7 @@ async function shutdown() {
  */
 async function main() {
     try {
-        // First, login to Discord using Railway's environment variable
+        // First, login to Discord using environment variable
         console.log('Logging into Discord...');
         await client.login(process.env.DISCORD_TOKEN);
         console.log(`Logged in as ${client.user.tag}`);
@@ -105,7 +105,7 @@ async function main() {
         // Store achievement feed service on client for global access
         client.achievementFeedService = scheduler.achievementFeedService;
 
-        // Connect to MongoDB using Railway's environment variable
+        // Connect to MongoDB using environment variable
         await mongoose.connect(process.env.MONGODB_URI);
         console.log('Connected to MongoDB');
 
@@ -121,10 +121,18 @@ async function main() {
         scheduler.startAll();
         console.log('Scheduler started');
 
+        // Add delay before initial achievement check
+        console.log('Waiting before initial achievement check...');
+        await new Promise(resolve => setTimeout(resolve, 5000));
+
         // Perform initial achievement check
         console.log('Starting initial achievement check...');
-        await achievementTracker.checkAllUsers();
-        console.log('Initial achievement check completed');
+        try {
+            await achievementTracker.checkAllUsers();
+            console.log('Initial achievement check completed');
+        } catch (error) {
+            console.error('Error during achievement check:', error);
+        }
 
     } catch (error) {
         console.error('Error during startup:', error);
