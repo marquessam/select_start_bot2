@@ -8,7 +8,7 @@ const { AwardFunctions, AwardType } = require('../enums/AwardType');
  * Splits a text string into chunks that are each no longer than maxLength.
  * Splitting is done on newline boundaries.
  * @param {string} text - The text to split.
- * @param {number} maxLength - The maximum length per chunk (default 1024).
+ * @param {number} maxLength - The maximum length per chunk.
  * @returns {string[]} - An array of text chunks.
  */
 function splitIntoChunks(text, maxLength = 1024) {
@@ -17,7 +17,7 @@ function splitIntoChunks(text, maxLength = 1024) {
     let currentChunk = '';
 
     for (const line of lines) {
-        // If adding this line would exceed the max length, push the current chunk and start a new one.
+        // +1 accounts for the newline character.
         if (currentChunk.length + line.length + 1 > maxLength) {
             chunks.push(currentChunk);
             currentChunk = line;
@@ -164,8 +164,8 @@ module.exports = {
                     monthlyDisplay = 'No monthly challenge data available.';
                 }
 
-                // Split the monthly display into chunks that do not exceed 1024 characters.
-                const monthlyChunks = splitIntoChunks(monthlyDisplay, 1024);
+                // Use 1013 as the max length for the leaderboard text (1013 + 11 = 1024).
+                const monthlyChunks = splitIntoChunks(monthlyDisplay, 1013);
 
                 // Send one embed per chunk.
                 for (let i = 0; i < monthlyChunks.length; i++) {
@@ -200,8 +200,8 @@ module.exports = {
                     yearlyDisplay = 'No yearly points data available.';
                 }
 
-                // Split the yearly display into chunks.
-                const yearlyChunks = splitIntoChunks(yearlyDisplay, 1024);
+                // Use 1013 as the max length for the yearly text.
+                const yearlyChunks = splitIntoChunks(yearlyDisplay, 1013);
 
                 // Send one embed per chunk.
                 for (let i = 0; i < yearlyChunks.length; i++) {
