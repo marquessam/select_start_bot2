@@ -2,220 +2,179 @@
 const { EmbedBuilder } = require('discord.js');
 const Game = require('../models/Game');
 const Award = require('../models/Award');
-const User = require('../models/User');
-const { AwardType, AwardFunctions } = require('../enums/AwardType');
+const { AwardFunctions, AwardType } = require('../enums/AwardType');
 
-function padString(str, length) {
-    return str.toString().slice(0, length).padEnd(length);
-}
-
-async function displayMonthlyLeaderboard() {
+/**
+ * Gets the monthly leaderboard data.
+ * For the current monthly challenge, returns each user's progress:
+ *   - Percentage (achievementCount / totalAchievements)
+ *   - Progress as x/x
+ *   - The emoji for the highest award achieved.
+ */
+async function getMonthlyLeaderboard() {
     const currentDate = new Date();
     const currentMonth = currentDate.getMonth() + 1;
     const currentYear = currentDate.getFullYear();
 
-    const monthlyGame = await Game.findOne({
+    // Find the active monthly challenge for the current month and year.
+    const currentGame = await Game.findOne({
         month: currentMonth,
         year: currentYear,
         type: 'MONTHLY'
     });
+    if (!currentGame) return { gameTitle: 'No Monthly Challenge', leaderboardData: [] };
 
-    if (!monthlyGame) {
-        throw new Error('No monthly game found for current month.');
-    }
-
+    // Find all awards for this monthly challenge.
     const awards = await Award.find({
-        gameId: monthlyGame.gameId,
+        gameId: currentGame.gameId,
         month: currentMonth,
-        year: currentYear,
-        achievementCount: { $gt: 0 }
+        year: currentYear
     });
 
-    const uniqueAwards = {};
-    for (const award of awards) {
-        const user = await User.findOne({
-            raUsername: { $regex: new RegExp(`^${award.raUsername}$`, 'i') }
-        });
-        
-        if (user) {
-            const canonicalUsername = user.raUsername;
-            if (!uniqueAwards[canonicalUsername] || 
-                award.achievementCount > uniqueAwards[canonicalUsername].achievementCount) {
-                award.raUsername = canonicalUsername;
-                uniqueAwards[canonicalUsername] = award;
-            }
-        }
-    }
+    // Build the leaderboard entries.
+    const leaderboardData = awards.map(award => {
+        // Calculate progress percentage.
+        const percentage = Math.floor((award.achievementCount / award.totalAchievements) * 100);
+        const progress = `${award.achievementCount}/${award.totalAchievements}`;
 
-    const sortedAwards = Object.values(uniqueAwards)
-        .sort((a, b) => b.achievementCount - a.achievementCount);
-
-    let currentRank = 1;
-    let currentScore = -1;
-    let increment = 0;
-
-    sortedAwards.forEach(award => {
-        if (award.achievementCount !== currentScore) {
-            currentRank += increment;
-            increment = 1;
-            currentScore = award.achievementCount;
-            award.rank = currentRank;
-        } else {
-            award.rank = currentRank;
-            increment++;
-        }
+        // Assume award.award already reflects the highest level achieved.
+        // (Mastery > Beaten > Participation)
+        const emoji = AwardFunctions.getEmoji(award.award);
+        return {
+            username: award.raUsername,
+            percentage,
+            progress,
+            emoji
+        };
     });
 
-    const embed = new EmbedBuilder()
-        .setColor('#0099ff')
-        .setTitle('Monthly Challenge:')
-        .setDescription(`**${monthlyGame.title}**`)
-        .setThumbnail('https://media.retroachievements.org/Images/022504.png');
-
-    const topTen = sortedAwards.slice(0, 10);
-    const others = sortedAwards.slice(10);
-
-    if (topTen.length > 0) {
-        let topTenText = '';
-        
-        topTen.forEach(award => {
-            const rank = padString(award.rank, 2);
-            const username = award.raUsername.padEnd(13);
-            const progress = `${award.achievementCount}/${award.totalAchievements}`;
-            let awards = '';
-            if (award.award === AwardType.MASTERED) awards = ' ✨';
-            else if (award.award === AwardType.BEATEN) awards = ' ⭐';
-            else if (award.award === AwardType.PARTICIPATION) awards = ' 🏁';
-            
-            topTenText += `${rank} ${username} ${progress}${awards}\n`;
-        });
-
-        embed.addFields({ 
-            name: 'Top Rankings', 
-            value: '```\n' + topTenText + '```' 
-        });
-
-        if (others.length > 0) {
-            const othersText = others
-                .map(a => `${a.raUsername}: ${a.achievementCount}/${a.totalAchievements}`)
-                .join('\n');
-            embed.addFields({ 
-                name: 'Also Participating', 
-                value: '```\n' + othersText + '```' 
-            });
-        }
-    }
-
-    return embed;
+    // Sort by descending percentage.
+    leaderboardData.sort((a, b) => b.percentage - a.percentage);
+    return {
+        gameTitle: currentGame.title,
+        leaderboardData
+    };
 }
 
-async function displayYearlyLeaderboard() {
+/**
+ * Aggregates yearly points for each user.
+ * Points come from challenge awards (only one per game is processed) plus manual awards.
+ * Only users with > 0 points are included.
+ */
+async function getYearlyLeaderboard() {
     const currentYear = new Date().getFullYear();
-    const awards = await Award.find({ year: currentYear });
 
-    const userPoints = {};
-
-    for (const award of awards) {
-        const user = await User.findOne({
-            raUsername: { $regex: new RegExp(`^${award.raUsername}$`, 'i') }
-        });
-
-        if (user) {
-            const canonicalUsername = user.raUsername;
-            if (!userPoints[canonicalUsername]) {
-                userPoints[canonicalUsername] = {
-                    username: canonicalUsername,
-                    totalPoints: 0,
-                    participations: 0,
-                    beaten: 0,
-                    mastered: 0,
-                    processedGames: new Set()
-                };
-            }
-
-            const gameKey = `${award.gameId}-${award.month}`;
-            if (!userPoints[canonicalUsername].processedGames.has(gameKey)) {
-                const points = AwardFunctions.getPoints(award.award);
-                userPoints[canonicalUsername].totalPoints += points;
-                
-                if (award.award >= AwardType.PARTICIPATION) userPoints[canonicalUsername].participations++;
-                if (award.award >= AwardType.BEATEN) userPoints[canonicalUsername].beaten++;
-                if (award.award >= AwardType.MASTERED) userPoints[canonicalUsername].mastered++;
-                
-                userPoints[canonicalUsername].processedGames.add(gameKey);
-            }
-        }
-    }
-
-    const leaderboard = Object.values(userPoints)
-        .filter(user => user.totalPoints > 0)
-        .map(({ processedGames, ...user }) => user)
-        .sort((a, b) => b.totalPoints - a.totalPoints);
-
-    let currentRank = 1;
-    let currentPoints = -1;
-    let increment = 0;
-
-    leaderboard.forEach(user => {
-        if (user.totalPoints !== currentPoints) {
-            currentRank += increment;
-            increment = 1;
-            currentPoints = user.totalPoints;
-            user.rank = currentRank;
-        } else {
-            user.rank = currentRank;
-            increment++;
-        }
+    // Get challenge awards (exclude manual awards).
+    const awards = await Award.find({
+        year: currentYear,
+        gameId: { $ne: 'manual' }
     });
 
-    const embed = new EmbedBuilder()
-        .setColor('#0099ff')
-        .setTitle('2025 Yearly Rankings');
+    // Get manual awards.
+    const manualAwards = await Award.find({
+        year: currentYear,
+        gameId: 'manual'
+    });
 
-    if (leaderboard.length > 0) {
-        let text = '';
-        leaderboard.forEach(user => {
-            const rank = padString(user.rank, 2);
-            const name = user.username.padEnd(13);
-            const points = padString(user.totalPoints, 4);
-            const p = padString(user.participations, 2);
-            const b = padString(user.beaten, 2);
-            const m = padString(user.mastered, 2);
-            
-            text += `${rank} ${name} ${points} ${p} ${b} ${m}\n`;
-        });
+    // Build a mapping from username to total points.
+    const leaderboard = {};
+    // To ensure we count only one award per game per user.
+    const processedGames = {};
 
-        embed.addFields({ name: 'Rankings', value: '```\n' + text + '```' });
-    } else {
-        embed.addFields({ 
-            name: 'Rankings', 
-            value: 'No points earned yet!' 
-        });
+    for (const award of awards) {
+        const username = award.raUsername;
+        if (!username) continue;
+        // Use a composite key to identify a unique game entry.
+        const gameKey = `${award.gameId}-${award.month}`;
+        if (!processedGames[username]) {
+            processedGames[username] = new Set();
+        }
+        if (processedGames[username].has(gameKey)) continue;
+        processedGames[username].add(gameKey);
+
+        const points = AwardFunctions.getPoints(award.award);
+        if (!leaderboard[username]) leaderboard[username] = 0;
+        leaderboard[username] += points;
     }
 
-    return embed;
+    // Process manual awards.
+    for (const award of manualAwards) {
+        const username = award.raUsername;
+        if (!username) continue;
+        // Use award.totalAchievements as the extra points.
+        const points = award.totalAchievements || 0;
+        if (!leaderboard[username]) leaderboard[username] = 0;
+        leaderboard[username] += points;
+    }
+
+    // Create and sort the leaderboard array.
+    const leaderboardArray = Object.keys(leaderboard)
+        .map(username => ({ username, points: leaderboard[username] }))
+        .filter(entry => entry.points > 0)
+        .sort((a, b) => b.points - a.points);
+
+    return leaderboardArray;
 }
 
 module.exports = {
     name: 'leaderboard',
-    description: 'Shows the leaderboard',
+    description: 'Displays the monthly and yearly leaderboards',
     async execute(message, args) {
         try {
-            const type = args[0]?.toLowerCase() || 'month';
-            let embed;
+            // If a subcommand is provided, show that leaderboard; otherwise show both.
+            const subcommand = args[0] ? args[0].toLowerCase() : 'both';
 
-            if (type === 'month' || type === 'm') {
-                embed = await displayMonthlyLeaderboard();
-            } else if (type === 'year' || type === 'y') {
-                embed = await displayYearlyLeaderboard();
-            } else {
-                return message.reply('Invalid command. Use !leaderboard month/m or !leaderboard year/y');
+            if (subcommand === 'monthly' || subcommand === 'both') {
+                const monthlyData = await getMonthlyLeaderboard();
+                let monthlyDisplay = '';
+
+                if (monthlyData.leaderboardData.length > 0) {
+                    monthlyData.leaderboardData.forEach((entry, index) => {
+                        monthlyDisplay += `${index + 1}. **${entry.username}** – ${entry.percentage}% (${entry.progress}) ${entry.emoji}\n`;
+                    });
+                } else {
+                    monthlyDisplay = 'No monthly challenge data available.';
+                }
+
+                const embed = new EmbedBuilder()
+                    .setColor('#0099ff')
+                    .setTitle('Monthly Leaderboard')
+                    .setDescription(`**Challenge:** ${monthlyData.gameTitle}`)
+                    .addFields({
+                        name: 'Progress',
+                        value: '```ml\n' + monthlyDisplay + '\n```'
+                    })
+                    .setTimestamp();
+
+                await message.channel.send({ embeds: [embed] });
             }
 
-            await message.channel.send({ embeds: [embed] });
+            if (subcommand === 'yearly' || subcommand === 'both') {
+                const yearlyData = await getYearlyLeaderboard();
+                let yearlyDisplay = '';
+
+                if (yearlyData.length > 0) {
+                    yearlyData.forEach((entry, index) => {
+                        yearlyDisplay += `${index + 1}. **${entry.username}** – ${entry.points} point${entry.points !== 1 ? 's' : ''}\n`;
+                    });
+                } else {
+                    yearlyDisplay = 'No yearly points data available.';
+                }
+
+                const embed = new EmbedBuilder()
+                    .setColor('#0099ff')
+                    .setTitle('Yearly Leaderboard')
+                    .addFields({
+                        name: 'Rankings',
+                        value: '```ml\n' + yearlyDisplay + '\n```'
+                    })
+                    .setTimestamp();
+
+                await message.channel.send({ embeds: [embed] });
+            }
         } catch (error) {
-            console.error('Leaderboard error:', error);
-            await message.reply('Error getting leaderboard data.');
+            console.error('Leaderboard Command Error:', error);
+            await message.reply('Error displaying leaderboard.');
         }
     }
 };
