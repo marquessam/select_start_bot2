@@ -2,7 +2,7 @@
  * File: src/commands/profile.js
  * Description: This command displays a detailed points profile for a user.
  * It retrieves Award documents from the database for the provided RA username,
- * separates them into game awards, manual (points command) awards, and then formats
+ * separates them into game awards and community awards (manual awards), and then formats
  * the information in an embed with distinct headers.
  */
 
@@ -153,14 +153,14 @@ function formatManualAwards(manualAwards) {
     if (!manualAwards.length) return 'None';
     // Each manual award will display its reason (or fallback text) and the associated points.
     return manualAwards.map(award => {
-        const reasonText = award.reason ? award.reason : "Manual Award";
+        const reasonText = award.reason ? award.reason : "Community Award";
         return `• **${reasonText}**: ${award.totalAchievements} point${award.totalAchievements !== 1 ? 's' : ''}`;
     }).join('\n\n');
 }
 
 module.exports = {
     name: 'profile',
-    description: 'Shows user profile information with detailed statistics and manual awards',
+    description: 'Shows user profile information with detailed statistics and community awards',
     async execute(message, args) {
         try {
             const requestedUsername = args[0] || "Royek";  // Default to Royek if no username provided
@@ -170,12 +170,11 @@ module.exports = {
             const user = await fetchUserProfile(requestedUsername);
             const raUsername = user.raUsername;
 
-            // Create embed
+            // Create embed (removed the detailed description text)
             const embed = new EmbedBuilder()
                 .setColor('#0099ff')
                 .setTitle(`User Profile: ${raUsername}`)
                 .setThumbnail(`https://media.retroachievements.org/UserPic/${raUsername}.png`)
-                .setDescription("Below is your detailed profile including game achievements and manual awards.")
                 .setTimestamp();
 
             // Get and display current progress
@@ -230,11 +229,11 @@ module.exports = {
                 });
             }
 
-            // Get and display manual awards (added via the points command)
+            // Get and display manual awards (displayed as community awards)
             const manualAwards = await getManualAwards(raUsername);
             const manualAwardsText = formatManualAwards(manualAwards);
             embed.addFields({
-                name: '🛠️ **Manual Awards**',
+                name: '🫂 **Community Awards**',
                 value: manualAwardsText
             });
 
