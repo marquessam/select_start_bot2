@@ -5,6 +5,11 @@ const AchievementFeedService = require('./achievementFeedService');
 
 class Scheduler {
     constructor(client) {
+        if (!client || !client.isReady()) {
+            throw new Error('Discord client must be ready before initializing scheduler');
+        }
+        
+        this.client = client;
         this.achievementFeedService = new AchievementFeedService(client);
 
         // Achievement feed check every 5 minutes
@@ -16,6 +21,8 @@ class Scheduler {
             } catch (error) {
                 console.error('Error in achievement feed check:', error);
             }
+        }, {
+            scheduled: false // Don't start automatically
         });
 
         // Achievement progress check every 15 minutes
@@ -27,6 +34,8 @@ class Scheduler {
             } catch (error) {
                 console.error('Error in scheduled achievement check:', error);
             }
+        }, {
+            scheduled: false // Don't start automatically
         });
 
         // Daily cleanup/summary at midnight
@@ -38,25 +47,50 @@ class Scheduler {
             } catch (error) {
                 console.error('Error in daily summary:', error);
             }
+        }, {
+            scheduled: false // Don't start automatically
         });
     }
 
     async initialize() {
-        await this.achievementFeedService.initialize();
+        try {
+            // Make sure client is ready
+            if (!this.client.isReady()) {
+                throw new Error('Discord client not ready');
+            }
+
+            // Initialize achievement feed service
+            await this.achievementFeedService.initialize();
+            console.log('Achievement feed service initialized');
+            
+            return true;
+        } catch (error) {
+            console.error('Error initializing scheduler:', error);
+            throw error;
+        }
     }
 
     startAll() {
-        this.achievementFeedJob.start();
-        this.achievementCheckJob.start();
-        this.dailySummaryJob.start();
-        console.log('All scheduled jobs started');
+        try {
+            this.achievementFeedJob.start();
+            this.achievementCheckJob.start();
+            this.dailySummaryJob.start();
+            console.log('All scheduled jobs started');
+        } catch (error) {
+            console.error('Error starting scheduled jobs:', error);
+            throw error;
+        }
     }
 
     stopAll() {
-        this.achievementFeedJob.stop();
-        this.achievementCheckJob.stop();
-        this.dailySummaryJob.stop();
-        console.log('All scheduled jobs stopped');
+        try {
+            this.achievementFeedJob.stop();
+            this.achievementCheckJob.stop();
+            this.dailySummaryJob.stop();
+            console.log('All scheduled jobs stopped');
+        } catch (error) {
+            console.error('Error stopping scheduled jobs:', error);
+        }
     }
 }
 
