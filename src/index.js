@@ -16,19 +16,32 @@ const Scheduler = require('./services/scheduler');
 // Load environment variables
 require('dotenv').config();
 
-// Verify critical environment variables
-const requiredEnvVars = [
+// Verify Railway environment variables
+const requiredRailwayVars = [
     'DISCORD_TOKEN',
     'MONGODB_URI',
     'RA_USERNAME',
-    'RA_API_KEY',
+    'RA_API_KEY'
+];
+
+// Verify .env environment variables
+const requiredDotEnvVars = [
     'ACHIEVEMENT_FEED_CHANNEL',
     'REGISTRATION_CHANNEL_ID'
 ];
 
-const missingEnvVars = requiredEnvVars.filter(varName => !process.env[varName]);
-if (missingEnvVars.length > 0) {
-    console.error('Missing required environment variables:', missingEnvVars.join(', '));
+const missingRailwayVars = requiredRailwayVars.filter(varName => !process.env[varName]);
+const missingDotEnvVars = requiredDotEnvVars.filter(varName => !process.env[varName]);
+
+if (missingRailwayVars.length > 0) {
+    console.error('Missing required Railway environment variables:', missingRailwayVars.join(', '));
+    console.error('Please configure these in your Railway project settings.');
+    process.exit(1);
+}
+
+if (missingDotEnvVars.length > 0) {
+    console.error('Missing required .env variables:', missingDotEnvVars.join(', '));
+    console.error('Please configure these in your .env file.');
     process.exit(1);
 }
 
