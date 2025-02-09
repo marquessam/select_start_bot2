@@ -348,5 +348,4 @@ class AchievementTracker {
         console.log(`Achievement feed ${paused ? 'paused' : 'resumed'}`);
     }
 }
-
-module.exports = AchievementFeedService;
+module.exports = AchievementTracker;
