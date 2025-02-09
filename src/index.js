@@ -1,5 +1,5 @@
 // File: src/index.js
-require('dotenv').config();
+
 const { Client, GatewayIntentBits, Collection, Events } = require('discord.js');
 const mongoose = require('mongoose');
 const fs = require('fs');
@@ -9,7 +9,30 @@ const { initializeUsers } = require('./utils/initializeUsers');
 const Scheduler = require('./services/scheduler');
 const achievementTracker = require('./services/achievementTracker');
 
-// Create a new Discord client with required intents
+// Load .env only for achievement feed channel
+require('dotenv').config();
+
+// Verify critical environment variables
+const requiredEnvVars = [
+    'DISCORD_TOKEN',
+    'MONGODB_URI',
+    'RA_USERNAME',
+    'RA_API_KEY'
+];
+
+const missingEnvVars = requiredEnvVars.filter(varName => !process.env[varName]);
+if (missingEnvVars.length > 0) {
+    console.error('Missing required Railway environment variables:', missingEnvVars.join(', '));
+    process.exit(1);
+}
+
+// Verify achievement feed channel is set in .env
+if (!process.env.ACHIEVEMENT_FEED_CHANNEL) {
+    console.error('Missing ACHIEVEMENT_FEED_CHANNEL in .env file');
+    process.exit(1);
+}
+
+// Create Discord client
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -62,7 +85,7 @@ async function shutdown() {
  */
 async function main() {
     try {
-        // First, login to Discord
+        // First, login to Discord using Railway's environment variable
         console.log('Logging into Discord...');
         await client.login(process.env.DISCORD_TOKEN);
         console.log(`Logged in as ${client.user.tag}`);
@@ -74,7 +97,7 @@ async function main() {
         });
         console.log('Discord client is ready');
 
-        // Connect to MongoDB
+        // Connect to MongoDB using Railway's environment variable
         await mongoose.connect(process.env.MONGODB_URI);
         console.log('Connected to MongoDB');
 
@@ -85,7 +108,7 @@ async function main() {
         await initializeGames();
         console.log('Games initialized');
 
-        // Initialize scheduler (which will initialize achievement feed)
+        // Initialize and start scheduler
         await scheduler.initialize();
         scheduler.startAll();
         console.log('Scheduler started');
