@@ -13,8 +13,8 @@ class AchievementTracker {
             process.env.RA_USERNAME,
             process.env.RA_API_KEY
         );
-        this.maxConcurrent = 3;  // Maximum concurrent API requests
-        this.checkInterval = 15 * 60 * 1000;  // 15 minutes between checks
+        this.maxConcurrent = 3;
+        this.checkInterval = 15 * 60 * 1000;
     }
 
     async processBatch(users, games) {
@@ -22,27 +22,12 @@ class AchievementTracker {
             const batch = [];
             console.log(`Processing batch for ${users.length} users and ${games.length} games`);
             
-            // Build batch of needed checks
+            // Build batch of needed checks - always include all users/games
             for (const user of users) {
                 for (const game of games) {
-                    const award = await Award.findOne({
-                        raUsername: user.raUsername,
-                        gameId: game.gameId,
-                        month: game.month,
-                        year: game.year
-                    });
-
-                    // Check if this needs processing
-                    if (!award || 
-                        Date.now() - award.lastChecked.getTime() > this.checkInterval) {
-                        batch.push({ user, game, priority: award?.checkPriority || 0 });
-                    }
+                    batch.push({ user, game, priority: 0 });
                 }
             }
-
-            // Sort by priority (higher numbers first)
-            batch.sort((a, b) => b.priority - a.priority);
-            console.log(`Created batch of ${batch.length} items to process`);
 
             // Process in parallel with rate limiting
             const chunks = [];
@@ -72,26 +57,7 @@ class AchievementTracker {
     async processGameProgress(raUsername, game) {
         try {
             console.log(`\nProcessing ${game.title} progress for ${raUsername}`);
-            console.log('Game requirements:', {
-                type: game.type,
-                requireProgression: game.requireProgression,
-                requireAllWinConditions: game.requireAllWinConditions,
-                masteryCheck: game.masteryCheck,
-                progressionCount: game.progression?.length || 0,
-                winConditionCount: game.winCondition?.length || 0
-            });
             
-            // Get player's progress record
-            let progressRecord = await PlayerProgress.findOne({
-                raUsername,
-                gameId: game.gameId
-            }) || new PlayerProgress({
-                raUsername,
-                gameId: game.gameId,
-                lastAchievementTimestamp: new Date(0),
-                announcedAchievements: []
-            });
-
             // Get progress with error handling
             const progress = await this.raAPI.getUserGameProgress(raUsername, game.gameId)
                 .catch(err => {
@@ -99,38 +65,47 @@ class AchievementTracker {
                     return null;
                 });
 
-            if (!progress) {
+            if (!progress || !progress.achievements) {
                 console.log(`No progress data available for ${raUsername} in ${game.title}`);
                 return;
             }
 
             // Extract earned achievements
-            const earnedAchievements = Object.entries(progress.achievements || {})
+            const earnedAchievements = Object.entries(progress.achievements)
                 .filter(([_, ach]) => ach && (ach.DateEarned || ach.dateEarned))
                 .map(([id]) => id);
 
-            console.log(`User has earned ${earnedAchievements.length} achievements`);
+            console.log(`User ${raUsername} has earned ${earnedAchievements.length} achievements in ${game.title}`);
 
-            // Calculate award level with detailed logging
+            // Initialize award level to NONE
             let awardLevel = AwardType.NONE;
             const awardDetails = [];
 
-            // FIRST: Check participation - ANY achievements = participation
+            // STEP 1: Check for participation (completely independent)
             if (earnedAchievements.length > 0) {
                 awardLevel = AwardType.PARTICIPATION;
                 awardDetails.push(`Participation: ${earnedAchievements.length} achievements earned`);
+            }
 
-                // SECOND: Check beaten requirements
+            // Log participation check
+            console.log('Participation check:', {
+                username: raUsername,
+                earnedCount: earnedAchievements.length,
+                participationAwarded: awardLevel === AwardType.PARTICIPATION
+            });
+
+            // STEP 2: Check for beaten status (if they have any achievements)
+            if (earnedAchievements.length > 0) {
                 let beatenRequirementsMet = true;
 
-                // Check progression if it exists
+                // Check progression requirements if they exist
                 if (game.progression && game.progression.length > 0) {
                     const earnedProgression = game.progression.filter(id => 
                         earnedAchievements.includes(id)
                     );
                     
                     if (game.requireProgression) {
-                        // Check if they're earned in order
+                        // Must be earned in order
                         const progressionInOrder = game.progression.every((id, index) => {
                             if (!earnedAchievements.includes(id)) return false;
                             if (index > 0) {
@@ -143,7 +118,7 @@ class AchievementTracker {
                         beatenRequirementsMet = beatenRequirementsMet && progressionInOrder;
                         awardDetails.push(`Progression: ${earnedProgression.length}/${game.progression.length} (In Order: ${progressionInOrder})`);
                     } else {
-                        // Just check if all are earned (any order)
+                        // Can be earned in any order
                         beatenRequirementsMet = beatenRequirementsMet && 
                             (earnedProgression.length === game.progression.length);
                         awardDetails.push(`Progression: ${earnedProgression.length}/${game.progression.length} (Any Order)`);
@@ -167,38 +142,41 @@ class AchievementTracker {
                     }
                 }
 
-                // If all beaten requirements are met, upgrade to beaten
+                // Upgrade to beaten if requirements met
                 if (beatenRequirementsMet) {
                     awardLevel = AwardType.BEATEN;
                     awardDetails.push('Game beaten (all requirements met)');
                 }
 
-                // FINALLY: Check mastery
+                // STEP 3: Check for mastery
                 if (game.type === 'MONTHLY' && 
-                    progress.userCompletion === "100.00%" && 
+                    earnedAchievements.length === progress.numAchievements &&
                     game.masteryCheck) {
                     awardLevel = AwardType.MASTERED;
                     awardDetails.push('Game mastered (100% completion)');
                 }
             }
 
-            console.log('Award calculation details:', {
+            // Log final award calculation
+            console.log('Final award calculation:', {
                 username: raUsername,
                 game: game.title,
+                earnedAchievements: earnedAchievements.length,
+                totalAchievements: progress.numAchievements,
                 awardLevel: AwardType[awardLevel],
                 details: awardDetails
             });
 
-            // Update award in database
+            // Always update the award in database with force
             const awardUpdate = {
                 award: awardLevel,
                 achievementCount: earnedAchievements.length,
-                totalAchievements: game.numAchievements || progress.numAchievements || 0,
+                totalAchievements: progress.numAchievements || 0,
                 userCompletion: progress.userCompletion || "0.00%",
-                lastChecked: new Date(),
-                checkPriority: this.calculateCheckPriority(earnedAchievements.length)
+                lastChecked: new Date()
             };
 
+            // Force update/create with the new award calculation
             await Award.findOneAndUpdate(
                 {
                     raUsername,
@@ -210,22 +188,10 @@ class AchievementTracker {
                 { upsert: true, new: true }
             );
 
-            // Update progress record
-            progressRecord.lastAchievementTimestamp = new Date();
-            await progressRecord.save();
-
         } catch (error) {
             console.error(`Error processing progress for ${raUsername} in ${game.title}:`, error);
             throw error;
         }
-    }
-
-    calculateCheckPriority(achievementCount) {
-        // Higher priority for users with more achievements
-        if (achievementCount > 20) return 3;
-        if (achievementCount > 10) return 2;
-        if (achievementCount > 0) return 1;
-        return 0;
     }
 
     async checkUserProgress(raUsername) {
