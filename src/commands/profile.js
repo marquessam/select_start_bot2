@@ -8,22 +8,6 @@ const RetroAchievementsAPI = require('../services/retroAchievements');
 const UsernameUtils = require('../utils/usernameUtils');
 
 /**
- * Fetch user profile with proper case handling
- */
-async function fetchUserProfile(username, usernameUtils) {
-    const normalizedUsername = usernameUtils.getNormalizedUsername(username);
-    const user = await User.findOne({
-        raUsername: { $regex: new RegExp(`^${normalizedUsername}$`, 'i') }
-    });
-
-    if (!user) {
-        throw new Error(`User ${username} not found.`);
-    }
-
-    return user;
-}
-
-/**
  * Get current monthly progress for user
  */
 async function getCurrentProgress(username) {
@@ -138,14 +122,30 @@ async function getYearlyStats(username) {
 }
 
 /**
- * Get manual awards for user
+ * Get placement awards for user
+ */
+async function getPlacementAwards(username) {
+    const currentYear = new Date().getFullYear();
+    const placements = await Award.find({
+        raUsername: username.toLowerCase(),
+        gameId: 'manual',
+        year: currentYear,
+        'metadata.type': 'placement'
+    }).sort({ 'metadata.month': 1 });  // Sort by month
+
+    return placements;
+}
+
+/**
+ * Get manual awards for user (excluding placements)
  */
 async function getManualAwards(username) {
     const currentYear = new Date().getFullYear();
     const manualAwards = await Award.find({
         raUsername: username.toLowerCase(),
         gameId: 'manual',
-        year: currentYear
+        year: currentYear,
+        'metadata.type': { $ne: 'placement' }
     }).sort({ lastChecked: -1 });
 
     return manualAwards;
@@ -193,7 +193,15 @@ module.exports = {
 
             // Get canonical username for display
             const canonicalUsername = await usernameUtils.getCanonicalUsername(requestedUsername);
-            const user = await fetchUserProfile(requestedUsername, usernameUtils);
+            const user = await User.findOne({
+                raUsername: { $regex: new RegExp(`^${requestedUsername}$`, 'i') }
+            });
+
+            if (!user) {
+                await loadingMsg.delete();
+                return message.reply('User not found.');
+            }
+
             const profilePicUrl = await usernameUtils.getProfilePicUrl(canonicalUsername);
             const profileUrl = await usernameUtils.getProfileUrl(canonicalUsername);
 
@@ -221,13 +229,27 @@ module.exports = {
                 embed.addFields({ name: '🎮 Current Challenges', value: progressText });
             }
 
-            // Get yearly stats and manual awards
+            // Get and display placement awards
+            const placements = await getPlacementAwards(canonicalUsername);
+            if (placements.length > 0) {
+                const placementsText = placements.map(award => 
+                    `${award.metadata.emoji} ${award.metadata.month}: ${award.totalAchievements} points`
+                ).join('\n');
+
+                embed.addFields({
+                    name: '🏆 Monthly Placements',
+                    value: '```ml\n' + createCompactBox('Rankings', placementsText) + '\n```'
+                });
+            }
+
+            // Get yearly stats
             const yearlyStats = await getYearlyStats(canonicalUsername);
             const manualAwards = await getManualAwards(canonicalUsername);
             const manualPoints = manualAwards.reduce((sum, award) => sum + (award.totalAchievements || 0), 0);
-            const totalPoints = yearlyStats.totalPoints + manualPoints;
+            const placementPoints = placements.reduce((sum, award) => sum + award.totalAchievements, 0);
+            const totalPoints = yearlyStats.totalPoints + manualPoints + placementPoints;
 
-            // Build statistics section with compact box
+            // Build statistics section
             const statsText = createCompactBox('Progress',
                 `Achievements: ${yearlyStats.totalAchievements}\n` +
                 `Monthly Games: ${yearlyStats.monthlyGames}\n` +
@@ -293,18 +315,14 @@ module.exports = {
                     name: '🎖️ Community Awards',
                     value: '```ml\n' + awardsText + '\n```'
                 });
-            } else {
-                embed.addFields({
-                    name: '🎖️ Community Awards',
-                    value: '```\nNone\n```'
-                });
             }
 
             // Add points total with compact box
             const pointsText = createCompactBox('Points',
                 `Total: ${totalPoints}\n` +
                 `• Challenge: ${yearlyStats.totalPoints}\n` +
-                `• Bonus: ${manualPoints}\n`
+                `• Placements: ${placementPoints}\n` +
+                `• Community: ${manualPoints}\n`
             );
             embed.addFields({ 
                 name: '🏆 Total Points',
