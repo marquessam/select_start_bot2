@@ -3,6 +3,20 @@ const { EmbedBuilder } = require('discord.js');
 const Game = require('../models/Game');
 const Award = require('../models/Award');
 const { AwardFunctions, AwardType } = require('../enums/AwardType');
+const RetroAchievementsAPI = require('../services/retroAchievements');
+
+// Helper to get time remaining until the end of the month
+function getTimeRemaining() {
+	const now = new Date();
+	const endDate = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+	const diff = endDate - now;
+
+	const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+	const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+	const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+
+	return `${days}d ${hours}h ${minutes}m`;
+}
 
 /**
  * Splits a text string into chunks that are each no longer than maxLength.
@@ -32,9 +46,9 @@ function splitIntoChunks(text, maxLength = 1024) {
 
 /**
  * Retrieves the monthly leaderboard data.
- * It finds the current monthly challenge and combines awards by normalizing usernames.
+ * Finds the current monthly challenge and combines awards by normalized usernames.
  * Only users with progress greater than 0% are included.
- * @returns {Promise<{gameTitle: string, leaderboardData: Array}>}
+ * @returns {Promise<{game: Object, gameTitle: string, leaderboardData: Array}>}
  */
 async function getMonthlyLeaderboard() {
 	const currentDate = new Date();
@@ -42,17 +56,16 @@ async function getMonthlyLeaderboard() {
 	const currentYear = currentDate.getFullYear();
 
 	// Find the active monthly challenge for the current month and year.
-	const currentGame = await Game.findOne({
+	const game = await Game.findOne({
 		month: currentMonth,
 		year: currentYear,
 		type: 'MONTHLY'
 	});
-	if (!currentGame)
-		return { gameTitle: 'No Monthly Challenge', leaderboardData: [] };
+	if (!game) return { game: null, gameTitle: 'No Monthly Challenge', leaderboardData: [] };
 
 	// Find all awards for this monthly challenge.
 	const awards = await Award.find({
-		gameId: currentGame.gameId,
+		gameId: game.gameId,
 		month: currentMonth,
 		year: currentYear
 	});
@@ -81,12 +94,12 @@ async function getMonthlyLeaderboard() {
 	const leaderboardData = Array.from(leaderboardMap.values());
 	// Sort descending by percentage.
 	leaderboardData.sort((a, b) => b.percentage - a.percentage);
-	return { gameTitle: currentGame.title, leaderboardData };
+	return { game, gameTitle: game.title, leaderboardData };
 }
 
 /**
  * Retrieves the yearly leaderboard data.
- * It aggregates points from challenge awards and manual awards by normalizing usernames.
+ * Aggregates points from challenge awards and manual awards by normalized usernames.
  * Only users with more than 0 points are included.
  * @returns {Promise<Array>}
  */
@@ -157,9 +170,27 @@ module.exports = {
 			// --- Monthly Leaderboard ---
 			if (subcommand === 'month' || subcommand === 'm') {
 				const monthlyData = await getMonthlyLeaderboard();
+
+				// Create an instance of the RA API to fetch game info for the monthly challenge.
+				let headerDetails = '';
+				let gameInfo = null;
+				const raAPI = new RetroAchievementsAPI(process.env.RA_USERNAME, process.env.RA_API_KEY);
+				if (monthlyData.game) {
+					// Fetch additional game info
+					gameInfo = await raAPI.getGameInfo(monthlyData.game.gameId);
+					headerDetails = `${gameInfo.GameTitle}\nGame Information\n` +
+						`Console: ${gameInfo.Console}\n` +
+						`Genre: ${gameInfo.Genre}\n` +
+						`Developer: ${gameInfo.Developer || 'N/A'}\n` +
+						`Publisher: ${gameInfo.Publisher}\n` +
+						`Release Date: ${gameInfo.Released}\n` +
+						`Total Achievements: ${monthlyData.game.numAchievements || 'N/A'}\n\n` +
+						`Time Remaining: ${getTimeRemaining()}`;
+				}
+
 				let monthlyDisplay = '';
 				if (monthlyData.leaderboardData.length > 0) {
-					// Normalize all names to lowercase and determine max length for padding.
+					// Normalize names to lowercase and pad them evenly.
 					const entries = monthlyData.leaderboardData;
 					const maxNameLength = Math.max(...entries.map(e => e.username.toLowerCase().length));
 					entries.forEach((entry, index) => {
@@ -170,23 +201,30 @@ module.exports = {
 					monthlyDisplay = 'No monthly challenge data available.';
 				}
 
-				// Use 1013 as the maximum length (to allow for code block markers, totaling ~1024).
+				// Split leaderboard text into chunks.
 				const monthlyChunks = splitIntoChunks(monthlyDisplay, 1013);
 
-				// Send one embed per chunk.
+				// Send one embed per chunk. For the first embed, include header details and the game thumbnail.
 				for (let i = 0; i < monthlyChunks.length; i++) {
 					const embed = new EmbedBuilder()
 						.setColor('#0099ff')
 						.setTitle(i === 0 ? 'Monthly Leaderboard' : `Monthly Leaderboard (Part ${i + 1})`)
 						.setTimestamp();
-					// Add the challenge title only on the first embed.
 					if (i === 0) {
-						embed.setDescription(`Challenge: ${monthlyData.gameTitle}`);
+						embed.setDescription(headerDetails);
+						if (gameInfo && gameInfo.ImageIcon) {
+							embed.setThumbnail(`https://retroachievements.org${gameInfo.ImageIcon}`);
+						}
+						embed.addFields({
+							name: 'Progress',
+							value: '```ml\n' + monthlyChunks[i] + '\n```'
+						});
+					} else {
+						embed.addFields({
+							name: 'Progress',
+							value: '```ml\n' + monthlyChunks[i] + '\n```'
+						});
 					}
-					embed.addFields({
-						name: 'Progress',
-						value: '```ml\n' + monthlyChunks[i] + '\n```'
-					});
 					await message.channel.send({ embeds: [embed] });
 				}
 			}
