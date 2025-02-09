@@ -237,7 +237,7 @@ module.exports = {
             // Add manual awards with improved formatting
             const manualAwardsText = formatManualAwards(manualAwards);
             embed.addFields({
-                name: '🫂 **Community Awards**',
+                name: '🎖️ **Community Awards**',
                 value: manualAwardsText
             });
 
