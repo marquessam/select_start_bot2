@@ -24,8 +24,9 @@ class AchievementService {
             process.env.RA_API_KEY
         );
 
-        // Initialize caches
-        this.userCache = new Cache(300000); // 5 minutes for username cache
+        // Initialize username utilities
+        const UsernameUtils = require('../utils/usernameUtils');
+        this.usernameUtils = new UsernameUtils(this.raAPI);
         this.announcementCache = new Cache(3600000); // 1 hour for announcement history
         this.achievementCache = new Cache(60000); // 1 minute for achievements
         
@@ -66,42 +67,7 @@ class AchievementService {
      * Get canonical form of username, maintaining original case from RetroAchievements
      */
     async getCanonicalUsername(username) {
-        if (!username) return null;
-
-        const normalizedUsername = username.toLowerCase();
-        
-        // Check cache first
-        const cachedUsername = this.userCache.get(normalizedUsername);
-        if (cachedUsername) {
-            return cachedUsername;
-        }
-
-        try {
-            // Try RetroAchievements API first
-            const profile = await this.raAPI.getUserProfile(username);
-            if (profile && profile.Username) {
-                this.userCache.set(normalizedUsername, profile.Username);
-                return profile.Username;
-            }
-        } catch (error) {
-            console.error(`Error getting canonical username from RA for ${username}:`, error);
-        }
-
-        try {
-            // Fallback to database
-            const user = await User.findOne({
-                raUsername: { $regex: new RegExp(`^${normalizedUsername}$`, 'i') }
-            });
-            
-            if (user) {
-                this.userCache.set(normalizedUsername, user.raUsername);
-                return user.raUsername;
-            }
-        } catch (error) {
-            console.error(`Error getting username from database for ${username}:`, error);
-        }
-
-        return username;
+        return await this.usernameUtils.getCanonicalUsername(username);
     }
 
     async checkAchievements() {
@@ -187,18 +153,24 @@ class AchievementService {
         if (this.isPaused) return;
 
         try {
-            const announcementKey = `${username}-${achievement.ID}-${achievement.Date}`;
+            // Always use canonical username for announcements and URLs
+            const canonicalUsername = await this.getCanonicalUsername(username);
+            const announcementKey = `${canonicalUsername}-${achievement.ID}-${achievement.Date}`;
             if (this.announcementCache.get(announcementKey)) {
                 return;
             }
+
+            const profilePicUrl = await this.usernameUtils.getProfilePicUrl(canonicalUsername);
+            const profileUrl = await this.usernameUtils.getProfileUrl(canonicalUsername);
 
             const embed = new EmbedBuilder()
                 .setColor(game?.type === 'SHADOW' ? '#FFD700' : '#00BFFF')
                 .setTitle(achievement.GameTitle)
                 .setDescription(
-                    `**${username}** earned **${achievement.Title}**\n\n` +
+                    `**${canonicalUsername}** earned **${achievement.Title}**\n\n` +
                     `*${achievement.Description || 'No description available'}*`
-                );
+                )
+                .setURL(profileUrl);
 
             // Set badge image if available
             if (achievement.BadgeName) {
@@ -215,7 +187,7 @@ class AchievementService {
 
             embed.setFooter({
                 text: `Points: ${achievement.Points} • ${new Date(achievement.Date).toLocaleTimeString()}`,
-                iconURL: `https://retroachievements.org/UserPic/${username}.png`
+                iconURL: profilePicUrl
             });
 
             const files = game ? [{
