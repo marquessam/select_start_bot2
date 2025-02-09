@@ -22,19 +22,21 @@ class AchievementTracker {
             const batch = [];
             console.log(`Processing batch for ${users.length} users and ${games.length} games`);
             
-            // Build batch with normalized usernames
+            // Build batch with normalized usernames in the user object.
             for (const user of users) {
+                // Create a normalized version for database operations,
+                // but keep the canonical version for API calls.
                 const normalizedUsername = user.raUsername.toLowerCase();
                 for (const game of games) {
                     batch.push({ 
-                        user: { ...user, raUsername: normalizedUsername }, 
+                        user: { ...user, normalizedUsername }, 
                         game, 
                         priority: 0 
                     });
                 }
             }
 
-            // Process in parallel with rate limiting
+            // Process in parallel with rate limiting.
             const chunks = [];
             for (let i = 0; i < batch.length; i += this.maxConcurrent) {
                 chunks.push(batch.slice(i, i + this.maxConcurrent));
@@ -48,7 +50,7 @@ class AchievementTracker {
                         this.processGameProgress(user.raUsername, game)
                     )
                 );
-                // Add delay between chunks to avoid rate limiting
+                // Add delay between chunks to avoid rate limiting.
                 await new Promise(resolve => setTimeout(resolve, 2000));
             }
 
@@ -61,58 +63,60 @@ class AchievementTracker {
 
     async processGameProgress(raUsername, game) {
         try {
-            // Normalize username immediately
-            raUsername = raUsername.toLowerCase();
-            console.log(`\nProcessing ${game.title} progress for ${raUsername}`);
+            // Preserve the canonical username for API calls
+            const canonicalUsername = raUsername;
+            // Create a normalized version for all database operations
+            const normalizedUsername = raUsername.toLowerCase();
             
-            // Get progress with error handling
-            const progress = await this.raAPI.getUserGameProgress(raUsername, game.gameId)
+            console.log(`\nProcessing ${game.title} progress for ${canonicalUsername}`);
+            
+            // Use the canonical username when calling the RA API
+            const progress = await this.raAPI.getUserGameProgress(canonicalUsername, game.gameId)
                 .catch(err => {
-                    console.error(`Error fetching progress for ${raUsername} in ${game.title}:`, err);
+                    console.error(`Error fetching progress for ${canonicalUsername} in ${game.title}:`, err);
                     return null;
                 });
 
             if (!progress || !progress.achievements) {
-                console.log(`No progress data available for ${raUsername} in ${game.title}`);
+                console.log(`No progress data available for ${canonicalUsername} in ${game.title}`);
                 return;
             }
 
-            // Extract earned achievements
+            // Extract earned achievements.
             const earnedAchievements = Object.entries(progress.achievements)
                 .filter(([_, ach]) => ach && (ach.DateEarned || ach.dateEarned))
                 .map(([id]) => id);
 
-            console.log(`User ${raUsername} has earned ${earnedAchievements.length} achievements in ${game.title}`);
+            console.log(`User ${canonicalUsername} has earned ${earnedAchievements.length} achievements in ${game.title}`);
 
-            // Initialize award level to NONE
+            // Initialize award level to NONE.
             let awardLevel = AwardType.NONE;
             const awardDetails = [];
 
-            // STEP 1: Check for participation (completely independent)
+            // STEP 1: Check for participation.
             if (earnedAchievements.length > 0) {
                 awardLevel = AwardType.PARTICIPATION;
                 awardDetails.push(`Participation: ${earnedAchievements.length} achievements earned`);
             }
 
-            // Log participation check
             console.log('Participation check:', {
-                username: raUsername,
+                username: canonicalUsername,
                 earnedCount: earnedAchievements.length,
                 participationAwarded: awardLevel === AwardType.PARTICIPATION
             });
 
-            // STEP 2: Check for beaten status (if they have any achievements)
+            // STEP 2: Check for beaten status.
             if (earnedAchievements.length > 0) {
                 let beatenRequirementsMet = true;
 
-                // Check progression requirements if they exist
+                // Check progression requirements if they exist.
                 if (game.progression && game.progression.length > 0) {
                     const earnedProgression = game.progression.filter(id => 
                         earnedAchievements.includes(id)
                     );
                     
                     if (game.requireProgression) {
-                        // Must be earned in order
+                        // Must be earned in order.
                         const progressionInOrder = game.progression.every((id, index) => {
                             if (!earnedAchievements.includes(id)) return false;
                             if (index > 0) {
@@ -125,14 +129,14 @@ class AchievementTracker {
                         beatenRequirementsMet = beatenRequirementsMet && progressionInOrder;
                         awardDetails.push(`Progression: ${earnedProgression.length}/${game.progression.length} (In Order: ${progressionInOrder})`);
                     } else {
-                        // Can be earned in any order
+                        // Can be earned in any order.
                         beatenRequirementsMet = beatenRequirementsMet && 
                             (earnedProgression.length === game.progression.length);
                         awardDetails.push(`Progression: ${earnedProgression.length}/${game.progression.length} (Any Order)`);
                     }
                 }
 
-                // Check win conditions
+                // Check win conditions.
                 if (game.winCondition && game.winCondition.length > 0) {
                     const earnedWinConditions = game.winCondition.filter(id => 
                         earnedAchievements.includes(id)
@@ -149,13 +153,13 @@ class AchievementTracker {
                     }
                 }
 
-                // Upgrade to beaten if requirements met
+                // Upgrade to beaten if requirements met.
                 if (beatenRequirementsMet) {
                     awardLevel = AwardType.BEATEN;
                     awardDetails.push('Game beaten (all requirements met)');
                 }
 
-                // STEP 3: Check for mastery
+                // STEP 3: Check for mastery.
                 if (game.type === 'MONTHLY' && 
                     earnedAchievements.length === progress.numAchievements &&
                     game.masteryCheck) {
@@ -164,9 +168,8 @@ class AchievementTracker {
                 }
             }
 
-            // Log final award calculation
             console.log('Final award calculation:', {
-                username: raUsername,
+                username: canonicalUsername,
                 game: game.title,
                 earnedAchievements: earnedAchievements.length,
                 totalAchievements: progress.numAchievements,
@@ -174,9 +177,9 @@ class AchievementTracker {
                 details: awardDetails
             });
 
-            // Always update the award in database with normalized username
+            // Prepare the award update object using the normalized username.
             const awardUpdate = {
-                raUsername: raUsername.toLowerCase(), // Ensure normalized username in update
+                raUsername: normalizedUsername, // normalized for storage
                 award: awardLevel,
                 achievementCount: earnedAchievements.length,
                 totalAchievements: progress.numAchievements || 0,
@@ -184,10 +187,10 @@ class AchievementTracker {
                 lastChecked: new Date()
             };
 
-            // Force update/create with the new award calculation
+            // Upsert the award using the normalized username.
             await Award.findOneAndUpdate(
                 {
-                    raUsername: raUsername.toLowerCase(), // Ensure normalized username in query
+                    raUsername: normalizedUsername, // normalized query
                     gameId: game.gameId,
                     month: game.month,
                     year: game.year
@@ -204,9 +207,11 @@ class AchievementTracker {
 
     async checkUserProgress(raUsername) {
         try {
-            // Normalize username immediately
-            raUsername = raUsername.toLowerCase();
-            console.log(`\nChecking progress for user ${raUsername}...`);
+            // Use the canonical username for logging and API calls.
+            const canonicalUsername = raUsername;
+            // Also create a normalized version for internal processing.
+            const normalizedUsername = raUsername.toLowerCase();
+            console.log(`\nChecking progress for user ${canonicalUsername}...`);
             
             const games = await Game.find({
                 year: 2025,
@@ -217,16 +222,16 @@ class AchievementTracker {
 
             for (const game of games) {
                 try {
-                    await this.processGameProgress(raUsername, game);
-                    // Add delay between games
+                    await this.processGameProgress(canonicalUsername, game);
+                    // Add delay between games.
                     await new Promise(resolve => setTimeout(resolve, 2000));
                 } catch (error) {
-                    console.error(`Error processing game ${game.title} for ${raUsername}:`, error);
+                    console.error(`Error processing game ${game.title} for ${canonicalUsername}:`, error);
                     continue;
                 }
             }
 
-            console.log(`Completed all progress checks for ${raUsername}`);
+            console.log(`Completed all progress checks for ${canonicalUsername}`);
         } catch (error) {
             console.error(`Error checking progress for ${raUsername}:`, error);
             throw error;
@@ -251,6 +256,6 @@ class AchievementTracker {
     }
 }
 
-// Create and export a single instance
+// Create and export a single instance.
 const tracker = new AchievementTracker();
 module.exports = tracker;
