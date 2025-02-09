@@ -1,9 +1,9 @@
 // File: src/services/UserTracker.js
+const { addUser, getActiveUsers } = require('../utils/initializeUsers');
+
 class UserTracker {
-    constructor(database, userStats) {
-        this.database = database;
-        this.userStats = userStats;
-        this.services = null; // Store services for potential extension
+    constructor() {
+        this.services = null;
         // Map to store valid users where the key is the lowercase username and the value is the preserved case
         this.validUsers = new Map(); 
         this.cache = {
@@ -13,7 +13,8 @@ class UserTracker {
             profileUrlPattern: /(?:retroachievements\.org\/user\/|ra\.org\/user\/)([^\/\s]+)/i
         };
         // Define the channel ID from which to process RetroAchievements profile URLs
-        this.trackedChannelId = '1337758757895012453';
+        this.trackedChannelId = process.env.REGISTRATION_CHANNEL_ID;
+        console.log('User Tracker initialized');
     }
 
     setServices(services) {
@@ -35,12 +36,15 @@ class UserTracker {
 
     async refreshUserCache() {
         try {
-            // Assume database.getValidUsers returns an array of valid usernames (strings)
-            const users = await this.database.getValidUsers();
+            // Get all active users from database
+            const users = await getActiveUsers();
             this.validUsers.clear();
+            
             for (const user of users) {
-                this.validUsers.set(user.toLowerCase(), user);
+                // Always store with lowercase key for case-insensitive lookups
+                this.validUsers.set(user.raUsername.toLowerCase(), user.raUsername);
             }
+            
             this.cache.lastUpdate = Date.now();
             console.log('[USER TRACKER] User cache refreshed. Valid users:', Array.from(this.validUsers.values()));
             return true;
@@ -103,42 +107,25 @@ class UserTracker {
     }
 
     /**
-     * Add or update a user in the valid users list and persist changes using database.manageUser.
-     * @param {string} username - The username extracted from the post.
-     * @returns {Promise<boolean>} - Returns true if a user was added or updated.
+     * Add a new user to the system using the database functions
      */
     async addUser(username) {
         try {
             if (!username) return false;
 
-            const originalCase = username.trim();
-            const lowercaseKey = originalCase.toLowerCase();
+            const normalizedUsername = username.toLowerCase();
+            
+            // Check if user already exists in cache
+            if (this.validUsers.has(normalizedUsername)) {
+                return false;
+            }
 
-            if (!originalCase) return false;
-
-            // Check if the user already exists in the cache
-            const existingUser = this.validUsers.get(lowercaseKey);
-
-            if (!existingUser) {
-                // Add the new user to the database
-                await this.database.manageUser('add', originalCase);
-                this.validUsers.set(lowercaseKey, originalCase);
-
-                if (this.userStats) {
-                    await this.userStats.initializeUserIfNeeded(originalCase);
-                }
-
-                if (global.leaderboardCache && typeof global.leaderboardCache.updateValidUsers === 'function') {
-                    await global.leaderboardCache.updateValidUsers();
-                }
-
-                console.log(`[USER TRACKER] Added new user: ${originalCase}`);
-                return true;
-            } else if (existingUser !== originalCase) {
-                // Update the user's case if needed in the database
-                await this.database.manageUser('update', existingUser, originalCase);
-                this.validUsers.set(lowercaseKey, originalCase);
-                console.log(`[USER TRACKER] Updated user: ${existingUser} to ${originalCase}`);
+            // Add user to database
+            const newUser = await addUser(username);
+            if (newUser) {
+                // Update cache with the new user
+                this.validUsers.set(normalizedUsername, newUser.raUsername);
+                console.log(`[USER TRACKER] Added new user: ${newUser.raUsername}`);
                 return true;
             }
 
@@ -151,7 +138,6 @@ class UserTracker {
 
     /**
      * Scans historical messages in the designated channel up to the specified limit.
-     * Useful for bootstrapping the user cache.
      */
     async scanHistoricalMessages(channel, limit = 100) {
         // Ensure we only scan on the designated channel
@@ -159,6 +145,7 @@ class UserTracker {
             console.log(`[USER TRACKER] Skipping channel ${channel.name} (ID: ${channel.id}).`);
             return;
         }
+
         try {
             console.log(`[USER TRACKER] Scanning historical messages in ${channel.name}...`);
             const messages = await channel.messages.fetch({ limit });
@@ -187,38 +174,6 @@ class UserTracker {
         } catch (error) {
             console.error('[USER TRACKER] Error scanning historical messages:', error);
             throw error;
-        }
-    }
-
-    /**
-     * Remove a user from the valid users list.
-     * @param {string} username - The username to remove.
-     * @returns {Promise<boolean>} - Returns true if the user was removed.
-     */
-    async removeUser(username) {
-        try {
-            const lowercaseKey = username.toLowerCase();
-            const originalCase = this.validUsers.get(lowercaseKey);
-
-            if (originalCase) {
-                await this.database.manageUser('remove', originalCase);
-                this.validUsers.delete(lowercaseKey);
-
-                if (this.userStats) {
-                    await this.userStats.removeUser(originalCase);
-                }
-
-                if (global.leaderboardCache && typeof global.leaderboardCache.updateValidUsers === 'function') {
-                    await global.leaderboardCache.updateValidUsers();
-                }
-
-                console.log(`[USER TRACKER] Removed user: ${originalCase}`);
-                return true;
-            }
-            return false;
-        } catch (error) {
-            console.error('[USER TRACKER] Error removing user:', error);
-            return false;
         }
     }
 
