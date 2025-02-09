@@ -215,6 +215,18 @@ class AchievementFeedService {
         }
     }
 
+    /**
+     * Helper function to return a canonical version of a username.
+     * Modify this function as needed. In this example, it simply capitalizes the first letter.
+     * You might retrieve the canonical name from the User model or an external API.
+     * @param {string} username - The username to canonicalize.
+     * @returns {string} - The canonical username.
+     */
+    getCanonicalUsername(username) {
+        if (!username) return username;
+        return username.charAt(0).toUpperCase() + username.slice(1);
+    }
+
     async announceAchievement(raUsername, achievement, game) {
         try {
             if (this.isPaused) return;
@@ -231,7 +243,9 @@ class AchievementFeedService {
                 ? `https://media.retroachievements.org/Badge/${achievement.BadgeName}.png`
                 : 'https://media.retroachievements.org/Badge/00000.png';
 
-            const userIconUrl = `https://retroachievements.org/UserPic/${raUsername}.png`;
+            // Use the canonical username for the profile pic URL.
+            const canonicalUsername = this.getCanonicalUsername(raUsername);
+            const userIconUrl = `https://retroachievements.org/UserPic/${canonicalUsername}.png`;
 
             const embed = new EmbedBuilder()
                 .setColor(game?.type === 'SHADOW' ? '#FFD700' : '#00BFFF')
@@ -286,7 +300,8 @@ class AchievementFeedService {
                 return;
             }
 
-            const userIconUrl = `https://retroachievements.org/UserPic/${raUsername}.png`;
+            const canonicalUsername = this.getCanonicalUsername(raUsername);
+            const userIconUrl = `https://retroachievements.org/UserPic/${canonicalUsername}.png`;
 
             const embed = new EmbedBuilder()
                 .setColor('#FFD700')
@@ -326,4 +341,4 @@ class AchievementFeedService {
     }
 }
 
-module.exports = AchievementFeedService
+module.exports = AchievementFeedService;
