@@ -87,8 +87,9 @@ module.exports = {
             .setDescription('Choose a category to view specific rules and information.')
             .addFields({
                 name: 'Available Categories',
-                value: '```' + categoriesText + '```'
-            });
+                value: '```ml\n' + categoriesText + '\n```'
+            })
+            .setTimestamp();
 
         await message.channel.send({ embeds: [embed] });
     },
@@ -136,13 +137,15 @@ module.exports = {
                 .addFields(
                     {
                         name: 'Active Challenge',
-                        value: '```' + activeChallengeTable + '```'
+                        value: '```ml\n' + activeChallengeTable + '\n```'
                     },
                     {
                         name: 'Achievement Points',
-                        value: '```' + achievementPointsTable + '```\n*Note: Participation and beaten points must be earned during the active month.*'
+                        value: '```ml\n' + achievementPointsTable + '\n```' +
+                               '\n*Note: Participation and beaten points must be earned during the active month.*'
                     }
-                );
+                )
+                .setTimestamp();
 
             await message.channel.send({ embeds: [embed] });
         } catch (error) {
@@ -169,8 +172,9 @@ module.exports = {
             .setDescription('The shadow game is a special monthly bonus challenge hidden within our community. Once discovered, it becomes available to all members as an additional way to earn points alongside the main challenge.')
             .addFields({
                 name: 'How It Works',
-                value: '```' + howItWorksTable + '```'
-            });
+                value: '```ml\n' + howItWorksTable + '\n```'
+            })
+            .setTimestamp();
 
         await message.channel.send({ embeds: [embed] });
     },
@@ -201,20 +205,29 @@ module.exports = {
             .addFields(
                 {
                     name: 'Monthly Challenge Points',
-                    value: '```' + monthlyPointsTable + '```'
+                    value: '```ml\n' + monthlyPointsTable + '\n```'
                 },
                 {
                     name: 'Shadow Game Points',
-                    value: '```' + shadowPointsTable + '```'
+                    value: '```ml\n' + shadowPointsTable + '\n```'
                 },
                 {
                     name: 'Important Notes',
-                    value: '• Participation and beaten points are time-limited\n' +
-                           '• Mastery points can be earned anytime during the year\n' +
-                           '• Points contribute to yearly rankings\n' +
-                           '• Year-end prizes awarded based on total points'
+                    value:
+                        '• Participation and beaten points are time-limited\n' +
+                        '• Mastery points can be earned anytime during the year\n' +
+                        '• Points contribute to yearly rankings\n' +
+                        '• Year-end prizes awarded based on total points'
+                },
+                {
+                    name: 'How to Earn Points',
+                    value:
+                        '• **Participation (1pt):** Awarded if you earn a single achievement in an eligible game.\n' +
+                        '• **Game Beaten (+3pts):** Awarded when you beat the game by achieving its win conditions.\n' +
+                        '• **Mastery (+3pts):** Awarded if you earn all 100% of the achievements in the game.'
                 }
-            );
+            )
+            .setTimestamp();
 
         await message.channel.send({ embeds: [embed] });
     },
@@ -262,17 +275,18 @@ module.exports = {
             .addFields(
                 {
                     name: 'General Conduct',
-                    value: '```' + generalConductTable + '```'
+                    value: '```ml\n' + generalConductTable + '\n```'
                 },
                 {
                     name: 'Challenge Participation',
-                    value: '```' + participationTable + '```'
+                    value: '```ml\n' + participationTable + '\n```'
                 },
                 {
                     name: 'Communication Channels',
-                    value: '```' + channelsTable + '```'
+                    value: '```ml\n' + channelsTable + '\n```'
                 }
-            );
+            )
+            .setTimestamp();
 
         await message.channel.send({ embeds: [embed] });
     }
