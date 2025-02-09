@@ -204,7 +204,7 @@ class AchievementFeedService {
             const embed = new EmbedBuilder()
                 .setColor(game.type === 'SHADOW' ? '#FFD700' : '#00BFFF')
                 .setAuthor({ 
-                    name: game.type === 'SHADOW' ? 'SHADOW GAME 🌘' : 'MONTHLY CHALLENGE 🏆',
+                    name: game.type === 'SHADOW' ? 'SHADOW GAME 🌑' : 'MONTHLY CHALLENGE ☀️',
                     iconURL: 'attachment://game_logo.png'
                 })
                 .setTitle(achievement.GameTitle)
