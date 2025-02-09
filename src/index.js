@@ -9,7 +9,7 @@ const { initializeUsers } = require('./utils/initializeUsers');
 const Scheduler = require('./services/scheduler');
 const achievementTracker = require('./services/achievementTracker');
 
-// Load .env only for achievement feed channel
+// Load .env for achievement feed channel
 require('dotenv').config();
 
 // Verify critical environment variables
@@ -102,6 +102,9 @@ async function main() {
         // Now we can create the scheduler
         scheduler = new Scheduler(client);
 
+        // Store achievement feed service on client for global access
+        client.achievementFeedService = scheduler.achievementFeedService;
+
         // Connect to MongoDB using Railway's environment variable
         await mongoose.connect(process.env.MONGODB_URI);
         console.log('Connected to MongoDB');
@@ -128,6 +131,12 @@ async function main() {
         process.exit(1);
     }
 }
+
+// Ready event handler
+client.on('ready', () => {
+    console.log(`Achievement Feed Channel ID: ${process.env.ACHIEVEMENT_FEED_CHANNEL}`);
+    console.log('Achievement Feed Service:', client.achievementFeedService ? 'Available' : 'Not Available');
+});
 
 // Message handler
 client.on(Events.MessageCreate, async message => {
