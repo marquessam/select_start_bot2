@@ -47,7 +47,7 @@ const AwardFunctions = {
             case AwardType.PARTICIPATION:
                 return '🏁';
             case AwardType.MANUAL:
-                return '🫂';
+                return '🎖️';
             default:
                 return '';
         }
