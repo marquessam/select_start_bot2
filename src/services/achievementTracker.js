@@ -22,10 +22,15 @@ class AchievementTracker {
             const batch = [];
             console.log(`Processing batch for ${users.length} users and ${games.length} games`);
             
-            // Build batch of needed checks - always include all users/games
+            // Build batch with normalized usernames
             for (const user of users) {
+                const normalizedUsername = user.raUsername.toLowerCase();
                 for (const game of games) {
-                    batch.push({ user, game, priority: 0 });
+                    batch.push({ 
+                        user: { ...user, raUsername: normalizedUsername }, 
+                        game, 
+                        priority: 0 
+                    });
                 }
             }
 
@@ -56,6 +61,8 @@ class AchievementTracker {
 
     async processGameProgress(raUsername, game) {
         try {
+            // Normalize username immediately
+            raUsername = raUsername.toLowerCase();
             console.log(`\nProcessing ${game.title} progress for ${raUsername}`);
             
             // Get progress with error handling
@@ -167,8 +174,9 @@ class AchievementTracker {
                 details: awardDetails
             });
 
-            // Always update the award in database with force
+            // Always update the award in database with normalized username
             const awardUpdate = {
+                raUsername: raUsername.toLowerCase(), // Ensure normalized username in update
                 award: awardLevel,
                 achievementCount: earnedAchievements.length,
                 totalAchievements: progress.numAchievements || 0,
@@ -179,7 +187,7 @@ class AchievementTracker {
             // Force update/create with the new award calculation
             await Award.findOneAndUpdate(
                 {
-                    raUsername,
+                    raUsername: raUsername.toLowerCase(), // Ensure normalized username in query
                     gameId: game.gameId,
                     month: game.month,
                     year: game.year
@@ -196,6 +204,8 @@ class AchievementTracker {
 
     async checkUserProgress(raUsername) {
         try {
+            // Normalize username immediately
+            raUsername = raUsername.toLowerCase();
             console.log(`\nChecking progress for user ${raUsername}...`);
             
             const games = await Game.find({
