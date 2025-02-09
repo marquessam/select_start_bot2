@@ -94,6 +94,10 @@ class AchievementFeedService {
             console.log(`Found ${users.length} active users and ${challengeGames.length} challenge games`);
 
             for (const user of users) {
+                if (!user.raUsername) {
+                    console.error(`User ${user._id} is missing raUsername; skipping.`);
+                    continue;
+                }
                 try {
                     await this.checkUserAchievements(user, challengeGames);
                     // Add delay between user checks to avoid rate limiting
@@ -230,6 +234,12 @@ class AchievementFeedService {
     async announceAchievement(raUsername, achievement, game) {
         try {
             if (this.isPaused) return;
+
+            // Guard: If raUsername is undefined, log and skip.
+            if (!raUsername) {
+                console.error('announceAchievement called with undefined raUsername, skipping.');
+                return;
+            }
 
             const announcementKey = `${raUsername}-${achievement.ID}-${achievement.Date}`;
             if (this.announcementHistory.has(announcementKey)) {
