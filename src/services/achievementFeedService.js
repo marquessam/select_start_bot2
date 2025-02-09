@@ -11,7 +11,7 @@ class AchievementFeedService {
         this.client = client;
         this.feedChannelId = process.env.ACHIEVEMENT_FEED_CHANNEL;
         if (!this.feedChannelId) {
-            console.error('Achievement Feed Error: No channel ID provided in environment variables');
+            throw new Error('Achievement Feed Error: No channel ID provided in environment variables');
         }
         this.raAPI = new RetroAchievementsAPI(
             process.env.RA_USERNAME,
@@ -24,9 +24,9 @@ class AchievementFeedService {
         this.announcementHistory = new Set();
         this.isProcessingQueue = false;
         this.isPaused = false;
+        this.initialized = false;
 
-        // Log configuration
-        console.log('Achievement Feed Service initialized with:', {
+        console.log('Achievement Feed Service constructed with:', {
             channelId: this.feedChannelId,
             lastCheck: this.lastCheck,
             checkInterval: this.checkInterval
@@ -35,12 +35,25 @@ class AchievementFeedService {
 
     async initialize() {
         try {
+            if (this.initialized) {
+                console.log('Achievement feed already initialized');
+                return true;
+            }
+
             // Verify channel exists and bot has permissions
             const channel = await this.client.channels.fetch(this.feedChannelId);
             if (!channel) {
                 throw new Error('Feed channel not found');
             }
+
+            // Verify permissions
+            const permissions = channel.permissionsFor(this.client.user);
+            if (!permissions.has('SendMessages') || !permissions.has('ViewChannel')) {
+                throw new Error('Bot lacks required permissions in feed channel');
+            }
+
             console.log('Achievement feed initialized with channel:', channel.name);
+            this.initialized = true;
             this.startPeriodicCheck();
             return true;
         } catch (error) {
@@ -55,6 +68,11 @@ class AchievementFeedService {
     }
 
     async checkRecentAchievements() {
+        if (!this.initialized) {
+            console.error('Achievement feed not initialized');
+            return;
+        }
+
         try {
             console.log('\nStarting achievement check...');
             const currentDate = new Date();
@@ -63,11 +81,14 @@ class AchievementFeedService {
             const currentMonth = currentDate.getMonth() + 1;
             const currentYear = currentDate.getFullYear();
 
-            // Fetch current challenge games (Monthly or Shadow) for labeling
+            // Fetch current challenge games with proper error handling
             const challengeGames = await Game.find({
                 month: currentMonth,
                 year: currentYear,
                 type: { $in: ['MONTHLY', 'SHADOW'] }
+            }).catch(err => {
+                console.error('Error fetching challenge games:', err);
+                return [];
             });
 
             console.log(`Found ${users.length} active users and ${challengeGames.length} challenge games`);
@@ -75,8 +96,11 @@ class AchievementFeedService {
             for (const user of users) {
                 try {
                     await this.checkUserAchievements(user, challengeGames);
+                    // Add delay between user checks to avoid rate limiting
+                    await new Promise(resolve => setTimeout(resolve, 2000));
                 } catch (error) {
                     console.error(`Error checking achievements for ${user.raUsername}:`, error);
+                    continue; // Continue with next user even if one fails
                 }
             }
 
@@ -87,12 +111,6 @@ class AchievementFeedService {
         }
     }
 
-    /**
-     * Processes all recent achievements for a given user.
-     * For each achievement, it checks if it has been announced before (using PlayerProgress).
-     * If not, it announces the achievement.
-     * If the achievement's game is a challenge (Monthly/Shadow), it passes along the game details so the announcement gets a label.
-     */
     async checkUserAchievements(user, challengeGames) {
         try {
             const recentAchievements = await this.raAPI.getUserRecentAchievements(user.raUsername);
@@ -103,21 +121,27 @@ class AchievementFeedService {
             }
 
             // Sort achievements by date (oldest first)
-            const sortedAchievements = recentAchievements.sort((a, b) => 
-                new Date(a.Date) - new Date(b.Date)
-            );
+            const sortedAchievements = recentAchievements
+                .filter(achievement => achievement && achievement.Date)
+                .sort((a, b) => new Date(a.Date) - new Date(b.Date));
 
             console.log(`Processing ${sortedAchievements.length} achievements for ${user.raUsername}`);
 
-            // Process each achievement regardless of game type.
             for (const achievement of sortedAchievements) {
                 const achievementDate = new Date(achievement.Date);
                 
-                // Retrieve progress for this specific game
+                // Skip if achievement is older than last check time
+                if (achievementDate <= this.lastCheck) {
+                    console.log(`Skipping old achievement for ${user.raUsername}: ${achievement.Title}`);
+                    continue;
+                }
+
+                // Get or create progress record
                 let progress = await PlayerProgress.findOne({
                     raUsername: user.raUsername,
                     gameId: achievement.GameID
                 });
+
                 if (!progress) {
                     progress = new PlayerProgress({
                         raUsername: user.raUsername,
@@ -127,27 +151,33 @@ class AchievementFeedService {
                     });
                 }
 
-                // Skip if already processed.
+                // Skip if already announced
                 if (achievementDate <= progress.lastAchievementTimestamp ||
                     progress.announcedAchievements.includes(achievement.ID)) {
+                    console.log(`Achievement already announced for ${user.raUsername}: ${achievement.Title}`);
                     continue;
                 }
 
-                // Determine if this achievement is for a challenge game.
-                // Look for a matching game in our pre-fetched challengeGames.
-                let game = challengeGames.find(g => String(g.gameId) === String(achievement.GameID));
-                // If not found, you may optionally attempt to fetch from DB:
-                // if (!game) game = await Game.findOne({ gameId: achievement.GameID });
+                // Find matching challenge game if any
+                const game = challengeGames.find(g => g.gameId === achievement.GameID.toString());
+                
+                try {
+                    // Announce the achievement
+                    await this.announceAchievement(user.raUsername, achievement, game);
+                    console.log(`Announced achievement for ${user.raUsername}: ${achievement.Title}`);
 
-                // Announce the achievement.
-                await this.announceAchievement(user.raUsername, achievement, game);
-
-                // Mark achievement as announced.
-                progress.announcedAchievements.push(achievement.ID);
-                if (achievementDate > progress.lastAchievementTimestamp) {
-                    progress.lastAchievementTimestamp = achievementDate;
+                    // Update progress
+                    progress.announcedAchievements.push(achievement.ID);
+                    if (achievementDate > progress.lastAchievementTimestamp) {
+                        progress.lastAchievementTimestamp = achievementDate;
+                    }
+                    await progress.save();
+                } catch (error) {
+                    console.error(`Error announcing achievement for ${user.raUsername}:`, error);
                 }
-                await progress.save();
+
+                // Add delay between announcements
+                await new Promise(resolve => setTimeout(resolve, 1000));
             }
         } catch (error) {
             console.error(`Error checking achievements for ${user.raUsername}:`, error);
@@ -185,13 +215,10 @@ class AchievementFeedService {
         }
     }
 
-    /**
-     * Announces a single achievement.
-     * If the achievement belongs to a challenge game (Monthly or Shadow), the embed gets a label.
-     * Otherwise, it is announced without a label.
-     */
     async announceAchievement(raUsername, achievement, game) {
         try {
+            if (this.isPaused) return;
+
             const announcementKey = `${raUsername}-${achievement.ID}-${achievement.Date}`;
             if (this.announcementHistory.has(announcementKey)) {
                 console.log(`Skipping duplicate announcement: ${announcementKey}`);
@@ -206,37 +233,33 @@ class AchievementFeedService {
 
             const userIconUrl = `https://retroachievements.org/UserPic/${raUsername}.png`;
 
-            // Build the embed.
-            const embed = new EmbedBuilder();
-            if (game && (game.type === 'SHADOW' || game.type === 'MONTHLY')) {
-                // For challenge games, set a label in the author field.
-                embed.setColor(game.type === 'SHADOW' ? '#FFD700' : '#00BFFF')
-                     .setAuthor({
-                         name: game.type === 'SHADOW' ? 'SHADOW GAME 🌑' : 'MONTHLY CHALLENGE ☀️',
-                         iconURL: 'attachment://game_logo.png'
-                     });
-            } else {
-                // For non-challenge games, use a default color and omit the label.
-                embed.setColor('#00BFFF');
-            }
-            embed.setTitle(achievement.GameTitle)
-                 .setThumbnail(badgeUrl)
-                 .setDescription(
-                     `**${raUsername}** earned **${achievement.Title}**\n\n` +
-                     `*${achievement.Description || 'No description available'}*`
-                 )
-                 .setFooter({
-                     text: `Points: ${achievement.Points} • ${new Date(achievement.Date).toLocaleTimeString()}`,
-                     iconURL: userIconUrl
-                 })
-                 .setTimestamp();
+            const embed = new EmbedBuilder()
+                .setColor(game?.type === 'SHADOW' ? '#FFD700' : '#00BFFF')
+                .setThumbnail(badgeUrl)
+                .setDescription(
+                    `**${raUsername}** earned **${achievement.Title}**\n\n` +
+                    `*${achievement.Description || 'No description available'}*`
+                );
 
-            // If the achievement is for a challenge game, include the logo attachment for the author icon.
+            if (game && (game.type === 'SHADOW' || game.type === 'MONTHLY')) {
+                embed.setAuthor({
+                    name: game.type === 'SHADOW' ? 'SHADOW GAME 🌑' : 'MONTHLY CHALLENGE ☀️',
+                    iconURL: 'attachment://game_logo.png'
+                });
+            }
+
+            embed.setTitle(achievement.GameTitle)
+                .setFooter({
+                    text: `Points: ${achievement.Points} • ${new Date(achievement.Date).toLocaleTimeString()}`,
+                    iconURL: userIconUrl
+                })
+                .setTimestamp();
+
             const files = (game && (game.type === 'SHADOW' || game.type === 'MONTHLY'))
                 ? [{
                     attachment: './assets/logo_simple.png',
                     name: 'game_logo.png'
-                  }]
+                }]
                 : [];
 
             await this.queueAnnouncement({ embeds: [embed], files });
@@ -287,23 +310,20 @@ class AchievementFeedService {
         }
     }
 
-    // Utility method to force a check (useful for testing)
     async forceCheck() {
         console.log('Forcing achievement check...');
         await this.checkRecentAchievements();
     }
 
-    // Method to clear announcement history (useful if needed)
     clearHistory() {
         this.announcementHistory.clear();
         console.log('Announcement history cleared');
     }
 
-    // Method to pause/unpause the feed
     setPaused(paused) {
         this.isPaused = paused;
         console.log(`Achievement feed ${paused ? 'paused' : 'resumed'}`);
     }
 }
 
-module.exports = AchievementFeedService;
+module.exports = AchievementFeedService
