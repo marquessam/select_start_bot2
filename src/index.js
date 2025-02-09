@@ -28,7 +28,6 @@ for (const file of commandFiles) {
         const filePath = path.join(commandsPath, file);
         const command = require(filePath);
         
-        // Check for required command properties
         if (command.name && typeof command.execute === 'function') {
             client.commands.set(command.name.toLowerCase(), command);
             console.log(`Loaded command: ${command.name}`);
@@ -63,6 +62,18 @@ async function shutdown() {
  */
 async function main() {
     try {
+        // First, login to Discord
+        console.log('Logging into Discord...');
+        await client.login(process.env.DISCORD_TOKEN);
+        console.log(`Logged in as ${client.user.tag}`);
+
+        // Wait for client to be ready
+        await new Promise((resolve) => {
+            if (client.isReady()) resolve();
+            else client.once('ready', resolve);
+        });
+        console.log('Discord client is ready');
+
         // Connect to MongoDB
         await mongoose.connect(process.env.MONGODB_URI);
         console.log('Connected to MongoDB');
@@ -74,19 +85,16 @@ async function main() {
         await initializeGames();
         console.log('Games initialized');
 
+        // Initialize scheduler (which will initialize achievement feed)
+        await scheduler.initialize();
+        scheduler.startAll();
+        console.log('Scheduler started');
+
         // Perform initial achievement check
         console.log('Starting initial achievement check...');
         await achievementTracker.checkAllUsers();
         console.log('Initial achievement check completed');
 
-        // Initialize and start scheduler
-        await scheduler.initialize();
-        scheduler.startAll();
-        console.log('Scheduler started');
-
-        // Login to Discord
-        await client.login(process.env.DISCORD_TOKEN);
-        console.log(`Logged in as ${client.user.tag}`);
     } catch (error) {
         console.error('Error during startup:', error);
         process.exit(1);
