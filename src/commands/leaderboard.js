@@ -159,8 +159,12 @@ module.exports = {
 				const monthlyData = await getMonthlyLeaderboard();
 				let monthlyDisplay = '';
 				if (monthlyData.leaderboardData.length > 0) {
-					monthlyData.leaderboardData.forEach((entry, index) => {
-						monthlyDisplay += `${index + 1}. **${entry.username}** – ${entry.percentage}% (${entry.progress}) ${entry.emoji}\n`;
+					// Normalize all names to lowercase and determine max length for padding.
+					const entries = monthlyData.leaderboardData;
+					const maxNameLength = Math.max(...entries.map(e => e.username.toLowerCase().length));
+					entries.forEach((entry, index) => {
+						const name = entry.username.toLowerCase().padEnd(maxNameLength, ' ');
+						monthlyDisplay += `${index + 1}. ${name} – ${entry.percentage}% (${entry.progress}) ${entry.emoji}\n`;
 					});
 				} else {
 					monthlyDisplay = 'No monthly challenge data available.';
@@ -177,7 +181,7 @@ module.exports = {
 						.setTimestamp();
 					// Add the challenge title only on the first embed.
 					if (i === 0) {
-						embed.setDescription(`**Challenge:** ${monthlyData.gameTitle}`);
+						embed.setDescription(`Challenge: ${monthlyData.gameTitle}`);
 					}
 					embed.addFields({
 						name: 'Progress',
@@ -191,8 +195,11 @@ module.exports = {
 				const yearlyData = await getYearlyLeaderboard();
 				let yearlyDisplay = '';
 				if (yearlyData.length > 0) {
-					yearlyData.forEach((entry, index) => {
-						yearlyDisplay += `${index + 1}. **${entry.username}** – ${entry.points} point${entry.points !== 1 ? 's' : ''}\n`;
+					const entries = yearlyData;
+					const maxNameLength = Math.max(...entries.map(e => e.username.toLowerCase().length));
+					entries.forEach((entry, index) => {
+						const name = entry.username.toLowerCase().padEnd(maxNameLength, ' ');
+						yearlyDisplay += `${index + 1}. ${name} – ${entry.points} point${entry.points !== 1 ? 's' : ''}\n`;
 					});
 				} else {
 					yearlyDisplay = 'No yearly points data available.';
