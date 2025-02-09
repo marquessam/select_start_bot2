@@ -3,11 +3,12 @@ const User = require('../models/User');
 const Game = require('../models/Game');
 const PlayerProgress = require('../models/PlayerProgress');
 const RetroAchievementsAPI = require('./retroAchievements');
+const DataService = require('../services/dataService');
 
 class AchievementFeedService {
   constructor(client) {
     this.client = client;
-    // Use environment variable if available; otherwise, fallback to the hard-coded ID.
+    // Use the environment variable if available; otherwise, fallback to the hard-coded channel ID.
     this.feedChannelId = process.env.ACHIEVEMENT_FEED_CHANNEL || '1336339958503571487';
     this.raAPI = new RetroAchievementsAPI(
       process.env.RA_USERNAME,
@@ -16,16 +17,17 @@ class AchievementFeedService {
     this.lastCheck = new Date();
     this.checkInterval = 5 * 60 * 1000; // 5 minutes in milliseconds
 
-    // New in this version: an announcement queue and in-memory history to avoid duplicates.
+    // Queue and history to ensure orderly and non-duplicate announcements.
     this.announcementQueue = [];
     this.announcementHistory = new Set();
     this.isProcessingQueue = false;
+    // Flag for pausing feed if needed.
+    this.isPaused = false;
   }
 
   async initialize() {
     this.lastCheck = new Date();
     console.log('Achievement feed service initialized');
-    // Optional: call checkRecentAchievements immediately if desired.
     this.startPeriodicCheck();
   }
 
@@ -50,17 +52,13 @@ class AchievementFeedService {
         type: { $in: ['MONTHLY', 'SHADOW'] }
       });
 
-      // Process achievements for each user
       for (const user of users) {
         try {
           await this.checkUserAchievements(user, challengeGames);
         } catch (error) {
           console.error(`Error checking achievements for ${user.raUsername}:`, error);
-          // Continue to next user if an error occurs
         }
       }
-
-      // Update the last check timestamp
       this.lastCheck = currentDate;
       console.log('Achievement check completed');
     } catch (error) {
@@ -70,14 +68,13 @@ class AchievementFeedService {
 
   async checkUserAchievements(user, challengeGames) {
     try {
-      // Get user's recent achievements from the RetroAchievements API
       const recentAchievements = await this.raAPI.getUserRecentAchievements(user.raUsername);
       if (!recentAchievements || !Array.isArray(recentAchievements)) {
         console.log(`No recent achievements for ${user.raUsername}`);
         return;
       }
 
-      // For each challenge game for the current month/year, compare against saved progress.
+      // Process each challenge game for the current month/year
       for (const game of challengeGames) {
         let progress = await PlayerProgress.findOne({
           raUsername: user.raUsername,
@@ -94,18 +91,17 @@ class AchievementFeedService {
           });
         }
 
-        // Filter achievements for this game that have not been announced yet and occurred after the last recorded achievement.
-        const gameAchievements = recentAchievements.filter(ach => 
+        // Filter achievements for this game that are new and not yet announced.
+        const gameAchievements = recentAchievements.filter(ach =>
           String(ach.GameID) === String(game.gameId) &&
           new Date(ach.Date) > progress.lastAchievementTimestamp &&
           !progress.announcedAchievements.includes(ach.ID)
         );
 
-        // If there are new achievements, call announceAchievement for each and update progress.
         let latestTimestamp = progress.lastAchievementTimestamp;
         for (const achievement of gameAchievements) {
+          // Announce this achievement
           await this.announceAchievement(user.raUsername, achievement, game);
-          // Track this achievement as announced
           progress.announcedAchievements.push(achievement.ID);
           const achDate = new Date(achievement.Date);
           if (achDate > latestTimestamp) {
@@ -113,7 +109,7 @@ class AchievementFeedService {
           }
         }
 
-        // Save progress if any announcements were sent.
+        // Save the progress if new achievements were announced.
         if (gameAchievements.length > 0) {
           progress.lastAchievementTimestamp = latestTimestamp;
           await progress.save();
@@ -124,7 +120,7 @@ class AchievementFeedService {
     }
   }
 
-  // This method queues an announcement instead of sending it directly.
+  // Queue an announcement to control rate limits and ordering.
   async queueAnnouncement(messageOptions) {
     this.announcementQueue.push(messageOptions);
     if (!this.isProcessingQueue) {
@@ -135,7 +131,6 @@ class AchievementFeedService {
   // Processes the announcement queue with a short delay between messages.
   async processAnnouncementQueue() {
     if (this.isProcessingQueue || this.announcementQueue.length === 0) return;
-
     this.isProcessingQueue = true;
     try {
       const channel = await this.client.channels.fetch(this.feedChannelId);
@@ -156,33 +151,135 @@ class AchievementFeedService {
     }
   }
 
-  // Announce a single achievement by building an embed, queuing the announcement,
-  // and using an in-memory history to avoid duplicate announcements.
+  // Announce a new achievement with special labeling for monthly/shadow challenges.
   async announceAchievement(raUsername, achievement, game) {
     try {
-      // Create a unique key for this announcement.
+      // Create a unique key to avoid duplicate announcements.
       const announcementKey = `${raUsername}-${achievement.ID}-${achievement.Date}`;
       if (this.announcementHistory.has(announcementKey)) {
-        // Skip duplicate announcement.
         return;
       }
-      // Build the embed.
+
+      const badgeUrl = achievement.BadgeName
+        ? `https://media.retroachievements.org/Badge/${achievement.BadgeName}.png`
+        : 'https://media.retroachievements.org/Badge/00000.png';
+
+      const userIconUrl = await DataService.getRAProfileImage(raUsername) ||
+        `https://retroachievements.org/UserPic/${raUsername}.png`;
+
+      let authorName = '';
+      let authorIconUrl = '';
+      let files = [];
+      let color = '#00FF00'; // Default color
+
+      const gameId = String(achievement.GameID); // Ensure string comparison
+
+      // Special handling for specific games with logos and special titles.
+      const logoFile = { 
+        attachment: './assets/logo_simple.png',
+        name: 'game_logo.png'
+      };
+
+      if (gameId === '274') { // Shadow Game – UN Squadron
+        authorName = 'SHADOW GAME 🌘';
+        files = [logoFile];
+        authorIconUrl = 'attachment://game_logo.png';
+        color = '#FFD700';  // Gold color
+      } else if (gameId === '355' || gameId === '319') { // Monthly Challenge examples
+        authorName = 'MONTHLY CHALLENGE 🏆';
+        files = [logoFile];
+        authorIconUrl = 'attachment://game_logo.png';
+        color = '#00BFFF';  // Blue color
+      }
+
       const embed = new EmbedBuilder()
-        .setTitle(`New Achievement Unlocked: ${achievement.Title}`)
-        .setDescription(`**Game:** ${game.title}\n**User:** ${raUsername}\n**Points:** ${achievement.Points}\n**Date:** ${achievement.Date}`)
-        .setColor(0x00AE86)
-        .setTimestamp(new Date());
-      
-      // Queue the announcement.
-      await this.queueAnnouncement({ embeds: [embed] });
+        .setColor(color)
+        .setTitle(`${achievement.GameTitle}`)
+        .setThumbnail(badgeUrl)
+        .setDescription(
+          `**${raUsername}** earned **${achievement.Title}**\n\n` +
+          `*${achievement.Description || 'No description available'}*`
+        )
+        .setFooter({ 
+          text: `Points: ${achievement.Points} • ${new Date(achievement.Date).toLocaleTimeString()}`, 
+          iconURL: userIconUrl 
+        })
+        .setTimestamp();
+
+      if (authorName) {
+        embed.setAuthor({ name: authorName, iconURL: authorIconUrl });
+      }
+
+      await this.queueAnnouncement({ embeds: [embed], files });
       console.log(`Queued announcement for achievement ${achievement.ID} for user ${raUsername} in game ${game.title}`);
-      
-      // Record this announcement in the in-memory history.
       this.announcementHistory.add(announcementKey);
-      // Clean up announcement history if it grows too large.
       if (this.announcementHistory.size > 1000) this.announcementHistory.clear();
     } catch (error) {
       console.error('Error announcing achievement:', error);
+    }
+  }
+
+  // Announce points awards, similar to achievements.
+  async announcePointsAward(raUsername, points, reason) {
+    try {
+      if (this.isPaused) return;
+      
+      const awardKey = `${raUsername}-${points}-${reason}-${Date.now()}`;
+      if (this.announcementHistory.has(awardKey)) {
+        console.log(`[ACHIEVEMENT FEED] Skipping duplicate points announcement: ${awardKey}`);
+        return;
+      }
+      this.announcementHistory.add(awardKey);
+
+      const userProfile = await DataService.getRAProfileImage(raUsername);
+      const embed = new EmbedBuilder()
+        .setColor('#FFD700')
+        .setAuthor({
+          name: raUsername,
+          iconURL: userProfile || `https://retroachievements.org/UserPic/${raUsername}.png`,
+          url: `https://retroachievements.org/user/${raUsername}`
+        })
+        .setTitle('🏆 Points Awarded!')
+        .setDescription(`**${raUsername}** earned **${points} point${points !== 1 ? 's' : ''}**!\n*${reason}*`)
+        .setTimestamp();
+
+      await this.queueAnnouncement({ embeds: [embed] });
+      console.log(`[ACHIEVEMENT FEED] Queued points announcement for ${raUsername}: ${points} points (${reason})`);
+    } catch (error) {
+      console.error('[ACHIEVEMENT FEED] Error announcing points award:', error);
+    }
+  }
+
+  // OPTIONAL: Announce a game award (separate from achievements or points).
+  async announceGameAward(raUsername, gameAward) {
+    try {
+      if (this.isPaused) return;
+      
+      const awardKey = `${raUsername}-gameaward-${gameAward.ID}-${Date.now()}`;
+      if (this.announcementHistory.has(awardKey)) {
+        console.log(`[ACHIEVEMENT FEED] Skipping duplicate game award announcement: ${awardKey}`);
+        return;
+      }
+      this.announcementHistory.add(awardKey);
+
+      const userIconUrl = await DataService.getRAProfileImage(raUsername) ||
+        `https://retroachievements.org/UserPic/${raUsername}.png`;
+
+      const embed = new EmbedBuilder()
+        .setColor('#FF4500')
+        .setAuthor({
+          name: raUsername,
+          iconURL: userIconUrl,
+          url: `https://retroachievements.org/user/${raUsername}`
+        })
+        .setTitle('🎖️ Game Award Earned!')
+        .setDescription(`**${raUsername}** earned a game award: **${gameAward.Title}**\n*${gameAward.Description || 'No description available'}*`)
+        .setTimestamp(new Date());
+
+      await this.queueAnnouncement({ embeds: [embed] });
+      console.log(`[ACHIEVEMENT FEED] Queued game award announcement for ${raUsername}: ${gameAward.Title}`);
+    } catch (error) {
+      console.error('[ACHIEVEMENT FEED] Error announcing game award:', error);
     }
   }
 }
