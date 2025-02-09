@@ -62,15 +62,17 @@ for (const file of commandFiles) {
     }
 }
 
-// Create scheduler instance
-const scheduler = new Scheduler(client);
+// Declare scheduler variable to be initialized later
+let scheduler;
 
 /**
  * Graceful shutdown handler
  */
 async function shutdown() {
     console.log('Shutting down gracefully...');
-    scheduler.stopAll();
+    if (scheduler) {
+        scheduler.stopAll();
+    }
     try {
         await mongoose.connection.close();
         console.log('MongoDB connection closed.');
@@ -96,6 +98,9 @@ async function main() {
             else client.once('ready', resolve);
         });
         console.log('Discord client is ready');
+
+        // Now we can create the scheduler
+        scheduler = new Scheduler(client);
 
         // Connect to MongoDB using Railway's environment variable
         await mongoose.connect(process.env.MONGODB_URI);
