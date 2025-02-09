@@ -1,10 +1,4 @@
-/**
- * File: src/commands/profile.js
- * Description: This command displays a detailed points profile for a user.
- * It retrieves Award documents from the database for the provided RA username,
- * separates them into game awards and community awards (manual awards), and then formats
- * the information in an embed with distinct headers.
- */
+// File: src/commands/profile.js
 
 const { EmbedBuilder } = require('discord.js');
 const Game = require('../models/Game');
@@ -13,7 +7,6 @@ const User = require('../models/User');
 const { AwardType, AwardFunctions } = require('../enums/AwardType');
 
 async function fetchUserProfile(username) {
-    // Find the user using a case-insensitive search
     const user = await User.findOne({
         raUsername: { $regex: new RegExp(`^${username}$`, 'i') }
     });
@@ -30,13 +23,11 @@ async function getCurrentProgress(username) {
     const currentMonth = currentDate.getMonth() + 1;
     const currentYear = currentDate.getFullYear();
 
-    // Get current games
     const currentGames = await Game.find({
         month: currentMonth,
         year: currentYear
     });
 
-    // Get awards for current games
     const currentProgress = [];
     for (const game of currentGames) {
         const award = await Award.findOne({
@@ -65,7 +56,7 @@ async function getYearlyStats(username) {
     const awards = await Award.find({
         raUsername: username,
         year: currentYear,
-        gameId: { $ne: "manual" } // Exclude manual awards
+        gameId: { $ne: 'manual' } // Exclude manual awards
     });
 
     const stats = {
@@ -76,12 +67,11 @@ async function getYearlyStats(username) {
         gamesMastered: 0,
         monthlyGames: 0,
         shadowGames: 0,
-        participationGames: [],
-        beatenGames: [],
-        masteredGames: []
+        participationGames: new Set(),
+        beatenGames: new Set(),
+        masteredGames: new Set()
     };
 
-    // Process each award (non-manual)
     const processedGames = new Set();
     for (const award of awards) {
         const game = await Game.findOne({
@@ -95,10 +85,8 @@ async function getYearlyStats(username) {
         if (processedGames.has(gameKey)) continue;
         processedGames.add(gameKey);
 
-        // Add points and track achievements
         stats.totalAchievements += award.achievementCount;
         
-        // Track game types
         if (game.type === 'MONTHLY') {
             stats.monthlyGames++;
         } else {
@@ -110,71 +98,82 @@ async function getYearlyStats(username) {
             case AwardType.MASTERED:
                 stats.totalPoints += AwardFunctions.getPoints(AwardType.MASTERED);
                 stats.gamesMastered++;
-                stats.masteredGames.push(game.title);
+                stats.masteredGames.add(game.title);
                 stats.gamesBeaten++;
-                stats.beatenGames.push(game.title);
+                stats.beatenGames.add(game.title);
                 stats.gamesParticipated++;
-                stats.participationGames.push(game.title);
+                stats.participationGames.add(game.title);
                 break;
             case AwardType.BEATEN:
                 stats.totalPoints += AwardFunctions.getPoints(AwardType.BEATEN);
                 stats.gamesBeaten++;
-                stats.beatenGames.push(game.title);
+                stats.beatenGames.add(game.title);
                 stats.gamesParticipated++;
-                stats.participationGames.push(game.title);
+                stats.participationGames.add(game.title);
                 break;
             case AwardType.PARTICIPATION:
                 stats.totalPoints += AwardFunctions.getPoints(AwardType.PARTICIPATION);
                 stats.gamesParticipated++;
-                stats.participationGames.push(game.title);
+                stats.participationGames.add(game.title);
                 break;
         }
     }
 
-    return stats;
+    return {
+        ...stats,
+        participationGames: Array.from(stats.participationGames),
+        beatenGames: Array.from(stats.beatenGames),
+        masteredGames: Array.from(stats.masteredGames)
+    };
 }
 
 async function getManualAwards(username) {
     const currentYear = new Date().getFullYear();
-    // Manual awards are those added via the points command with gameId "manual"
     const manualAwards = await Award.find({
         raUsername: username,
-        gameId: "manual",
+        gameId: 'manual',
         year: currentYear
-    });
+    }).sort({ lastChecked: -1 });
+
     return manualAwards;
 }
 
 function formatGameList(games) {
-    return games.length ? games.map(g => `• ${g}`).join('\n') : 'None';
+    if (!games.length) return 'None';
+    return games.map(g => `• ${g}`).join('\n');
 }
 
 function formatManualAwards(manualAwards) {
     if (!manualAwards.length) return 'None';
-    // Each manual award will display its reason (or fallback text) and the associated points.
-    return manualAwards.map(award => {
-        const reasonText = award.reason ? award.reason : "Community Award";
-        return `• **${reasonText}**: ${award.totalAchievements} point${award.totalAchievements !== 1 ? 's' : ''}`;
-    }).join('\n\n');
+    
+    let totalExtraPoints = 0;
+    const awardStrings = manualAwards.map(award => {
+        const points = award.totalAchievements || 0;
+        totalExtraPoints += points;
+        return `• **${award.reason}**: ${points} point${points !== 1 ? 's' : ''}`;
+    });
+
+    return `Total Extra Points: **${totalExtraPoints}**\n\n${awardStrings.join('\n')}`;
 }
 
 module.exports = {
     name: 'profile',
-    description: 'Shows user profile information with detailed statistics and community awards',
+    description: 'Shows user profile information with detailed statistics',
     async execute(message, args) {
         try {
-            const requestedUsername = args[0] || "Royek";  // Default to Royek if no username provided
+            const requestedUsername = args[0] || message.author.username;
             const loadingMsg = await message.channel.send('Fetching profile data...');
 
             // Get user info
             const user = await fetchUserProfile(requestedUsername);
             const raUsername = user.raUsername;
 
-            // Create embed (removed the detailed description text)
+            // Create embed
             const embed = new EmbedBuilder()
                 .setColor('#0099ff')
                 .setTitle(`User Profile: ${raUsername}`)
-                .setThumbnail(`https://media.retroachievements.org/UserPic/${raUsername}.png`)
+                .setThumbnail(`https://retroachievements.org/UserPic/${raUsername}.png`)
+                .setURL(`https://retroachievements.org/user/${raUsername}`)
                 .setTimestamp();
 
             // Get and display current progress
@@ -195,16 +194,22 @@ module.exports = {
 
             // Get and display yearly stats
             const yearlyStats = await getYearlyStats(raUsername);
+            const manualAwards = await getManualAwards(raUsername);
+            
+            // Calculate total points including manual awards
+            const manualPoints = manualAwards.reduce((sum, award) => sum + (award.totalAchievements || 0), 0);
+            const totalPoints = yearlyStats.totalPoints + manualPoints;
             
             // Add overall statistics
             const statsText = 
-                `**Total Points:** ${yearlyStats.totalPoints}\n` +
+                `**Total Points:** ${totalPoints} (${yearlyStats.totalPoints} + ${manualPoints} bonus)\n` +
                 `**Achievements Earned:** ${yearlyStats.totalAchievements}\n` +
                 `**Monthly Games:** ${yearlyStats.monthlyGames}\n` +
                 `**Shadow Games:** ${yearlyStats.shadowGames}\n` +
                 `**Games Participated:** ${yearlyStats.gamesParticipated}\n` +
                 `**Games Beaten:** ${yearlyStats.gamesBeaten}\n` +
                 `**Games Mastered:** ${yearlyStats.gamesMastered}`;
+            
             embed.addFields({ name: '**2025 Statistics**', value: statsText });
 
             // Add game lists
@@ -229,8 +234,7 @@ module.exports = {
                 });
             }
 
-            // Get and display manual awards (displayed as community awards)
-            const manualAwards = await getManualAwards(raUsername);
+            // Add manual awards with improved formatting
             const manualAwardsText = formatManualAwards(manualAwards);
             embed.addFields({
                 name: '🫂 **Community Awards**',
@@ -243,7 +247,7 @@ module.exports = {
 
         } catch (error) {
             console.error('Error showing profile:', error);
-            await message.reply('Error getting profile data.');
+            await message.reply('Error getting profile data. Please try again.');
         }
     }
 };
