@@ -1,253 +1,386 @@
-// File: src/services/scheduler.js
-const cron = require('node-cron');
-const AchievementService = require('./achievementService');
+// File: src/services/achievementService.js
+const { EmbedBuilder } = require('discord.js');
+const User = require('../models/User');
+const Game = require('../models/Game');
+const Award = require('../models/Award');
+const PlayerProgress = require('../models/PlayerProgress');
+const RetroAchievementsAPI = require('./retroAchievements');
+const UsernameUtils = require('../utils/usernameUtils');
+const Cache = require('../utils/cache');
 
-class Scheduler {
+class AchievementService {
     constructor(client) {
-        if (!client || !client.isReady()) {
-            throw new Error('Discord client must be ready before initializing scheduler');
+        if (!client) {
+            throw new Error('Discord client is required');
         }
-        
+
         this.client = client;
-        this.achievementService = new AchievementService(client);
-        this.jobs = new Map();
+        this.feedChannelId = process.env.ACHIEVEMENT_FEED_CHANNEL;
+        if (!this.feedChannelId) {
+            throw new Error('Achievement Feed Error: No channel ID provided in environment variables');
+        }
 
-        // Achievement check - Runs every minute but internally handles tiered checking
-        this.jobs.set('achievementCheck', cron.schedule('* * * * *', async () => {
-            console.log('Running tiered achievement check...');
-            try {
-                await this.achievementService.checkAchievements();
-            } catch (error) {
-                console.error('Error in achievement check:', error);
-            }
-        }, {
-            scheduled: false
-        }));
+        // Initialize API and utilities
+        this.raAPI = new RetroAchievementsAPI(
+            process.env.RA_USERNAME,
+            process.env.RA_API_KEY
+        );
+        this.usernameUtils = new UsernameUtils(this.raAPI);
 
-        // Active users update - Every 15 minutes
-        this.jobs.set('activeUsersUpdate', cron.schedule('*/15 * * * *', async () => {
-            console.log('Updating active users list...');
-            try {
-                await this.achievementService.updateActiveUsers();
-            } catch (error) {
-                console.error('Error updating active users:', error);
-            }
-        }, {
-            scheduled: false
-        }));
+        // Initialize check intervals
+        this.activeInterval = 5 * 60 * 1000;  // 5 minutes for active users
+        this.inactiveInterval = 60 * 60 * 1000; // 1 hour for inactive users
 
-        // Daily cleanup - Midnight
-        this.jobs.set('dailyCleanup', cron.schedule('0 0 * * *', async () => {
-            console.log('Starting daily cleanup...');
-            try {
-                // Clear various caches
-                this.achievementService.clearCache();
-                this.achievementService.lastUserChecks.clear();
-                this.achievementService.lastActiveUpdate = null;
-                await this.achievementService.updateActiveUsers();
-                console.log('Daily cleanup completed');
-            } catch (error) {
-                console.error('Error in daily cleanup:', error);
-            }
-        }, {
-            scheduled: false
-        }));
+        // Initialize caches
+        this.announcementCache = new Cache(3600000); // 1 hour for announcements
+        this.achievementCache = new Cache(60000);    // 1 minute for achievements
+        this.userGameCache = new Cache(300000);      // 5 minutes for user game data
 
-        // Weekly maintenance - Sunday 2 AM
-        this.jobs.set('weeklyMaintenance', cron.schedule('0 2 * * 0', async () => {
-            console.log('Starting weekly maintenance...');
-            try {
-                // Perform deep cleanup
-                await this.achievementService.clearCache();
-                this.achievementService.lastUserChecks.clear();
-                this.achievementService.activeUsers.clear();
-                this.achievementService.lastActiveUpdate = null;
-                
-                // Force full refresh
-                await this.achievementService.updateActiveUsers();
-                console.log('Weekly maintenance completed');
-            } catch (error) {
-                console.error('Error in weekly maintenance:', error);
-            }
-        }, {
-            scheduled: false
-        }));
+        // Track user checks
+        this.lastUserChecks = new Map();
+        this.activeUsers = new Set();
+        this.lastActiveUpdate = null;
+        this.activeUpdateInterval = 15 * 60 * 1000; // 15 minutes
 
-        // Monthly rollover - 1st of month at 00:05
-        this.jobs.set('monthlyRollover', cron.schedule('5 0 1 * *', async () => {
-            console.log('Starting monthly rollover...');
-            try {
-                // Reset all tracking for new month
-                this.achievementService.clearCache();
-                this.achievementService.lastUserChecks.clear();
-                this.achievementService.activeUsers.clear();
-                this.achievementService.lastActiveUpdate = null;
-                
-                // Wait a moment for any final previous month updates
-                await new Promise(resolve => setTimeout(resolve, 5000));
-                
-                // Force fresh start for new month
-                await this.achievementService.updateActiveUsers();
-                console.log('Monthly rollover completed');
-            } catch (error) {
-                console.error('Error in monthly rollover:', error);
-            }
-        }, {
-            scheduled: false
-        }));
+        // Queue management
+        this.announcementQueue = [];
+        this.isProcessingQueue = false;
+        this.isPaused = false;
 
-        // API usage monitor - Every hour
-        this.jobs.set('apiMonitor', cron.schedule('0 * * * *', async () => {
-            try {
-                const activeCount = this.achievementService.activeUsers.size;
-                const totalChecks = this.achievementService.lastUserChecks.size;
-                const hourlyChecks = Array.from(this.achievementService.lastUserChecks.values())
-                    .filter(timestamp => Date.now() - timestamp < 3600000).length;
+        // Start from 24 hours ago to catch up on missed achievements
+        this.lastCheck = new Date(Date.now() - (24 * 60 * 60 * 1000));
 
-                console.log('API Usage Stats:', {
-                    activeUsers: activeCount,
-                    totalUsersTracked: totalChecks,
-                    checksLastHour: hourlyChecks,
-                    timestamp: new Date().toISOString()
-                });
-            } catch (error) {
-                console.error('Error in API monitor:', error);
-            }
-        }, {
-            scheduled: false
-        }));
-
-        console.log('Scheduler constructed with jobs:', 
-            Array.from(this.jobs.keys()).join(', '));
+        console.log('Achievement Service initialized with:', {
+            channelId: this.feedChannelId,
+            activeInterval: this.activeInterval / 1000 + 's',
+            inactiveInterval: this.inactiveInterval / 1000 + 's'
+        });
     }
 
     async initialize() {
         try {
-            if (!this.client.isReady()) {
-                throw new Error('Discord client not ready');
+            // Verify channel exists and bot has permissions
+            const channel = await this.client.channels.fetch(this.feedChannelId);
+            if (!channel) {
+                throw new Error('Feed channel not found');
             }
 
-            // Initialize achievement service
-            await this.achievementService.initialize();
-            console.log('Achievement service initialized');
+            const permissions = channel.permissionsFor(this.client.user);
+            if (!permissions.has('SendMessages') || !permissions.has('ViewChannel')) {
+                throw new Error('Bot lacks required permissions in feed channel');
+            }
 
-            // Force initial active users update
-            await this.achievementService.updateActiveUsers();
-            console.log('Initial active users updated');
+            // Do initial active users update
+            await this.updateActiveUsers();
 
-            // Store service on client for global access
-            this.client.achievementService = this.achievementService;
-            
+            console.log('Achievement service initialized successfully');
             return true;
         } catch (error) {
-            console.error('Error initializing scheduler:', error);
+            console.error('Error initializing achievement service:', error);
             throw error;
         }
     }
 
-    startAll() {
+    /**
+     * Check if a user is active in the current month's challenge
+     */
+    async isUserActive(username) {
+        const currentDate = new Date();
+        const currentMonth = currentDate.getMonth() + 1;
+        const currentYear = currentDate.getFullYear();
+
+        // Check cache first
+        const cacheKey = `active-${username.toLowerCase()}-${currentMonth}-${currentYear}`;
+        const cachedStatus = this.userGameCache.get(cacheKey);
+        if (cachedStatus !== undefined) {
+            return cachedStatus;
+        }
+
         try {
-            for (const [jobName, job] of this.jobs) {
-                job.start();
-                console.log(`Started ${jobName} job`);
-            }
-            console.log('All scheduled jobs started');
+            // Check if user has any achievements in current monthly challenge
+            const award = await Award.findOne({
+                raUsername: username.toLowerCase(),
+                month: currentMonth,
+                year: currentYear,
+                achievementCount: { $gt: 0 }
+            });
+
+            const isActive = !!award;
+            this.userGameCache.set(cacheKey, isActive);
+            return isActive;
         } catch (error) {
-            console.error('Error starting scheduled jobs:', error);
-            throw error;
+            console.error(`Error checking if user ${username} is active:`, error);
+            return false;
         }
     }
 
-    stopAll() {
+    /**
+     * Update the active users cache
+     */
+    async updateActiveUsers() {
+        if (this.lastActiveUpdate && 
+            Date.now() - this.lastActiveUpdate < this.activeUpdateInterval) {
+            return;
+        }
+
         try {
-            for (const [jobName, job] of this.jobs) {
-                job.stop();
-                console.log(`Stopped ${jobName} job`);
+            const users = await User.find({ isActive: true });
+            this.activeUsers.clear();
+
+            for (const user of users) {
+                if (await this.isUserActive(user.raUsername)) {
+                    this.activeUsers.add(user.raUsername.toLowerCase());
+                }
             }
-            console.log('All scheduled jobs stopped');
+
+            this.lastActiveUpdate = Date.now();
+            console.log(`Updated active users cache. Found ${this.activeUsers.size} active users.`);
         } catch (error) {
-            console.error('Error stopping scheduled jobs:', error);
+            console.error('Error updating active users:', error);
         }
     }
 
-    startJob(jobName) {
-        const job = this.jobs.get(jobName);
-        if (job) {
-            job.start();
-            console.log(`Started ${jobName} job`);
-        } else {
-            console.error(`Job ${jobName} not found`);
-        }
+    /**
+     * Check if it's time to check a user again
+     */
+    shouldCheckUser(username) {
+        const lastCheck = this.lastUserChecks.get(username.toLowerCase()) || 0;
+        const interval = this.activeUsers.has(username.toLowerCase()) 
+            ? this.activeInterval 
+            : this.inactiveInterval;
+        
+        return Date.now() - lastCheck >= interval;
     }
 
-    stopJob(jobName) {
-        const job = this.jobs.get(jobName);
-        if (job) {
-            job.stop();
-            console.log(`Stopped ${jobName} job`);
-        } else {
-            console.error(`Job ${jobName} not found`);
-        }
-    }
+    /**
+     * Main achievement check method
+     */
+    async checkAchievements() {
+        if (this.isPaused) return;
 
-    getStatus() {
-        const status = {};
-        for (const [jobName, job] of this.jobs) {
-            status[jobName] = {
-                running: job.getStatus() === 'scheduled',
-                lastRun: job.lastRun,
-                nextRun: job.nextRun
-            };
-        }
-        return status;
-    }
-
-    async runJobNow(jobName) {
-        console.log(`Manually running ${jobName} job`);
         try {
-            switch (jobName) {
-                case 'achievementCheck':
-                    await this.achievementService.checkAchievements();
-                    break;
-                case 'activeUsersUpdate':
-                    await this.achievementService.updateActiveUsers();
-                    break;
-                case 'dailyCleanup':
-                    this.achievementService.clearCache();
-                    this.achievementService.lastUserChecks.clear();
-                    await this.achievementService.updateActiveUsers();
-                    break;
-                default:
-                    console.error(`Job ${jobName} not found or cannot be run manually`);
+            // Update active users cache if needed
+            await this.updateActiveUsers();
+
+            const users = await User.find({ isActive: true });
+            const currentDate = new Date();
+            const currentMonth = currentDate.getMonth() + 1;
+            const currentYear = currentDate.getFullYear();
+
+            const challengeGames = await Game.find({
+                month: currentMonth,
+                year: currentYear,
+                type: { $in: ['MONTHLY', 'SHADOW'] }
+            });
+
+            console.log(`Checking achievements for ${users.length} users (${this.activeUsers.size} active)`);
+
+            for (const user of users) {
+                const username = user.raUsername.toLowerCase();
+                
+                // Skip if it's not time to check this user
+                if (!this.shouldCheckUser(username)) {
+                    continue;
+                }
+
+                try {
+                    await this.checkUserAchievements(user, challengeGames);
+                    this.lastUserChecks.set(username, Date.now());
+
+                    // Add appropriate delay based on user status
+                    const delay = this.activeUsers.has(username) ? 2000 : 1000;
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                } catch (error) {
+                    console.error(`Error checking achievements for ${username}:`, error);
+                }
+            }
+
+            this.lastCheck = currentDate;
+            console.log('Achievement check completed');
+        } catch (error) {
+            console.error('Error in achievement check:', error);
+        }
+    }
+
+    /**
+     * Check achievements for a specific user
+     */
+    async checkUserAchievements(user, challengeGames) {
+        try {
+            const recentAchievements = await this.raAPI.getUserRecentAchievements(user.raUsername);
+            if (!Array.isArray(recentAchievements)) return;
+
+            const canonicalUsername = await this.usernameUtils.getCanonicalUsername(user.raUsername);
+            const processedAchievements = new Set();
+
+            for (const achievement of recentAchievements) {
+                const achievementDate = new Date(achievement.Date);
+                if (achievementDate <= this.lastCheck) continue;
+
+                const achievementKey = `${achievement.ID}-${achievement.GameID}-${achievementDate.getTime()}`;
+                if (processedAchievements.has(achievementKey)) continue;
+                processedAchievements.add(achievementKey);
+
+                let progress = await PlayerProgress.findOne({
+                    raUsername: user.raUsername.toLowerCase(),
+                    gameId: achievement.GameID
+                });
+
+                if (!progress) {
+                    progress = new PlayerProgress({
+                        raUsername: user.raUsername.toLowerCase(),
+                        gameId: achievement.GameID,
+                        lastAchievementTimestamp: new Date(0),
+                        announcedAchievements: []
+                    });
+                }
+
+                if (!progress.announcedAchievements.includes(achievement.ID)) {
+                    const game = challengeGames.find(g => g.gameId === achievement.GameID.toString());
+                    await this.announceAchievement(canonicalUsername, achievement, game);
+                    
+                    progress.announcedAchievements.push(achievement.ID);
+                    progress.lastAchievementTimestamp = achievementDate;
+                    await progress.save();
+
+                    // Force active status update if achievement is from challenge game
+                    if (game) {
+                        this.lastActiveUpdate = null;
+                    }
+                }
             }
         } catch (error) {
-            console.error(`Error running ${jobName} job:`, error);
+            console.error(`Error checking achievements for ${user.raUsername}:`, error);
         }
     }
 
-    async shutdown() {
-        console.log('Shutting down scheduler...');
-        this.stopAll();
-        if (this.achievementService) {
-            await this.achievementService.clearCache();
-            this.achievementService.lastUserChecks.clear();
-            this.achievementService.activeUsers.clear();
+    async announceAchievement(username, achievement, game) {
+        if (this.isPaused) return;
+
+        try {
+            const announcementKey = `${username}-${achievement.ID}-${achievement.Date}`;
+            if (this.announcementCache.get(announcementKey)) return;
+
+            const profilePicUrl = await this.usernameUtils.getProfilePicUrl(username);
+            const profileUrl = await this.usernameUtils.getProfileUrl(username);
+
+            const embed = new EmbedBuilder()
+                .setColor(game?.type === 'SHADOW' ? '#FFD700' : '#00BFFF')
+                .setTitle(achievement.GameTitle)
+                .setDescription(
+                    `**${username}** earned **${achievement.Title}**\n\n` +
+                    `*${achievement.Description || 'No description available'}*`
+                )
+                .setURL(profileUrl);
+
+            if (achievement.BadgeName) {
+                embed.setThumbnail(`https://media.retroachievements.org/Badge/${achievement.BadgeName}.png`);
+            }
+
+            if (game && (game.type === 'SHADOW' || game.type === 'MONTHLY')) {
+                embed.setAuthor({
+                    name: game.type === 'SHADOW' ? 'SHADOW GAME 🌑' : 'MONTHLY CHALLENGE ☀️',
+                    iconURL: 'attachment://game_logo.png'
+                });
+            }
+
+            embed.setFooter({
+                text: `Points: ${achievement.Points} • ${new Date(achievement.Date).toLocaleTimeString()}`,
+                iconURL: profilePicUrl
+            });
+
+            const files = game ? [{
+                attachment: './assets/logo_simple.png',
+                name: 'game_logo.png'
+            }] : [];
+
+            await this.queueAnnouncement({ embeds: [embed], files });
+            this.announcementCache.set(announcementKey, true);
+        } catch (error) {
+            console.error('Error announcing achievement:', error);
         }
     }
 
-    getActiveUserCount() {
-        return this.achievementService.activeUsers.size;
+    async announcePointsAward(raUsername, points, reason) {
+        if (this.isPaused) return;
+
+        try {
+            const canonicalUsername = await this.usernameUtils.getCanonicalUsername(raUsername);
+            const awardKey = `${canonicalUsername}-points-${points}-${Date.now()}`;
+            
+            if (this.announcementCache.get(awardKey)) return;
+
+            const profilePicUrl = await this.usernameUtils.getProfilePicUrl(canonicalUsername);
+            const profileUrl = await this.usernameUtils.getProfileUrl(canonicalUsername);
+
+            const embed = new EmbedBuilder()
+                .setColor('#FFD700')
+                .setAuthor({
+                    name: canonicalUsername,
+                    iconURL: profilePicUrl,
+                    url: profileUrl
+                })
+                .setTitle('🏆 Points Awarded!')
+                .setDescription(
+                    `**${canonicalUsername}** earned **${points} point${points !== 1 ? 's' : ''}**!\n` +
+                    `*${reason}*`
+                )
+                .setTimestamp();
+
+            await this.queueAnnouncement({ embeds: [embed] });
+            this.announcementCache.set(awardKey, true);
+        } catch (error) {
+            console.error('Error announcing points award:', error);
+        }
     }
 
-    getTotalUserCount() {
-        return this.achievementService.lastUserChecks.size;
+    async queueAnnouncement(messageOptions) {
+        this.announcementQueue.push(messageOptions);
+        if (!this.isProcessingQueue) {
+            await this.processAnnouncementQueue();
+        }
     }
 
-    getHourlyCheckCount() {
-        const hourAgo = Date.now() - 3600000;
-        return Array.from(this.achievementService.lastUserChecks.values())
-            .filter(timestamp => timestamp > hourAgo).length;
+    async processAnnouncementQueue() {
+        if (this.isProcessingQueue || this.announcementQueue.length === 0) return;
+        this.isProcessingQueue = true;
+
+        try {
+            const channel = await this.client.channels.fetch(this.feedChannelId);
+            while (this.announcementQueue.length > 0) {
+                const messageOptions = this.announcementQueue.shift();
+                await channel.send(messageOptions);
+                await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+        } catch (error) {
+            console.error('Error processing announcement queue:', error);
+        } finally {
+            this.isProcessingQueue = false;
+        }
+    }
+
+    clearCache() {
+        this.announcementCache.clear();
+        this.achievementCache.clear();
+        this.userGameCache.clear();
+        console.log('Achievement service caches cleared');
+    }
+
+    setPaused(paused) {
+        this.isPaused = paused;
+        console.log(`Achievement service ${paused ? 'paused' : 'resumed'}`);
+    }
+
+    getStats() {
+        return {
+            activeUsers: this.activeUsers.size,
+            totalUsers: this.lastUserChecks.size,
+            queueLength: this.announcementQueue.length,
+            isPaused: this.isPaused,
+            lastCheck: this.lastCheck,
+            lastActiveUpdate: this.lastActiveUpdate
+        };
     }
 }
 
-module.exports = Scheduler;
+module.exports = AchievementService;
