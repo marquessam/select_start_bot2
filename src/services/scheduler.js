@@ -8,6 +8,7 @@ class Scheduler {
             throw new Error('Discord client must be ready before initializing scheduler');
         }
         
+        console.log('Constructing scheduler...');
         this.client = client;
         this.achievementService = new AchievementService(client);
         this.jobs = new Map();
@@ -26,7 +27,7 @@ class Scheduler {
 
         // Active users update - Every 15 minutes
         this.jobs.set('activeUsersUpdate', cron.schedule('*/15 * * * *', async () => {
-            console.log('Updating active users list...');
+            console.log('Scheduled active users update...');
             try {
                 await this.achievementService.updateActiveUsers();
             } catch (error) {
@@ -42,9 +43,13 @@ class Scheduler {
             try {
                 // Clear various caches
                 this.achievementService.clearCache();
-                this.achievementService.lastUserChecks.clear();
-                this.achievementService.lastActiveUpdate = null;
+                // Force fresh checks
                 await this.achievementService.updateActiveUsers();
+                // Log cleanup results
+                console.log({
+                    activeUsers: this.achievementService.activeUsers.size,
+                    totalChecks: this.achievementService.lastUserChecks.size
+                });
                 console.log('Daily cleanup completed');
             } catch (error) {
                 console.error('Error in daily cleanup:', error);
@@ -65,6 +70,13 @@ class Scheduler {
                 
                 // Force full refresh
                 await this.achievementService.updateActiveUsers();
+
+                // Log maintenance results
+                console.log({
+                    activeUsers: this.achievementService.activeUsers.size,
+                    cacheCleared: true,
+                    checksReset: true
+                });
                 console.log('Weekly maintenance completed');
             } catch (error) {
                 console.error('Error in weekly maintenance:', error);
@@ -88,9 +100,33 @@ class Scheduler {
                 
                 // Force fresh start for new month
                 await this.achievementService.updateActiveUsers();
+
+                // Log rollover results
+                console.log({
+                    month: new Date().getMonth() + 1,
+                    year: new Date().getFullYear(),
+                    activeUsers: this.achievementService.activeUsers.size,
+                    cacheCleared: true,
+                    checksReset: true
+                });
                 console.log('Monthly rollover completed');
             } catch (error) {
                 console.error('Error in monthly rollover:', error);
+            }
+        }, {
+            scheduled: false
+        }));
+
+        // API usage monitor - Every hour
+        this.jobs.set('apiMonitor', cron.schedule('0 * * * *', async () => {
+            try {
+                const stats = this.getStats();
+                console.log('API Usage Stats:', {
+                    ...stats,
+                    timestamp: new Date().toISOString()
+                });
+            } catch (error) {
+                console.error('Error in API monitor:', error);
             }
         }, {
             scheduled: false
@@ -102,24 +138,29 @@ class Scheduler {
 
     async initialize() {
         try {
+            console.log('Initializing scheduler...');
+            
             if (!this.client.isReady()) {
                 throw new Error('Discord client not ready');
             }
 
+            console.log('Initializing achievement service...');
             // Initialize achievement service
             await this.achievementService.initialize();
             console.log('Achievement service initialized');
 
-            // Force initial active users update
-            await this.achievementService.updateActiveUsers();
-            console.log('Initial active users updated');
-
             // Store service on client for global access
             this.client.achievementService = this.achievementService;
+
+            console.log('Updating active users...');
+            // Initial active users update
+            await this.achievementService.updateActiveUsers();
+            console.log('Initial active users updated');
             
             return true;
         } catch (error) {
             console.error('Error initializing scheduler:', error);
+            console.error('Stack trace:', error.stack);
             throw error;
         }
     }
@@ -149,13 +190,50 @@ class Scheduler {
         }
     }
 
-    async shutdown() {
-        console.log('Shutting down scheduler...');
-        this.stopAll();
-        if (this.achievementService) {
-            await this.achievementService.clearCache();
-            this.achievementService.lastUserChecks.clear();
-            this.achievementService.activeUsers.clear();
+    startJob(jobName) {
+        const job = this.jobs.get(jobName);
+        if (job) {
+            job.start();
+            console.log(`Started ${jobName} job`);
+        } else {
+            console.error(`Job ${jobName} not found`);
+        }
+    }
+
+    stopJob(jobName) {
+        const job = this.jobs.get(jobName);
+        if (job) {
+            job.stop();
+            console.log(`Stopped ${jobName} job`);
+        } else {
+            console.error(`Job ${jobName} not found`);
+        }
+    }
+
+    async runJobNow(jobName) {
+        console.log(`Manually running ${jobName} job`);
+        try {
+            switch (jobName) {
+                case 'achievementCheck':
+                    await this.achievementService.checkAchievements();
+                    break;
+                case 'activeUsersUpdate':
+                    await this.achievementService.updateActiveUsers();
+                    break;
+                case 'dailyCleanup':
+                    this.achievementService.clearCache();
+                    await this.achievementService.updateActiveUsers();
+                    break;
+                case 'weeklyMaintenance':
+                    await this.achievementService.clearCache();
+                    this.achievementService.lastUserChecks.clear();
+                    await this.achievementService.updateActiveUsers();
+                    break;
+                default:
+                    console.error(`Job ${jobName} not found or cannot be run manually`);
+            }
+        } catch (error) {
+            console.error(`Error running ${jobName} job:`, error);
         }
     }
 
@@ -164,9 +242,22 @@ class Scheduler {
             activeUsers: this.achievementService.activeUsers.size,
             totalUsers: this.achievementService.lastUserChecks.size,
             jobs: Array.from(this.jobs.keys()),
+            runningJobs: Array.from(this.jobs.entries())
+                .filter(([_, job]) => job.getStatus() === 'scheduled')
+                .map(([name]) => name),
             lastCheck: this.achievementService.lastCheck,
             queueLength: this.achievementService.announcementQueue.length
         };
+    }
+
+    async shutdown() {
+        console.log('Shutting down scheduler...');
+        this.stopAll();
+        if (this.achievementService) {
+            await this.achievementService.clearCache();
+            this.achievementService.lastUserChecks.clear();
+            this.achievementService.activeUsers.clear();
+        }
     }
 }
 
