@@ -1,4 +1,3 @@
-// File: src/services/achievementService.js
 const { EmbedBuilder } = require('discord.js');
 const User = require('../models/User');
 const Game = require('../models/Game');
@@ -72,7 +71,8 @@ class AchievementService {
 
     async checkAchievements() {
         try {
-            const users = await User.find({ isActive: true });
+            // Removed active user check: now fetches all users
+            const users = await User.find({});
             const currentDate = new Date();
             const currentMonth = currentDate.getMonth() + 1;
             const currentYear = currentDate.getFullYear();
