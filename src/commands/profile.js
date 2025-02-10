@@ -8,21 +8,6 @@ const RetroAchievementsAPI = require('../services/retroAchievements');
 const UsernameUtils = require('../utils/usernameUtils');
 
 /**
- * Format game title with colored words
- */
-function getColoredGameTitle(title) {
-    const joiners = /\b(to|the|and|or|of|in|on|at|by|for|with)\b/gi;
-    return title.split(joiners).map((part, index) => {
-        part = part.trim();
-        if (!part) return '';
-        if (joiners.test(part.toLowerCase())) {
-            return part; // Keep joiner words white
-        }
-        return `[${part}]`; // Color other words
-    }).join(' ');
-}
-
-/**
  * Create a compact box with title
  */
 function createCompactBox(title, content) {
@@ -148,7 +133,7 @@ async function getYearlyStats(username) {
 }
 
 /**
- * Get manual awards and placement awards for user
+ * Get manual awards for user
  */
 async function getManualAwards(username) {
     const currentYear = new Date().getFullYear();
@@ -203,7 +188,7 @@ module.exports = {
                 let progressText = '';
                 for (const progress of currentProgress) {
                     const typeEmoji = progress.type === 'SHADOW' ? '🌑' : '☀️';
-                    progressText += `${typeEmoji} ${getColoredGameTitle(progress.title)}\n`;
+                    progressText += `${typeEmoji} ${progress.title}\n`;
                     progressText += `Progress: ${progress.progress} (${progress.completion})\n`;
                     if (progress.award) {
                         progressText += `Award: ${AwardFunctions.getName(progress.award)}\n`;
@@ -217,9 +202,6 @@ module.exports = {
             const yearlyStats = await getYearlyStats(canonicalUsername);
             const manualAwards = await getManualAwards(canonicalUsername);
             const manualPoints = manualAwards.reduce((sum, award) => sum + (award.totalAchievements || 0), 0);
-            const placementPoints = manualAwards
-                .filter(award => award.metadata?.type === 'placement')
-                .reduce((sum, award) => sum + award.totalAchievements, 0);
             const totalPoints = yearlyStats.totalPoints + manualPoints;
 
             // Build statistics section
@@ -243,8 +225,7 @@ module.exports = {
             // Add games sections
             if (yearlyStats.participationGames.length > 0) {
                 const participationText = [
-                    'Games Participated (+1pt):',
-                    ...yearlyStats.participationGames.map(g => `• ${getColoredGameTitle(g)}`)
+                    `• ${yearlyStats.participationGames.map(g => g).join('\n• ')}`
                 ].join('\n');
                 embed.addFields({
                     name: '🏁 Games Participated (+1pt)',
@@ -254,8 +235,7 @@ module.exports = {
 
             if (yearlyStats.beatenGames.length > 0) {
                 const beatenText = [
-                    'Games Beaten (+3pts):',
-                    ...yearlyStats.beatenGames.map(g => `• ${getColoredGameTitle(g)}`)
+                    `• ${yearlyStats.beatenGames.map(g => g).join('\n• ')}`
                 ].join('\n');
                 embed.addFields({
                     name: '⭐ Games Beaten (+3pts)',
@@ -265,8 +245,7 @@ module.exports = {
 
             if (yearlyStats.masteredGames.length > 0) {
                 const masteredText = [
-                    'Games Mastered (+3pts):',
-                    ...yearlyStats.masteredGames.map(g => `• ${getColoredGameTitle(g)}`)
+                    `• ${yearlyStats.masteredGames.map(g => g).join('\n• ')}`
                 ].join('\n');
                 embed.addFields({
                     name: '✨ Games Mastered (+3pts)',
@@ -304,8 +283,7 @@ module.exports = {
             const pointsText = createCompactBox('Points',
                 `Total: ${totalPoints}\n` +
                 `• Challenge: ${yearlyStats.totalPoints}\n` +
-                `• Placements: ${placementPoints}\n` +
-                `• Community: ${manualPoints - placementPoints}\n`
+                `• Community: ${manualPoints}\n`
             );
             embed.addFields({ 
                 name: '🏆 Total Points',
