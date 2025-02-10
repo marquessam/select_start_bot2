@@ -10,7 +10,6 @@ const fs = require('fs');
 const path = require('path');
 const { initializeGames } = require('./utils/initializeGames');
 const { initializeUsers } = require('./utils/initializeUsers');
-const InitializationService = require('./services/initializationService');
 const UserTracker = require('./services/userTracker');
 const Scheduler = require('./services/scheduler');
 const MigrationService = require('./services/migrationService');
@@ -54,7 +53,7 @@ client.commands = new Collection();
 // Global services
 let scheduler;
 let userTracker;
-let initService;
+let migrationService;
 
 /**
  * Load commands from the commands directory
@@ -102,25 +101,25 @@ async function initializeMongoDB() {
  */
 async function initializeServices() {
     try {
+        // Run migrations first
+        migrationService = new MigrationService();
+        await migrationService.runMigrations();
+        console.log('Migrations completed');
+
         // Initialize user tracker
         userTracker = new UserTracker();
         await userTracker.initialize();
         console.log('User tracker initialized');
 
-        // Initialize scheduler and services
+        // Initialize scheduler and achievement service
         scheduler = new Scheduler(client);
         await scheduler.initialize();
-        console.log('Scheduler initialized');
-
-        // Initialize services using the new initialization service
-        initService = new InitializationService(client);
-        await initService.initialize();
-        console.log('All services initialized through InitializationService');
+        console.log('Scheduler and achievement service initialized');
 
         // Store services on client for global access
         client.userTracker = userTracker;
         client.scheduler = scheduler;
-        client.initService = initService;
+        client.achievementService = scheduler.achievementService;
 
         // Initialize games and users
         await initializeUsers();
@@ -128,6 +127,10 @@ async function initializeServices() {
 
         await initializeGames();
         console.log('Games initialized');
+
+        // Start scheduled jobs
+        scheduler.startAll();
+        console.log('Scheduled jobs started');
 
     } catch (error) {
         console.error('Error initializing services:', error);
@@ -142,12 +145,12 @@ function displayStatus() {
     const status = {
         client: client.isReady(),
         mongodb: mongoose.connection.readyState === 1,
-        services: initService?.getStatus() || {},
-        scheduler: scheduler?.getStats() || {},
-        userTracker: {
-            initialized: userTracker?.initialized || false,
-            validUsers: userTracker?.getValidUsers()?.length || 0
-        }
+        services: {
+            userTracker: userTracker?.initialized || false,
+            scheduler: scheduler?.initialized || false,
+            achievementService: scheduler?.achievementService?.initialized || false
+        },
+        stats: scheduler?.getStats() || {}
     };
     console.log('Current System Status:', status);
     return status;
@@ -168,7 +171,6 @@ async function shutdown() {
         await mongoose.connection.close();
         console.log('MongoDB connection closed');
 
-        // Destroy the Discord client
         if (client) {
             client.destroy();
             console.log('Discord client destroyed');
@@ -191,8 +193,7 @@ async function main() {
 
         // Connect to MongoDB
         await initializeMongoDB();
-
-        // Login to Discord
+// Login to Discord
         await client.login(process.env.DISCORD_TOKEN);
         console.log(`Logged in as ${client.user.tag}`);
 
@@ -254,6 +255,30 @@ client.on(Events.MessageCreate, async message => {
         }
     } catch (error) {
         console.error('Error in message handler:', error);
+    }
+});
+
+// Interaction handler for slash commands
+client.on(Events.InteractionCreate, async interaction => {
+    if (!interaction.isCommand()) return;
+
+    const command = client.commands.get(interaction.commandName);
+    if (!command) return;
+
+    try {
+        await command.execute(interaction);
+    } catch (error) {
+        console.error('Error executing interaction:', error);
+        const replyContent = {
+            content: 'There was an error executing this command.',
+            ephemeral: true
+        };
+        
+        if (interaction.deferred || interaction.replied) {
+            await interaction.editReply(replyContent);
+        } else {
+            await interaction.reply(replyContent);
+        }
     }
 });
 
