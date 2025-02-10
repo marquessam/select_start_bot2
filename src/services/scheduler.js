@@ -1,6 +1,8 @@
 // File: src/services/scheduler.js
 const cron = require('node-cron');
 const AchievementService = require('./achievementService');
+const User = require('../models/User');
+const Game = require('../models/Game');
 
 class Scheduler {
     constructor(client) {
@@ -134,6 +136,31 @@ class Scheduler {
         console.log('Scheduler constructed with jobs:', Array.from(this.jobs.keys()).join(', '));
     }
 
+    // New method to force a refresh of award data for active users
+    async forceAwardRefresh() {
+        try {
+            // Get active users and current games from the database
+            const users = await User.find({ isActive: true });
+            const now = new Date();
+            const currentMonth = now.getMonth() + 1;
+            const currentYear = now.getFullYear();
+            const currentGames = await Game.find({
+                month: currentMonth,
+                year: currentYear
+            });
+
+            for (const user of users) {
+                // Call the achievement service for each user.
+                // Note: checkUserAchievements may require additional parameters based on your implementation.
+                await this.achievementService.checkUserAchievements(user, currentGames, currentMonth, currentYear);
+                // Delay to respect rate limits
+                await new Promise(resolve => setTimeout(resolve, 2000));
+            }
+        } catch (error) {
+            console.error('Error in force award refresh:', error);
+        }
+    }
+
     // Check if a job is running
     isJobRunning(job) {
         // Handle both old and new versions of node-cron
@@ -173,6 +200,9 @@ class Scheduler {
             console.log('Initializing achievement service...');
             await this.achievementService.initialize();
             console.log('Achievement service initialized');
+
+            // Call the forceAwardRefresh method during initialization
+            await this.forceAwardRefresh();
 
             // Store service on client for global access
             this.client.achievementService = this.achievementService;
