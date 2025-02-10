@@ -1,7 +1,6 @@
 // File: src/models/Award.js
-
 const mongoose = require('mongoose');
-const { AwardType } = require('../enums/AwardType');
+const { AwardType, AwardFunctions } = require('../enums/AwardType');
 
 const awardSchema = new mongoose.Schema({
     raUsername: {
@@ -21,14 +20,13 @@ const awardSchema = new mongoose.Schema({
         type: Number,
         required: true
     },
-    // Award type using enum
-    award: {
+    // Store the highest award level achieved (using AwardType numeric values)
+    highestAwardKind: {
         type: Number,
         enum: Object.values(AwardType),
         default: AwardType.NONE,
         required: true
     },
-    // Achievement tracking
     achievementCount: {
         type: Number,
         required: true,
@@ -44,7 +42,7 @@ const awardSchema = new mongoose.Schema({
         required: true,
         default: "0.00%"
     },
-    // New fields for manual awards
+    // Fields for manual awards
     reason: {
         type: String,
         default: null  // Stores the reason for manual point awards
@@ -53,7 +51,7 @@ const awardSchema = new mongoose.Schema({
         type: String,
         default: null  // Stores who awarded the points
     },
-    // Timestamps
+    // Timestamps for tracking
     lastChecked: {
         type: Date,
         required: true,
@@ -64,7 +62,7 @@ const awardSchema = new mongoose.Schema({
         default: Date.now
     }
 }, {
-    timestamps: true  // Adds createdAt and updatedAt
+    timestamps: true  // Automatically adds createdAt and updatedAt fields
 });
 
 // Indexes for efficient queries
@@ -72,15 +70,17 @@ awardSchema.index({ raUsername: 1, gameId: 1, year: 1, month: 1 }, { unique: tru
 awardSchema.index({ raUsername: 1, year: 1 });
 awardSchema.index({ lastChecked: 1 });
 
-// Virtual getter for point value
+// Virtual getter for point value.
+// For manual awards (identified by gameId === 'manual'), we use totalAchievements;
+// otherwise, we compute points from the highestAwardKind using AwardFunctions.getPoints.
 awardSchema.virtual('points').get(function() {
     if (this.gameId === 'manual') {
-        return this.totalAchievements; // For manual awards, totalAchievements stores the points
+        return this.totalAchievements;
     }
-    return AwardType.getPoints(this.award);
+    return AwardFunctions.getPoints(this.highestAwardKind);
 });
 
-// Add some helper methods
+// Helper methods
 awardSchema.methods = {
     isManualAward() {
         return this.gameId === 'manual';
@@ -90,7 +90,7 @@ awardSchema.methods = {
         if (this.isManualAward()) {
             return this.reason || 'Community Award';
         }
-        return AwardFunctions.getName(this.award);
+        return AwardFunctions.getName(this.highestAwardKind);
     },
 
     getPoints() {
@@ -98,7 +98,7 @@ awardSchema.methods = {
     }
 };
 
-// Add some static methods for common queries
+// Static methods for common queries
 awardSchema.statics = {
     async getUserYearlyPoints(username, year) {
         const awards = await this.find({
