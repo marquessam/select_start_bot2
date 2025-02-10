@@ -20,10 +20,12 @@ function getTimeRemaining() {
  * Create a compact box with title
  */
 function createCompactBox(title, content) {
+  const lines = content.split('\n');
+  const maxLength = lines.reduce((max, line) => Math.max(max, line.length), 0);
   return [
     `─${title}─`,
     content,
-    '─'.repeat(Math.max(...content.split('\n').map(line => line.length)) + 2)
+    '─'.repeat(maxLength + 2)
   ].join('\n');
 }
 
@@ -31,6 +33,8 @@ function createCompactBox(title, content) {
  * Format game title with colored words
  */
 function getColoredGameTitle(title) {
+  // Return an empty string if title is undefined or null
+  if (!title) return '';
   const joiners = /\b(to|the|and|or|of|in|on|at|by|for|with)\b/gi;
   return title.split(joiners).map(part => {
     part = part.trim();
@@ -46,17 +50,26 @@ function getColoredGameTitle(title) {
  * Format leaderboard entries with consistent spacing
  */
 function formatLeaderboardEntries(entries, showProgress = false) {
+  // Ensure each entry has a username; if not, default to 'Unknown'
+  const safeEntries = entries.map(e => ({
+    username: e.username ? e.username : 'Unknown',
+    ...e
+  }));
+
   // Find the longest username for padding
-  const maxUsernameLength = Math.max(...entries.map(e => e.username.length));
+  const maxUsernameLength = safeEntries.reduce((max, e) => Math.max(max, e.username.length), 0);
   
-  return entries.map((entry, index) => {
+  return safeEntries.map((entry, index) => {
     const position = (index + 1).toString().padStart(2, ' ');
     const username = entry.username.padEnd(maxUsernameLength, ' ');
     if (showProgress) {
-      return `${position}. ${username} - ${entry.progress} (${entry.percentage}%)`;
+      // In case progress or percentage are undefined, provide default values.
+      const progress = entry.progress ? entry.progress : '0/0';
+      const percentage = entry.percentage !== undefined ? entry.percentage.toString() : '0';
+      return `${position}. ${username} - ${progress} (${percentage}%)`;
     } else {
-      const points = entry.points.toString().padStart(2, ' ');
-      return `${position}. ${username} - ${points} point${entry.points !== 1 ? 's' : ''}`;
+      const points = entry.points !== undefined ? entry.points.toString() : '0';
+      return `${position}. ${username} - ${points} point${points !== '1' ? 's' : ''}`;
     }
   }).join('\n');
 }
@@ -101,21 +114,21 @@ module.exports = {
         // If an active monthly game exists, fetch additional game info.
         if (monthlyData.game && monthlyData.game !== 'No Monthly Game') {
           gameInfo = await raAPI.getGameInfo(monthlyData.game.gameId);
-          const gameTitle = getColoredGameTitle(gameInfo.GameTitle);
+          const gameTitle = getColoredGameTitle(gameInfo?.GameTitle);
           headerDetails = createCompactBox('Game Information',
             `[${gameTitle}]\n` +
-            `Console: ${gameInfo.Console}\n` +
-            `Genre: ${gameInfo.Genre}\n` +
-            `Developer: ${gameInfo.Developer || 'N/A'}\n` +
-            `Publisher: ${gameInfo.Publisher}\n` +
-            `Release Date: ${gameInfo.Released}\n` +
+            `Console: ${gameInfo?.Console || 'N/A'}\n` +
+            `Genre: ${gameInfo?.Genre || 'N/A'}\n` +
+            `Developer: ${gameInfo?.Developer || 'N/A'}\n` +
+            `Publisher: ${gameInfo?.Publisher || 'N/A'}\n` +
+            `Release Date: ${gameInfo?.Released || 'N/A'}\n` +
             `Total Achievements: ${monthlyData.game.numAchievements || 'N/A'}\n\n` +
             `Time Remaining: ${getTimeRemaining()}`
           );
         }
         
         // Build the leaderboard text from cached data.
-        const entries = monthlyData.leaderboard.map(entry => ({
+        const entries = (monthlyData.leaderboard || []).map(entry => ({
           username: entry.username,
           progress: entry.progress,
           percentage: entry.percentage
@@ -127,7 +140,7 @@ module.exports = {
           .setTitle('Monthly Leaderboard')
           .setTimestamp();
         
-        if (gameInfo && gameInfo.ImageIcon) {
+        if (gameInfo?.ImageIcon) {
           embed.setThumbnail(`https://retroachievements.org${gameInfo.ImageIcon}`);
         }
         
@@ -157,7 +170,7 @@ module.exports = {
         const leaderboardText = formatLeaderboardEntries(yearlyData);
         const yearlyInfo = createCompactBox('2025 Total Points',
           `Active Players: ${yearlyData.length}\n` +
-          `Total Points: ${yearlyData.reduce((sum, entry) => sum + entry.points, 0)}`
+          `Total Points: ${yearlyData.reduce((sum, entry) => sum + (entry.points || 0), 0)}`
         );
         
         const embed = new EmbedBuilder()
@@ -183,7 +196,7 @@ module.exports = {
       }
     } catch (error) {
       console.error('Leaderboard Command Error:', error);
-      await message.reply('Error displaying leaderboard.');
+      await message.channel.send('There was an error displaying the leaderboard.');
     }
   }
 };
