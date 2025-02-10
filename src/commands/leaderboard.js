@@ -1,192 +1,240 @@
 const { EmbedBuilder } = require('discord.js');
-const RetroAchievementsAPI = require('../services/retroAchievements');
-const UsernameUtils = require('../utils/usernameUtils');
-const leaderboardService = require('../services/leaderboardService');
+const Game = require('../models/Game');
+const Award = require('../models/Award');
+const User = require('../models/User');
+const { AwardType, AwardFunctions } = require('../enums/AwardType');
 
-// Helper to get time remaining until the end of the month
-function getTimeRemaining() {
-  const now = new Date();
-  const endDate = new Date(now.getFullYear(), now.getMonth() + 1, 1);
-  const diff = endDate - now;
-
-  const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-  const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-  const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-
-  return `${days}d ${hours}h ${minutes}m`;
+/**
+ * Pads a given string to a specific length.
+ */
+function padString(str, length) {
+  return str.toString().slice(0, length).padEnd(length);
 }
 
 /**
- * Create a compact box with title.
+ * Displays the monthly leaderboard.
  */
-function createCompactBox(title, content) {
-  const lines = content.split('\n');
-  const maxLength = lines.reduce((max, line) => Math.max(max, line.length), 0);
-  return [
-    `─${title}─`,
-    content,
-    '─'.repeat(maxLength + 2)
-  ].join('\n');
-}
+async function displayMonthlyLeaderboard() {
+  const currentDate = new Date();
+  const currentMonth = currentDate.getMonth() + 1;
+  const currentYear = currentDate.getFullYear();
 
-/**
- * Format game title with colored words.
- */
-function getColoredGameTitle(title) {
-  if (!title) return '';
-  const joiners = /\b(to|the|and|or|of|in|on|at|by|for|with)\b/gi;
-  return title.split(joiners).map(part => {
-    part = part.trim();
-    if (!part) return '';
-    if (joiners.test(part.toLowerCase())) {
-      return part;
-    }
-    return `[${part}]`;
-  }).join(' ');
-}
+  // Look up the monthly game for the current month and year.
+  const monthlyGame = await Game.findOne({
+    month: currentMonth,
+    year: currentYear,
+    type: 'MONTHLY'
+  });
 
-/**
- * Format leaderboard entries with consistent spacing.
- */
-function formatLeaderboardEntries(entries, showProgress = false) {
-  const safeEntries = entries.map(e => ({
-    username: e.username ? e.username : 'Unknown',
-    ...e
-  }));
-
-  const maxUsernameLength = safeEntries.reduce((max, e) => Math.max(max, e.username.length), 0);
-  
-  return safeEntries.map((entry, index) => {
-    const position = (index + 1).toString().padStart(2, ' ');
-    const username = entry.username.padEnd(maxUsernameLength, ' ');
-    if (showProgress) {
-      const progress = entry.progress ? entry.progress : '0/0';
-      const percentage = entry.percentage !== undefined ? entry.percentage.toString() : '0';
-      return `${position}. ${username} - ${progress} (${percentage}%)`;
-    } else {
-      const points = entry.points !== undefined ? entry.points.toString() : '0';
-      return `${position}. ${username} - ${points} point${points !== '1' ? 's' : ''}`;
-    }
-  }).join('\n');
-}
-
-/**
- * Helper to trim embed field values to 1024 characters.
- */
-function trimFieldValue(content) {
-  if (content.length > 1024) {
-    return content.slice(0, 1021) + '...';
+  if (!monthlyGame) {
+    throw new Error('No monthly game found for current month.');
   }
-  return content;
+
+  // Get all awards for the monthly game with achievements.
+  const awards = await Award.find({
+    gameId: monthlyGame.gameId,
+    month: currentMonth,
+    year: currentYear,
+    achievementCount: { $gt: 0 }
+  });
+
+  // Build a unique set of awards keyed by canonical username.
+  const uniqueAwards = {};
+  for (const award of awards) {
+    const user = await User.findOne({
+      raUsername: { $regex: new RegExp(`^${award.raUsername}$`, 'i') }
+    });
+    if (user) {
+      const canonicalUsername = user.raUsername;
+      // If there's no record yet, or this award has more achievements, take it.
+      if (!uniqueAwards[canonicalUsername] || 
+          award.achievementCount > uniqueAwards[canonicalUsername].achievementCount) {
+        award.raUsername = canonicalUsername;
+        uniqueAwards[canonicalUsername] = award;
+      }
+    }
+  }
+
+  // Sort the awards descending by achievement count.
+  const sortedAwards = Object.values(uniqueAwards)
+    .sort((a, b) => b.achievementCount - a.achievementCount);
+
+  // Assign ranks, handling ties.
+  let currentRank = 1;
+  let currentScore = -1;
+  let increment = 0;
+
+  sortedAwards.forEach(award => {
+    if (award.achievementCount !== currentScore) {
+      currentRank += increment;
+      increment = 1;
+      currentScore = award.achievementCount;
+      award.rank = currentRank;
+    } else {
+      award.rank = currentRank;
+      increment++;
+    }
+  });
+
+  // Build the embed using the game information.
+  const embed = new EmbedBuilder()
+    .setColor('#0099ff')
+    .setTitle('Monthly Challenge:')
+    .setDescription(`**${monthlyGame.title}**`)
+    .setThumbnail('https://media.retroachievements.org/Images/022504.png');
+
+  const topTen = sortedAwards.slice(0, 10);
+  const others = sortedAwards.slice(10);
+
+  if (topTen.length > 0) {
+    let topTenText = '';
+    
+    topTen.forEach(award => {
+      const rank = padString(award.rank, 2);
+      const username = award.raUsername.padEnd(13);
+      const progress = `${award.achievementCount}/${award.totalAchievements}`;
+      let awardIcon = '';
+      if (award.award === AwardType.MASTERED) awardIcon = ' ✨';
+      else if (award.award === AwardType.BEATEN) awardIcon = ' ⭐';
+      else if (award.award === AwardType.PARTICIPATION) awardIcon = ' 🏁';
+      
+      topTenText += `${rank} ${username} ${progress}${awardIcon}\n`;
+    });
+
+    embed.addFields({ 
+      name: 'Top Rankings', 
+      value: '```\n' + topTenText + '```' 
+    });
+
+    if (others.length > 0) {
+      const othersText = others
+        .map(a => `${a.raUsername}: ${a.achievementCount}/${a.totalAchievements}`)
+        .join('\n');
+      embed.addFields({ 
+        name: 'Also Participating', 
+        value: '```\n' + othersText + '```' 
+      });
+    }
+  }
+
+  return embed;
+}
+
+/**
+ * Displays the yearly leaderboard.
+ */
+async function displayYearlyLeaderboard() {
+  const currentYear = new Date().getFullYear();
+  // Retrieve all awards for the current year.
+  const awards = await Award.find({ year: currentYear });
+
+  // Create a point tally per user.
+  const userPoints = {};
+
+  for (const award of awards) {
+    const user = await User.findOne({
+      raUsername: { $regex: new RegExp(`^${award.raUsername}$`, 'i') }
+    });
+    if (user) {
+      const canonicalUsername = user.raUsername;
+      if (!userPoints[canonicalUsername]) {
+        userPoints[canonicalUsername] = {
+          username: canonicalUsername,
+          totalPoints: 0,
+          participations: 0,
+          beaten: 0,
+          mastered: 0,
+          processedGames: new Set()
+        };
+      }
+      
+      // Use gameId-month as a key to avoid counting a game more than once.
+      const gameKey = `${award.gameId}-${award.month}`;
+      if (!userPoints[canonicalUsername].processedGames.has(gameKey)) {
+        const points = AwardFunctions.getPoints(award.award);
+        userPoints[canonicalUsername].totalPoints += points;
+        
+        if (award.award >= AwardType.PARTICIPATION) userPoints[canonicalUsername].participations++;
+        if (award.award >= AwardType.BEATEN) userPoints[canonicalUsername].beaten++;
+        if (award.award >= AwardType.MASTERED) userPoints[canonicalUsername].mastered++;
+        
+        userPoints[canonicalUsername].processedGames.add(gameKey);
+      }
+    }
+  }
+
+  // Build and sort the leaderboard.
+  const leaderboard = Object.values(userPoints)
+    .filter(user => user.totalPoints > 0)
+    .map(({ processedGames, ...user }) => user)
+    .sort((a, b) => b.totalPoints - a.totalPoints);
+
+  // Rank the users, handling ties.
+  let currentRank = 1;
+  let currentPoints = -1;
+  let increment = 0;
+
+  leaderboard.forEach(user => {
+    if (user.totalPoints !== currentPoints) {
+      currentRank += increment;
+      increment = 1;
+      currentPoints = user.totalPoints;
+      user.rank = currentRank;
+    } else {
+      user.rank = currentRank;
+      increment++;
+    }
+  });
+
+  const embed = new EmbedBuilder()
+    .setColor('#0099ff')
+    .setTitle('2025 Yearly Rankings');
+
+  if (leaderboard.length > 0) {
+    let text = '';
+    leaderboard.forEach(user => {
+      const rank = padString(user.rank, 2);
+      const name = user.username.padEnd(13);
+      const points = padString(user.totalPoints, 4);
+      const part = padString(user.participations, 2);
+      const beaten = padString(user.beaten, 2);
+      const mastered = padString(user.mastered, 2);
+      
+      text += `${rank} ${name} ${points} ${part} ${beaten} ${mastered}\n`;
+    });
+
+    embed.addFields({ name: 'Rankings', value: '```\n' + text + '```' });
+  } else {
+    embed.addFields({ 
+      name: 'Rankings', 
+      value: 'No points earned yet!' 
+    });
+  }
+
+  return embed;
 }
 
 module.exports = {
   name: 'leaderboard',
-  description: 'Displays monthly or yearly leaderboards using cached database data',
+  description: 'Shows the leaderboard',
   async execute(message, args) {
     try {
-      const raAPI = new RetroAchievementsAPI(
-        process.env.RA_USERNAME,
-        process.env.RA_API_KEY
-      );
-      const usernameUtils = new UsernameUtils(raAPI);
+      // Determine whether to show the monthly or yearly leaderboard.
+      const type = args[0]?.toLowerCase() || 'month';
+      let embed;
 
-      if (!args[0]) {
-        const menuEmbed = new EmbedBuilder()
-          .setColor('#0099ff')
-          .setTitle('Leaderboard Menu')
-          .setDescription(
-            'Use `!leaderboard month` to view the monthly leaderboard\n' +
-            'Use `!leaderboard year` to view the yearly leaderboard'
-          )
-          .setTimestamp();
-        return message.channel.send({ embeds: [menuEmbed] });
-      }
-
-      const subcommand = args[0].toLowerCase();
-
-      if (subcommand === 'month' || subcommand === 'm') {
-        const monthlyData = await leaderboardService.getMonthlyLeaderboardCache();
-        if (!monthlyData) {
-          return message.channel.send('Monthly leaderboard data is not available at the moment.');
-        }
-        
-        let headerDetails = '';
-        let gameInfo = null;
-        
-        if (monthlyData.game && monthlyData.game !== 'No Monthly Game') {
-          gameInfo = await raAPI.getGameInfo(monthlyData.game.gameId);
-          const gameTitle = getColoredGameTitle(gameInfo?.GameTitle);
-          headerDetails = createCompactBox('Game Information',
-            `[${gameTitle}]\n` +
-            `Console: ${gameInfo?.Console || 'N/A'}\n` +
-            `Genre: ${gameInfo?.Genre || 'N/A'}\n` +
-            `Developer: ${gameInfo?.Developer || 'N/A'}\n` +
-            `Publisher: ${gameInfo?.Publisher || 'N/A'}\n` +
-            `Release Date: ${gameInfo?.Released || 'N/A'}\n` +
-            `Total Achievements: ${monthlyData.game.numAchievements || 'N/A'}\n\n` +
-            `Time Remaining: ${getTimeRemaining()}`
-          );
-        }
-        
-        const entries = (monthlyData.leaderboard || []).map(entry => ({
-          username: entry.username,
-          progress: entry.progress,
-          percentage: entry.percentage
-        }));
-        let leaderboardText = formatLeaderboardEntries(entries, true);
-        leaderboardText = trimFieldValue('```ml\n' + leaderboardText + '\n```');
-
-        const embed = new EmbedBuilder()
-          .setColor('#0099ff')
-          .setTitle('Monthly Leaderboard')
-          .setTimestamp();
-        
-        if (gameInfo?.ImageIcon) {
-          embed.setThumbnail(`https://retroachievements.org${gameInfo.ImageIcon}`);
-        }
-        
-        if (headerDetails) {
-          embed.setDescription('```ml\n' + headerDetails + '\n```');
-        }
-        
-        embed.addFields({
-          name: '📊 Rankings',
-          value: leaderboardText
-        });
-        
-        await message.channel.send({ embeds: [embed] });
-      } else if (subcommand === 'year' || subcommand === 'y') {
-        const yearlyData = await leaderboardService.getYearlyLeaderboardCache();
-        if (!yearlyData) {
-          return message.channel.send('Yearly leaderboard data is not available at the moment.');
-        }
-        
-        let leaderboardText = formatLeaderboardEntries(yearlyData);
-        leaderboardText = trimFieldValue('```ml\n' + leaderboardText + '\n```');
-        const totalPoints = yearlyData.reduce((sum, entry) => sum + (entry.points || 0), 0);
-        const yearlyInfo = createCompactBox('2025 Total Points',
-          `Active Players: ${yearlyData.length}\n` +
-          `Total Points: ${totalPoints}`
-        );
-        const embed = new EmbedBuilder()
-          .setColor('#0099ff')
-          .setTitle('Yearly Leaderboard')
-          .setDescription('```ml\n' + yearlyInfo + '\n```')
-          .setTimestamp();
-          
-        embed.addFields({
-          name: '🏆 Rankings',
-          value: leaderboardText
-        });
-        
-        await message.channel.send({ embeds: [embed] });
+      if (type === 'month' || type === 'm') {
+        embed = await displayMonthlyLeaderboard();
+      } else if (type === 'year' || type === 'y') {
+        embed = await displayYearlyLeaderboard();
       } else {
-        await message.reply('Please specify either "month" or "year" (e.g., !leaderboard month)');
+        return message.reply('Invalid command. Use !leaderboard month/m or !leaderboard year/y');
       }
+
+      await message.channel.send({ embeds: [embed] });
     } catch (error) {
-      console.error('Leaderboard Command Error:', error);
-      await message.channel.send('There was an error displaying the leaderboard.');
+      console.error('Leaderboard error:', error);
+      await message.reply('Error getting leaderboard data.');
     }
   }
 };
