@@ -109,7 +109,7 @@ class AchievementService {
         }
     }
 
-    async isUserActive(username) {
+ async isUserActive(username) {
         try {
             const normalizedUsername = username.toLowerCase();
             const currentDate = new Date();
@@ -123,23 +123,41 @@ class AchievementService {
                 return cachedStatus;
             }
 
+            // Get current month's games
+            const currentGames = await Game.find({
+                month: currentMonth,
+                year: currentYear,
+                type: { $in: ['MONTHLY', 'SHADOW'] }
+            });
+
+            // Check for any awards in current month's games
+            const gameIds = currentGames.map(g => g.gameId);
+            
             // Check if user has any achievements in current monthly challenges
             const award = await Award.findOne({
                 raUsername: normalizedUsername,
+                gameId: { $in: gameIds },
                 month: currentMonth,
                 year: currentYear,
                 achievementCount: { $gt: 0 }
             });
 
             const isActive = !!award;
+            
+            // Cache the result
             this.userGameCache.set(cacheKey, isActive);
+            
+            // Log for debugging
+            if (isActive) {
+                console.log(`User ${username} is active in current month`);
+            }
+            
             return isActive;
         } catch (error) {
             console.error(`Error checking if user ${username} is active:`, error);
             return false;
         }
     }
-
     async updateActiveUsers() {
         console.log('Updating active users list...');
         try {
