@@ -134,6 +134,28 @@ class Scheduler {
         console.log('Scheduler constructed with jobs:', Array.from(this.jobs.keys()).join(', '));
     }
 
+    // Check if a job is running
+    isJobRunning(job) {
+        // Handle both old and new versions of node-cron
+        if (typeof job.getStatus === 'function') {
+            return job.getStatus() === 'scheduled';
+        }
+        return job.status === 'scheduled';
+    }
+
+    getStats() {
+        return {
+            initialized: this.initialized,
+            achievements: this.achievementService.getStats(),
+            jobs: {
+                total: this.jobs.size,
+                running: Array.from(this.jobs.entries())
+                    .filter(([_, job]) => this.isJobRunning(job))
+                    .map(([name]) => name)
+            }
+        };
+    }
+
     async initialize() {
         try {
             if (this.initialized) {
@@ -243,19 +265,6 @@ class Scheduler {
             console.error(`Error running ${jobName} job:`, error);
             return false;
         }
-    }
-
-    getStats() {
-        return {
-            initialized: this.initialized,
-            achievements: this.achievementService.getStats(),
-            jobs: {
-                total: this.jobs.size,
-                running: Array.from(this.jobs.entries())
-                    .filter(([_, job]) => job.getStatus() === 'scheduled')
-                    .map(([name]) => name)
-            }
-        };
     }
 
     async shutdown() {
