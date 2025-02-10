@@ -71,7 +71,7 @@ class AchievementService {
 
     async checkAchievements() {
         try {
-            // Removed active user check: now fetches all users
+            // Fetch all users (active or not) to check achievements
             const users = await User.find({});
             const currentDate = new Date();
             const currentMonth = currentDate.getMonth() + 1;
@@ -238,6 +238,32 @@ class AchievementService {
         this.announcementCache.clear();
         this.achievementCache.clear();
         console.log('Achievement service caches cleared');
+    }
+
+    /**
+     * Verifies the provided award data and computes yearly stats.
+     * @param {Array} awardData - Array of award objects.
+     * @returns {Object} breakdown of yearly awards and a total points sum.
+     */
+    verifyAwardData(awardData) {
+        const yearlyAwards = {};
+        let yearTotal = 0;
+
+        awardData.forEach(award => {
+            // Assuming award.date is a valid date string and award.points a number
+            const year = new Date(award.date).getFullYear();
+            if (!yearlyAwards[year]) {
+                yearlyAwards[year] = {
+                    totalPoints: 0,
+                    awards: []
+                };
+            }
+            yearlyAwards[year].awards.push(award);
+            yearlyAwards[year].totalPoints += award.points;
+            yearTotal += award.points;
+        });
+
+        return { yearlyAwards, yearTotal };
     }
 }
 
