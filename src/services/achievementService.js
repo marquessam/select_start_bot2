@@ -163,7 +163,121 @@ class AchievementService {
             console.error(`Error checking achievements for ${user.raUsername}:`, error);
         }
     }
+/**
+ * Checks if a game is beaten based on user's achievements
+ * @param {string} username - RetroAchievements username
+ * @param {Game} game - Game from database
+ * @returns {Promise<boolean>} - Whether the game is beaten
+ */
+async isGameBeaten(username, game) {
+    try {
+        // Get user's game progress from RetroAchievements
+        const progress = await this.raAPI.getUserGameProgress(username, game.gameId);
+        
+        if (!progress || !progress.achievements) {
+            return false;
+        }
 
+        // Convert user's achievements to a Set for easy checking
+        const userAchievements = new Set(
+            Object.entries(progress.achievements)
+                .filter(([_, ach]) => ach.DateEarned)
+                .map(([id, _]) => id)
+        );
+
+        // Check win conditions first
+        const hasWinConditions = game.requireAllWinConditions
+            ? game.winCondition.every(id => userAchievements.has(id))
+            : game.winCondition.some(id => userAchievements.has(id));
+
+        if (!hasWinConditions) {
+            return false;
+        }
+
+        // Check progression achievements
+        // If requireProgression is false, we just need to have all the achievements in any order
+        // If true, we'd need to check they were earned in the correct order
+        const hasProgression = game.progression.every(id => userAchievements.has(id));
+
+        return hasProgression;
+    } catch (error) {
+        console.error(`Error checking if game is beaten for ${username}:`, error);
+        return false;
+    }
+}
+
+/**
+ * Updates award status for a user and game
+ */
+async updateAwardStatus(username, game) {
+    try {
+        const normalizedUsername = username.toLowerCase();
+        const currentDate = new Date();
+        
+        // Find or create award record
+        let award = await Award.findOne({
+            raUsername: normalizedUsername,
+            gameId: game.gameId,
+            month: currentDate.getMonth() + 1,
+            year: currentDate.getFullYear()
+        });
+
+        if (!award) {
+            award = new Award({
+                raUsername: normalizedUsername,
+                gameId: game.gameId,
+                month: currentDate.getMonth() + 1,
+                year: currentDate.getFullYear(),
+                award: AwardType.NONE,
+                achievementCount: 0,
+                totalAchievements: 0,
+                userCompletion: "0.00%"
+            });
+        }
+
+        // Get current progress
+        const progress = await this.raAPI.getUserGameProgress(username, game.gameId);
+        if (!progress) return;
+
+        // Update basic stats
+        award.achievementCount = progress.earnedAchievements || 0;
+        award.totalAchievements = progress.totalAchievements || 0;
+        award.userCompletion = progress.userCompletion || "0.00%";
+
+        // Determine award level
+        let newAwardType = AwardType.NONE;
+
+        // Check for participation (at least one achievement)
+        if (award.achievementCount > 0) {
+            newAwardType = AwardType.PARTICIPATION;
+
+            // Check for beaten status
+            if (await this.isGameBeaten(username, game)) {
+                newAwardType = AwardType.BEATEN;
+
+                // Check for mastery
+                if (game.masteryCheck && award.userCompletion === "100.00%") {
+                    newAwardType = AwardType.MASTERED;
+                }
+            }
+        }
+
+        // Update award if it's higher than current
+        if (newAwardType > award.award) {
+            award.award = newAwardType;
+            // Trigger a feed announcement if this is a new award level
+            if (this.feedChannel) {
+                await this.announceGameAward(username, game, newAwardType, 
+                    award.achievementCount, award.totalAchievements);
+            }
+        }
+
+        await award.save();
+        return award;
+    } catch (error) {
+        console.error(`Error updating award status for ${username}:`, error);
+    }
+}
    async announceAchievement(username, achievement, game) {
     if (this.isPaused) return;
 
