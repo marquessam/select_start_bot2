@@ -11,7 +11,7 @@ const { initializeGames } = require('./utils/initializeGames');
 const { initializeUsers } = require('./utils/initializeUsers');
 const UserTracker = require('./services/userTracker');
 const Scheduler = require('./services/scheduler');
-const leaderboardService = require('./services/leaderboardService'); // Import leaderboard service
+const LeaderboardService = require('./services/leaderboardService');
 
 // Load environment variables
 require('dotenv').config();
@@ -60,6 +60,7 @@ client.commands = new Collection();
 // Global services
 let scheduler;
 let userTracker;
+let leaderboardService;
 
 /**
  * Load commands from the commands directory
@@ -115,9 +116,14 @@ async function initializeServices() {
         scheduler.startAll();
         console.log('Scheduler and achievement service initialized');
 
+        // Initialize leaderboard service
+        leaderboardService = new LeaderboardService();
+        console.log('Leaderboard service initialized');
+
         // Store services on client for global access
         client.userTracker = userTracker;
         client.scheduler = scheduler;
+        client.leaderboardService = leaderboardService;
 
         // Initialize games and users
         await initializeUsers();
@@ -125,6 +131,17 @@ async function initializeServices() {
 
         await initializeGames();
         console.log('Games initialized');
+
+        // Update leaderboard caches
+        await leaderboardService.updateAllLeaderboards();
+        console.log('Leaderboard caches updated on startup');
+
+        // Schedule periodic leaderboard refresh
+        setInterval(() => {
+            leaderboardService.updateAllLeaderboards()
+                .then(() => console.log('Leaderboard caches refreshed successfully.'))
+                .catch(err => console.error('Error refreshing leaderboard caches:', err));
+        }, 5 * 60 * 1000); // Every 5 minutes
     } catch (error) {
         console.error('Error initializing services:', error);
         throw error;
@@ -184,18 +201,6 @@ async function main() {
         // Initialize services after client is ready
         await initializeServices();
         console.log('All services initialized');
-
-        // Update leaderboard caches immediately on startup
-        await leaderboardService.updateAllLeaderboards()
-            .then(() => console.log('Leaderboard caches updated successfully on startup.'))
-            .catch(err => console.error('Error updating leaderboard caches on startup:', err));
-
-        // Schedule periodic leaderboard cache refresh every 5 minutes.
-        setInterval(() => {
-            leaderboardService.updateAllLeaderboards()
-                .then(() => console.log('Leaderboard caches refreshed successfully.'))
-                .catch(err => console.error('Error refreshing leaderboard caches:', err));
-        }, 5 * 60 * 1000);
 
     } catch (error) {
         console.error('Error during startup:', error);
