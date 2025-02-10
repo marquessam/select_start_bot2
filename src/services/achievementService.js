@@ -331,57 +331,123 @@ class AchievementService {
         }
     }
 
-    async updateAward(username, game, achievement) {
-        try {
-            const currentMonth = new Date().getMonth() + 1;
-            const currentYear = new Date().getFullYear();
+   async updateAward(username, game, achievement) {
+    try {
+        const currentMonth = new Date().getMonth() + 1;
+        const currentYear = new Date().getFullYear();
 
-            let award = await Award.findOne({
+        // First, find any existing award
+        let award = await Award.findOne({
+            raUsername: username.toLowerCase(),
+            gameId: game.gameId,
+            month: currentMonth,
+            year: currentYear
+        });
+
+        if (!award) {
+            // Create new award
+            award = new Award({
                 raUsername: username.toLowerCase(),
                 gameId: game.gameId,
                 month: currentMonth,
-                year: currentYear
+                year: currentYear,
+                achievementCount: 1,
+                totalAchievements: game.numAchievements,
+                highestAwardKind: AwardType.PARTICIPATION,
+                userCompletion: ((1 / game.numAchievements) * 100).toFixed(2) + '%'
             });
-
-            if (!award) {
-                award = new Award({
-                    raUsername: username.toLowerCase(),
-                    gameId: game.gameId,
-                    month: currentMonth,
-                    year: currentYear,
-                    achievementCount: 1,
-                    totalAchievements: game.numAchievements,
-                    highestAwardKind: AwardType.PARTICIPATION
-                });
-            } else {
-                award.achievementCount = (award.achievementCount || 0) + 1;
-                
-                // Check for mastery
-                if (award.achievementCount >= award.totalAchievements) {
-                    award.highestAwardKind = AwardType.MASTERED;
-                } 
-                // Check for game beaten
-                else if (this.checkGameBeaten(game, achievement)) {
-                    if (award.highestAwardKind < AwardType.BEATEN) {
-                        award.highestAwardKind = AwardType.BEATEN;
-                    }
+        } else {
+            // Update existing award
+            award.achievementCount = (award.achievementCount || 0) + 1;
+            award.userCompletion = ((award.achievementCount / award.totalAchievements) * 100).toFixed(2) + '%';
+            
+            // Update award type based on progress
+            if (award.achievementCount >= award.totalAchievements) {
+                award.highestAwardKind = AwardType.MASTERED;
+            } else if (this.checkGameBeaten(game, achievement)) {
+                if (award.highestAwardKind < AwardType.BEATEN) {
+                    award.highestAwardKind = AwardType.BEATEN;
                 }
             }
+        }
 
+        // Save with error handling
+        try {
             await award.save();
+            console.log(`Updated award for ${username} on game ${game.title}:`, {
+                achievementCount: award.achievementCount,
+                totalAchievements: award.totalAchievements,
+                highestAwardKind: award.highestAwardKind,
+                userCompletion: award.userCompletion
+            });
+        } catch (saveError) {
+            console.error('Error saving award:', saveError);
+            throw saveError;
+        }
 
-            // Announce award milestone if reached
-            if (award.highestAwardKind === AwardType.MASTERED || 
-                award.highestAwardKind === AwardType.BEATEN) {
-                await this.announceAwardMilestone(username, game, award.highestAwardKind);
+        // Announce award milestone if reached
+        if (award.highestAwardKind === AwardType.MASTERED || 
+            award.highestAwardKind === AwardType.BEATEN) {
+            await this.announceAwardMilestone(username, game, award.highestAwardKind);
+        }
+
+        // Invalidate active users cache when awards change
+        this.lastActiveUpdate = null;
+        
+        return award;
+    } catch (error) {
+        console.error(`Error updating award for ${username}:`, error);
+        throw error;
+    }
+}
+
+// Add helper method to verify award data
+async verifyAwardData(username) {
+    try {
+        const currentYear = new Date().getFullYear();
+        const awards = await Award.find({
+            raUsername: username.toLowerCase(),
+            year: currentYear
+        });
+
+        let awardsFixed = 0;
+        for (const award of awards) {
+            let needsSave = false;
+
+            // Fix missing achievement counts
+            if (!award.achievementCount && award.achievementCount !== 0) {
+                award.achievementCount = 0;
+                needsSave = true;
             }
 
-            // Invalidate active users cache when awards change
-            this.lastActiveUpdate = null;
-        } catch (error) {
-            console.error(`Error updating award for ${username}:`, error);
+            // Fix missing award types
+            if (!award.highestAwardKind && award.highestAwardKind !== 0) {
+                award.highestAwardKind = AwardType.NONE;
+                needsSave = true;
+            }
+
+            // Fix missing completion percentage
+            if (!award.userCompletion) {
+                award.userCompletion = "0.00%";
+                needsSave = true;
+            }
+
+            if (needsSave) {
+                await award.save();
+                awardsFixed++;
+            }
         }
+
+        if (awardsFixed > 0) {
+            console.log(`Fixed ${awardsFixed} awards for user ${username}`);
+        }
+
+        return awards;
+    } catch (error) {
+        console.error(`Error verifying awards for ${username}:`, error);
+        throw error;
     }
+}
 
     checkGameBeaten(game, achievement) {
         // If game requires specific win conditions
