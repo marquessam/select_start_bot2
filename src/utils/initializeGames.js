@@ -95,7 +95,7 @@ const games2025 = [
                 '6421'   // Mission 9
             ],
             winCondition: ['6422'],  // Final Mission
-            requireProgression: true,  // Must complete missions in order
+            requireProgression: false,  // Must complete missions in order
             requireAllWinConditions: true,
             masteryCheck: false
         }
