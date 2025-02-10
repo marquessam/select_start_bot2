@@ -1,10 +1,9 @@
 // File: src/enums/AwardType.js
-
 const AwardType = {
     NONE: 0,
     PARTICIPATION: 1,
-    BEATEN: 4,     // 1 (participation) + 3 (beaten)
-    MASTERED: 7,   // 1 (participation) + 3 (beaten) + 3 (mastery)
+    BEATEN: 4,     // PARTICIPATION (1) + beaten bonus (3)
+    MASTERED: 7,   // PARTICIPATION (1) + beaten (3) + mastery (3)
     MANUAL: 999    // Special type for manual awards
 };
 
