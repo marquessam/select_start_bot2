@@ -242,10 +242,16 @@ class AchievementService {
 
     /**
      * Verifies the provided award data and computes yearly stats.
-     * @param {Array} awardData - Array of award objects.
+     * If awardData is not an array, attempts to convert it using Object.values.
+     * @param {Array|Object} awardData - Array or object of award data.
      * @returns {Object} breakdown of yearly awards and a total points sum.
      */
     verifyAwardData(awardData) {
+        // If awardData is not an array, attempt to convert it
+        if (!Array.isArray(awardData)) {
+            awardData = Object.values(awardData);
+        }
+
         const yearlyAwards = {};
         let yearTotal = 0;
 
