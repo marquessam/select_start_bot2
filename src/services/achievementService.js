@@ -1,14 +1,14 @@
 // File: src/services/achievementService.js
 const { EmbedBuilder } = require('discord.js');
-const User = require('../models/User');
 const Game = require('../models/Game');
 const Award = require('../models/Award');
+const User = require('../models/User');
 const PlayerProgress = require('../models/PlayerProgress');
 const RetroAchievementsAPI = require('./retroAchievements');
 const UsernameUtils = require('../utils/usernameUtils');
 const Cache = require('../utils/cache');
 const StaticCache = require('../utils/staticCache');
-const { AwardType } = require('../enums/AwardType');
+const { AwardType, AwardFunctions } = require('../enums/AwardType');
 
 class AchievementService {
     constructor(client) {
@@ -16,6 +16,7 @@ class AchievementService {
             throw new Error('Discord client is required');
         }
 
+        console.log('Constructing achievement service...');
         this.client = client;
         this.feedChannelId = process.env.ACHIEVEMENT_FEED_CHANNEL;
         if (!this.feedChannelId) {
@@ -49,6 +50,7 @@ class AchievementService {
         this.announcementQueue = [];
         this.isProcessingQueue = false;
         this.isPaused = false;
+        this.initialized = false;
 
         // Start from 24 hours ago to catch up on missed achievements
         this.lastCheck = new Date(Date.now() - (24 * 60 * 60 * 1000));
@@ -58,6 +60,11 @@ class AchievementService {
 
     async initialize() {
         try {
+            if (this.initialized) {
+                console.log('Achievement service already initialized');
+                return true;
+            }
+
             console.log('Initializing Achievement Service...');
             
             // Verify channel exists and bot has permissions
@@ -76,7 +83,9 @@ class AchievementService {
 
             // Initial active users update
             await this.updateActiveUsers();
-            console.log('Achievement Service initialized with channel:', channel.name);
+            
+            this.initialized = true;
+            console.log('Achievement Service initialized');
             
             return true;
         } catch (error) {
@@ -110,10 +119,6 @@ class AchievementService {
         }
     }
 
-    /**
-     * Checks if a user is active by looking up an Award record for one of the current month’s challenge games.
-     * A user is considered active if their HighestAwardKind is at least PARTICIPATION.
-     */
     async isUserActive(username) {
         try {
             const normalizedUsername = username.toLowerCase();
@@ -136,7 +141,7 @@ class AchievementService {
             });
             const gameIds = currentGames.map(g => g.gameId);
 
-            // Look up an Award record for the user for any of the current month's games
+            // Look up an Award record for any of the current month's games
             const award = await Award.findOne({
                 raUsername: normalizedUsername,
                 gameId: { $in: gameIds },
@@ -145,9 +150,9 @@ class AchievementService {
             });
 
             let isActive = false;
-               if (award && award.highestAwardKind !== undefined) {
-                  isActive = award.highestAwardKind >= AwardType.PARTICIPATION;
-}
+            if (award && award.highestAwardKind !== undefined) {
+                isActive = award.highestAwardKind >= AwardType.PARTICIPATION;
+            }
 
             // Cache the result
             this.userGameCache.set(cacheKey, isActive);
@@ -176,12 +181,7 @@ class AchievementService {
             this.activeUsers.clear();
 
             for (const user of users) {
-                // Use static cache for user profile check
-                const profile = await this.staticCache.getUserProfile(user.raUsername,
-                    async () => await this.raAPI.getUserProfile(user.raUsername)
-                );
-
-                if (profile && await this.isUserActive(user.raUsername)) {
+                if (await this.isUserActive(user.raUsername)) {
                     this.activeUsers.add(user.raUsername.toLowerCase());
                 }
             }
@@ -194,8 +194,17 @@ class AchievementService {
         }
     }
 
+    shouldCheckUser(username) {
+        const lastCheck = this.lastUserChecks.get(username.toLowerCase()) || 0;
+        const interval = this.activeUsers.has(username.toLowerCase()) 
+            ? this.activeInterval 
+            : this.inactiveInterval;
+        
+        return Date.now() - lastCheck >= interval;
+    }
+
     async checkAchievements() {
-        if (this.isPaused) return;
+        if (this.isPaused || !this.initialized) return;
 
         try {
             // Update active users cache if needed
@@ -226,7 +235,7 @@ class AchievementService {
                 }
 
                 try {
-                    await this.checkUserAchievements(user, challengeGames, currentMonth, currentYear);
+                    await this.checkUserAchievements(user, challengeGames);
                     this.lastUserChecks.set(username, Date.now());
 
                     // Add appropriate delay based on user status
@@ -244,49 +253,32 @@ class AchievementService {
         }
     }
 
-    shouldCheckUser(username) {
-        const lastCheck = this.lastUserChecks.get(username.toLowerCase()) || 0;
-        const interval = this.activeUsers.has(username.toLowerCase()) 
-            ? this.activeInterval 
-            : this.inactiveInterval;
-        
-        return Date.now() - lastCheck >= interval;
-    }
-
-    /**
-     * Processes a user’s recent achievements. For each new achievement:
-     * - It is announced (if not already announced)
-     * - The PlayerProgress record is updated
-     * - The Award record is updated (or created) for this game/challenge
-     */
-    async checkUserAchievements(user, challengeGames, currentMonth, currentYear) {
+    async checkUserAchievements(user, challengeGames) {
         try {
-            // Use static cache for user profile
-            const userProfile = await this.staticCache.getUserProfile(user.raUsername,
-                async () => await this.raAPI.getUserProfile(user.raUsername)
-            );
-
             const recentAchievements = await this.raAPI.getUserRecentAchievements(user.raUsername);
-            if (!Array.isArray(recentAchievements)) return;
+            
+            if (!recentAchievements || !Array.isArray(recentAchievements)) {
+                console.log(`No recent achievements for ${user.raUsername}`);
+                return;
+            }
 
-            const canonicalUsername = userProfile.Username || user.raUsername;
-            const processedAchievements = new Set();
+            // Sort achievements by date (oldest first)
+            const sortedAchievements = recentAchievements
+                .filter(achievement => achievement && achievement.Date)
+                .sort((a, b) => new Date(a.Date) - new Date(b.Date));
 
-            for (const achievement of recentAchievements) {
+            console.log(`Processing ${sortedAchievements.length} achievements for ${user.raUsername}`);
+
+            for (const achievement of sortedAchievements) {
                 const achievementDate = new Date(achievement.Date);
-                if (achievementDate <= this.lastCheck) continue;
+                
+                // Skip if achievement is older than last check time
+                if (achievementDate <= this.lastCheck) {
+                    console.log(`Skipping old achievement for ${user.raUsername}: ${achievement.Title}`);
+                    continue;
+                }
 
-                const achievementKey = `${achievement.ID}-${achievement.GameID}-${achievementDate.getTime()}`;
-                if (processedAchievements.has(achievementKey)) continue;
-                processedAchievements.add(achievementKey);
-
-                // Cache the achievement info
-                await this.staticCache.getAchievementInfo(
-                    achievement.GameID,
-                    achievement.ID,
-                    async () => achievement
-                );
-
+                // Get or create progress record
                 let progress = await PlayerProgress.findOne({
                     raUsername: user.raUsername.toLowerCase(),
                     gameId: achievement.GameID.toString()
@@ -301,48 +293,110 @@ class AchievementService {
                     });
                 }
 
-                if (!progress.announcedAchievements.includes(achievement.ID)) {
-                    const game = challengeGames.find(g => g.gameId === achievement.GameID.toString());
-                    await this.announceAchievement(canonicalUsername, achievement, game);
-                    
+                // Skip if already announced
+                if (achievementDate <= progress.lastAchievementTimestamp ||
+                    progress.announcedAchievements.includes(achievement.ID)) {
+                    console.log(`Achievement already announced for ${user.raUsername}: ${achievement.Title}`);
+                    continue;
+                }
+
+                // Find matching challenge game if any
+                const game = challengeGames.find(g => g.gameId === achievement.GameID.toString());
+                
+                try {
+                    // Announce the achievement
+                    await this.announceAchievement(user.raUsername, achievement, game);
+                    console.log(`Announced achievement for ${user.raUsername}: ${achievement.Title}`);
+
+                    // Update progress
                     progress.announcedAchievements.push(achievement.ID);
-                    progress.lastAchievementTimestamp = achievementDate;
+                    if (achievementDate > progress.lastAchievementTimestamp) {
+                        progress.lastAchievementTimestamp = achievementDate;
+                    }
                     await progress.save();
 
-                    // Update Award record for this achievement
-                    let award = await Award.findOne({
-                        raUsername: user.raUsername.toLowerCase(),
-                        gameId: achievement.GameID.toString(),
-                        month: currentMonth,
-                        year: currentYear
-                    });
-                    if (!award) {
-                        award = new Award({
-                            raUsername: user.raUsername.toLowerCase(),
-                            gameId: achievement.GameID.toString(),
-                            month: currentMonth,
-                            year: currentYear,
-                            achievementCount: 1,
-                            highestAwardKind: achievement.Points // assuming Points corresponds to award type
-                        });
-                    } else {
-                        award.achievementCount = (award.achievementCount || 0) + 1;
-                        if (achievement.Points > (award.highestAwardKind || 0)) {
-                            award.highestAwardKind = achievement.Points;
-                        }
-                    }
-                    await award.save();
-
-                    // Invalidate active users cache if award was updated
+                    // Update Award record if it's a challenge game
                     if (game) {
-                        this.lastActiveUpdate = null;
+                        await this.updateAward(user.raUsername, game, achievement);
                     }
+                } catch (error) {
+                    console.error(`Error processing achievement for ${user.raUsername}:`, error);
                 }
+
+                // Add delay between achievements
+                await new Promise(resolve => setTimeout(resolve, 1000));
             }
         } catch (error) {
             console.error(`Error checking achievements for ${user.raUsername}:`, error);
-            throw error;
         }
+    }
+
+    async updateAward(username, game, achievement) {
+        try {
+            const currentMonth = new Date().getMonth() + 1;
+            const currentYear = new Date().getFullYear();
+
+            let award = await Award.findOne({
+                raUsername: username.toLowerCase(),
+                gameId: game.gameId,
+                month: currentMonth,
+                year: currentYear
+            });
+
+            if (!award) {
+                award = new Award({
+                    raUsername: username.toLowerCase(),
+                    gameId: game.gameId,
+                    month: currentMonth,
+                    year: currentYear,
+                    achievementCount: 1,
+                    totalAchievements: game.numAchievements,
+                    highestAwardKind: AwardType.PARTICIPATION
+                });
+            } else {
+                award.achievementCount = (award.achievementCount || 0) + 1;
+                
+                // Check for mastery
+                if (award.achievementCount >= award.totalAchievements) {
+                    award.highestAwardKind = AwardType.MASTERED;
+                } 
+                // Check for game beaten
+                else if (this.checkGameBeaten(game, achievement)) {
+                    if (award.highestAwardKind < AwardType.BEATEN) {
+                        award.highestAwardKind = AwardType.BEATEN;
+                    }
+                }
+            }
+
+            await award.save();
+
+            // Announce award milestone if reached
+            if (award.highestAwardKind === AwardType.MASTERED || 
+                award.highestAwardKind === AwardType.BEATEN) {
+                await this.announceAwardMilestone(username, game, award.highestAwardKind);
+            }
+
+            // Invalidate active users cache when awards change
+            this.lastActiveUpdate = null;
+        } catch (error) {
+            console.error(`Error updating award for ${username}:`, error);
+        }
+    }
+
+    checkGameBeaten(game, achievement) {
+        // If game requires specific win conditions
+        if (game.winCondition && game.winCondition.length > 0) {
+            if (game.requireAllWinConditions) {
+                // All win conditions must be met
+                return game.winCondition.includes(achievement.ID);
+            } else {
+                // Any win condition is sufficient
+                return game.winCondition.includes(achievement.ID);
+            }
+        }
+        // Default to achievement-based completion
+        return game.progression && 
+               game.progression.includes(achievement.ID);
     }
 
     async announceAchievement(username, achievement, game) {
@@ -352,29 +406,22 @@ class AchievementService {
             const announcementKey = `${username}-${achievement.ID}-${achievement.Date}`;
             if (this.announcementCache.get(announcementKey)) return;
 
-            // Use static cache for game info
-            const gameInfo = await this.staticCache.getGameInfo(achievement.GameID,
-                async () => await this.raAPI.getGameInfo(achievement.GameID)
-            );
-
-            // Get cached profile URLs
-            const profilePicUrl = await this.usernameUtils.getProfilePicUrl(username);
-            const profileUrl = await this.usernameUtils.getProfileUrl(username);
+            const canonicalUsername = await this.usernameUtils.getCanonicalUsername(username);
+            const profilePicUrl = await this.usernameUtils.getProfilePicUrl(canonicalUsername);
+            const badgeUrl = achievement.BadgeName 
+                ? `https://media.retroachievements.org/Badge/${achievement.BadgeName}.png`
+                : 'https://media.retroachievements.org/Badge/00000.png';
 
             const embed = new EmbedBuilder()
                 .setColor(game?.type === 'SHADOW' ? '#FFD700' : '#00BFFF')
-                .setTitle(gameInfo.Title || achievement.GameTitle)
+.setTitle(achievement.GameTitle)
+                .setThumbnail(badgeUrl)
                 .setDescription(
-                    `**${username}** earned **${achievement.Title}**\n\n` +
+                    `**${canonicalUsername}** earned **${achievement.Title}**\n\n` +
                     `*${achievement.Description || 'No description available'}*`
-                )
-                .setURL(profileUrl);
+                );
 
-            if (achievement.BadgeName) {
-                embed.setThumbnail(`https://media.retroachievements.org/Badge/${achievement.BadgeName}.png`);
-            }
-
-            if (game && (game.type === 'SHADOW' || game.type === 'MONTHLY')) {
+            if (game) {
                 embed.setAuthor({
                     name: game.type === 'SHADOW' ? 'SHADOW GAME 🌑' : 'MONTHLY CHALLENGE ☀️',
                     iconURL: 'attachment://game_logo.png'
@@ -398,11 +445,54 @@ class AchievementService {
         }
     }
 
-    async announcePointsAward(raUsername, points, reason) {
+    async announceAwardMilestone(username, game, awardType) {
         if (this.isPaused) return;
 
         try {
-            const canonicalUsername = await this.usernameUtils.getCanonicalUsername(raUsername);
+            const canonicalUsername = await this.usernameUtils.getCanonicalUsername(username);
+            const awardKey = `${canonicalUsername}-${game.gameId}-${awardType}-${Date.now()}`;
+            
+            if (this.announcementCache.get(awardKey)) return;
+
+            const profilePicUrl = await this.usernameUtils.getProfilePicUrl(canonicalUsername);
+            const points = AwardFunctions.getPoints(awardType);
+            const awardName = AwardFunctions.getName(awardType);
+            const emoji = AwardFunctions.getEmoji(awardType);
+
+            const embed = new EmbedBuilder()
+                .setColor('#FFD700')
+                .setAuthor({
+                    name: game.type === 'SHADOW' ? 'SHADOW GAME 🌑' : 'MONTHLY CHALLENGE ☀️',
+                    iconURL: 'attachment://game_logo.png'
+                })
+                .setTitle(`${emoji} ${awardName} Award!`)
+                .setDescription(
+                    `**${canonicalUsername}** earned the **${awardName}** award for ${game.title}!\n` +
+                    `*+${points} points awarded!*`
+                )
+                .setFooter({ 
+                    text: new Date().toLocaleString(),
+                    iconURL: profilePicUrl 
+                })
+                .setTimestamp();
+
+            const files = [{
+                attachment: './assets/logo_simple.png',
+                name: 'game_logo.png'
+            }];
+
+            await this.queueAnnouncement({ embeds: [embed], files });
+            this.announcementCache.set(awardKey, true);
+        } catch (error) {
+            console.error('Error announcing award milestone:', error);
+        }
+    }
+
+    async announcePointsAward(username, points, reason) {
+        if (this.isPaused) return;
+
+        try {
+            const canonicalUsername = await this.usernameUtils.getCanonicalUsername(username);
             const awardKey = `${canonicalUsername}-points-${points}-${Date.now()}`;
             
             if (this.announcementCache.get(awardKey)) return;
@@ -460,7 +550,6 @@ class AchievementService {
         this.announcementCache.clear();
         this.achievementCache.clear();
         this.userGameCache.clear();
-        // Selectively clear static cache
         this.staticCache.clearChallengeCache();
         console.log('Achievement service caches cleared');
     }
@@ -470,9 +559,6 @@ class AchievementService {
         console.log(`Achievement service ${paused ? 'paused' : 'resumed'}`);
     }
 
-    /**
-     * Get comprehensive service statistics
-     */
     getStats() {
         const staticCacheStats = this.staticCache.getCacheStats();
         const dynamicCacheStats = {
@@ -487,12 +573,15 @@ class AchievementService {
         return {
             status: {
                 isPaused: this.isPaused,
+                initialized: this.initialized,
                 lastCheck: this.lastCheck,
                 lastActiveUpdate: this.lastActiveUpdate,
                 isProcessingQueue: this.isProcessingQueue
             },
-            staticCache: staticCacheStats,
-            dynamicCache: dynamicCacheStats,
+            caches: {
+                static: staticCacheStats,
+                dynamic: dynamicCacheStats
+            },
             queues: {
                 announcements: this.announcementQueue.length,
                 userChecks: this.lastUserChecks.size
@@ -505,84 +594,6 @@ class AchievementService {
         };
     }
 
-    /**
-     * Perform maintenance tasks
-     */
-    async performMaintenance() {
-        console.log('Starting achievement service maintenance...');
-        try {
-            // Clear expired cache entries
-            this.clearCache();
-
-            // Reset tracking for users that haven't been seen in a while
-            const now = Date.now();
-            const staleThreshold = 24 * 60 * 60 * 1000; // 24 hours
-            let staleUsers = 0;
-
-            for (const [username, lastCheck] of this.lastUserChecks.entries()) {
-                if (now - lastCheck > staleThreshold) {
-                    this.lastUserChecks.delete(username);
-                    this.activeUsers.delete(username);
-                    staleUsers++;
-                }
-            }
-
-            // Force refresh of current challenges
-            await this.preloadCurrentChallenges();
-
-            // Log maintenance results
-            console.log('Maintenance completed:', {
-                staleUsersRemoved: staleUsers,
-                activeUsers: this.activeUsers.size,
-                totalUsers: this.lastUserChecks.size,
-                cacheStats: this.staticCache.getCacheStats()
-            });
-        } catch (error) {
-            console.error('Error during maintenance:', error);
-        }
-    }
-
-    /**
-     * Force check a specific user
-     */
-    async forceCheckUser(username) {
-        try {
-            const user = await User.findOne({
-                raUsername: { $regex: new RegExp(`^${username}$`, 'i') }
-            });
-
-            if (!user) {
-                throw new Error(`User ${username} not found`);
-            }
-
-            const currentMonth = new Date().getMonth() + 1;
-            const currentYear = new Date().getFullYear();
-
-            const challengeGames = await this.staticCache.getCurrentChallenges(
-                async () => await Game.find({
-                    month: currentMonth,
-                    year: currentYear,
-                    type: { $in: ['MONTHLY', 'SHADOW'] }
-                })
-            );
-
-            await this.checkUserAchievements(user, challengeGames, currentMonth, currentYear);
-            this.lastUserChecks.set(user.raUsername.toLowerCase(), Date.now());
-
-            return {
-                success: true,
-                username: user.raUsername,
-                timestamp: new Date()
-            };
-        } catch (error) {
-            console.error(`Error force checking user ${username}:`, error);
-            throw error;
-        }
-    }
-
-    /**
-     * Clean up resources
-     */
     async shutdown() {
         console.log('Shutting down achievement service...');
         this.setPaused(true);
@@ -590,6 +601,7 @@ class AchievementService {
         this.lastUserChecks.clear();
         this.activeUsers.clear();
         this.announcementQueue = [];
+        this.initialized = false;
         console.log('Achievement service shut down');
     }
 }
