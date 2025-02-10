@@ -12,29 +12,36 @@ const { initializeGames } = require('./utils/initializeGames');
 const { initializeUsers } = require('./utils/initializeUsers');
 const UserTracker = require('./services/userTracker');
 const Scheduler = require('./services/scheduler');
-const MigrationService = require('./services/migrationService');
 
 // Load environment variables
 require('dotenv').config();
 
-// Required environment variables with descriptions
-const requiredEnvVars = {
-    DISCORD_TOKEN: 'Discord bot token for authentication',
-    MONGODB_URI: 'MongoDB connection string',
-    RA_USERNAME: 'RetroAchievements API username',
-    RA_API_KEY: 'RetroAchievements API key',
-    ACHIEVEMENT_FEED_CHANNEL: 'Channel ID for achievement announcements',
-    REGISTRATION_CHANNEL_ID: 'Channel ID for user registration',
-    CLIENT_ID: 'Discord application client ID'
-};
+// Verify Railway environment variables
+const requiredRailwayVars = [
+    'DISCORD_TOKEN',
+    'MONGODB_URI',
+    'RA_USERNAME',
+    'RA_API_KEY'
+];
 
-// Verify all required environment variables
-const missingVars = Object.entries(requiredEnvVars)
-    .filter(([key]) => !process.env[key])
-    .map(([key, desc]) => `${key}: ${desc}`);
+// Verify .env environment variables
+const requiredDotEnvVars = [
+    'ACHIEVEMENT_FEED_CHANNEL',
+    'REGISTRATION_CHANNEL_ID'
+];
 
-if (missingVars.length > 0) {
-    console.error('Missing required environment variables:\n', missingVars.join('\n'));
+const missingRailwayVars = requiredRailwayVars.filter(varName => !process.env[varName]);
+const missingDotEnvVars = requiredDotEnvVars.filter(varName => !process.env[varName]);
+
+if (missingRailwayVars.length > 0) {
+    console.error('Missing required Railway environment variables:', missingRailwayVars.join(', '));
+    console.error('Please configure these in your Railway project settings.');
+    process.exit(1);
+}
+
+if (missingDotEnvVars.length > 0) {
+    console.error('Missing required .env variables:', missingDotEnvVars.join(', '));
+    console.error('Please configure these in your .env file.');
     process.exit(1);
 }
 
@@ -53,7 +60,6 @@ client.commands = new Collection();
 // Global services
 let scheduler;
 let userTracker;
-let migrationService;
 
 /**
  * Load commands from the commands directory
@@ -85,10 +91,7 @@ async function loadCommands() {
  */
 async function initializeMongoDB() {
     try {
-        await mongoose.connect(process.env.MONGODB_URI, {
-            useNewUrlParser: true,
-            useUnifiedTopology: true
-        });
+        await mongoose.connect(process.env.MONGODB_URI);
         console.log('Connected to MongoDB');
     } catch (error) {
         console.error('Error connecting to MongoDB:', error);
@@ -101,11 +104,6 @@ async function initializeMongoDB() {
  */
 async function initializeServices() {
     try {
-        // Run migrations first
-        migrationService = new MigrationService();
-        await migrationService.runMigrations();
-        console.log('Migrations completed');
-
         // Initialize user tracker
         userTracker = new UserTracker();
         await userTracker.initialize();
@@ -114,12 +112,12 @@ async function initializeServices() {
         // Initialize scheduler and achievement service
         scheduler = new Scheduler(client);
         await scheduler.initialize();
+        scheduler.startAll();
         console.log('Scheduler and achievement service initialized');
 
         // Store services on client for global access
         client.userTracker = userTracker;
         client.scheduler = scheduler;
-        client.achievementService = scheduler.achievementService;
 
         // Initialize games and users
         await initializeUsers();
@@ -128,32 +126,10 @@ async function initializeServices() {
         await initializeGames();
         console.log('Games initialized');
 
-        // Start scheduled jobs
-        scheduler.startAll();
-        console.log('Scheduled jobs started');
-
     } catch (error) {
         console.error('Error initializing services:', error);
         throw error;
     }
-}
-
-/**
- * Display service status
- */
-function displayStatus() {
-    const status = {
-        client: client.isReady(),
-        mongodb: mongoose.connection.readyState === 1,
-        services: {
-            userTracker: userTracker?.initialized || false,
-            scheduler: scheduler?.initialized || false,
-            achievementService: scheduler?.achievementService?.initialized || false
-        },
-        stats: scheduler?.getStats() || {}
-    };
-    console.log('Current System Status:', status);
-    return status;
 }
 
 /**
@@ -171,6 +147,7 @@ async function shutdown() {
         await mongoose.connection.close();
         console.log('MongoDB connection closed');
 
+        // Destroy the Discord client
         if (client) {
             client.destroy();
             console.log('Discord client destroyed');
@@ -193,7 +170,8 @@ async function main() {
 
         // Connect to MongoDB
         await initializeMongoDB();
-// Login to Discord
+
+        // Login to Discord
         await client.login(process.env.DISCORD_TOKEN);
         console.log(`Logged in as ${client.user.tag}`);
 
@@ -207,9 +185,6 @@ async function main() {
         // Initialize services after client is ready
         await initializeServices();
         console.log('All services initialized');
-
-        // Display initial status
-        displayStatus();
 
     } catch (error) {
         console.error('Error during startup:', error);
@@ -255,30 +230,6 @@ client.on(Events.MessageCreate, async message => {
         }
     } catch (error) {
         console.error('Error in message handler:', error);
-    }
-});
-
-// Interaction handler for slash commands
-client.on(Events.InteractionCreate, async interaction => {
-    if (!interaction.isCommand()) return;
-
-    const command = client.commands.get(interaction.commandName);
-    if (!command) return;
-
-    try {
-        await command.execute(interaction);
-    } catch (error) {
-        console.error('Error executing interaction:', error);
-        const replyContent = {
-            content: 'There was an error executing this command.',
-            ephemeral: true
-        };
-        
-        if (interaction.deferred || interaction.replied) {
-            await interaction.editReply(replyContent);
-        } else {
-            await interaction.reply(replyContent);
-        }
     }
 });
 
