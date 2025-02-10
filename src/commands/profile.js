@@ -59,6 +59,11 @@ async function getCurrentProgress(username) {
  */
 async function getYearlyStats(username) {
     const currentYear = new Date().getFullYear();
+    
+    // First verify/fix any corrupted award data
+    const achievementService = client.achievementService;
+    await achievementService.verifyAwardData(username);
+    
     const awards = await Award.find({
         raUsername: username.toLowerCase(),
         year: currentYear,
@@ -78,8 +83,11 @@ async function getYearlyStats(username) {
         masteredGames: new Set()
     };
 
-    const processedGames = new Set();
+    const processedGames = new Map(); // Use Map to track unique game-month combinations
+
     for (const award of awards) {
+        if (!award.achievementCount || award.achievementCount <= 0) continue;
+
         const game = await Game.findOne({
             gameId: award.gameId,
             year: currentYear
@@ -87,19 +95,22 @@ async function getYearlyStats(username) {
 
         if (!game) continue;
 
-        const gameKey = `${game.gameId}-${game.month}`;
+        const gameKey = `${game.gameId}-${award.month}`;
         if (processedGames.has(gameKey)) continue;
-        processedGames.add(gameKey);
+        processedGames.set(gameKey, true);
 
+        // Add to total achievements regardless of award type
         stats.totalAchievements += award.achievementCount;
-        
+
+        // Track game type
         if (game.type === 'MONTHLY') {
             stats.monthlyGames++;
-        } else {
+        } else if (game.type === 'SHADOW') {
             stats.shadowGames++;
         }
 
-        switch (award.award) {
+        // Calculate points and track completion based on award type
+        switch (award.highestAwardKind) {
             case AwardType.MASTERED:
                 stats.totalPoints += AwardFunctions.getPoints(AwardType.MASTERED);
                 stats.gamesMastered++;
@@ -131,7 +142,6 @@ async function getYearlyStats(username) {
         masteredGames: Array.from(stats.masteredGames)
     };
 }
-
 /**
  * Get manual awards for user
  */
