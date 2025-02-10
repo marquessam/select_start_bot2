@@ -12,10 +12,11 @@ class Scheduler {
         this.client = client;
         this.achievementService = new AchievementService(client);
         this.jobs = new Map();
+        this.initialized = false;
 
         // Achievement check - Runs every minute but internally handles tiered checking
         this.jobs.set('achievementCheck', cron.schedule('* * * * *', async () => {
-            console.log('Running tiered achievement check...');
+            console.log('Running scheduled achievement check...');
             try {
                 await this.achievementService.checkAchievements();
             } catch (error) {
@@ -27,7 +28,7 @@ class Scheduler {
 
         // Active users update - Every 15 minutes
         this.jobs.set('activeUsersUpdate', cron.schedule('*/15 * * * *', async () => {
-            console.log('Scheduled active users update...');
+            console.log('Running scheduled active users update...');
             try {
                 await this.achievementService.updateActiveUsers();
             } catch (error) {
@@ -46,11 +47,11 @@ class Scheduler {
                 // Force fresh checks
                 await this.achievementService.updateActiveUsers();
                 // Log cleanup results
-                console.log({
+                console.log('Daily cleanup stats:', {
                     activeUsers: this.achievementService.activeUsers.size,
-                    totalChecks: this.achievementService.lastUserChecks.size
+                    totalChecks: this.achievementService.lastUserChecks.size,
+                    cacheCleared: true
                 });
-                console.log('Daily cleanup completed');
             } catch (error) {
                 console.error('Error in daily cleanup:', error);
             }
@@ -70,14 +71,13 @@ class Scheduler {
                 
                 // Force full refresh
                 await this.achievementService.updateActiveUsers();
+                await this.achievementService.preloadCurrentChallenges();
 
-                // Log maintenance results
-                console.log({
+                console.log('Weekly maintenance completed:', {
                     activeUsers: this.achievementService.activeUsers.size,
                     cacheCleared: true,
                     checksReset: true
                 });
-                console.log('Weekly maintenance completed');
             } catch (error) {
                 console.error('Error in weekly maintenance:', error);
             }
@@ -100,16 +100,15 @@ class Scheduler {
                 
                 // Force fresh start for new month
                 await this.achievementService.updateActiveUsers();
+                await this.achievementService.preloadCurrentChallenges();
 
-                // Log rollover results
-                console.log({
+                console.log('Monthly rollover completed:', {
                     month: new Date().getMonth() + 1,
                     year: new Date().getFullYear(),
                     activeUsers: this.achievementService.activeUsers.size,
                     cacheCleared: true,
                     checksReset: true
                 });
-                console.log('Monthly rollover completed');
             } catch (error) {
                 console.error('Error in monthly rollover:', error);
             }
@@ -117,55 +116,60 @@ class Scheduler {
             scheduled: false
         }));
 
-        // API usage monitor - Every hour
-        this.jobs.set('apiMonitor', cron.schedule('0 * * * *', async () => {
+        // Service monitoring - Every hour
+        this.jobs.set('serviceMonitor', cron.schedule('0 * * * *', async () => {
             try {
                 const stats = this.getStats();
-                console.log('API Usage Stats:', {
+                console.log('Service Monitoring Stats:', {
                     ...stats,
                     timestamp: new Date().toISOString()
                 });
             } catch (error) {
-                console.error('Error in API monitor:', error);
+                console.error('Error in service monitor:', error);
             }
         }, {
             scheduled: false
         }));
 
-        console.log('Scheduler constructed with jobs:', 
-            Array.from(this.jobs.keys()).join(', '));
+        console.log('Scheduler constructed with jobs:', Array.from(this.jobs.keys()).join(', '));
     }
 
     async initialize() {
         try {
+            if (this.initialized) {
+                console.log('Scheduler already initialized');
+                return true;
+            }
+
             console.log('Initializing scheduler...');
             
             if (!this.client.isReady()) {
                 throw new Error('Discord client not ready');
             }
 
-            console.log('Initializing achievement service...');
             // Initialize achievement service
+            console.log('Initializing achievement service...');
             await this.achievementService.initialize();
             console.log('Achievement service initialized');
 
             // Store service on client for global access
             this.client.achievementService = this.achievementService;
 
-            console.log('Updating active users...');
-            // Initial active users update
-            await this.achievementService.updateActiveUsers();
-            console.log('Initial active users updated');
+            this.initialized = true;
+            console.log('Scheduler initialization completed');
             
             return true;
         } catch (error) {
             console.error('Error initializing scheduler:', error);
-            console.error('Stack trace:', error.stack);
             throw error;
         }
     }
 
     startAll() {
+        if (!this.initialized) {
+            throw new Error('Scheduler must be initialized before starting jobs');
+        }
+
         try {
             for (const [jobName, job] of this.jobs) {
                 job.start();
@@ -195,9 +199,10 @@ class Scheduler {
         if (job) {
             job.start();
             console.log(`Started ${jobName} job`);
-        } else {
-            console.error(`Job ${jobName} not found`);
+            return true;
         }
+        console.error(`Job ${jobName} not found`);
+        return false;
     }
 
     stopJob(jobName) {
@@ -205,9 +210,10 @@ class Scheduler {
         if (job) {
             job.stop();
             console.log(`Stopped ${jobName} job`);
-        } else {
-            console.error(`Job ${jobName} not found`);
+            return true;
         }
+        console.error(`Job ${jobName} not found`);
+        return false;
     }
 
     async runJobNow(jobName) {
@@ -230,34 +236,51 @@ class Scheduler {
                     await this.achievementService.updateActiveUsers();
                     break;
                 default:
-                    console.error(`Job ${jobName} not found or cannot be run manually`);
+                    throw new Error(`Job ${jobName} not found or cannot be run manually`);
             }
+            return true;
         } catch (error) {
             console.error(`Error running ${jobName} job:`, error);
+            return false;
         }
     }
 
     getStats() {
         return {
-            activeUsers: this.achievementService.activeUsers.size,
-            totalUsers: this.achievementService.lastUserChecks.size,
-            jobs: Array.from(this.jobs.keys()),
-            runningJobs: Array.from(this.jobs.entries())
-                .filter(([_, job]) => job.getState() === 'scheduled')
-                .map(([name]) => name),
-            lastCheck: this.achievementService.lastCheck,
-            queueLength: this.achievementService.announcementQueue.length
+            initialized: this.initialized,
+            achievements: {
+                activeUsers: this.achievementService.activeUsers.size,
+                totalUsers: this.achievementService.lastUserChecks.size,
+                lastCheck: this.achievementService.lastCheck,
+                queueLength: this.achievementService.announcementQueue.length
+            },
+            jobs: {
+                total: this.jobs.size,
+                running: Array.from(this.jobs.entries())
+                    .filter(([_, job]) => job.getStatus() === 'scheduled')
+                    .map(([name]) => name)
+            },
+            caches: {
+                announcements: this.achievementService.announcementCache?.size() || 0,
+                achievements: this.achievementService.achievementCache?.size() || 0,
+                userGames: this.achievementService.userGameCache?.size() || 0
+            }
         };
     }
 
     async shutdown() {
         console.log('Shutting down scheduler...');
         this.stopAll();
+        
         if (this.achievementService) {
             await this.achievementService.clearCache();
             this.achievementService.lastUserChecks.clear();
             this.achievementService.activeUsers.clear();
+            console.log('Achievement service cleared');
         }
+
+        this.initialized = false;
+        console.log('Scheduler shut down successfully');
     }
 }
 
