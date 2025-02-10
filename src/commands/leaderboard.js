@@ -17,7 +17,7 @@ function getTimeRemaining() {
 }
 
 /**
- * Create a compact box with title
+ * Create a compact box with title.
  */
 function createCompactBox(title, content) {
   const lines = content.split('\n');
@@ -30,40 +30,36 @@ function createCompactBox(title, content) {
 }
 
 /**
- * Format game title with colored words
+ * Format game title with colored words.
  */
 function getColoredGameTitle(title) {
-  // Return an empty string if title is undefined or null
   if (!title) return '';
   const joiners = /\b(to|the|and|or|of|in|on|at|by|for|with)\b/gi;
   return title.split(joiners).map(part => {
     part = part.trim();
     if (!part) return '';
     if (joiners.test(part.toLowerCase())) {
-      return part; // Keep joiner words white
+      return part;
     }
-    return `[${part}]`; // Color other words
+    return `[${part}]`;
   }).join(' ');
 }
 
 /**
- * Format leaderboard entries with consistent spacing
+ * Format leaderboard entries with consistent spacing.
  */
 function formatLeaderboardEntries(entries, showProgress = false) {
-  // Ensure each entry has a username; if not, default to 'Unknown'
   const safeEntries = entries.map(e => ({
     username: e.username ? e.username : 'Unknown',
     ...e
   }));
 
-  // Find the longest username for padding
   const maxUsernameLength = safeEntries.reduce((max, e) => Math.max(max, e.username.length), 0);
   
   return safeEntries.map((entry, index) => {
     const position = (index + 1).toString().padStart(2, ' ');
     const username = entry.username.padEnd(maxUsernameLength, ' ');
     if (showProgress) {
-      // In case progress or percentage are undefined, provide default values.
       const progress = entry.progress ? entry.progress : '0/0';
       const percentage = entry.percentage !== undefined ? entry.percentage.toString() : '0';
       return `${position}. ${username} - ${progress} (${percentage}%)`;
@@ -74,19 +70,27 @@ function formatLeaderboardEntries(entries, showProgress = false) {
   }).join('\n');
 }
 
+/**
+ * Helper to trim embed field values to 1024 characters.
+ */
+function trimFieldValue(content) {
+  if (content.length > 1024) {
+    return content.slice(0, 1021) + '...';
+  }
+  return content;
+}
+
 module.exports = {
   name: 'leaderboard',
   description: 'Displays monthly or yearly leaderboards using cached database data',
   async execute(message, args) {
     try {
-      // Initialize API and username utilities for additional calls (like game info)
       const raAPI = new RetroAchievementsAPI(
         process.env.RA_USERNAME,
         process.env.RA_API_KEY
       );
       const usernameUtils = new UsernameUtils(raAPI);
 
-      // Show menu if no arguments provided.
       if (!args[0]) {
         const menuEmbed = new EmbedBuilder()
           .setColor('#0099ff')
@@ -102,7 +106,6 @@ module.exports = {
       const subcommand = args[0].toLowerCase();
 
       if (subcommand === 'month' || subcommand === 'm') {
-        // Retrieve cached monthly leaderboard from the database.
         const monthlyData = await leaderboardService.getMonthlyLeaderboardCache();
         if (!monthlyData) {
           return message.channel.send('Monthly leaderboard data is not available at the moment.');
@@ -111,7 +114,6 @@ module.exports = {
         let headerDetails = '';
         let gameInfo = null;
         
-        // If an active monthly game exists, fetch additional game info.
         if (monthlyData.game && monthlyData.game !== 'No Monthly Game') {
           gameInfo = await raAPI.getGameInfo(monthlyData.game.gameId);
           const gameTitle = getColoredGameTitle(gameInfo?.GameTitle);
@@ -127,13 +129,13 @@ module.exports = {
           );
         }
         
-        // Build the leaderboard text from cached data.
         const entries = (monthlyData.leaderboard || []).map(entry => ({
           username: entry.username,
           progress: entry.progress,
           percentage: entry.percentage
         }));
-        const leaderboardText = formatLeaderboardEntries(entries, true);
+        let leaderboardText = formatLeaderboardEntries(entries, true);
+        leaderboardText = trimFieldValue('```ml\n' + leaderboardText + '\n```');
 
         const embed = new EmbedBuilder()
           .setColor('#0099ff')
@@ -148,48 +150,36 @@ module.exports = {
           embed.setDescription('```ml\n' + headerDetails + '\n```');
         }
         
-        if (leaderboardText) {
-          embed.addFields({
-            name: '📊 Rankings',
-            value: '```ml\n' + leaderboardText + '\n```'
-          });
-        } else {
-          embed.addFields({
-            name: '📊 Rankings',
-            value: '```ml\nNo entries yet\n```'
-          });
-        }
+        embed.addFields({
+          name: '📊 Rankings',
+          value: leaderboardText
+        });
+        
         await message.channel.send({ embeds: [embed] });
       } else if (subcommand === 'year' || subcommand === 'y') {
-        // Retrieve cached yearly leaderboard from the database.
         const yearlyData = await leaderboardService.getYearlyLeaderboardCache();
         if (!yearlyData) {
           return message.channel.send('Yearly leaderboard data is not available at the moment.');
         }
         
-        const leaderboardText = formatLeaderboardEntries(yearlyData);
+        let leaderboardText = formatLeaderboardEntries(yearlyData);
+        leaderboardText = trimFieldValue('```ml\n' + leaderboardText + '\n```');
+        const totalPoints = yearlyData.reduce((sum, entry) => sum + (entry.points || 0), 0);
         const yearlyInfo = createCompactBox('2025 Total Points',
           `Active Players: ${yearlyData.length}\n` +
-          `Total Points: ${yearlyData.reduce((sum, entry) => sum + (entry.points || 0), 0)}`
+          `Total Points: ${totalPoints}`
         );
-        
         const embed = new EmbedBuilder()
           .setColor('#0099ff')
           .setTitle('Yearly Leaderboard')
           .setDescription('```ml\n' + yearlyInfo + '\n```')
           .setTimestamp();
           
-        if (leaderboardText) {
-          embed.addFields({
-            name: '🏆 Rankings',
-            value: '```ml\n' + leaderboardText + '\n```'
-          });
-        } else {
-          embed.addFields({
-            name: '🏆 Rankings',
-            value: '```ml\nNo entries yet\n```'
-          });
-        }
+        embed.addFields({
+          name: '🏆 Rankings',
+          value: leaderboardText
+        });
+        
         await message.channel.send({ embeds: [embed] });
       } else {
         await message.reply('Please specify either "month" or "year" (e.g., !leaderboard month)');
