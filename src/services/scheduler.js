@@ -243,7 +243,7 @@ class Scheduler {
             totalUsers: this.achievementService.lastUserChecks.size,
             jobs: Array.from(this.jobs.keys()),
             runningJobs: Array.from(this.jobs.entries())
-                .filter(([_, job]) => job.getStatus() === 'scheduled')
+                .filter(([_, job]) => job.getState() === 'scheduled')
                 .map(([name]) => name),
             lastCheck: this.achievementService.lastCheck,
             queueLength: this.achievementService.announcementQueue.length
