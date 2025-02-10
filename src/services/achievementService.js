@@ -164,73 +164,70 @@ class AchievementService {
         }
     }
 
-    async announceAchievement(username, achievement, game) {
-        if (this.isPaused) return;
+   async announceAchievement(username, achievement, game) {
+    if (this.isPaused) return;
 
-        try {
-            const canonicalUsername = await this.getCanonicalUsername(username);
-            const announcementKey = `${canonicalUsername}-${achievement.ID}-${achievement.Date}`;
-            if (this.announcementCache.get(announcementKey)) return;
+    try {
+        const canonicalUsername = await this.getCanonicalUsername(username);
+        const announcementKey = `${canonicalUsername}-${achievement.ID}-${achievement.Date}`;
+        if (this.announcementCache.get(announcementKey)) return;
 
-            const profilePicUrl = await this.usernameUtils.getProfilePicUrl(canonicalUsername);
-            const profileUrl = await this.usernameUtils.getProfileUrl(canonicalUsername);
+        const profilePicUrl = await this.usernameUtils.getProfilePicUrl(canonicalUsername);
+        const profileUrl = await this.usernameUtils.getProfileUrl(canonicalUsername);
 
-            let authorName = '';
-            let color = '#00FF00';
-            let files = [];
+        let authorName = '';
+        let color = '#00FF00'; // Default color for non-challenge achievements
+        let files = [];
 
-            const logoFile = {
-                attachment: './assets/logo_simple.png',
-                name: 'game_logo.png'
-            };
+        const logoFile = {
+            attachment: './assets/logo_simple.png',
+            name: 'game_logo.png'
+        };
 
-            if (game) {
-                switch(game.gameId) {
-                    case '274': // UN Squadron
-                        authorName = 'SHADOW GAME 🌑';
-                        color = '#FFD700';
-                        files = [logoFile];
-                        break;
-                    case '355': // ALTTP
-                    case '319': // Chrono Trigger
-                        authorName = 'MONTHLY CHALLENGE ☀️';
-                        color = '#00BFFF';
-                        files = [logoFile];
-                        break;
-                }
+        // Check game type instead of specific IDs
+        if (game) {
+            if (game.type === 'SHADOW') {
+                authorName = 'SHADOW GAME 🌑';
+                color = '#FFD700'; // Gold
+                files = [logoFile];
+            } else if (game.type === 'MONTHLY') {
+                authorName = 'MONTHLY CHALLENGE ☀️';
+                color = '#00BFFF'; // Blue
+                files = [logoFile];
             }
-
-            const embed = new EmbedBuilder()
-                .setColor(color)
-                .setTitle(achievement.GameTitle)
-                .setDescription(
-                    `**${canonicalUsername}** earned **${achievement.Title}**\n\n` +
-                    `*${achievement.Description || 'No description available'}*`
-                )
-                .setURL(profileUrl);
-
-            if (achievement.BadgeName) {
-                embed.setThumbnail(`https://media.retroachievements.org/Badge/${achievement.BadgeName}.png`);
-            }
-
-            if (authorName) {
-                embed.setAuthor({
-                    name: authorName,
-                    iconURL: 'attachment://game_logo.png'
-                });
-            }
-
-            embed.setFooter({
-                text: `Points: ${achievement.Points} • ${new Date(achievement.Date).toLocaleTimeString()}`,
-                iconURL: profilePicUrl
-            });
-
-            await this.queueAnnouncement({ embeds: [embed], files });
-            this.announcementCache.set(announcementKey, true);
-        } catch (error) {
-            console.error('Error announcing achievement:', error);
         }
+
+        const embed = new EmbedBuilder()
+            .setColor(color)
+            .setTitle(achievement.GameTitle)
+            .setDescription(
+                `**${canonicalUsername}** earned **${achievement.Title}**\n\n` +
+                `*${achievement.Description || 'No description available'}*`
+            )
+            .setURL(profileUrl);
+
+        if (achievement.BadgeName) {
+            embed.setThumbnail(`https://media.retroachievements.org/Badge/${achievement.BadgeName}.png`);
+        }
+
+        if (authorName) {
+            embed.setAuthor({
+                name: authorName,
+                iconURL: 'attachment://game_logo.png'
+            });
+        }
+
+        embed.setFooter({
+            text: `Points: ${achievement.Points} • ${new Date(achievement.Date).toLocaleTimeString()}`,
+            iconURL: profilePicUrl
+        });
+
+        await this.queueAnnouncement({ embeds: [embed], files });
+        this.announcementCache.set(announcementKey, true);
+    } catch (error) {
+        console.error('Error announcing achievement:', error);
     }
+}
 
     async announceGameAward(username, game, awardType, achievementCount, totalAchievements) {
         if (this.isPaused) return;
