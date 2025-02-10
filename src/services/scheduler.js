@@ -248,22 +248,12 @@ class Scheduler {
     getStats() {
         return {
             initialized: this.initialized,
-            achievements: {
-                activeUsers: this.achievementService.activeUsers.size,
-                totalUsers: this.achievementService.lastUserChecks.size,
-                lastCheck: this.achievementService.lastCheck,
-                queueLength: this.achievementService.announcementQueue.length
-            },
+            achievements: this.achievementService.getStats(),
             jobs: {
                 total: this.jobs.size,
                 running: Array.from(this.jobs.entries())
                     .filter(([_, job]) => job.getStatus() === 'scheduled')
                     .map(([name]) => name)
-            },
-            caches: {
-                announcements: this.achievementService.announcementCache?.size() || 0,
-                achievements: this.achievementService.achievementCache?.size() || 0,
-                userGames: this.achievementService.userGameCache?.size() || 0
             }
         };
     }
@@ -273,10 +263,7 @@ class Scheduler {
         this.stopAll();
         
         if (this.achievementService) {
-            await this.achievementService.clearCache();
-            this.achievementService.lastUserChecks.clear();
-            this.achievementService.activeUsers.clear();
-            console.log('Achievement service cleared');
+            await this.achievementService.shutdown();
         }
 
         this.initialized = false;
