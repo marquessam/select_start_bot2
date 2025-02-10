@@ -145,15 +145,15 @@ class AchievementService {
             });
 
             let isActive = false;
-            if (award && award.HighestAwardKind !== undefined) {
-                isActive = award.HighestAwardKind >= AwardType.PARTICIPATION;
-            }
+               if (award && award.highestAwardKind !== undefined) {
+                  isActive = award.highestAwardKind >= AwardType.PARTICIPATION;
+}
 
             // Cache the result
             this.userGameCache.set(cacheKey, isActive);
             
             if (isActive) {
-                console.log(`User ${username} is active in current month with award level ${award.HighestAwardKind}`);
+                console.log(`User ${username} is active in current month with award level ${award.highestAwardKind}`);
             }
             
             return isActive;
@@ -323,12 +323,12 @@ class AchievementService {
                             month: currentMonth,
                             year: currentYear,
                             achievementCount: 1,
-                            HighestAwardKind: achievement.Points // assuming Points corresponds to award type
+                            highestAwardKind: achievement.Points // assuming Points corresponds to award type
                         });
                     } else {
                         award.achievementCount = (award.achievementCount || 0) + 1;
-                        if (achievement.Points > (award.HighestAwardKind || 0)) {
-                            award.HighestAwardKind = achievement.Points;
+                        if (achievement.Points > (award.highestAwardKind || 0)) {
+                            award.highestAwardKind = achievement.Points;
                         }
                     }
                     await award.save();
