@@ -1,4 +1,3 @@
-// File: src/index.js
 const { 
     Client, 
     GatewayIntentBits, 
@@ -12,6 +11,7 @@ const { initializeGames } = require('./utils/initializeGames');
 const { initializeUsers } = require('./utils/initializeUsers');
 const UserTracker = require('./services/userTracker');
 const Scheduler = require('./services/scheduler');
+const leaderboardService = require('./services/leaderboardService'); // Import leaderboard service
 
 // Load environment variables
 require('dotenv').config();
@@ -125,7 +125,6 @@ async function initializeServices() {
 
         await initializeGames();
         console.log('Games initialized');
-
     } catch (error) {
         console.error('Error initializing services:', error);
         throw error;
@@ -186,6 +185,18 @@ async function main() {
         await initializeServices();
         console.log('All services initialized');
 
+        // Update leaderboard caches immediately on startup
+        await leaderboardService.updateAllLeaderboards()
+            .then(() => console.log('Leaderboard caches updated successfully on startup.'))
+            .catch(err => console.error('Error updating leaderboard caches on startup:', err));
+
+        // Schedule periodic leaderboard cache refresh every 5 minutes.
+        setInterval(() => {
+            leaderboardService.updateAllLeaderboards()
+                .then(() => console.log('Leaderboard caches refreshed successfully.'))
+                .catch(err => console.error('Error refreshing leaderboard caches:', err));
+        }, 5 * 60 * 1000);
+
     } catch (error) {
         console.error('Error during startup:', error);
         process.exit(1);
@@ -213,7 +224,7 @@ client.on(Events.MessageCreate, async message => {
             return;
         }
 
-        // Handle commands
+        // Handle commands with prefix "!"
         if (message.content.startsWith('!')) {
             const args = message.content.slice(1).trim().split(/ +/);
             const commandName = args.shift().toLowerCase();
