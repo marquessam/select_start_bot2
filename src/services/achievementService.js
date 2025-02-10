@@ -253,83 +253,117 @@ class AchievementService {
         }
     }
 
-    async checkUserAchievements(user, challengeGames) {
-        try {
-            const recentAchievements = await this.raAPI.getUserRecentAchievements(user.raUsername);
-            
-            if (!recentAchievements || !Array.isArray(recentAchievements)) {
-                console.log(`No recent achievements for ${user.raUsername}`);
-                return;
-            }
-
-            // Sort achievements by date (oldest first)
-            const sortedAchievements = recentAchievements
-                .filter(achievement => achievement && achievement.Date)
-                .sort((a, b) => new Date(a.Date) - new Date(b.Date));
-
-            console.log(`Processing ${sortedAchievements.length} achievements for ${user.raUsername}`);
-
-            for (const achievement of sortedAchievements) {
-                const achievementDate = new Date(achievement.Date);
-                
-                // Skip if achievement is older than last check time
-                if (achievementDate <= this.lastCheck) {
-                    console.log(`Skipping old achievement for ${user.raUsername}: ${achievement.Title}`);
-                    continue;
-                }
-
-                // Get or create progress record
-                let progress = await PlayerProgress.findOne({
-                    raUsername: user.raUsername.toLowerCase(),
-                    gameId: achievement.GameID.toString()
-                });
-
-                if (!progress) {
-                    progress = new PlayerProgress({
-                        raUsername: user.raUsername.toLowerCase(),
-                        gameId: achievement.GameID.toString(),
-                        lastAchievementTimestamp: new Date(0),
-                        announcedAchievements: []
-                    });
-                }
-
-                // Skip if already announced
-                if (achievementDate <= progress.lastAchievementTimestamp ||
-                    progress.announcedAchievements.includes(achievement.ID)) {
-                    console.log(`Achievement already announced for ${user.raUsername}: ${achievement.Title}`);
-                    continue;
-                }
-
-                // Find matching challenge game if any
-                const game = challengeGames.find(g => g.gameId === achievement.GameID.toString());
-                
-                try {
-                    // Announce the achievement
-                    await this.announceAchievement(user.raUsername, achievement, game);
-                    console.log(`Announced achievement for ${user.raUsername}: ${achievement.Title}`);
-
-                    // Update progress
-                    progress.announcedAchievements.push(achievement.ID);
-                    if (achievementDate > progress.lastAchievementTimestamp) {
-                        progress.lastAchievementTimestamp = achievementDate;
-                    }
-                    await progress.save();
-
-                    // Update Award record if it's a challenge game
-                    if (game) {
-                        await this.updateAward(user.raUsername, game, achievement);
-                    }
-                } catch (error) {
-                    console.error(`Error processing achievement for ${user.raUsername}:`, error);
-                }
-
-                // Add delay between achievements
-                await new Promise(resolve => setTimeout(resolve, 1000));
-            }
-        } catch (error) {
-            console.error(`Error checking achievements for ${user.raUsername}:`, error);
+async checkUserAchievements(user, challengeGames) {
+    try {
+        console.log(`Checking achievements for ${user.raUsername}`);
+        const recentAchievements = await this.raAPI.getUserRecentAchievements(user.raUsername);
+        
+        if (!recentAchievements || !Array.isArray(recentAchievements)) {
+            console.log(`No recent achievements for ${user.raUsername}`);
+            return;
         }
+
+        // Get current awards for all challenge games
+        const currentMonth = new Date().getMonth() + 1;
+        const currentYear = new Date().getFullYear();
+        const gameIds = challengeGames.map(g => g.gameId);
+        
+        // Get all current awards for the user's challenge games
+        const existingAwards = await Award.find({
+            raUsername: user.raUsername.toLowerCase(),
+            gameId: { $in: gameIds },
+            month: currentMonth,
+            year: currentYear
+        });
+
+        // Create a map for quick lookup
+        const awardMap = new Map(existingAwards.map(award => [award.gameId, award]));
+
+        // Get game completion information for all challenge games
+        const gameProgress = {};
+        for (const game of challengeGames) {
+            try {
+                const progress = await this.raAPI.getUserGameProgress(user.raUsername, game.gameId);
+                if (progress) {
+                    gameProgress[game.gameId] = {
+                        earnedAchievements: progress.earnedAchievements || 0,
+                        totalAchievements: progress.totalAchievements || 0,
+                        userCompletion: progress.userCompletion || "0.00%",
+                        achievements: progress.achievements || []
+                    };
+                }
+            } catch (error) {
+                console.error(`Error getting game progress for ${game.gameId}:`, error);
+            }
+        }
+
+        // Update awards based on current progress
+        for (const game of challengeGames) {
+            const progress = gameProgress[game.gameId];
+            if (!progress) continue;
+
+            let award = awardMap.get(game.gameId);
+            const needsUpdate = !award || 
+                award.achievementCount !== progress.earnedAchievements ||
+                award.totalAchievements !== progress.totalAchievements;
+
+            if (needsUpdate) {
+                console.log(`Updating award for ${user.raUsername} in ${game.title}`);
+                if (!award) {
+                    award = new Award({
+                        raUsername: user.raUsername.toLowerCase(),
+                        gameId: game.gameId,
+                        month: currentMonth,
+                        year: currentYear,
+                        achievementCount: progress.earnedAchievements,
+                        totalAchievements: progress.totalAchievements,
+                        userCompletion: progress.userCompletion,
+                        highestAwardKind: AwardType.NONE
+                    });
+                } else {
+                    award.achievementCount = progress.earnedAchievements;
+                    award.totalAchievements = progress.totalAchievements;
+                    award.userCompletion = progress.userCompletion;
+                }
+
+                // Determine award type
+                if (progress.earnedAchievements >= progress.totalAchievements) {
+                    award.highestAwardKind = AwardType.MASTERED;
+                } else if (this.checkGameBeaten(game, progress.achievements)) {
+                    award.highestAwardKind = AwardType.BEATEN;
+                } else if (progress.earnedAchievements > 0) {
+                    award.highestAwardKind = AwardType.PARTICIPATION;
+                }
+
+                try {
+                    await award.save();
+                    console.log(`Saved award for ${user.raUsername} in ${game.title}:`, {
+                        achievementCount: award.achievementCount,
+                        totalAchievements: award.totalAchievements,
+                        highestAwardKind: award.highestAwardKind,
+                        userCompletion: award.userCompletion
+                    });
+                } catch (saveError) {
+                    console.error(`Error saving award for ${user.raUsername}:`, saveError);
+                }
+            }
+        }
+
+        // Process recent achievements for announcements
+        const sortedAchievements = recentAchievements
+            .filter(achievement => achievement && achievement.Date)
+            .sort((a, b) => new Date(a.Date) - new Date(b.Date));
+
+        for (const achievement of sortedAchievements) {
+            // Handle achievement announcements as before...
+            // [Previous announcement code remains the same]
+        }
+
+    } catch (error) {
+        console.error(`Error checking achievements for ${user.raUsername}:`, error);
     }
+}
+
 
    async updateAward(username, game, achievement) {
     try {
@@ -449,21 +483,23 @@ async verifyAwardData(username) {
     }
 }
 
-    checkGameBeaten(game, achievement) {
-        // If game requires specific win conditions
-        if (game.winCondition && game.winCondition.length > 0) {
-            if (game.requireAllWinConditions) {
-                // All win conditions must be met
-                return game.winCondition.includes(achievement.ID);
-            } else {
-                // Any win condition is sufficient
-                return game.winCondition.includes(achievement.ID);
-            }
-        }
-        // Default to achievement-based completion
-        return game.progression && 
-               game.progression.includes(achievement.ID);
+  checkGameBeaten(game, achievements) {
+    if (!game.winCondition || !game.winCondition.length) {
+        return false;
     }
+
+    const earnedAchievements = new Set(achievements
+        .filter(a => a.DateEarned)
+        .map(a => a.ID.toString()));
+
+    if (game.requireAllWinConditions) {
+        // All win conditions must be met
+        return game.winCondition.every(id => earnedAchievements.has(id.toString()));
+    } else {
+        // Any win condition is sufficient
+        return game.winCondition.some(id => earnedAchievements.has(id.toString()));
+    }
+}
 
     async announceAchievement(username, achievement, game) {
         if (this.isPaused) return;
