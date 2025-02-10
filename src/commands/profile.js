@@ -6,17 +6,6 @@ const { AwardType, AwardFunctions } = require('../enums/AwardType');
 const RetroAchievementsAPI = require('../services/retroAchievements');
 const UsernameUtils = require('../utils/usernameUtils');
 
-/**
- * Helper function to pad a string to a given length.
- */
-function padString(str, length) {
-  return str.toString().slice(0, length).padEnd(length);
-}
-
-/**
- * Get the user's current monthly progress.
- * Looks up all monthly games for the current month and finds the corresponding award for the user.
- */
 async function getCurrentProgress(normalizedUsername) {
   const currentDate = new Date();
   const currentMonth = currentDate.getMonth() + 1;
@@ -28,7 +17,6 @@ async function getCurrentProgress(normalizedUsername) {
   });
 
   const currentProgress = [];
-  // For each monthly game, look up if the user has an award.
   for (const game of currentGames) {
     const award = await Award.findOne({
       raUsername: normalizedUsername,
@@ -51,38 +39,38 @@ async function getCurrentProgress(normalizedUsername) {
   return currentProgress;
 }
 
-/**
- * Get yearly statistics for the user.
- * Processes challenge (non-manual) awards for the current year.
- * Uses logic similar to the working leaderboard to ensure each game is only processed once per month.
- */
-async function getYearlyStats(normalizedUsername) {
+async function getYearlyAwards(normalizedUsername) {
   const currentYear = new Date().getFullYear();
   const awards = await Award.find({
     raUsername: normalizedUsername,
     year: currentYear,
-    gameId: { $ne: 'manual' },
     achievementCount: { $gt: 0 }
   });
 
-  // Initialize statistics.
-  const stats = {
-    totalPoints: 0,
-    totalAchievements: 0,
-    gamesParticipated: 0,
-    gamesBeaten: 0,
-    gamesMastered: 0,
-    monthlyGames: 0,
-    shadowGames: 0,
-    processedGames: new Set()
+  // Group awards by type and game
+  const groupedAwards = {
+    mastered: [],
+    beaten: [],
+    participation: [],
+    community: []
   };
 
-  // Process each award.
+  const processedGames = new Set();
+
   for (const award of awards) {
-    // Key to ensure each game-month combo is counted only once.
+    // Skip if we've already processed this game for this month
     const gameKey = `${award.gameId}-${award.month}`;
-    if (stats.processedGames.has(gameKey)) continue;
-    stats.processedGames.add(gameKey);
+    if (processedGames.has(gameKey)) continue;
+    processedGames.add(gameKey);
+
+    if (award.gameId === 'manual') {
+      groupedAwards.community.push({
+        reason: award.reason,
+        points: award.totalAchievements,
+        metadata: award.metadata
+      });
+      continue;
+    }
 
     const game = await Game.findOne({
       gameId: award.gameId,
@@ -90,38 +78,65 @@ async function getYearlyStats(normalizedUsername) {
     });
     if (!game) continue;
 
-    stats.totalAchievements += award.achievementCount;
-    if (game.type === 'MONTHLY') {
-      stats.monthlyGames++;
-    } else if (game.type === 'SHADOW') {
-      stats.shadowGames++;
+    const awardInfo = {
+      title: game.title,
+      type: game.type,
+      month: award.month
+    };
+
+    if (award.award === AwardType.MASTERED) {
+      groupedAwards.mastered.push(awardInfo);
+    } else if (award.award === AwardType.BEATEN) {
+      groupedAwards.beaten.push(awardInfo);
+    } else if (award.award === AwardType.PARTICIPATION) {
+      groupedAwards.participation.push(awardInfo);
     }
-
-    // Use AwardFunctions to calculate points for this award.
-    const points = AwardFunctions.getPoints(award.award);
-    stats.totalPoints += points;
-
-    // Increment counters based on award type.
-    if (award.award >= AwardType.PARTICIPATION) stats.gamesParticipated++;
-    if (award.award >= AwardType.BEATEN) stats.gamesBeaten++;
-    if (award.award >= AwardType.MASTERED) stats.gamesMastered++;
   }
 
-  return stats;
+  return groupedAwards;
 }
 
-/**
- * Get manual (community) awards for the user.
- */
-async function getManualAwards(normalizedUsername) {
-  const currentYear = new Date().getFullYear();
-  const manualAwards = await Award.find({
-    raUsername: normalizedUsername,
-    gameId: 'manual',
-    year: currentYear
-  }).sort({ lastChecked: -1 });
+async function formatAwardsSection(groupedAwards) {
+  let sections = [];
 
-  return manualAwards;
+  // Format mastery awards
+  if (groupedAwards.mastered.length > 0) {
+    const masteryText = groupedAwards.mastered
+      .map(award => `• ${award.type === 'SHADOW' ? '🌑' : '☀️'} ${award.title}`)
+      .join('\n');
+    sections.push({ name: '✨ Mastery Awards', value: masteryText });
+  }
+
+  // Format beaten awards
+  if (groupedAwards.beaten.length > 0) {
+    const beatenText = groupedAwards.beaten
+      .map(award => `• ${award.type === 'SHADOW' ? '🌑' : '☀️'} ${award.title}`)
+      .join('\n');
+    sections.push({ name: '⭐ Beaten Awards', value: beatenText });
+  }
+
+  // Format participation awards
+  if (groupedAwards.participation.length > 0) {
+    const participationText = groupedAwards.participation
+      .map(award => `• ${award.type === 'SHADOW' ? '🌑' : '☀️'} ${award.title}`)
+      .join('\n');
+    sections.push({ name: '🏁 Participation Awards', value: participationText });
+  }
+
+  // Format community awards
+  if (groupedAwards.community.length > 0) {
+    const communityText = groupedAwards.community
+      .map(award => {
+        if (award.metadata?.type === 'placement') {
+          return `• ${award.metadata.emoji} ${award.reason} (${award.points} pts)`;
+        }
+        return `• ${award.reason} (${award.points} pts)`;
+      })
+      .join('\n');
+    sections.push({ name: '🎖️ Community Awards', value: communityText });
+  }
+
+  return sections;
 }
 
 module.exports = {
@@ -129,7 +144,6 @@ module.exports = {
   description: 'Shows user profile with detailed statistics and awards',
   async execute(message, args) {
     try {
-      // Use provided username or default to sender's username.
       const requestedUsername = args[0] || message.author.username;
       const loadingMsg = await message.channel.send('Fetching profile data...');
 
@@ -139,11 +153,9 @@ module.exports = {
       );
       const usernameUtils = new UsernameUtils(raAPI);
 
-      // Retrieve canonical username and normalize it (lowercase) for DB queries.
       const canonicalUsername = await usernameUtils.getCanonicalUsername(requestedUsername);
       const normalizedUsername = canonicalUsername.toLowerCase();
 
-      // Find the User record.
       const user = await User.findOne({
         raUsername: { $regex: new RegExp(`^${canonicalUsername}$`, 'i') }
       });
@@ -152,11 +164,9 @@ module.exports = {
         return message.reply('User not found.');
       }
 
-      // Retrieve profile image and URL.
       const profilePicUrl = await usernameUtils.getProfilePicUrl(canonicalUsername);
       const profileUrl = await usernameUtils.getProfileUrl(canonicalUsername);
 
-      // Prepare the embed.
       const embed = new EmbedBuilder()
         .setColor('#0099ff')
         .setTitle(`User Profile: ${canonicalUsername}`)
@@ -164,12 +174,11 @@ module.exports = {
         .setURL(profileUrl)
         .setTimestamp();
 
-      // Get current monthly progress.
+      // Get and display current progress
       const currentProgress = await getCurrentProgress(normalizedUsername);
       if (currentProgress.length > 0) {
         let progressText = '';
         currentProgress.forEach(progress => {
-          // Display an emoji based on game type.
           const typeEmoji = progress.type === 'SHADOW' ? '🌑' : '☀️';
           let awardIcon = '';
           if (progress.award === AwardType.MASTERED) awardIcon = ' ✨';
@@ -179,66 +188,38 @@ module.exports = {
           progressText += `${typeEmoji} ${progress.title}\n`;
           progressText += `Progress: ${progress.progress} (${progress.completion})${awardIcon}\n\n`;
         });
-        embed.addFields({ name: '🎮 Current Challenges', value: '```\n' + progressText + '```' });
+        embed.addFields({ name: '🎮 Current Challenges', value: progressText });
       }
 
-      // Get yearly statistics.
-      const yearlyStats = await getYearlyStats(normalizedUsername);
-      // Format statistics similar to the leaderboard style using padString.
-      const statsText = 
-        `Achievements: ${yearlyStats.totalAchievements}\n` +
-        `Monthly Games: ${yearlyStats.monthlyGames}\n` +
-        `Shadow Games: ${yearlyStats.shadowGames}`;
-      const completionText = 
-        `Participated: ${yearlyStats.gamesParticipated}\n` +
-        `Beaten: ${yearlyStats.gamesBeaten}\n` +
-        `Mastered: ${yearlyStats.gamesMastered}`;
+      // Get and format all awards
+      const yearlyAwards = await getYearlyAwards(normalizedUsername);
+      const awardSections = await formatAwardsSection(yearlyAwards);
       
-      embed.addFields({ 
-        name: '📊 2025 Statistics',
-        value: '```\n' + statsText + '\n\n' + completionText + '\n```'
+      // Calculate total points
+      const communityPoints = yearlyAwards.community.reduce((sum, award) => sum + award.points, 0);
+      const gamePoints = (
+        (yearlyAwards.mastered.length * 7) +
+        (yearlyAwards.beaten.length * 4) +
+        (yearlyAwards.participation.length * 1)
+      );
+      const totalPoints = gamePoints + communityPoints;
+
+      // Add award sections to embed
+      awardSections.forEach(section => {
+        embed.addFields({ name: section.name, value: section.value });
       });
 
-      // Get manual (community) awards.
-      const manualAwards = await getManualAwards(normalizedUsername);
-      const manualPoints = manualAwards.reduce((sum, award) => sum + (award.totalAchievements || 0), 0);
-      if (manualAwards.length > 0) {
-        const communityAwardsText = manualAwards
-          .map(award => {
-            // Check if this is a placement award with an emoji.
-            if (award.metadata?.type === 'placement') {
-              return `• ${award.metadata.emoji || '🏆'} ${award.reason}: ${award.totalAchievements} point${award.totalAchievements !== 1 ? 's' : ''}`;
-            }
-            return `• ${award.reason}: ${award.totalAchievements} point${award.totalAchievements !== 1 ? 's' : ''}`;
-          })
-          .join('\n');
-        embed.addFields({ 
-          name: '🎖️ Community Awards', 
-          value: '```\n' + communityAwardsText + '\n```'
-        });
-      } else {
-        embed.addFields({ 
-          name: '🎖️ Community Awards', 
-          value: '```\nNone\n```'
-        });
-      }
-
-      // Total points comprise challenge points and community extra points.
-      const totalPoints = yearlyStats.totalPoints + manualPoints;
+      // Add points summary
       const pointsText = 
         `Total: ${totalPoints}\n` +
-        `• Challenge: ${yearlyStats.totalPoints}\n` +
-        `• Community: ${manualPoints}\n`;
-      embed.addFields({ 
-        name: '🏆 Total Points',
-        value: '```\n' + pointsText + '\n```'
-      });
+        `• Challenge: ${gamePoints}\n` +
+        `• Community: ${communityPoints}`;
+      embed.addFields({ name: '🏆 Points Summary', value: pointsText });
 
       await loadingMsg.delete();
       await message.channel.send({ embeds: [embed] });
     } catch (error) {
       console.error('Error showing profile:', error);
-      console.error('Error stack:', error.stack);
       await message.reply('Error getting profile data. Please try again.');
     }
   }
