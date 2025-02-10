@@ -1,5 +1,5 @@
-// File: src/models/PlayerProgress.js
 const mongoose = require('mongoose');
+const { AwardType } = require('../enums/AwardType');
 
 const playerProgressSchema = new mongoose.Schema({
     raUsername: {
@@ -16,8 +16,13 @@ const playerProgressSchema = new mongoose.Schema({
         required: true,
         default: Date.now
     },
+    // Track the last award type announced to prevent duplicate announcements
+    lastAwardType: {
+        type: Number,
+        enum: Object.values(AwardType),
+        default: AwardType.NONE
+    },
     // We'll use this to track which achievements have been announced
-    // to avoid duplicate announcements
     announcedAchievements: [{
         type: String  // Achievement IDs
     }]
