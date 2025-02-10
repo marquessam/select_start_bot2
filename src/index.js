@@ -10,38 +10,32 @@ const fs = require('fs');
 const path = require('path');
 const { initializeGames } = require('./utils/initializeGames');
 const { initializeUsers } = require('./utils/initializeUsers');
+const InitializationService = require('./services/initializationService');
 const UserTracker = require('./services/userTracker');
 const Scheduler = require('./services/scheduler');
+const MigrationService = require('./services/migrationService');
 
 // Load environment variables
 require('dotenv').config();
 
-// Verify Railway environment variables
-const requiredRailwayVars = [
-    'DISCORD_TOKEN',
-    'MONGODB_URI',
-    'RA_USERNAME',
-    'RA_API_KEY'
-];
+// Required environment variables with descriptions
+const requiredEnvVars = {
+    DISCORD_TOKEN: 'Discord bot token for authentication',
+    MONGODB_URI: 'MongoDB connection string',
+    RA_USERNAME: 'RetroAchievements API username',
+    RA_API_KEY: 'RetroAchievements API key',
+    ACHIEVEMENT_FEED_CHANNEL: 'Channel ID for achievement announcements',
+    REGISTRATION_CHANNEL_ID: 'Channel ID for user registration',
+    CLIENT_ID: 'Discord application client ID'
+};
 
-// Verify .env environment variables
-const requiredDotEnvVars = [
-    'ACHIEVEMENT_FEED_CHANNEL',
-    'REGISTRATION_CHANNEL_ID'
-];
+// Verify all required environment variables
+const missingVars = Object.entries(requiredEnvVars)
+    .filter(([key]) => !process.env[key])
+    .map(([key, desc]) => `${key}: ${desc}`);
 
-const missingRailwayVars = requiredRailwayVars.filter(varName => !process.env[varName]);
-const missingDotEnvVars = requiredDotEnvVars.filter(varName => !process.env[varName]);
-
-if (missingRailwayVars.length > 0) {
-    console.error('Missing required Railway environment variables:', missingRailwayVars.join(', '));
-    console.error('Please configure these in your Railway project settings.');
-    process.exit(1);
-}
-
-if (missingDotEnvVars.length > 0) {
-    console.error('Missing required .env variables:', missingDotEnvVars.join(', '));
-    console.error('Please configure these in your .env file.');
+if (missingVars.length > 0) {
+    console.error('Missing required environment variables:\n', missingVars.join('\n'));
     process.exit(1);
 }
 
@@ -60,6 +54,7 @@ client.commands = new Collection();
 // Global services
 let scheduler;
 let userTracker;
+let initService;
 
 /**
  * Load commands from the commands directory
@@ -91,7 +86,10 @@ async function loadCommands() {
  */
 async function initializeMongoDB() {
     try {
-        await mongoose.connect(process.env.MONGODB_URI);
+        await mongoose.connect(process.env.MONGODB_URI, {
+            useNewUrlParser: true,
+            useUnifiedTopology: true
+        });
         console.log('Connected to MongoDB');
     } catch (error) {
         console.error('Error connecting to MongoDB:', error);
@@ -109,18 +107,20 @@ async function initializeServices() {
         await userTracker.initialize();
         console.log('User tracker initialized');
 
-        // Initialize scheduler and achievement service
+        // Initialize scheduler and services
         scheduler = new Scheduler(client);
         await scheduler.initialize();
-        
-        // Start all scheduled jobs
-        scheduler.startAll();
-        console.log('Scheduler and achievement service initialized');
+        console.log('Scheduler initialized');
+
+        // Initialize services using the new initialization service
+        initService = new InitializationService(client);
+        await initService.initialize();
+        console.log('All services initialized through InitializationService');
 
         // Store services on client for global access
         client.userTracker = userTracker;
         client.scheduler = scheduler;
-        client.achievementService = scheduler.achievementService;
+        client.initService = initService;
 
         // Initialize games and users
         await initializeUsers();
@@ -133,6 +133,24 @@ async function initializeServices() {
         console.error('Error initializing services:', error);
         throw error;
     }
+}
+
+/**
+ * Display service status
+ */
+function displayStatus() {
+    const status = {
+        client: client.isReady(),
+        mongodb: mongoose.connection.readyState === 1,
+        services: initService?.getStatus() || {},
+        scheduler: scheduler?.getStats() || {},
+        userTracker: {
+            initialized: userTracker?.initialized || false,
+            validUsers: userTracker?.getValidUsers()?.length || 0
+        }
+    };
+    console.log('Current System Status:', status);
+    return status;
 }
 
 /**
@@ -188,6 +206,9 @@ async function main() {
         // Initialize services after client is ready
         await initializeServices();
         console.log('All services initialized');
+
+        // Display initial status
+        displayStatus();
 
     } catch (error) {
         console.error('Error during startup:', error);
