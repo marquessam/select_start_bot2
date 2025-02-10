@@ -57,11 +57,16 @@ async function getCurrentProgress(username) {
 /**
  * Get yearly statistics for user
  */
-async function getYearlyStats(username) {
+async function getYearlyStats(username, client) {
     const currentYear = new Date().getFullYear();
     
     // First verify/fix any corrupted award data
     const achievementService = client.achievementService;
+    if (!achievementService) {
+        console.error('Achievement service not found on client');
+        throw new Error('Achievement service not initialized');
+    }
+
     await achievementService.verifyAwardData(username);
     
     const awards = await Award.find({
@@ -142,6 +147,7 @@ async function getYearlyStats(username) {
         masteredGames: Array.from(stats.masteredGames)
     };
 }
+
 /**
  * Get manual awards for user
  */
@@ -172,7 +178,7 @@ module.exports = {
 
             // Get canonical username for display
             const canonicalUsername = await usernameUtils.getCanonicalUsername(requestedUsername);
-            const user = await User.findOne({
+            const user = await User.find({
                 raUsername: { $regex: new RegExp(`^${requestedUsername}$`, 'i') }
             });
 
@@ -181,6 +187,7 @@ module.exports = {
                 return message.reply('User not found.');
             }
 
+            // Get profile URLs
             const profilePicUrl = await usernameUtils.getProfilePicUrl(canonicalUsername);
             const profileUrl = await usernameUtils.getProfileUrl(canonicalUsername);
 
@@ -201,7 +208,7 @@ module.exports = {
                     progressText += `${typeEmoji} ${progress.title}\n`;
                     progressText += `Progress: ${progress.progress} (${progress.completion})\n`;
                     if (progress.award) {
-                        progressText += `Award: ${AwardFunctions.getName(progress.award)}\n`;
+                        progressText += `Award: ${AwardFunctions.getName(progress.award)} ${AwardFunctions.getEmoji(progress.award)}\n`;
                     }
                     progressText += '\n';
                 }
@@ -209,7 +216,7 @@ module.exports = {
             }
 
             // Get yearly stats
-            const yearlyStats = await getYearlyStats(canonicalUsername);
+            const yearlyStats = await getYearlyStats(canonicalUsername, message.client);
             const manualAwards = await getManualAwards(canonicalUsername);
             const manualPoints = manualAwards.reduce((sum, award) => sum + (award.totalAchievements || 0), 0);
             const totalPoints = yearlyStats.totalPoints + manualPoints;
@@ -234,9 +241,8 @@ module.exports = {
 
             // Add games sections
             if (yearlyStats.participationGames.length > 0) {
-                const participationText = [
-                    `• ${yearlyStats.participationGames.map(g => g).join('\n• ')}`
-                ].join('\n');
+                const participationText = yearlyStats.participationGames
+                    .map(g => `• ${g}`).join('\n');
                 embed.addFields({
                     name: '🏁 Games Participated (+1pt)',
                     value: '```ml\n' + participationText + '\n```'
@@ -244,9 +250,8 @@ module.exports = {
             }
 
             if (yearlyStats.beatenGames.length > 0) {
-                const beatenText = [
-                    `• ${yearlyStats.beatenGames.map(g => g).join('\n• ')}`
-                ].join('\n');
+                const beatenText = yearlyStats.beatenGames
+                    .map(g => `• ${g}`).join('\n');
                 embed.addFields({
                     name: '⭐ Games Beaten (+3pts)',
                     value: '```ml\n' + beatenText + '\n```'
@@ -254,9 +259,8 @@ module.exports = {
             }
 
             if (yearlyStats.masteredGames.length > 0) {
-                const masteredText = [
-                    `• ${yearlyStats.masteredGames.map(g => g).join('\n• ')}`
-                ].join('\n');
+                const masteredText = yearlyStats.masteredGames
+                    .map(g => `• ${g}`).join('\n');
                 embed.addFields({
                     name: '✨ Games Mastered (+3pts)',
                     value: '```ml\n' + masteredText + '\n```'
@@ -269,11 +273,9 @@ module.exports = {
                     `Total Extra Points: ${manualPoints}`,
                     '',
                     ...manualAwards.map(award => {
-                        // Handle placement awards
                         if (award.metadata?.type === 'placement') {
                             return `• ${award.metadata.emoji || '🏆'} ${award.reason}: ${award.totalAchievements} points`;
                         }
-                        // Regular awards
                         return `• ${award.reason}: ${award.totalAchievements} point${award.totalAchievements !== 1 ? 's' : ''}`;
                     })
                 ].join('\n');
@@ -306,6 +308,7 @@ module.exports = {
 
         } catch (error) {
             console.error('Error showing profile:', error);
+            console.error('Error details:', error.stack);
             await message.reply('Error getting profile data. Please try again.');
         }
     }
