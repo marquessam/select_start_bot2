@@ -28,10 +28,8 @@ async function getCurrentProgress(normalizedUsername) {
     if (award) {
       currentProgress.push({
         title: game.title,
-        type: game.type,
         progress: `${award.achievementCount}/${award.totalAchievements}`,
-        completion: award.userCompletion || 'N/A',
-        award: award.award
+        completion: award.userCompletion || 'N/A'
       });
     }
   }
@@ -47,12 +45,11 @@ async function getYearlyAwards(normalizedUsername) {
     achievementCount: { $gt: 0 }
   });
 
-  // Group awards by type and game
+  // Group awards by highest award level achieved
   const groupedAwards = {
     mastered: [],
     beaten: [],
-    participation: [],
-    community: []
+    participation: []
   };
 
   const processedGames = new Set();
@@ -60,17 +57,8 @@ async function getYearlyAwards(normalizedUsername) {
   for (const award of awards) {
     // Skip if we've already processed this game for this month
     const gameKey = `${award.gameId}-${award.month}`;
-    if (processedGames.has(gameKey)) continue;
+    if (processedGames.has(gameKey) || award.gameId === 'manual') continue;
     processedGames.add(gameKey);
-
-    if (award.gameId === 'manual') {
-      groupedAwards.community.push({
-        reason: award.reason,
-        points: award.totalAchievements,
-        metadata: award.metadata
-      });
-      continue;
-    }
 
     const game = await Game.findOne({
       gameId: award.gameId,
@@ -78,65 +66,43 @@ async function getYearlyAwards(normalizedUsername) {
     });
     if (!game) continue;
 
-    const awardInfo = {
-      title: game.title,
-      type: game.type,
-      month: award.month
-    };
-
     if (award.award === AwardType.MASTERED) {
-      groupedAwards.mastered.push(awardInfo);
+      groupedAwards.mastered.push(game.title);
     } else if (award.award === AwardType.BEATEN) {
-      groupedAwards.beaten.push(awardInfo);
+      groupedAwards.beaten.push(game.title);
     } else if (award.award === AwardType.PARTICIPATION) {
-      groupedAwards.participation.push(awardInfo);
+      groupedAwards.participation.push(game.title);
     }
   }
 
   return groupedAwards;
 }
 
-async function formatAwardsSection(groupedAwards) {
-  let sections = [];
+async function getManualAwards(normalizedUsername) {
+  const currentYear = new Date().getFullYear();
+  const manualAwards = await Award.find({
+    raUsername: normalizedUsername,
+    gameId: 'manual',
+    year: currentYear
+  }).sort({ awardedAt: -1 });
 
-  // Format mastery awards
-  if (groupedAwards.mastered.length > 0) {
-    const masteryText = groupedAwards.mastered
-      .map(award => `• ${award.type === 'SHADOW' ? '🌑' : '☀️'} ${award.title}`)
-      .join('\n');
-    sections.push({ name: '✨ Mastery Awards', value: masteryText });
+  if (manualAwards.length === 0) {
+    return null;
   }
 
-  // Format beaten awards
-  if (groupedAwards.beaten.length > 0) {
-    const beatenText = groupedAwards.beaten
-      .map(award => `• ${award.type === 'SHADOW' ? '🌑' : '☀️'} ${award.title}`)
-      .join('\n');
-    sections.push({ name: '⭐ Beaten Awards', value: beatenText });
+  let awardText = '';
+  for (const award of manualAwards) {
+    if (award.metadata?.type === 'placement') {
+      awardText += `${award.metadata.emoji} ${award.metadata.name} - ${award.metadata.month}: ${award.totalAchievements} points\n`;
+    } else {
+      awardText += `• ${award.reason}: ${award.totalAchievements} points\n`;
+    }
   }
 
-  // Format participation awards
-  if (groupedAwards.participation.length > 0) {
-    const participationText = groupedAwards.participation
-      .map(award => `• ${award.type === 'SHADOW' ? '🌑' : '☀️'} ${award.title}`)
-      .join('\n');
-    sections.push({ name: '🏁 Participation Awards', value: participationText });
-  }
-
-  // Format community awards
-  if (groupedAwards.community.length > 0) {
-    const communityText = groupedAwards.community
-      .map(award => {
-        if (award.metadata?.type === 'placement') {
-          return `• ${award.metadata.emoji} ${award.reason} (${award.points} pts)`;
-        }
-        return `• ${award.reason} (${award.points} pts)`;
-      })
-      .join('\n');
-    sections.push({ name: '🎖️ Community Awards', value: communityText });
-  }
-
-  return sections;
+  return {
+    text: awardText,
+    totalPoints: manualAwards.reduce((sum, award) => sum + award.totalAchievements, 0)
+  };
 }
 
 module.exports = {
@@ -171,50 +137,71 @@ module.exports = {
         .setColor('#0099ff')
         .setTitle(`User Profile: ${canonicalUsername}`)
         .setThumbnail(profilePicUrl)
-        .setURL(profileUrl)
-        .setTimestamp();
+        .setURL(profileUrl);
 
-      // Get and display current progress
+      // Get current monthly progress
       const currentProgress = await getCurrentProgress(normalizedUsername);
       if (currentProgress.length > 0) {
         let progressText = '';
         currentProgress.forEach(progress => {
-          const typeEmoji = progress.type === 'SHADOW' ? '🌑' : '☀️';
-          let awardIcon = '';
-          if (progress.award === AwardType.MASTERED) awardIcon = ' ✨';
-          else if (progress.award === AwardType.BEATEN) awardIcon = ' ⭐';
-          else if (progress.award === AwardType.PARTICIPATION) awardIcon = ' 🏁';
-          
-          progressText += `${typeEmoji} ${progress.title}\n`;
-          progressText += `Progress: ${progress.progress} (${progress.completion})${awardIcon}\n\n`;
+          progressText += `${progress.title}\n`;
+          progressText += `Progress: ${progress.progress} (${progress.completion})\n\n`;
         });
         embed.addFields({ name: '🎮 Current Challenges', value: progressText });
       }
 
-      // Get and format all awards
+      // Get and format game awards
       const yearlyAwards = await getYearlyAwards(normalizedUsername);
-      const awardSections = await formatAwardsSection(yearlyAwards);
-      
-      // Calculate total points
-      const communityPoints = yearlyAwards.community.reduce((sum, award) => sum + award.points, 0);
+      let gameAwardsText = '';
+
+      if (yearlyAwards.mastered.length > 0) {
+        yearlyAwards.mastered.forEach(game => {
+          gameAwardsText += `${game}: Mastered ✨\n`;
+        });
+      }
+      if (yearlyAwards.beaten.length > 0) {
+        yearlyAwards.beaten.forEach(game => {
+          gameAwardsText += `${game}: Beaten ⭐\n`;
+        });
+      }
+      if (yearlyAwards.participation.length > 0) {
+        yearlyAwards.participation.forEach(game => {
+          gameAwardsText += `${game}: Participation 🏁\n`;
+        });
+      }
+
+      if (gameAwardsText) {
+        embed.addFields({ 
+          name: '🎮 Game Awards', 
+          value: gameAwardsText 
+        });
+      }
+
+      // Add manual awards section
+      const manualAwards = await getManualAwards(normalizedUsername);
+      if (manualAwards) {
+        embed.addFields({
+          name: '🎖️ Community Awards',
+          value: manualAwards.text
+        });
+      }
+
+      // Calculate points
       const gamePoints = (
         (yearlyAwards.mastered.length * 7) +
         (yearlyAwards.beaten.length * 4) +
-        (yearlyAwards.participation.length * 1)
+        (yearlyAwards.participation.length)
       );
+      const communityPoints = manualAwards?.totalPoints || 0;
       const totalPoints = gamePoints + communityPoints;
 
-      // Add award sections to embed
-      awardSections.forEach(section => {
-        embed.addFields({ name: section.name, value: section.value });
+      embed.addFields({
+        name: '🏆 Points Summary',
+        value: 
+          `Total: ${totalPoints}\n` +
+          `• Challenge: ${gamePoints}\n` +
+          `• Community: ${communityPoints}`
       });
-
-      // Add points summary
-      const pointsText = 
-        `Total: ${totalPoints}\n` +
-        `• Challenge: ${gamePoints}\n` +
-        `• Community: ${communityPoints}`;
-      embed.addFields({ name: '🏆 Points Summary', value: pointsText });
 
       await loadingMsg.delete();
       await message.channel.send({ embeds: [embed] });
