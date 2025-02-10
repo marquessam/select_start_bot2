@@ -149,85 +149,139 @@ class AchievementService {
         }
     }
 
-    async announceAchievement(username, achievement, game) {
-        if (this.isPaused) return;
+  async announceAchievement(username, achievement, game) {
+    if (this.isPaused) return;
 
-        try {
-            // Always use canonical username for announcements and URLs
-            const canonicalUsername = await this.getCanonicalUsername(username);
-            const announcementKey = `${canonicalUsername}-${achievement.ID}-${achievement.Date}`;
-            if (this.announcementCache.get(announcementKey)) {
-                return;
+    try {
+        // Always use canonical username for announcements and URLs
+        const canonicalUsername = await this.getCanonicalUsername(username);
+        const announcementKey = `${canonicalUsername}-${achievement.ID}-${achievement.Date}`;
+        if (this.announcementCache.get(announcementKey)) {
+            return;
+        }
+
+        const profilePicUrl = await this.usernameUtils.getProfilePicUrl(canonicalUsername);
+        const profileUrl = await this.usernameUtils.getProfileUrl(canonicalUsername);
+
+        // Determine special game handling and colors
+        let authorName = '';
+        let color = '#00FF00'; // Default color
+        let files = [];
+
+        const logoFile = {
+            attachment: './assets/logo_simple.png',
+            name: 'game_logo.png'
+        };
+
+        if (game) {
+            switch(game.gameId) {
+                case '274': // UN Squadron
+                    authorName = 'SHADOW GAME 🌑';
+                    color = '#FFD700';
+                    files = [logoFile];
+                    break;
+                case '355': // ALTTP
+                case '319': // Chrono Trigger
+                    authorName = 'MONTHLY CHALLENGE ☀️';
+                    color = '#00BFFF';
+                    files = [logoFile];
+                    break;
             }
+        }
 
-            const profilePicUrl = await this.usernameUtils.getProfilePicUrl(canonicalUsername);
-            const profileUrl = await this.usernameUtils.getProfileUrl(canonicalUsername);
+        const embed = new EmbedBuilder()
+            .setColor(color)
+            .setTitle(achievement.GameTitle)
+            .setDescription(
+                `**${canonicalUsername}** earned **${achievement.Title}**\n\n` +
+                `*${achievement.Description || 'No description available'}*`
+            )
+            .setURL(profileUrl);
 
-            const embed = new EmbedBuilder()
-                .setColor(game?.type === 'SHADOW' ? '#FFD700' : '#00BFFF')
-                .setTitle(achievement.GameTitle)
-                .setDescription(
-                    `**${canonicalUsername}** earned **${achievement.Title}**\n\n` +
-                    `*${achievement.Description || 'No description available'}*`
-                )
-                .setURL(profileUrl);
+        // Set badge image if available
+        if (achievement.BadgeName) {
+            embed.setThumbnail(`https://media.retroachievements.org/Badge/${achievement.BadgeName}.png`);
+        }
 
-            // Set badge image if available
-            if (achievement.BadgeName) {
-                embed.setThumbnail(`https://media.retroachievements.org/Badge/${achievement.BadgeName}.png`);
-            }
-
-            // Add game type header for challenge games
-            if (game && (game.type === 'SHADOW' || game.type === 'MONTHLY')) {
-                embed.setAuthor({
-                    name: game.type === 'SHADOW' ? 'SHADOW GAME 🌑' : 'MONTHLY CHALLENGE ☀️',
-                    iconURL: 'attachment://game_logo.png'
-                });
-            }
-
-            embed.setFooter({
-                text: `Points: ${achievement.Points} • ${new Date(achievement.Date).toLocaleTimeString()}`,
-                iconURL: profilePicUrl
+        // Add game type header for challenge games
+        if (authorName) {
+            embed.setAuthor({
+                name: authorName,
+                iconURL: 'attachment://game_logo.png'
             });
-
-            const files = game ? [{
-                attachment: './assets/logo_simple.png',
-                name: 'game_logo.png'
-            }] : [];
-
-            await this.queueAnnouncement({ embeds: [embed], files });
-            this.announcementCache.set(announcementKey, true);
-        } catch (error) {
-            console.error('Error announcing achievement:', error);
         }
-    }
 
-    async queueAnnouncement(messageOptions) {
-        this.announcementQueue.push(messageOptions);
-        if (!this.isProcessingQueue) {
-            await this.processAnnouncementQueue();
+        embed.setFooter({
+            text: `Points: ${achievement.Points} • ${new Date(achievement.Date).toLocaleTimeString()}`,
+            iconURL: profilePicUrl
+        });
+
+        await this.queueAnnouncement({ embeds: [embed], files });
+        this.announcementCache.set(announcementKey, true);
+    } catch (error) {
+        console.error('Error announcing achievement:', error);
+    }
+}
+async announcePointsAward(username, points, reason) {
+    if (this.isPaused) return;
+
+    try {
+        const canonicalUsername = await this.getCanonicalUsername(username);
+        const announcementKey = `points-${canonicalUsername}-${points}-${reason}-${Date.now()}`;
+        
+        if (this.announcementCache.get(announcementKey)) {
+            return;
         }
+
+        const profilePicUrl = await this.usernameUtils.getProfilePicUrl(canonicalUsername);
+        const profileUrl = await this.usernameUtils.getProfileUrl(canonicalUsername);
+
+        const embed = new EmbedBuilder()
+            .setColor('#FFD700')
+            .setAuthor({
+                name: canonicalUsername,
+                iconURL: profilePicUrl,
+                url: profileUrl
+            })
+            .setTitle('🏆 Points Awarded!')
+            .setDescription(
+                `**${canonicalUsername}** earned **${points} point${points !== 1 ? 's' : ''}**!\n` +
+                `*${reason}*`
+            )
+            .setTimestamp();
+
+        await this.queueAnnouncement({ embeds: [embed] });
+        this.announcementCache.set(announcementKey, true);
+    } catch (error) {
+        console.error('Error announcing points award:', error);
     }
+}
 
-    async processAnnouncementQueue() {
-        if (this.isProcessingQueue || this.announcementQueue.length === 0) return;
-        this.isProcessingQueue = true;
+async queueAnnouncement(messageOptions) {
+    this.announcementQueue.push(messageOptions);
+    if (!this.isProcessingQueue) {
+        await this.processAnnouncementQueue();
+    }
+}
 
-        try {
-            const channel = await this.client.channels.fetch(this.feedChannelId);
-            while (this.announcementQueue.length > 0) {
-                const messageOptions = this.announcementQueue.shift();
-                await channel.send(messageOptions);
-                // Add delay between messages
-                await new Promise(resolve => setTimeout(resolve, 1000));
-            }
-        } catch (error) {
-            console.error('Error processing announcement queue:', error);
-        } finally {
-            this.isProcessingQueue = false;
+async processAnnouncementQueue() {
+    if (this.isProcessingQueue || this.announcementQueue.length === 0) return;
+    this.isProcessingQueue = true;
+
+    try {
+        const channel = await this.client.channels.fetch(this.feedChannelId);
+        while (this.announcementQueue.length > 0) {
+            const messageOptions = this.announcementQueue.shift();
+            await channel.send(messageOptions);
+            // Add delay between messages to avoid rate limits
+            await new Promise(resolve => setTimeout(resolve, 1000));
         }
+    } catch (error) {
+        console.error('Error processing announcement queue:', error);
+    } finally {
+        this.isProcessingQueue = false;
     }
-
+}
     setPaused(paused) {
         this.isPaused = paused;
         console.log(`Achievement service ${paused ? 'paused' : 'resumed'}`);
