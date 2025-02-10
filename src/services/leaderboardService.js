@@ -1,13 +1,19 @@
-// File: src/services/leaderboardService.js
 const { EmbedBuilder } = require('discord.js');
 const Game = require('../models/Game');
 const Award = require('../models/Award');
 const Leaderboard = require('../models/Leaderboard');
 const User = require('../models/User');
 const { AwardType, AwardFunctions } = require('../enums/AwardType');
+const RetroAchievementsAPI = require('./retroAchievements');
+const UsernameUtils = require('../utils/usernameUtils');
 
 class LeaderboardService {
   constructor() {
+    this.raAPI = new RetroAchievementsAPI(
+      process.env.RA_USERNAME,
+      process.env.RA_API_KEY
+    );
+    this.usernameUtils = new UsernameUtils(this.raAPI);
     console.log('Leaderboard service initialized');
   }
 
@@ -127,52 +133,61 @@ class LeaderboardService {
       const currentYear = new Date().getFullYear();
       const awards = await Award.find({ year: currentYear });
 
+      // Track canonical username mappings
+      const canonicalUsernames = new Map();
       const userPoints = {};
 
+      // First, get all canonical usernames
+      const uniqueUsernames = new Set(awards.map(award => award.raUsername.toLowerCase()));
+      for (const username of uniqueUsernames) {
+        const canonicalName = await this.usernameUtils.getCanonicalUsername(username);
+        canonicalUsernames.set(username.toLowerCase(), canonicalName);
+      }
+
+      // Process awards using canonical usernames
       for (const award of awards) {
-        const user = await User.findOne({
-          raUsername: { $regex: new RegExp(`^${award.raUsername}$`, 'i') }
-        });
-        if (user) {
-          const canonicalUsername = user.raUsername;
-          if (!userPoints[canonicalUsername]) {
-            userPoints[canonicalUsername] = {
-              username: canonicalUsername,
-              totalPoints: 0,
-              communityPoints: 0,
-              challengePoints: 0,
-              participations: 0,
-              beaten: 0,
-              mastered: 0,
-              processedGames: new Set()
-            };
+        const normalizedUsername = award.raUsername.toLowerCase();
+        const canonicalUsername = canonicalUsernames.get(normalizedUsername);
+        
+        if (!canonicalUsername) continue;
+
+        if (!userPoints[canonicalUsername]) {
+          userPoints[canonicalUsername] = {
+            username: canonicalUsername,
+            totalPoints: 0,
+            communityPoints: 0,
+            challengePoints: 0,
+            participations: 0,
+            beaten: 0,
+            mastered: 0,
+            processedGames: new Set()
+          };
+        }
+
+        // Handle manual (community) awards separately
+        if (award.gameId === 'manual') {
+          userPoints[canonicalUsername].communityPoints += (award.totalAchievements || 0);
+          userPoints[canonicalUsername].totalPoints += (award.totalAchievements || 0);
+          continue;
+        }
+        
+        const gameKey = `${award.gameId}-${award.month}`;
+        if (!userPoints[canonicalUsername].processedGames.has(gameKey)) {
+          let points = 0;
+          if (award.award >= AwardType.MASTERED) {
+            points = 7;
+            userPoints[canonicalUsername].mastered++;
+          } else if (award.award >= AwardType.BEATEN) {
+            points = 4;
+            userPoints[canonicalUsername].beaten++;
+          } else if (award.award >= AwardType.PARTICIPATION) {
+            points = 1;
+            userPoints[canonicalUsername].participations++;
           }
 
-          // Handle manual (community) awards separately
-          if (award.gameId === 'manual') {
-            userPoints[canonicalUsername].communityPoints += (award.totalAchievements || 0);
-            userPoints[canonicalUsername].totalPoints += (award.totalAchievements || 0);
-            continue;
-          }
-          
-          const gameKey = `${award.gameId}-${award.month}`;
-          if (!userPoints[canonicalUsername].processedGames.has(gameKey)) {
-            let points = 0;
-            if (award.award >= AwardType.MASTERED) {
-              points = 7;
-              userPoints[canonicalUsername].mastered++;
-            } else if (award.award >= AwardType.BEATEN) {
-              points = 4;
-              userPoints[canonicalUsername].beaten++;
-            } else if (award.award >= AwardType.PARTICIPATION) {
-              points = 1;
-              userPoints[canonicalUsername].participations++;
-            }
-
-            userPoints[canonicalUsername].challengePoints += points;
-            userPoints[canonicalUsername].totalPoints += points;
-            userPoints[canonicalUsername].processedGames.add(gameKey);
-          }
+          userPoints[canonicalUsername].challengePoints += points;
+          userPoints[canonicalUsername].totalPoints += points;
+          userPoints[canonicalUsername].processedGames.add(gameKey);
         }
       }
 
@@ -237,7 +252,6 @@ class LeaderboardService {
       throw error;
     }
   }
-
   /**
    * Updates both monthly and yearly leaderboard caches
    */
