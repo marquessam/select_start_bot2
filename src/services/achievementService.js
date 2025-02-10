@@ -289,12 +289,15 @@ async checkUserAchievements(user, challengeGames) {
                         earnedAchievements: progress.earnedAchievements || 0,
                         totalAchievements: progress.totalAchievements || 0,
                         userCompletion: progress.userCompletion || "0.00%",
-                        achievements: progress.achievements || []
+                        achievements: Array.isArray(progress.achievements) ? progress.achievements : []
                     };
                 }
             } catch (error) {
                 console.error(`Error getting game progress for ${game.gameId}:`, error);
             }
+            
+            // Add delay between API calls
+            await new Promise(resolve => setTimeout(resolve, 1000));
         }
 
         // Update awards based on current progress
@@ -363,8 +366,7 @@ async checkUserAchievements(user, challengeGames) {
         console.error(`Error checking achievements for ${user.raUsername}:`, error);
     }
 }
-
-
+    
    async updateAward(username, game, achievement) {
     try {
         const currentMonth = new Date().getMonth() + 1;
@@ -483,21 +485,40 @@ async verifyAwardData(username) {
     }
 }
 
-  checkGameBeaten(game, achievements) {
+checkGameBeaten(game, achievements) {
+    // If there are no win conditions defined, game can't be beaten
     if (!game.winCondition || !game.winCondition.length) {
         return false;
     }
 
-    const earnedAchievements = new Set(achievements
-        .filter(a => a.DateEarned)
-        .map(a => a.ID.toString()));
+    // Handle cases where achievements might not be an array
+    if (!achievements || !Array.isArray(achievements)) {
+        console.log(`No valid achievements data provided for game ${game.gameId}`);
+        return false;
+    }
 
-    if (game.requireAllWinConditions) {
-        // All win conditions must be met
-        return game.winCondition.every(id => earnedAchievements.has(id.toString()));
-    } else {
-        // Any win condition is sufficient
-        return game.winCondition.some(id => earnedAchievements.has(id.toString()));
+    try {
+        // Create a set of earned achievement IDs
+        const earnedAchievements = new Set(
+            achievements
+                .filter(a => a && a.DateEarned)
+                .map(a => (a.ID || a.id || '').toString())
+        );
+
+        if (game.requireAllWinConditions) {
+            // All win conditions must be met
+            return game.winCondition.every(id => 
+                earnedAchievements.has(id.toString())
+            );
+        } else {
+            // Any win condition is sufficient
+            return game.winCondition.some(id => 
+                earnedAchievements.has(id.toString())
+            );
+        }
+    } catch (error) {
+        console.error(`Error checking game beaten status for game ${game.gameId}:`, error);
+        return false;
     }
 }
 
