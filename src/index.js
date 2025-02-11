@@ -1,3 +1,4 @@
+// File: src/index.js
 const { 
     Client, 
     GatewayIntentBits, 
@@ -12,6 +13,11 @@ const { initializeUsers } = require('./utils/initializeUsers');
 const UserTracker = require('./services/userTracker');
 const Scheduler = require('./services/scheduler');
 const LeaderboardService = require('./services/leaderboardService');
+const RetroAchievementsAPI = require('./services/retroAchievements');
+const UsernameUtils = require('./utils/usernameUtils');
+const AchievementFeedService = require('./services/achievementFeedService');
+const AchievementTrackingService = require('./services/achievementTrackingService');
+const AwardService = require('./services/awardService');
 
 // Load environment variables
 require('dotenv').config();
@@ -35,13 +41,11 @@ const missingDotEnvVars = requiredDotEnvVars.filter(varName => !process.env[varN
 
 if (missingRailwayVars.length > 0) {
     console.error('Missing required Railway environment variables:', missingRailwayVars.join(', '));
-    console.error('Please configure these in your Railway project settings.');
     process.exit(1);
 }
 
 if (missingDotEnvVars.length > 0) {
     console.error('Missing required .env variables:', missingDotEnvVars.join(', '));
-    console.error('Please configure these in your .env file.');
     process.exit(1);
 }
 
@@ -61,6 +65,11 @@ client.commands = new Collection();
 let scheduler;
 let userTracker;
 let leaderboardService;
+let achievementFeedService;
+let achievementTrackingService;
+let awardService;
+let raAPI;
+let usernameUtils;
 
 /**
  * Load commands from the commands directory
@@ -105,16 +114,44 @@ async function initializeMongoDB() {
  */
 async function initializeServices() {
     try {
+        // Initialize RetroAchievements API client
+        raAPI = new RetroAchievementsAPI(
+            process.env.RA_USERNAME,
+            process.env.RA_API_KEY
+        );
+        console.log('RetroAchievements API client initialized');
+
+        // Initialize username utilities
+        usernameUtils = new UsernameUtils(raAPI);
+        console.log('Username utilities initialized');
+
+        // Initialize achievement feed service
+        achievementFeedService = new AchievementFeedService(client, usernameUtils);
+        await achievementFeedService.initialize();
+        console.log('Achievement feed service initialized');
+
+        // Initialize award service
+        awardService = new AwardService(achievementFeedService, usernameUtils);
+        console.log('Award service initialized');
+
+        // Initialize achievement tracking service
+        achievementTrackingService = new AchievementTrackingService(
+            raAPI,
+            usernameUtils,
+            achievementFeedService
+        );
+        console.log('Achievement tracking service initialized');
+
         // Initialize user tracker
         userTracker = new UserTracker();
         await userTracker.initialize();
         console.log('User tracker initialized');
 
-        // Initialize scheduler and achievement service
-        scheduler = new Scheduler(client);
+        // Initialize scheduler and start tasks
+        scheduler = new Scheduler(client, achievementTrackingService);
         await scheduler.initialize();
         scheduler.startAll();
-        console.log('Scheduler and achievement service initialized');
+        console.log('Scheduler initialized and started');
 
         // Initialize leaderboard service
         leaderboardService = new LeaderboardService();
@@ -124,6 +161,11 @@ async function initializeServices() {
         client.userTracker = userTracker;
         client.scheduler = scheduler;
         client.leaderboardService = leaderboardService;
+        client.achievementFeedService = achievementFeedService;
+        client.achievementTrackingService = achievementTrackingService;
+        client.awardService = awardService;
+        client.raAPI = raAPI;
+        client.usernameUtils = usernameUtils;
 
         // Initialize games and users
         await initializeUsers();
