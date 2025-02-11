@@ -26,7 +26,7 @@ const AwardService = require('./services/awardService');
 // Load environment variables
 require('dotenv').config();
 
-// Environment variable validation
+// Verify Railway environment variables
 const requiredRailwayVars = [
     'DISCORD_TOKEN',
     'MONGODB_URI',
@@ -34,26 +34,23 @@ const requiredRailwayVars = [
     'RA_API_KEY'
 ];
 
+// Verify .env environment variables
 const requiredDotEnvVars = [
     'ACHIEVEMENT_FEED_CHANNEL',
     'REGISTRATION_CHANNEL_ID'
 ];
 
-function validateEnvironment() {
-    const missingRailwayVars = requiredRailwayVars.filter(varName => !process.env[varName]);
-    const missingDotEnvVars = requiredDotEnvVars.filter(varName => !process.env[varName]);
+const missingRailwayVars = requiredRailwayVars.filter(varName => !process.env[varName]);
+const missingDotEnvVars = requiredDotEnvVars.filter(varName => !process.env[varName]);
 
-    if (missingRailwayVars.length > 0) {
-        console.error('Missing required Railway environment variables:', missingRailwayVars.join(', '));
-        return false;
-    }
+if (missingRailwayVars.length > 0) {
+    console.error('Missing required Railway environment variables:', missingRailwayVars.join(', '));
+    process.exit(1);
+}
 
-    if (missingDotEnvVars.length > 0) {
-        console.error('Missing required .env variables:', missingDotEnvVars.join(', '));
-        return false;
-    }
-
-    return true;
+if (missingDotEnvVars.length > 0) {
+    console.error('Missing required .env variables:', missingDotEnvVars.join(', '));
+    process.exit(1);
 }
 
 // Create Discord client with required intents
@@ -128,14 +125,11 @@ async function initializeServices() {
         );
         console.log('RetroAchievements API client initialized');
 
-       // Initialize users with usernameUtils
-        await initializeUsers(usernameUtils);
-        console.log('Users initialized');
+        // Initialize username utilities
+        usernameUtils = new UsernameUtils(raAPI);
+        console.log('Username utilities initialized');
 
-        await initializeGames();
-        console.log('Games initialized');
-
-        // Initialize services that depend on the core services
+        // Initialize user tracker with usernameUtils
         userTracker = new UserTracker(usernameUtils);
         await userTracker.initialize();
         console.log('User tracker initialized');
@@ -198,8 +192,8 @@ async function initializeServices() {
 
         console.log('All services successfully attached to client');
 
-        // Initialize games and users
-        await initializeUsers();
+        // Initialize users with usernameUtils
+        await initializeUsers(usernameUtils);
         console.log('Users initialized');
 
         await initializeGames();
@@ -215,7 +209,6 @@ async function initializeServices() {
                 .then(() => console.log('Leaderboard caches refreshed successfully.'))
                 .catch(err => console.error('Error refreshing leaderboard caches:', err));
         }, 5 * 60 * 1000); // Every 5 minutes
-
     } catch (error) {
         console.error('Error initializing services:', error);
         throw error;
@@ -254,13 +247,6 @@ async function shutdown() {
  */
 async function main() {
     try {
-        console.log('Starting initialization sequence...');
-
-        // Validate environment variables
-        if (!validateEnvironment()) {
-            throw new Error('Environment validation failed');
-        }
-
         // Connect to MongoDB first
         await initializeMongoDB();
         console.log('MongoDB connected');
@@ -283,14 +269,6 @@ async function main() {
         // Load commands last (after services are available)
         await loadCommands();
         console.log('Commands loaded');
-
-        // Final verification of client services
-        console.log('Verifying service availability...');
-        if (!client.usernameUtils) {
-            throw new Error('Critical service usernameUtils not available');
-        }
-        console.log('Service verification complete');
-        console.log('Bot initialization completed successfully');
 
     } catch (error) {
         console.error('Error during startup:', error);
