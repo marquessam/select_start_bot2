@@ -1,6 +1,6 @@
-//File: src/commands/points.js
+// File: src/commands/points.js
 const { EmbedBuilder } = require('discord.js');
-const User = require('../models/User');
+const { AwardType } = require('../enums/AwardType');
 
 /**
  * Handle adding points to a user
@@ -25,7 +25,7 @@ async function handleAddPoints(message, canonicalUsername, filter, awaitOptions,
         const month = monthArg.charAt(0).toUpperCase() + monthArg.slice(1).toLowerCase();
 
         try {
-            await awardService.addPlacementAward(canonicalUsername, placement.toLowerCase(), month);
+            await awardService.addPlacementAward(canonicalUsername, placement, month);
             await message.channel.send(
                 `Added ${placement} place award for ${month} to **${canonicalUsername}**!`
             );
@@ -165,6 +165,11 @@ module.exports = {
             );
         }
 
+        // Check for admin permissions
+        if (!message.member.permissions.has('ADMINISTRATOR')) {
+            return message.reply('This command can only be used by administrators.');
+        }
+
         const action = args[0].toLowerCase();
         const username = args[1];
 
@@ -175,20 +180,18 @@ module.exports = {
         try {
             // Get required services
             const { usernameUtils, awardService } = message.client;
+            if (!usernameUtils || !awardService) {
+                console.error('Required services not available:', {
+                    hasUsernameUtils: !!usernameUtils,
+                    hasAwardService: !!awardService
+                });
+                throw new Error('Required services not available');
+            }
 
             // Get canonical username
             const canonicalUsername = await usernameUtils.getCanonicalUsername(username);
             if (!canonicalUsername) {
                 return message.reply('User not found on RetroAchievements.');
-            }
-
-            // Check if user is in our database
-            const user = await User.findOne({
-                raUsername: { $regex: new RegExp(`^${canonicalUsername}$`, 'i') }
-            });
-
-            if (!user) {
-                return message.reply('User not found in our database. They need to register first!');
             }
 
             const filter = m => m.author.id === message.author.id;
@@ -209,6 +212,8 @@ module.exports = {
         } catch (error) {
             if (error.message === 'CANCELLED') {
                 await message.reply('Operation cancelled.');
+            } else if (error.message === 'time') {
+                await message.reply('Command timed out. Please try again.');
             } else {
                 console.error('Error in points command:', error);
                 await message.reply('An error occurred while processing the command.');
