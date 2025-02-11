@@ -124,25 +124,25 @@ async function initializeServices() {
             process.env.RA_API_KEY
         );
         console.log('RetroAchievements API client initialized');
-
+        
         // Initialize username utilities
         usernameUtils = new UsernameUtils(raAPI);
         console.log('Username utilities initialized');
-
+        
         // Initialize user tracker with usernameUtils
         userTracker = new UserTracker(usernameUtils);
         await userTracker.initialize();
         console.log('User tracker initialized');
-
+        
         // Initialize achievement feed service
         achievementFeedService = new AchievementFeedService(client, usernameUtils);
         await achievementFeedService.initialize();
         console.log('Achievement feed service initialized');
-
+        
         // Initialize award service
         awardService = new AwardService(achievementFeedService, usernameUtils);
         console.log('Award service initialized');
-
+        
         // Initialize achievement tracking service
         achievementTrackingService = new AchievementTrackingService(
             raAPI,
@@ -150,17 +150,17 @@ async function initializeServices() {
             achievementFeedService
         );
         console.log('Achievement tracking service initialized');
-
+        
         // Initialize scheduler with tracking service
         scheduler = new Scheduler(client, achievementTrackingService);
         await scheduler.initialize();
         scheduler.startAll();
         console.log('Scheduler initialized and started');
-
-        // Initialize leaderboard service
-        leaderboardService = new LeaderboardService();
+        
+        // FIX: Pass usernameUtils instance to LeaderboardService
+        leaderboardService = new LeaderboardService(usernameUtils);
         console.log('Leaderboard service initialized');
-
+        
         // Store services on client for global access
         Object.assign(client, {
             userTracker,
@@ -172,7 +172,7 @@ async function initializeServices() {
             raAPI,
             usernameUtils
         });
-
+        
         // Verify services are properly attached
         const requiredServices = [
             'userTracker',
@@ -184,25 +184,25 @@ async function initializeServices() {
             'raAPI',
             'usernameUtils'
         ];
-
+        
         const missingServices = requiredServices.filter(service => !client[service]);
         if (missingServices.length > 0) {
             throw new Error(`Missing required services: ${missingServices.join(', ')}`);
         }
-
+        
         console.log('All services successfully attached to client');
-
+        
         // Initialize users with usernameUtils
         await initializeUsers(usernameUtils);
         console.log('Users initialized');
-
+        
         await initializeGames();
         console.log('Games initialized');
-
+        
         // Update leaderboard caches
         await leaderboardService.updateAllLeaderboards();
         console.log('Leaderboard caches updated on startup');
-
+        
         // Schedule periodic leaderboard refresh
         setInterval(() => {
             leaderboardService.updateAllLeaderboards()
@@ -226,10 +226,10 @@ async function shutdown() {
             await scheduler.shutdown();
             console.log('Scheduler shut down');
         }
-
+        
         await mongoose.connection.close();
         console.log('MongoDB connection closed');
-
+        
         // Destroy the Discord client
         if (client) {
             client.destroy();
@@ -250,26 +250,26 @@ async function main() {
         // Connect to MongoDB first
         await initializeMongoDB();
         console.log('MongoDB connected');
-
+        
         // Login to Discord
         await client.login(process.env.DISCORD_TOKEN);
         console.log(`Logged in as ${client.user.tag}`);
-
+        
         // Wait for client to be ready
         await new Promise((resolve) => {
             if (client.isReady()) resolve();
             else client.once('ready', resolve);
         });
         console.log('Discord client is ready');
-
+        
         // Initialize all services
         await initializeServices();
         console.log('All services initialized');
-
+        
         // Load commands last (after services are available)
         await loadCommands();
         console.log('Commands loaded');
-
+        
     } catch (error) {
         console.error('Error during startup:', error);
         process.exit(1);
@@ -290,13 +290,13 @@ client.on(Events.MessageCreate, async message => {
     try {
         // Ignore messages from bots
         if (message.author.bot) return;
-
+        
         // Process RetroAchievements profile links if in registration channel
         if (message.channel.id === process.env.REGISTRATION_CHANNEL_ID) {
             await userTracker.processMessage(message);
             return;
         }
-
+        
         // Handle commands with prefix "!"
         if (message.content.startsWith('!')) {
             const args = message.content.slice(1).trim().split(/ +/);
@@ -304,7 +304,7 @@ client.on(Events.MessageCreate, async message => {
             
             const command = client.commands.get(commandName);
             if (!command) return;
-
+            
             try {
                 await command.execute(message, args);
             } catch (error) {
