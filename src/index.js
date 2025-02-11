@@ -8,13 +8,17 @@ const {
 const mongoose = require('mongoose');
 const fs = require('fs');
 const path = require('path');
+
+// Import core utilities and initializers
 const { initializeGames } = require('./utils/initializeGames');
 const { initializeUsers } = require('./utils/initializeUsers');
+const UsernameUtils = require('./utils/usernameUtils');
+
+// Import all services
 const UserTracker = require('./services/userTracker');
 const Scheduler = require('./services/scheduler');
 const LeaderboardService = require('./services/leaderboardService');
 const RetroAchievementsAPI = require('./services/retroAchievements');
-const UsernameUtils = require('./utils/usernameUtils');
 const AchievementFeedService = require('./services/achievementFeedService');
 const AchievementTrackingService = require('./services/achievementTrackingService');
 const AwardService = require('./services/awardService');
@@ -22,7 +26,7 @@ const AwardService = require('./services/awardService');
 // Load environment variables
 require('dotenv').config();
 
-// Verify Railway environment variables
+// Environment variable validation
 const requiredRailwayVars = [
     'DISCORD_TOKEN',
     'MONGODB_URI',
@@ -30,23 +34,26 @@ const requiredRailwayVars = [
     'RA_API_KEY'
 ];
 
-// Verify .env environment variables
 const requiredDotEnvVars = [
     'ACHIEVEMENT_FEED_CHANNEL',
     'REGISTRATION_CHANNEL_ID'
 ];
 
-const missingRailwayVars = requiredRailwayVars.filter(varName => !process.env[varName]);
-const missingDotEnvVars = requiredDotEnvVars.filter(varName => !process.env[varName]);
+function validateEnvironment() {
+    const missingRailwayVars = requiredRailwayVars.filter(varName => !process.env[varName]);
+    const missingDotEnvVars = requiredDotEnvVars.filter(varName => !process.env[varName]);
 
-if (missingRailwayVars.length > 0) {
-    console.error('Missing required Railway environment variables:', missingRailwayVars.join(', '));
-    process.exit(1);
-}
+    if (missingRailwayVars.length > 0) {
+        console.error('Missing required Railway environment variables:', missingRailwayVars.join(', '));
+        return false;
+    }
 
-if (missingDotEnvVars.length > 0) {
-    console.error('Missing required .env variables:', missingDotEnvVars.join(', '));
-    process.exit(1);
+    if (missingDotEnvVars.length > 0) {
+        console.error('Missing required .env variables:', missingDotEnvVars.join(', '));
+        return false;
+    }
+
+    return true;
 }
 
 // Create Discord client with required intents
@@ -62,14 +69,14 @@ const client = new Client({
 client.commands = new Collection();
 
 // Global services
-let scheduler;
+let raAPI;
+let usernameUtils;
 let userTracker;
+let scheduler;
 let leaderboardService;
 let achievementFeedService;
 let achievementTrackingService;
 let awardService;
-let raAPI;
-let usernameUtils;
 
 /**
  * Load commands from the commands directory
@@ -147,12 +154,7 @@ async function initializeServices() {
         );
         console.log('Achievement tracking service initialized');
 
-        // Initialize user tracker
-        userTracker = new UserTracker();
-        await userTracker.initialize();
-        console.log('User tracker initialized');
-
-        // Initialize scheduler and start tasks
+        // Initialize scheduler with tracking service
         scheduler = new Scheduler(client, achievementTrackingService);
         await scheduler.initialize();
         scheduler.startAll();
@@ -163,14 +165,35 @@ async function initializeServices() {
         console.log('Leaderboard service initialized');
 
         // Store services on client for global access
-        client.userTracker = userTracker;
-        client.scheduler = scheduler;
-        client.leaderboardService = leaderboardService;
-        client.achievementFeedService = achievementFeedService;
-        client.achievementTrackingService = achievementTrackingService;
-        client.awardService = awardService;
-        client.raAPI = raAPI;
-        client.usernameUtils = usernameUtils;
+        Object.assign(client, {
+            userTracker,
+            scheduler,
+            leaderboardService,
+            achievementFeedService,
+            achievementTrackingService,
+            awardService,
+            raAPI,
+            usernameUtils
+        });
+
+        // Verify services are properly attached
+        const requiredServices = [
+            'userTracker',
+            'scheduler',
+            'leaderboardService',
+            'achievementFeedService',
+            'achievementTrackingService',
+            'awardService',
+            'raAPI',
+            'usernameUtils'
+        ];
+
+        const missingServices = requiredServices.filter(service => !client[service]);
+        if (missingServices.length > 0) {
+            throw new Error(`Missing required services: ${missingServices.join(', ')}`);
+        }
+
+        console.log('All services successfully attached to client');
 
         // Initialize games and users
         await initializeUsers();
@@ -189,6 +212,7 @@ async function initializeServices() {
                 .then(() => console.log('Leaderboard caches refreshed successfully.'))
                 .catch(err => console.error('Error refreshing leaderboard caches:', err));
         }, 5 * 60 * 1000); // Every 5 minutes
+
     } catch (error) {
         console.error('Error initializing services:', error);
         throw error;
@@ -227,12 +251,16 @@ async function shutdown() {
  */
 async function main() {
     try {
-        // Load commands first
-        await loadCommands();
-        console.log('Commands loaded');
+        console.log('Starting initialization sequence...');
 
-        // Connect to MongoDB
+        // Validate environment variables
+        if (!validateEnvironment()) {
+            throw new Error('Environment validation failed');
+        }
+
+        // Connect to MongoDB first
         await initializeMongoDB();
+        console.log('MongoDB connected');
 
         // Login to Discord
         await client.login(process.env.DISCORD_TOKEN);
@@ -245,9 +273,21 @@ async function main() {
         });
         console.log('Discord client is ready');
 
-        // Initialize services after client is ready
+        // Initialize all services
         await initializeServices();
         console.log('All services initialized');
+
+        // Load commands last (after services are available)
+        await loadCommands();
+        console.log('Commands loaded');
+
+        // Final verification of client services
+        console.log('Verifying service availability...');
+        if (!client.usernameUtils) {
+            throw new Error('Critical service usernameUtils not available');
+        }
+        console.log('Service verification complete');
+        console.log('Bot initialization completed successfully');
 
     } catch (error) {
         console.error('Error during startup:', error);
