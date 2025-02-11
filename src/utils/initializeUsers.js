@@ -4,32 +4,41 @@ const User = require('../models/User');
 /**
  * Add a new user to the system
  * @param {string} username - RetroAchievements username
+ * @param {UsernameUtils} usernameUtils - Instance of UsernameUtils
  * @returns {Promise<Object>} The created/updated user object
  */
-async function addUser(username) {
+async function addUser(username, usernameUtils) {
     try {
-        // Normalize username
-        const normalizedUsername = username.toLowerCase();
-        
+        // Get canonical username
+        const canonicalUsername = await usernameUtils.getCanonicalUsername(username);
+        if (!canonicalUsername) {
+            throw new Error(`Could not find canonical username for ${username}`);
+        }
+
         // Check if user already exists (case-insensitive)
         const existingUser = await User.findOne({
-            raUsername: { $regex: new RegExp(`^${normalizedUsername}$`, 'i') }
+            raUsernameLower: canonicalUsername.toLowerCase()
         });
 
         if (existingUser) {
-            console.log(`User ${username} already exists`);
+            // Update the stored username to ensure it's in canonical form
+            if (existingUser.raUsername !== canonicalUsername) {
+                existingUser.raUsername = canonicalUsername;
+                await existingUser.save();
+                console.log(`Updated username case for ${canonicalUsername}`);
+            }
             return existingUser;
         }
 
-        // Create new user
+        // Create new user with canonical username
         const newUser = new User({
-            raUsername: normalizedUsername,
+            raUsername: canonicalUsername,
             isActive: true,
             joinDate: new Date()
         });
 
         await newUser.save();
-        console.log(`Added new user: ${normalizedUsername}`);
+        console.log(`Added new user: ${canonicalUsername}`);
         return newUser;
     } catch (error) {
         console.error(`Error adding user ${username}:`, error);
@@ -40,21 +49,24 @@ async function addUser(username) {
 /**
  * Remove a user from the system
  * @param {string} username - RetroAchievements username
+ * @param {UsernameUtils} usernameUtils - Instance of UsernameUtils
  * @returns {Promise<boolean>} Success status
  */
-async function removeUser(username) {
+async function removeUser(username, usernameUtils) {
     try {
-        const normalizedUsername = username.toLowerCase();
+        const canonicalUsername = await usernameUtils.getCanonicalUsername(username);
+        if (!canonicalUsername) return false;
+
         const result = await User.findOneAndUpdate(
-            { raUsername: { $regex: new RegExp(`^${normalizedUsername}$`, 'i') } },
+            { raUsernameLower: canonicalUsername.toLowerCase() },
             { isActive: false }
         );
 
         if (result) {
-            console.log(`Deactivated user: ${normalizedUsername}`);
+            console.log(`Deactivated user: ${canonicalUsername}`);
             return true;
         }
-        console.log(`User ${username} not found`);
+        console.log(`User ${canonicalUsername} not found`);
         return false;
     } catch (error) {
         console.error(`Error removing user ${username}:`, error);
@@ -77,21 +89,21 @@ async function getActiveUsers() {
 }
 
 /**
- * Legacy initialization function - kept for compatibility
- * but no longer maintains a hardcoded list
+ * Initialize users and ensure canonical usernames
+ * @param {UsernameUtils} usernameUtils - Instance of UsernameUtils
  */
-async function initializeUsers() {
+async function initializeUsers(usernameUtils) {
     try {
         console.log('Checking existing users...');
         const users = await User.find({});
         console.log(`Found ${users.length} users in database`);
         
-        // Ensure all usernames are normalized
+        // Update all usernames to canonical form
         for (const user of users) {
-            const normalizedUsername = user.raUsername.toLowerCase();
-            if (user.raUsername !== normalizedUsername) {
-                console.log(`Normalizing username: ${user.raUsername} -> ${normalizedUsername}`);
-                user.raUsername = normalizedUsername;
+            const canonicalUsername = await usernameUtils.getCanonicalUsername(user.raUsername);
+            if (canonicalUsername && canonicalUsername !== user.raUsername) {
+                console.log(`Updating username: ${user.raUsername} -> ${canonicalUsername}`);
+                user.raUsername = canonicalUsername;
                 await user.save();
             }
         }
@@ -106,19 +118,22 @@ async function initializeUsers() {
 /**
  * Reactivate a previously deactivated user
  * @param {string} username - RetroAchievements username
+ * @param {UsernameUtils} usernameUtils - Instance of UsernameUtils
  * @returns {Promise<Object>} The reactivated user object
  */
-async function reactivateUser(username) {
+async function reactivateUser(username, usernameUtils) {
     try {
-        const normalizedUsername = username.toLowerCase();
+        const canonicalUsername = await usernameUtils.getCanonicalUsername(username);
+        if (!canonicalUsername) return null;
+
         const user = await User.findOneAndUpdate(
-            { raUsername: { $regex: new RegExp(`^${normalizedUsername}$`, 'i') } },
+            { raUsernameLower: canonicalUsername.toLowerCase() },
             { isActive: true },
             { new: true }
         );
 
         if (user) {
-            console.log(`Reactivated user: ${normalizedUsername}`);
+            console.log(`Reactivated user: ${canonicalUsername}`);
             return user;
         }
         return null;
