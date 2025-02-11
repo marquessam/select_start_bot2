@@ -1,6 +1,5 @@
 // File: src/commands/arcade.js
 const { EmbedBuilder } = require('discord.js');
-const RetroAchievementsAPI = require('../services/retroAchievements');
 const User = require('../models/User');
 
 // Updated arcade configuration with correct game IDs and descriptions
@@ -13,13 +12,13 @@ const arcadeConfigs = [
     },
     {
         leaderboardId: 18937,
-        gameId: 113311, // Updated game ID for Tony Hawk
+        gameId: 113311,
         name: "Tony Hawk's Pro Skater (PSX)",
         description: "Warehouse, Woodland Hills"
     },
     {
         leaderboardId: 24,
-        gameId: 508, // Updated game ID for Tetris
+        gameId: 508,
         name: "Tetris (GB)",
         description: "A-Type Challenge"
     },
@@ -55,13 +54,11 @@ function ordinal(n) {
     return n + (s[(v - 20) % 10] || s[v] || s[0]);
 }
 
-async function fetchLeaderboardEntries(leaderboardId) {
-    const raAPI = new RetroAchievementsAPI(process.env.RA_USERNAME, process.env.RA_API_KEY);
+async function fetchLeaderboardEntries(leaderboardId, raAPI) {
     try {
         console.log(`Fetching leaderboard data for leaderboard ID: ${leaderboardId}`);
         const data = await raAPI.getLeaderboardInfo(leaderboardId);
-        console.log('Raw leaderboard response:', data);
-
+        
         if (!data) {
             console.log('No leaderboard data received');
             return [];
@@ -142,17 +139,36 @@ module.exports = {
             const selectedConfig = arcadeConfigs[selection - 1];
             const loadingMessage = await message.channel.send('Fetching leaderboard data...');
 
-            let leaderboardEntries = await fetchLeaderboardEntries(selectedConfig.leaderboardId);
+            // Get required services from client
+            const { raAPI, usernameUtils } = message.client;
+
+            let leaderboardEntries = await fetchLeaderboardEntries(selectedConfig.leaderboardId, raAPI);
             console.log('Number of entries before user filtering:', leaderboardEntries.length);
 
+            // Get registered users and convert to canonical form
             const users = await User.find({});
-            const registeredUsers = users.map(u => u.raUsername.trim().toLowerCase());
-            const registeredUserSet = new Set(registeredUsers);
+            const registeredUsers = new Map(); // Map of lowercase to canonical usernames
+            for (const user of users) {
+                const canonicalUsername = await usernameUtils.getCanonicalUsername(user.raUsername);
+                if (canonicalUsername) {
+                    registeredUsers.set(canonicalUsername.toLowerCase(), canonicalUsername);
+                }
+            }
 
-            leaderboardEntries = leaderboardEntries.filter(entry => {
-                const username = (entry.User || '').trim().toLowerCase();
-                return registeredUserSet.has(username);
-            });
+            // Filter and update usernames to canonical form
+            leaderboardEntries = await Promise.all(leaderboardEntries
+                .map(async entry => {
+                    const canonicalUsername = await usernameUtils.getCanonicalUsername(entry.User);
+                    if (canonicalUsername && registeredUsers.has(canonicalUsername.toLowerCase())) {
+                        return {
+                            ...entry,
+                            User: canonicalUsername
+                        };
+                    }
+                    return null;
+                }));
+
+            leaderboardEntries = leaderboardEntries.filter(entry => entry !== null);
 
             let output = `**${selectedConfig.name}**\n`;
             output += `*${selectedConfig.description}*\n\n`;
@@ -167,7 +183,6 @@ module.exports = {
                 output += 'No leaderboard entries found for registered users.';
             }
 
-            const raAPI = new RetroAchievementsAPI(process.env.RA_USERNAME, process.env.RA_API_KEY);
             const gameInfo = await raAPI.getGameInfo(selectedConfig.gameId);
 
             const embed = new EmbedBuilder()
