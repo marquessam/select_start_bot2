@@ -2,7 +2,7 @@
 const Award = require('../models/Award');
 const Game = require('../models/Game');
 const User = require('../models/User');
-const { AwardType, AwardFunctions } = require('../enums/AwardType');
+const { AwardType } = require('../enums/AwardType');
 
 class AwardService {
     constructor(achievementFeedService, usernameUtils) {
@@ -24,18 +24,30 @@ class AwardService {
     async addManualAward(username, points, reason, awardedBy, metadata = null) {
         try {
             const canonicalUsername = await this.usernameUtils.getCanonicalUsername(username);
+            if (!canonicalUsername) {
+                throw new Error(`Could not find canonical username for ${username}`);
+            }
+
+            // Check if user exists in our system
+            const user = await User.findByUsername(canonicalUsername);
+            if (!user) {
+                throw new Error(`User ${canonicalUsername} not found in database`);
+            }
+
             const normalizedUsername = canonicalUsername.toLowerCase();
+            const now = new Date();
 
             const award = new Award({
                 raUsername: normalizedUsername,
                 gameId: 'manual',
-                month: new Date().getMonth() + 1,
-                year: new Date().getFullYear(),
+                month: now.getMonth() + 1,
+                year: now.getFullYear(),
                 award: AwardType.MANUAL,
                 totalAchievements: points,
                 reason: reason,
                 awardedBy: awardedBy,
-                metadata: metadata
+                metadata: metadata,
+                awardedAt: now
             });
 
             await award.save();
@@ -50,6 +62,60 @@ class AwardService {
             return award;
         } catch (error) {
             console.error(`Error adding manual award for ${username}:`, error);
+            throw error;
+        }
+    }
+
+    /**
+     * Add placement award (for monthly rankings)
+     */
+    async addPlacementAward(username, placement, month) {
+        try {
+            const canonicalUsername = await this.usernameUtils.getCanonicalUsername(username);
+            if (!canonicalUsername) {
+                throw new Error(`Could not find canonical username for ${username}`);
+            }
+
+            const placementMap = {
+                'first': { points: 5, emoji: '🥇', name: 'First Place' },
+                'second': { points: 3, emoji: '🥈', name: 'Second Place' },
+                'third': { points: 2, emoji: '🥉', name: 'Third Place' }
+            };
+
+            const placementInfo = placementMap[placement.toLowerCase()];
+            if (!placementInfo) {
+                throw new Error('Invalid placement');
+            }
+
+            // Check for existing placement award
+            const existingAward = await Award.findOne({
+                raUsername: canonicalUsername.toLowerCase(),
+                gameId: 'manual',
+                year: new Date().getFullYear(),
+                'metadata.type': 'placement',
+                'metadata.month': month
+            });
+
+            if (existingAward) {
+                throw new Error('Duplicate placement');
+            }
+
+            const metadata = {
+                type: 'placement',
+                placement: placementInfo.name,
+                month: month,
+                emoji: placementInfo.emoji
+            };
+
+            return this.addManualAward(
+                canonicalUsername,
+                placementInfo.points,
+                `${placementInfo.emoji} ${placementInfo.name} - ${month}`,
+                'System',
+                metadata
+            );
+        } catch (error) {
+            console.error(`Error adding placement award for ${username}:`, error);
             throw error;
         }
     }
@@ -77,11 +143,14 @@ class AwardService {
      */
     async getManualAwards(username) {
         try {
-            const normalizedUsername = username.toLowerCase();
-            const currentYear = new Date().getFullYear();
+            const canonicalUsername = await this.usernameUtils.getCanonicalUsername(username);
+            if (!canonicalUsername) {
+                throw new Error(`Could not find canonical username for ${username}`);
+            }
 
+            const currentYear = new Date().getFullYear();
             const awards = await Award.find({
-                raUsername: normalizedUsername,
+                raUsername: canonicalUsername.toLowerCase(),
                 gameId: 'manual',
                 year: currentYear
             }).sort({ awardedAt: -1 });
@@ -98,7 +167,12 @@ class AwardService {
      */
     async calculateTotalPoints(username) {
         try {
-            const normalizedUsername = username.toLowerCase();
+            const canonicalUsername = await this.usernameUtils.getCanonicalUsername(username);
+            if (!canonicalUsername) {
+                throw new Error(`Could not find canonical username for ${username}`);
+            }
+
+            const normalizedUsername = canonicalUsername.toLowerCase();
             const currentYear = new Date().getFullYear();
 
             const awards = await Award.find({
@@ -154,118 +228,71 @@ class AwardService {
     }
 
     /**
-     * Add placement award (for monthly rankings)
-     */
-    async addPlacementAward(username, placement, month) {
-        const placementMap = {
-            'first': { points: 5, emoji: '🥇', name: 'First Place' },
-            'second': { points: 3, emoji: '🥈', name: 'Second Place' },
-            'third': { points: 2, emoji: '🥉', name: 'Third Place' }
-        };
-
-        const placementInfo = placementMap[placement.toLowerCase()];
-        if (!placementInfo) {
-            throw new Error('Invalid placement');
-        }
-
-        const metadata = {
-            type: 'placement',
-            placement: placementInfo.name,
-            month: month,
-            emoji: placementInfo.emoji
-        };
-
-        return this.addManualAward(
-            username,
-            placementInfo.points,
-            `${placementInfo.emoji} ${placementInfo.name} - ${month}`,
-            'System',
-            metadata
-        );
-    }
-
-    /**
-     * Check if an award exists for a game
-     */
-    async hasAward(username, gameId, month, year) {
-        const award = await Award.findOne({
-            raUsername: username.toLowerCase(),
-            gameId: gameId,
-            month: month,
-            year: year
-        });
-
-        return award !== null;
-    }
-
-    /**
-     * Get the highest award level for a game
-     */
-    async getHighestAward(username, gameId, month, year) {
-        const award = await Award.findOne({
-            raUsername: username.toLowerCase(),
-            gameId: gameId,
-            month: month,
-            year: year
-        });
-
-        return award ? award.award : AwardType.NONE;
-    }
-
-    /**
      * Get yearly award statistics for a user
      */
     async getYearlyStats(username) {
-        const year = new Date().getFullYear();
-        const normalizedUsername = username.toLowerCase();
-
-        const awards = await Award.find({
-            raUsername: normalizedUsername,
-            year: year
-        });
-
-        const stats = {
-            mastered: 0,
-            beaten: 0,
-            participation: 0,
-            manualPoints: 0,
-            totalPoints: 0,
-            monthlyPlacements: []
-        };
-
-        const processedGames = new Set();
-
-        for (const award of awards) {
-            if (award.gameId === 'manual') {
-                stats.manualPoints += award.totalAchievements;
-                if (award.metadata?.type === 'placement') {
-                    stats.monthlyPlacements.push({
-                        month: award.metadata.month,
-                        placement: award.metadata.placement,
-                        points: award.totalAchievements
-                    });
-                }
-                continue;
+        try {
+            const canonicalUsername = await this.usernameUtils.getCanonicalUsername(username);
+            if (!canonicalUsername) {
+                throw new Error(`Could not find canonical username for ${username}`);
             }
 
-            const gameKey = `${award.gameId}-${award.month}`;
-            if (!processedGames.has(gameKey)) {
-                processedGames.add(gameKey);
+            const normalizedUsername = canonicalUsername.toLowerCase();
+            const year = new Date().getFullYear();
 
-                if (award.award >= AwardType.MASTERED) {
-                    stats.mastered++;
-                } else if (award.award >= AwardType.BEATEN) {
-                    stats.beaten++;
-                } else if (award.award >= AwardType.PARTICIPATION) {
-                    stats.participation++;
+            const awards = await Award.find({
+                raUsername: normalizedUsername,
+                year: year
+            });
+
+            const stats = {
+                username: canonicalUsername,
+                mastered: 0,
+                beaten: 0,
+                participation: 0,
+                manualPoints: 0,
+                totalPoints: 0,
+                monthlyPlacements: [],
+                processedGames: new Set()
+            };
+
+            for (const award of awards) {
+                if (award.gameId === 'manual') {
+                    stats.manualPoints += award.totalAchievements;
+                    if (award.metadata?.type === 'placement') {
+                        stats.monthlyPlacements.push({
+                            month: award.metadata.month,
+                            placement: award.metadata.placement,
+                            points: award.totalAchievements
+                        });
+                    }
+                    continue;
+                }
+
+                const gameKey = `${award.gameId}-${award.month}`;
+                if (!stats.processedGames.has(gameKey)) {
+                    stats.processedGames.add(gameKey);
+
+                    if (award.award >= AwardType.MASTERED) {
+                        stats.mastered++;
+                    } else if (award.award >= AwardType.BEATEN) {
+                        stats.beaten++;
+                    } else if (award.award >= AwardType.PARTICIPATION) {
+                        stats.participation++;
+                    }
                 }
             }
+
+            stats.totalPoints = (stats.mastered * 7) + (stats.beaten * 4) + 
+                             stats.participation + stats.manualPoints;
+
+            // Remove the Set before returning
+            delete stats.processedGames;
+            return stats;
+        } catch (error) {
+            console.error(`Error getting yearly stats for ${username}:`, error);
+            throw error;
         }
-
-        stats.totalPoints = (stats.mastered * 7) + (stats.beaten * 4) + 
-                          stats.participation + stats.manualPoints;
-
-        return stats;
     }
 }
 
