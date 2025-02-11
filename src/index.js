@@ -128,9 +128,12 @@ async function initializeServices() {
         );
         console.log('RetroAchievements API client initialized');
 
-        // Initialize username utilities
-        usernameUtils = new UsernameUtils(raAPI);
-        console.log('Username utilities initialized');
+       // Initialize users with usernameUtils
+        await initializeUsers(usernameUtils);
+        console.log('Users initialized');
+
+        await initializeGames();
+        console.log('Games initialized');
 
         // Initialize services that depend on the core services
         userTracker = new UserTracker(usernameUtils);
