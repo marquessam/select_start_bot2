@@ -114,7 +114,7 @@ async function initializeMongoDB() {
  */
 async function initializeServices() {
     try {
-        // Initialize RetroAchievements API client
+        // Initialize core services first
         raAPI = new RetroAchievementsAPI(
             process.env.RA_USERNAME,
             process.env.RA_API_KEY
@@ -124,6 +124,11 @@ async function initializeServices() {
         // Initialize username utilities
         usernameUtils = new UsernameUtils(raAPI);
         console.log('Username utilities initialized');
+
+        // Initialize services that depend on the core services
+        userTracker = new UserTracker(usernameUtils);
+        await userTracker.initialize();
+        console.log('User tracker initialized');
 
         // Initialize achievement feed service
         achievementFeedService = new AchievementFeedService(client, usernameUtils);
