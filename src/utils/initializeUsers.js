@@ -8,6 +8,10 @@ const User = require('../models/User');
  * @returns {Promise<Object>} The created/updated user object
  */
 async function addUser(username, usernameUtils) {
+    if (!usernameUtils) {
+        throw new Error('UsernameUtils is required for adding users');
+    }
+
     try {
         // Get canonical username
         const canonicalUsername = await usernameUtils.getCanonicalUsername(username);
@@ -16,15 +20,12 @@ async function addUser(username, usernameUtils) {
         }
 
         // Check if user already exists (case-insensitive)
-        const existingUser = await User.findOne({
-            raUsernameLower: canonicalUsername.toLowerCase()
-        });
+        const existingUser = await User.findByUsername(canonicalUsername);
 
         if (existingUser) {
-            // Update the stored username to ensure it's in canonical form
+            // Update to ensure canonical form is correct
             if (existingUser.raUsername !== canonicalUsername) {
-                existingUser.raUsername = canonicalUsername;
-                await existingUser.save();
+                await existingUser.updateCanonicalUsername(canonicalUsername);
                 console.log(`Updated username case for ${canonicalUsername}`);
             }
             return existingUser;
@@ -53,21 +54,23 @@ async function addUser(username, usernameUtils) {
  * @returns {Promise<boolean>} Success status
  */
 async function removeUser(username, usernameUtils) {
+    if (!usernameUtils) {
+        throw new Error('UsernameUtils is required for removing users');
+    }
+
     try {
         const canonicalUsername = await usernameUtils.getCanonicalUsername(username);
         if (!canonicalUsername) return false;
 
-        const result = await User.findOneAndUpdate(
-            { raUsernameLower: canonicalUsername.toLowerCase() },
-            { isActive: false }
-        );
-
-        if (result) {
-            console.log(`Deactivated user: ${canonicalUsername}`);
-            return true;
+        const user = await User.findByUsername(canonicalUsername);
+        if (!user) {
+            console.log(`User ${canonicalUsername} not found`);
+            return false;
         }
-        console.log(`User ${canonicalUsername} not found`);
-        return false;
+
+        await user.deactivate();
+        console.log(`Deactivated user: ${canonicalUsername}`);
+        return true;
     } catch (error) {
         console.error(`Error removing user ${username}:`, error);
         throw error;
@@ -80,8 +83,7 @@ async function removeUser(username, usernameUtils) {
  */
 async function getActiveUsers() {
     try {
-        const users = await User.find({ isActive: true });
-        return users;
+        return await User.getActiveUsers();
     } catch (error) {
         console.error('Error getting active users:', error);
         throw error;
@@ -96,6 +98,7 @@ async function initializeUsers(usernameUtils) {
     if (!usernameUtils) {
         throw new Error('UsernameUtils is required for user initialization');
     }
+
     try {
         console.log('Checking existing users...');
         const users = await User.find({});
@@ -103,11 +106,14 @@ async function initializeUsers(usernameUtils) {
         
         // Update all usernames to canonical form
         for (const user of users) {
-            const canonicalUsername = await usernameUtils.getCanonicalUsername(user.raUsername);
-            if (canonicalUsername && canonicalUsername !== user.raUsername) {
-                console.log(`Updating username: ${user.raUsername} -> ${canonicalUsername}`);
-                user.raUsername = canonicalUsername;
-                await user.save();
+            try {
+                const canonicalUsername = await usernameUtils.getCanonicalUsername(user.raUsername);
+                if (canonicalUsername && canonicalUsername !== user.raUsername) {
+                    console.log(`Updating username: ${user.raUsername} -> ${canonicalUsername}`);
+                    await user.updateCanonicalUsername(canonicalUsername);
+                }
+            } catch (error) {
+                console.error(`Error updating username for ${user.raUsername}:`, error);
             }
         }
         
@@ -125,21 +131,20 @@ async function initializeUsers(usernameUtils) {
  * @returns {Promise<Object>} The reactivated user object
  */
 async function reactivateUser(username, usernameUtils) {
+    if (!usernameUtils) {
+        throw new Error('UsernameUtils is required for reactivating users');
+    }
+
     try {
         const canonicalUsername = await usernameUtils.getCanonicalUsername(username);
         if (!canonicalUsername) return null;
 
-        const user = await User.findOneAndUpdate(
-            { raUsernameLower: canonicalUsername.toLowerCase() },
-            { isActive: true },
-            { new: true }
-        );
+        const user = await User.findByUsername(canonicalUsername);
+        if (!user) return null;
 
-        if (user) {
-            console.log(`Reactivated user: ${canonicalUsername}`);
-            return user;
-        }
-        return null;
+        await user.reactivate();
+        console.log(`Reactivated user: ${canonicalUsername}`);
+        return user;
     } catch (error) {
         console.error(`Error reactivating user ${username}:`, error);
         throw error;
