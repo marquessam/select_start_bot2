@@ -54,7 +54,7 @@ function ordinal(n) {
     return n + (s[(v - 20) % 10] || s[v] || s[0]);
 }
 
-async function fetchLeaderboardEntries(leaderboardId, raAPI) {
+async function fetchLeaderboardEntries(leaderboardId, raAPI, usernameUtils) {
     try {
         console.log(`Fetching leaderboard data for leaderboard ID: ${leaderboardId}`);
         const data = await raAPI.getLeaderboardInfo(leaderboardId);
@@ -75,29 +75,32 @@ async function fetchLeaderboardEntries(leaderboardId, raAPI) {
             entries = Object.values(data);
         }
 
-        const validEntries = entries
+        // Convert entries to a standard format with canonical usernames
+        const processedEntries = await Promise.all(entries
             .filter(entry => {
                 const hasUser = Boolean(entry && (entry.User || entry.user));
                 const hasScore = Boolean(entry && (entry.Score || entry.score || entry.FormattedScore || entry.formattedScore));
                 return hasUser && hasScore;
             })
-            .map(entry => {
+            .map(async entry => {
                 const rawUser = entry.User || entry.user || '';
                 const apiRank = entry.Rank || entry.rank || '0';
                 const formattedScore = entry.FormattedScore || entry.formattedScore;
                 const fallbackScore = entry.Score || entry.score || '0';
                 const trackTime = formattedScore ? formattedScore.trim() : fallbackScore.toString();
                 
+                // Get canonical username
+                const canonicalUsername = await usernameUtils.getCanonicalUsername(rawUser.trim());
+                
                 return {
                     ApiRank: parseInt(apiRank, 10),
-                    User: rawUser.trim(),
+                    User: canonicalUsername || rawUser.trim(), // Fall back to raw if canonical not found
                     TrackTime: trackTime,
                     DateSubmitted: entry.DateSubmitted || entry.dateSubmitted || null,
                 };
-            })
-            .filter(entry => !isNaN(entry.ApiRank) && entry.User.length > 0);
+            }));
 
-        return validEntries;
+        return processedEntries.filter(entry => !isNaN(entry.ApiRank) && entry.User.length > 0);
     } catch (error) {
         console.error('Error fetching leaderboard:', error);
         throw error;
@@ -114,13 +117,22 @@ module.exports = {
     description: 'Displays highscore lists for preset arcade games',
     async execute(message, args) {
         try {
+            // Check required services
+            const { raAPI, usernameUtils } = message.client;
+            if (!raAPI || !usernameUtils) {
+                console.error('Required services not available:', {
+                    hasRaAPI: !!raAPI,
+                    hasUsernameUtils: !!usernameUtils
+                });
+                throw new Error('Required services not available');
+            }
+
             if (!args[0]) {
                 let listText = '**Available Arcade Leaderboards:**\n\n';
                 arcadeConfigs.forEach((config, index) => {
                     listText += `${index + 1}. ${config.name}\n   *${config.description}*\n`;
                 });
-                listText += `\n**Note:** Only players in the top 100 on RetroAchievements' leaderboard `;
-                listText += `who are registered with our bot will appear in these rankings.\n\n`;
+                listText += `\n**Note:** Only players who are registered with our bot will appear in these rankings.\n\n`;
                 listText += `Type \`!arcade <number>\` to view that leaderboard.`;
 
                 const embed = new EmbedBuilder()
@@ -139,15 +151,12 @@ module.exports = {
             const selectedConfig = arcadeConfigs[selection - 1];
             const loadingMessage = await message.channel.send('Fetching leaderboard data...');
 
-            // Get required services from client
-            const { raAPI, usernameUtils } = message.client;
-
-            let leaderboardEntries = await fetchLeaderboardEntries(selectedConfig.leaderboardId, raAPI);
+            let leaderboardEntries = await fetchLeaderboardEntries(selectedConfig.leaderboardId, raAPI, usernameUtils);
             console.log('Number of entries before user filtering:', leaderboardEntries.length);
 
-            // Get registered users and convert to canonical form
-            const users = await User.find({});
-            const registeredUsers = new Map(); // Map of lowercase to canonical usernames
+            // Get registered users and create lookup map
+            const users = await User.find({ isActive: true });
+            const registeredUsers = new Map();
             for (const user of users) {
                 const canonicalUsername = await usernameUtils.getCanonicalUsername(user.raUsername);
                 if (canonicalUsername) {
@@ -155,20 +164,10 @@ module.exports = {
                 }
             }
 
-            // Filter and update usernames to canonical form
-            leaderboardEntries = await Promise.all(leaderboardEntries
-                .map(async entry => {
-                    const canonicalUsername = await usernameUtils.getCanonicalUsername(entry.User);
-                    if (canonicalUsername && registeredUsers.has(canonicalUsername.toLowerCase())) {
-                        return {
-                            ...entry,
-                            User: canonicalUsername
-                        };
-                    }
-                    return null;
-                }));
-
-            leaderboardEntries = leaderboardEntries.filter(entry => entry !== null);
+            // Filter entries to only show registered users
+            leaderboardEntries = leaderboardEntries.filter(entry => {
+                return entry.User && registeredUsers.has(entry.User.toLowerCase());
+            });
 
             let output = `**${selectedConfig.name}**\n`;
             output += `*${selectedConfig.description}*\n\n`;
@@ -199,7 +198,7 @@ module.exports = {
             await message.channel.send({ embeds: [embed] });
         } catch (error) {
             console.error('Arcade command error:', error);
-            await message.reply('Error fetching arcade leaderboard. The game or leaderboard might not be available.');
+            await message.reply('Error fetching arcade leaderboard. The game or leaderboard might not be unavailable.');
         }
     }
 };
