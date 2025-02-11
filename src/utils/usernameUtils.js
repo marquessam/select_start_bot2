@@ -4,6 +4,9 @@ const Cache = require('./cache');
 
 class UsernameUtils {
     constructor(raAPI) {
+        if (!raAPI) {
+            throw new Error('RetroAchievements API client is required');
+        }
         this.raAPI = raAPI;
         // Cache duration: 1 hour for canonical usernames
         this.canonicalCache = new Cache(3600000);
@@ -30,6 +33,7 @@ class UsernameUtils {
             const profile = await this.raAPI.getUserProfile(username);
             if (profile && profile.Username) {
                 this.canonicalCache.set(normalizedUsername, profile.Username);
+                console.log(`Canonical username found from RA API: ${profile.Username}`);
                 return profile.Username;
             }
         } catch (error) {
@@ -48,6 +52,7 @@ class UsernameUtils {
                     const profile = await this.raAPI.getUserProfile(user.raUsername);
                     if (profile && profile.Username) {
                         this.canonicalCache.set(normalizedUsername, profile.Username);
+                        console.log(`Canonical username found from second RA API attempt: ${profile.Username}`);
                         return profile.Username;
                     }
                 } catch (error) {
@@ -56,23 +61,41 @@ class UsernameUtils {
                 
                 // If RA lookup fails, use the stored username
                 this.canonicalCache.set(normalizedUsername, user.raUsername);
+                console.log(`Using stored username as canonical: ${user.raUsername}`);
                 return user.raUsername;
             }
         } catch (error) {
             console.error(`Error getting username from database for ${username}:`, error);
         }
 
-        // If all else fails, return the original username
-        return username;
+        // If all else fails, return null instead of the original username
+        // This ensures we don't accidentally use an incorrect case
+        console.log(`No canonical username found for ${username}`);
+        return null;
     }
 
     /**
-     * Get normalized username for database operations
+     * Get RetroAchievements profile URL with canonical username
      * @param {string} username - Username in any case
-     * @returns {string} - Lowercase username for database operations
+     * @returns {Promise<string>} - Profile URL with canonical username
      */
-    getNormalizedUsername(username) {
-        return username ? username.toLowerCase() : null;
+    async getProfileUrl(username) {
+        const canonicalName = await this.getCanonicalUsername(username);
+        return canonicalName ? 
+            `https://retroachievements.org/user/${canonicalName}` :
+            null;
+    }
+
+    /**
+     * Get RetroAchievements profile picture URL with canonical username
+     * @param {string} username - Username in any case
+     * @returns {Promise<string>} - Profile picture URL with canonical username
+     */
+    async getProfilePicUrl(username) {
+        const canonicalName = await this.getCanonicalUsername(username);
+        return canonicalName ? 
+            `https://retroachievements.org/UserPic/${canonicalName}.png` :
+            null;
     }
 
     /**
@@ -87,30 +110,11 @@ class UsernameUtils {
     }
 
     /**
-     * Get RetroAchievements profile URL with canonical username
-     * @param {string} username - Username in any case
-     * @returns {string} - Profile URL with canonical username
-     */
-    async getProfileUrl(username) {
-        const canonicalName = await this.getCanonicalUsername(username);
-        return `https://retroachievements.org/user/${canonicalName}`;
-    }
-
-    /**
-     * Get RetroAchievements profile picture URL with canonical username
-     * @param {string} username - Username in any case
-     * @returns {string} - Profile picture URL with canonical username
-     */
-    async getProfilePicUrl(username) {
-        const canonicalName = await this.getCanonicalUsername(username);
-        return `https://retroachievements.org/UserPic/${canonicalName}.png`;
-    }
-
-    /**
      * Clear the username cache
      */
     clearCache() {
         this.canonicalCache.clear();
+        console.log('Username cache cleared');
     }
 }
 
