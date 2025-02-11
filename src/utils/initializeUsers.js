@@ -93,6 +93,9 @@ async function getActiveUsers() {
  * @param {UsernameUtils} usernameUtils - Instance of UsernameUtils
  */
 async function initializeUsers(usernameUtils) {
+    if (!usernameUtils) {
+        throw new Error('UsernameUtils is required for user initialization');
+    }
     try {
         console.log('Checking existing users...');
         const users = await User.find({});
