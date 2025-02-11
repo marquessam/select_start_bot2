@@ -2,6 +2,7 @@
 const { EmbedBuilder } = require('discord.js');
 const Game = require('../models/Game');
 const User = require('../models/User');
+const Award = require('../models/Award');
 
 async function getCurrentProgress(awardService, username, canonicalUsername) {
     const currentDate = new Date();
@@ -15,18 +16,20 @@ async function getCurrentProgress(awardService, username, canonicalUsername) {
 
     const currentProgress = [];
     for (const game of currentGames) {
-        const award = await awardService.getHighestAward(
-            username,
-            game.gameId,
-            currentMonth,
-            currentYear
-        );
+        const award = await Award.findOne({
+            raUsername: username.toLowerCase(),
+            gameId: game.gameId,
+            month: currentMonth,
+            year: currentYear
+        });
         
         if (award && award.achievementCount > 0) {
             currentProgress.push({
                 title: game.title,
+                type: game.type,
                 progress: `${award.achievementCount}/${award.totalAchievements}`,
-                completion: award.userCompletion || 'N/A'
+                completion: award.userCompletion || 'N/A',
+                award: award.award
             });
         }
     }
@@ -41,6 +44,15 @@ module.exports = {
         try {
             const requestedUsername = args[0] || message.author.username;
             const loadingMsg = await message.channel.send('Fetching profile data...');
+
+            // Verify required services are available
+            if (!message.client.usernameUtils || !message.client.awardService) {
+                console.error('Required services not available:', {
+                    hasUsernameUtils: !!message.client.usernameUtils,
+                    hasAwardService: !!message.client.awardService
+                });
+                throw new Error('Required services not available');
+            }
 
             // Get services from client
             const { usernameUtils, awardService } = message.client;
@@ -72,12 +84,18 @@ module.exports = {
                 .setURL(profileUrl);
 
             // Get current monthly progress
-            const currentProgress = await getCurrentProgress(awardService, canonicalUsername.toLowerCase(), canonicalUsername);
+            const currentProgress = await getCurrentProgress(awardService, canonicalUsername, canonicalUsername);
             if (currentProgress.length > 0) {
                 let progressText = '';
                 currentProgress.forEach(progress => {
-                    progressText += `${progress.title}\n`;
-                    progressText += `Progress: ${progress.progress} (${progress.completion})\n\n`;
+                    const type = progress.type === 'MONTHLY' ? '☀️' : '🌑';
+                    progressText += `${type} **${progress.title}**\n`;
+                    progressText += `Progress: ${progress.progress} (${progress.completion})\n`;
+                    if (progress.award) {
+                        const emoji = progress.award === 7 ? '✨' : progress.award === 4 ? '⭐' : '🏁';
+                        progressText += `Current Award: ${emoji}\n`;
+                    }
+                    progressText += '\n';
                 });
                 embed.addFields({ name: '🎮 Current Challenges', value: progressText });
             }
@@ -85,15 +103,62 @@ module.exports = {
             // Get yearly stats using award service
             const yearlyStats = await awardService.getYearlyStats(canonicalUsername);
             
+            // Get all awards for the current year
+            const currentYear = new Date().getFullYear();
+            const yearlyAwards = await Award.find({
+                raUsername: canonicalUsername.toLowerCase(),
+                year: currentYear,
+                gameId: { $ne: 'manual' }  // Exclude manual awards
+            }).populate('gameId');
+
+            // Group awards by level
+            const gameAwards = {
+                mastered: [],
+                beaten: [],
+                participation: []
+            };
+
+            const processedGames = new Set();
+            for (const award of yearlyAwards) {
+                const gameKey = `${award.gameId}-${award.month}`;
+                if (processedGames.has(gameKey)) continue;
+                processedGames.add(gameKey);
+
+                const game = await Game.findOne({ gameId: award.gameId });
+                if (!game) continue;
+
+                const progressStr = `${award.achievementCount}/${award.totalAchievements} (${award.userCompletion})`;
+                const gameInfo = `${game.title}: ${progressStr}`;
+
+                if (award.award >= 7) {
+                    gameAwards.mastered.push(gameInfo);
+                } else if (award.award >= 4) {
+                    gameAwards.beaten.push(gameInfo);
+                } else if (award.award >= 1) {
+                    gameAwards.participation.push(gameInfo);
+                }
+            }
+
             let gameAwardsText = '';
-            if (yearlyStats.mastered > 0) {
-                gameAwardsText += `✨ Mastered: ${yearlyStats.mastered} games\n`;
+            if (gameAwards.mastered.length > 0) {
+                gameAwardsText += '**Mastered Games** ✨\n';
+                gameAwards.mastered.forEach(game => {
+                    gameAwardsText += `• ${game}\n`;
+                });
+                gameAwardsText += '\n';
             }
-            if (yearlyStats.beaten > 0) {
-                gameAwardsText += `⭐ Beaten: ${yearlyStats.beaten} games\n`;
+            if (gameAwards.beaten.length > 0) {
+                gameAwardsText += '**Beaten Games** ⭐\n';
+                gameAwards.beaten.forEach(game => {
+                    gameAwardsText += `• ${game}\n`;
+                });
+                gameAwardsText += '\n';
             }
-            if (yearlyStats.participation > 0) {
-                gameAwardsText += `🏁 Participation: ${yearlyStats.participation} games\n`;
+            if (gameAwards.participation.length > 0) {
+                gameAwardsText += '**Participation** 🏁\n';
+                gameAwards.participation.forEach(game => {
+                    gameAwardsText += `• ${game}\n`;
+                });
             }
 
             if (gameAwardsText) {
