@@ -8,9 +8,7 @@ class UserTracker {
         }
 
         this.usernameUtils = usernameUtils;
-        this.services = null;
-        // Map to store valid users where the key is the lowercase username and the value is the canonical form
-        this.validUsers = new Map(); 
+        this.validUsers = new Map(); // Map of lowercase -> canonical usernames
         this.cache = {
             lastUpdate: null,
             updateInterval: 5 * 60 * 1000, // 5 minutes
@@ -21,11 +19,6 @@ class UserTracker {
         // Define the channel ID from which to process RetroAchievements profile URLs
         this.trackedChannelId = process.env.REGISTRATION_CHANNEL_ID;
         console.log('User Tracker initialized');
-    }
-
-    setServices(services) {
-        this.services = services;
-        console.log('[USER TRACKER] Services linked:', Object.keys(services));
     }
 
     async initialize() {
@@ -47,11 +40,15 @@ class UserTracker {
             this.validUsers.clear();
             
             for (const user of users) {
-                // Get canonical username for each user
-                const canonicalUsername = await this.usernameUtils.getCanonicalUsername(user.raUsername);
-                if (canonicalUsername) {
-                    // Store with lowercase key for case-insensitive lookups
-                    this.validUsers.set(canonicalUsername.toLowerCase(), canonicalUsername);
+                try {
+                    // Get canonical username for each user
+                    const canonicalUsername = await this.usernameUtils.getCanonicalUsername(user.raUsername);
+                    if (canonicalUsername) {
+                        // Store with lowercase key for case-insensitive lookups
+                        this.validUsers.set(canonicalUsername.toLowerCase(), canonicalUsername);
+                    }
+                } catch (error) {
+                    console.error(`[USER TRACKER] Error getting canonical username for ${user.raUsername}:`, error);
                 }
             }
             
@@ -79,11 +76,9 @@ class UserTracker {
     }
 
     /**
-     * Process messages only from the designated channel.
-     * If a RetroAchievements profile URL is found, extract the username and add it.
+     * Process messages from the registration channel
      */
     async processMessage(message) {
-        // Only process messages from the tracked channel
         if (message.channel.id !== this.trackedChannelId) return;
         if (message.author.bot) return;
 
@@ -102,10 +97,17 @@ class UserTracker {
                         // Get canonical username before adding
                         const canonicalUsername = await this.usernameUtils.getCanonicalUsername(extractedUsername);
                         if (canonicalUsername) {
-                            const added = await this.addUser(canonicalUsername);
+                            const added = await addUser(canonicalUsername, this.usernameUtils);
                             if (added) {
                                 updatedAny = true;
+                                // Update cache with new user
+                                this.validUsers.set(canonicalUsername.toLowerCase(), canonicalUsername);
+                                await message.reply(`Successfully registered user: ${canonicalUsername}`);
+                            } else {
+                                await message.reply(`User ${canonicalUsername} is already registered.`);
                             }
+                        } else {
+                            await message.reply(`Could not find RetroAchievements user: ${extractedUsername}`);
                         }
                     }
                 }
@@ -113,88 +115,56 @@ class UserTracker {
 
             if (updatedAny) {
                 await message.react('✅');
-                await this.refreshUserCache(); // Refresh cache after changes
-            }
-        } catch (error) {
-            console.error('[USER TRACKER] Error processing message:', error);
-        }
-    }
-
-    /**
-     * Add a new user to the system using the database functions
-     */
-    async addUser(username) {
-        try {
-            if (!username) return false;
-
-            // Get canonical form before checking or adding
-            const canonicalUsername = await this.usernameUtils.getCanonicalUsername(username);
-            if (!canonicalUsername) return false;
-
-            const normalizedUsername = canonicalUsername.toLowerCase();
-            
-            // Check if user already exists in cache
-            if (this.validUsers.has(normalizedUsername)) {
-                return false;
-            }
-
-            // Add user to database with canonical username
-            const newUser = await addUser(canonicalUsername);
-            if (newUser) {
-                // Update cache with the canonical username
-                this.validUsers.set(normalizedUsername, canonicalUsername);
-                console.log(`[USER TRACKER] Added new user: ${canonicalUsername}`);
-                return true;
-            }
-
-            return false;
-        } catch (error) {
-            console.error('[USER TRACKER] Error adding user:', error);
-            return false;
-        }
-    }
-
-    /**
-     * Scans historical messages in the designated channel up to the specified limit.
-     */
-    async scanHistoricalMessages(channel, limit = 100) {
-        // Ensure we only scan on the designated channel
-        if (channel.id !== this.trackedChannelId) {
-            console.log(`[USER TRACKER] Skipping channel ${channel.name} (ID: ${channel.id}).`);
-            return;
-        }
-
-        try {
-            console.log(`[USER TRACKER] Scanning historical messages in ${channel.name}...`);
-            const messages = await channel.messages.fetch({ limit });
-            
-            let processedCount = 0;
-            let addedUsers = 0;
-
-            for (const message of messages.values()) {
-                const words = message.content.split(/\s+/);
-                for (const word of words) {
-                    if (word.includes('retroachievements.org/user/') || word.includes('ra.org/user/')) {
-                        const extractedUsername = this.extractUsername(word);
-                        if (extractedUsername) {
-                            const canonicalUsername = await this.usernameUtils.getCanonicalUsername(extractedUsername);
-                            if (canonicalUsername) {
-                                const added = await this.addUser(canonicalUsername);
-                                if (added) addedUsers++;
-                            }
-                        }
-                    }
-                }
-                processedCount++;
-            }
-            
-            console.log(`[USER TRACKER] Processed ${processedCount} messages, found ${addedUsers} new users.`);
-            if (addedUsers > 0) {
                 await this.refreshUserCache();
             }
         } catch (error) {
-            console.error('[USER TRACKER] Error scanning historical messages:', error);
-            throw error;
+            console.error('[USER TRACKER] Error processing message:', error);
+            await message.reply('There was an error processing your registration. Please try again later.');
+        }
+    }
+
+    /**
+     * Check if a username is valid and registered
+     */
+    async isValidUser(username) {
+        if (this.shouldRefreshCache()) {
+            await this.refreshUserCache();
+        }
+
+        if (!username) return false;
+        
+        try {
+            const canonicalUsername = await this.usernameUtils.getCanonicalUsername(username);
+            return canonicalUsername ? this.validUsers.has(canonicalUsername.toLowerCase()) : false;
+        } catch (error) {
+            console.error(`[USER TRACKER] Error checking username validity for ${username}:`, error);
+            return false;
+        }
+    }
+
+    /**
+     * Get canonical username for a given username
+     */
+    async getCanonicalUsername(username) {
+        if (!username) return null;
+
+        try {
+            // First check our cache
+            const lowercaseUsername = username.toLowerCase();
+            if (this.validUsers.has(lowercaseUsername)) {
+                return this.validUsers.get(lowercaseUsername);
+            }
+
+            // If not in cache, try to get from RetroAchievements
+            const canonicalUsername = await this.usernameUtils.getCanonicalUsername(username);
+            if (canonicalUsername && await this.isValidUser(canonicalUsername)) {
+                return canonicalUsername;
+            }
+
+            return null;
+        } catch (error) {
+            console.error(`[USER TRACKER] Error getting canonical username for ${username}:`, error);
+            return null;
         }
     }
 
@@ -206,15 +176,12 @@ class UserTracker {
     }
 
     /**
-     * Check if a username is valid and registered
+     * Clear the cache and force a refresh
      */
-    async isValidUser(username) {
-        if (this.shouldRefreshCache()) {
-            await this.refreshUserCache();
-        }
-        
-        const canonicalUsername = await this.usernameUtils.getCanonicalUsername(username);
-        return canonicalUsername ? this.validUsers.has(canonicalUsername.toLowerCase()) : false;
+    async clearCache() {
+        this.validUsers.clear();
+        this.cache.lastUpdate = null;
+        await this.refreshUserCache();
     }
 }
 
