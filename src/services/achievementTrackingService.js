@@ -118,12 +118,17 @@ class AchievementTrackingService {
     /**
      * Check if a game is beaten based on user's achievements
      */
-    async isGameBeaten(username, game) {
+  async isGameBeaten(username, game) {
         try {
             const progress = await this.raAPI.getUserGameProgress(username, game.gameId);
             
             if (!progress || !progress.achievements) {
                 return false;
+            }
+
+            // Check if user has 100% completion - if so, they've definitely beaten it
+            if (progress.userCompletion === "100.00%") {
+                return true;
             }
 
             const userAchievements = new Set(
@@ -132,6 +137,7 @@ class AchievementTrackingService {
                     .map(([id, _]) => id)
             );
 
+            // Check win conditions
             const hasWinConditions = game.requireAllWinConditions
                 ? game.winCondition.every(id => userAchievements.has(id))
                 : game.winCondition.some(id => userAchievements.has(id));
@@ -140,14 +146,17 @@ class AchievementTrackingService {
                 return false;
             }
 
-            return game.progression.every(id => userAchievements.has(id));
+            // If no progression requirements, or all progression achievements are earned
+            const hasProgression = !game.progression.length || 
+                game.progression.every(id => userAchievements.has(id));
+
+            return hasProgression;
         } catch (error) {
             console.error(`Error checking if game is beaten for ${username}:`, error);
             return false;
         }
     }
-
-    /**
+  /**
      * Check and update award status for a user and game
      */
     async checkAndUpdateAward(username, game, canonicalUsername) {
@@ -184,15 +193,19 @@ class AchievementTrackingService {
 
             let newAwardType = AwardType.NONE;
 
+            // Check for participation (at least one achievement)
             if (award.achievementCount > 0) {
                 newAwardType = AwardType.PARTICIPATION;
 
-                if (await this.isGameBeaten(username, game)) {
-                    newAwardType = AwardType.BEATEN;
+                // Check for completion conditions
+                const hasBeaten = await this.isGameBeaten(username, game);
+                const hasMastery = award.userCompletion === "100.00%";
 
-                    if (game.masteryCheck && award.userCompletion === "100.00%") {
-                        newAwardType = AwardType.MASTERED;
-                    }
+                if (hasMastery) {
+                    // If they've mastered it, they get mastery if eligible, otherwise beaten
+                    newAwardType = game.masteryCheck ? AwardType.MASTERED : AwardType.BEATEN;
+                } else if (hasBeaten) {
+                    newAwardType = AwardType.BEATEN;
                 }
             }
 
