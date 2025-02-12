@@ -1,11 +1,9 @@
 // File: src/commands/points.js
 const { EmbedBuilder } = require('discord.js');
-const { AwardType } = require('../enums/AwardType');
+const User = require('../models/User');
+const Award = require('../models/Award');
 
-/**
- * Handle adding points to a user
- */
-async function handleAddPoints(message, canonicalUsername, filter, awaitOptions, awardService) {
+async function handleAddPoints(message, username, filter, awaitOptions) {
     // Check if it's a placement award
     const args = message.content.split(' ').slice(2); // Remove '!points add username'
     const placement = args.find(arg => ['first', 'second', 'third'].includes(arg.toLowerCase()));
@@ -23,19 +21,33 @@ async function handleAddPoints(message, canonicalUsername, filter, awaitOptions,
         }
 
         const month = monthArg.charAt(0).toUpperCase() + monthArg.slice(1).toLowerCase();
+        const points = placement === 'first' ? 5 : placement === 'second' ? 3 : 2;
 
-        try {
-            await awardService.addPlacementAward(canonicalUsername, placement, month);
-            await message.channel.send(
-                `Added ${placement} place award for ${month} to **${canonicalUsername}**!`
-            );
-        } catch (error) {
-            if (error.message === 'Duplicate placement') {
-                await message.reply(`${canonicalUsername} already has a placement award for ${month}`);
-            } else {
-                throw error;
-            }
+        // Check for existing placement award
+        const existingAward = await Award.findOne({
+            raUsername: username.toLowerCase(),
+            isManual: true,
+            year: new Date().getFullYear(),
+            reason: `${placement} place - ${month}`
+        });
+
+        if (existingAward) {
+            return message.reply(`${username} already has a placement award for ${month}`);
         }
+
+        // Create the award
+        const award = new Award({
+            raUsername: username.toLowerCase(),
+            isManual: true,
+            manualPoints: points,
+            reason: `${placement} place - ${month}`,
+            awardedBy: message.author.tag,
+            month: new Date().getMonth() + 1,
+            year: new Date().getFullYear()
+        });
+
+        await award.save();
+        await message.channel.send(`Added ${placement} place award (${points} points) for ${month} to **${username}**!`);
         return;
     }
 
@@ -60,7 +72,7 @@ async function handleAddPoints(message, canonicalUsername, filter, awaitOptions,
         .setTitle('Confirm Points Award')
         .setDescription(
             `Please verify:\n\n` +
-            `Username: **${canonicalUsername}**\n` +
+            `Username: **${username}**\n` +
             `Points: **${points}**\n` +
             `Reason: **${reason}**\n\n` +
             `Type \`confirm\` to proceed or anything else to cancel.`
@@ -74,21 +86,26 @@ async function handleAddPoints(message, canonicalUsername, filter, awaitOptions,
         throw new Error('CANCELLED');
     }
 
-    await awardService.addManualAward(
-        canonicalUsername,
-        points,
-        reason,
-        message.author.tag
-    );
+    const award = new Award({
+        raUsername: username.toLowerCase(),
+        isManual: true,
+        manualPoints: points,
+        reason: reason,
+        awardedBy: message.author.tag,
+        month: new Date().getMonth() + 1,
+        year: new Date().getFullYear()
+    });
 
-    await message.channel.send(`Successfully added **${points}** points to **${canonicalUsername}**!`);
+    await award.save();
+    await message.channel.send(`Successfully added **${points}** points to **${username}**!`);
 }
 
-/**
- * Handle removing points from a user
- */
-async function handleRemovePoints(message, canonicalUsername, filter, awaitOptions, awardService) {
-    const manualAwards = await awardService.getManualAwards(canonicalUsername);
+async function handleRemovePoints(message, username, filter, awaitOptions) {
+    const manualAwards = await Award.find({
+        raUsername: username.toLowerCase(),
+        isManual: true,
+        year: new Date().getFullYear()
+    }).sort({ createdAt: -1 });
     
     if (!manualAwards || manualAwards.length === 0) {
         await message.channel.send('No manual awards found for this user.');
@@ -97,15 +114,11 @@ async function handleRemovePoints(message, canonicalUsername, filter, awaitOptio
 
     let listText = '';
     manualAwards.forEach((award, index) => {
-        if (award.metadata?.type === 'placement') {
-            listText += `${index + 1}. ${award.metadata.emoji} ${award.points} points - ${award.metadata.month} ${award.metadata.name}\n`;
-        } else {
-            listText += `${index + 1}. **${award.totalAchievements} points** - ${award.reason}\n`;
-        }
+        listText += `${index + 1}. **${award.manualPoints} points** - ${award.reason}\n`;
     });
 
     const listEmbed = new EmbedBuilder()
-        .setTitle(`Manual Awards for ${canonicalUsername}`)
+        .setTitle(`Manual Awards for ${username}`)
         .setDescription(
             `${listText}\n\n` +
             `Enter the number of the award to remove, or \`cancel\` to exit.`
@@ -134,9 +147,9 @@ async function handleRemovePoints(message, canonicalUsername, filter, awaitOptio
         .setTitle('Confirm Award Removal')
         .setDescription(
             `Are you sure you want to remove this award?\n\n` +
-            `Points: **${selectedAward.totalAchievements}**\n` +
+            `Points: **${selectedAward.manualPoints}**\n` +
             `Reason: **${selectedAward.reason}**\n` +
-            `Date: ${selectedAward.awardedAt.toLocaleDateString()}\n\n` +
+            `Date: ${selectedAward.createdAt.toLocaleDateString()}\n\n` +
             `Type \`confirm\` to proceed or anything else to cancel.`
         )
         .setColor('#ff0000');
@@ -149,9 +162,9 @@ async function handleRemovePoints(message, canonicalUsername, filter, awaitOptio
         return;
     }
 
-    await awardService.removeManualAward(selectedAward._id);
+    await Award.findByIdAndDelete(selectedAward._id);
     await message.channel.send(
-        `Successfully removed the ${selectedAward.totalAchievements} point award from **${canonicalUsername}**`
+        `Successfully removed the ${selectedAward.manualPoints} point award from **${username}**`
     );
 }
 
@@ -178,20 +191,13 @@ module.exports = {
         }
 
         try {
-            // Get required services
-            const { usernameUtils, awardService } = message.client;
-            if (!usernameUtils || !awardService) {
-                console.error('Required services not available:', {
-                    hasUsernameUtils: !!usernameUtils,
-                    hasAwardService: !!awardService
-                });
-                throw new Error('Required services not available');
-            }
+            // Find user (case-insensitive)
+            const user = await User.findOne({
+                raUsername: { $regex: new RegExp(`^${username}$`, 'i') }
+            });
 
-            // Get canonical username
-            const canonicalUsername = await usernameUtils.getCanonicalUsername(username);
-            if (!canonicalUsername) {
-                return message.reply('User not found on RetroAchievements.');
+            if (!user) {
+                return message.reply('User not found. They need to register first!');
             }
 
             const filter = m => m.author.id === message.author.id;
@@ -199,11 +205,11 @@ module.exports = {
 
             switch (action) {
                 case 'add':
-                    await handleAddPoints(message, canonicalUsername, filter, awaitOptions, awardService);
+                    await handleAddPoints(message, user.raUsername, filter, awaitOptions);
                     break;
                 
                 case 'remove':
-                    await handleRemovePoints(message, canonicalUsername, filter, awaitOptions, awardService);
+                    await handleRemovePoints(message, user.raUsername, filter, awaitOptions);
                     break;
 
                 default:
