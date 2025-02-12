@@ -1,74 +1,8 @@
 // File: src/commands/profile.js
 const { EmbedBuilder } = require('discord.js');
-const Game = require('../models/Game');
 const User = require('../models/User');
+const Game = require('../models/Game');
 const Award = require('../models/Award');
-const { AwardType } = require('../enums/AwardType');
-
-/**
- * Get the user's current progress in active challenges
- */
-async function getCurrentProgress(awardService, achievementTrackingService, canonicalUsername) {
-    const currentDate = new Date();
-    const currentMonth = currentDate.getMonth() + 1;
-    const currentYear = currentDate.getFullYear();
-
-    const currentGames = await Game.find({
-        month: currentMonth,
-        year: currentYear
-    });
-
-    const currentProgress = [];
-    for (const game of currentGames) {
-        const award = await achievementTrackingService.getCurrentAward(canonicalUsername, game.gameId);
-        
-        if (award && award.achievementCount > 0) {
-            const emoji = game.type === 'MONTHLY' ? '☀️' : '🌑';
-            const awardEmoji = award.award >= AwardType.MASTERED ? '✨' : 
-                             award.award >= AwardType.BEATEN ? '⭐' : 
-                             award.award >= AwardType.PARTICIPATION ? '🏁' : '';
-
-            currentProgress.push({
-                title: game.title,
-                type: emoji,
-                progress: `${award.achievementCount}/${award.totalAchievements}`,
-                completion: award.userCompletion || 'N/A',
-                award: awardEmoji,
-                currentAward: award.award
-            });
-        }
-    }
-
-    return currentProgress;
-}
-
-/**
- * Format award display text
- */
-function formatAwardText(awards) {
-    let text = '';
-    if (awards.mastered.length > 0) {
-        text += '**Mastered Games** ✨\n';
-        awards.mastered.forEach(game => {
-            text += `• ${game}\n`;
-        });
-        text += '\n';
-    }
-    if (awards.beaten.length > 0) {
-        text += '**Beaten Games** ⭐\n';
-        awards.beaten.forEach(game => {
-            text += `• ${game}\n`;
-        });
-        text += '\n';
-    }
-    if (awards.participation.length > 0) {
-        text += '**Participation** 🏁\n';
-        awards.participation.forEach(game => {
-            text += `• ${game}\n`;
-        });
-    }
-    return text || 'No awards yet!';
-}
 
 module.exports = {
     name: 'profile',
@@ -78,108 +12,175 @@ module.exports = {
             const requestedUsername = args[0] || message.author.username;
             const loadingMsg = await message.channel.send('Fetching profile data...');
 
-            // Verify required services are available
-            if (!message.client.usernameUtils || !message.client.awardService || !message.client.achievementTrackingService) {
-                console.error('Required services not available:', {
-                    hasUsernameUtils: !!message.client.usernameUtils,
-                    hasAwardService: !!message.client.awardService,
-                    hasAchievementTrackingService: !!message.client.achievementTrackingService
-                });
-                throw new Error('Required services not available');
-            }
-
-            // Get services from client
-            const { usernameUtils, awardService, achievementTrackingService } = message.client;
-
-            // Get canonical username
-            const canonicalUsername = await usernameUtils.getCanonicalUsername(requestedUsername);
-            if (!canonicalUsername) {
-                await loadingMsg.delete();
-                return message.reply('User not found on RetroAchievements.');
-            }
-
-            // Find user in database
+            // Find user in database (case-insensitive)
             const user = await User.findOne({
-                raUsernameLower: canonicalUsername.toLowerCase()
+                raUsername: { $regex: new RegExp(`^${requestedUsername}$`, 'i') }
             });
+
             if (!user) {
                 await loadingMsg.delete();
-                return message.reply('User not found in our database. They need to register first!');
+                return message.reply('User not found. They need to register first!');
             }
 
-            // Get profile URLs using username utils
-            const profilePicUrl = await usernameUtils.getProfilePicUrl(canonicalUsername);
-            const profileUrl = await usernameUtils.getProfileUrl(canonicalUsername);
+            // Get RA profile data
+            const raProfile = await message.client.raAPI('API_GetUserProfile.php', {
+                u: user.raUsername
+            });
 
+            if (!raProfile) {
+                await loadingMsg.delete();
+                return message.reply('Error fetching RetroAchievements profile.');
+            }
+
+            // Create embed
             const embed = new EmbedBuilder()
                 .setColor('#0099ff')
-                .setTitle(`User Profile: ${canonicalUsername}`)
-                .setThumbnail(profilePicUrl)
-                .setURL(profileUrl);
+                .setTitle(`User Profile: ${user.raUsername}`)
+                .setThumbnail(`https://retroachievements.org/UserPic/${user.raUsername}.png`)
+                .setURL(`https://retroachievements.org/user/${user.raUsername}`);
 
-            // Get current monthly progress
-            const currentProgress = await getCurrentProgress(
-                awardService, 
-                achievementTrackingService, 
-                canonicalUsername
-            );
+            // Get current challenges
+            const currentDate = new Date();
+            const currentMonth = currentDate.getMonth() + 1;
+            const currentYear = currentDate.getFullYear();
 
-            if (currentProgress.length > 0) {
+            const currentGames = await Game.find({
+                month: currentMonth,
+                year: currentYear
+            });
+
+            // Get progress for current games
+            if (currentGames.length > 0) {
                 let progressText = '';
-                currentProgress.forEach(progress => {
-                    progressText += `${progress.type} **${progress.title}**\n`;
-                    progressText += `Progress: ${progress.progress} (${progress.completion})\n`;
-                    if (progress.award) {
-                        progressText += `Current Award: ${progress.award}\n`;
-                    }
-                    progressText += '\n';
-                });
-                embed.addFields({ name: '🎮 Current Challenges', value: progressText });
-            }
+                
+                for (const game of currentGames) {
+                    // Get game progress from RA
+                    const progress = await message.client.raAPI('API_GetGameInfoAndUserProgress.php', {
+                        u: user.raUsername,
+                        g: game.gameId
+                    });
 
-            // Get yearly stats using award service
-            const yearlyStats = await awardService.getYearlyStats(canonicalUsername);
-            
-            let awardText = formatAwardText({
-                mastered: yearlyStats.masteredGames || [],
-                beaten: yearlyStats.beatenGames || [],
-                participation: yearlyStats.participationGames || []
-            });
+                    if (progress) {
+                        const type = game.type === 'MONTHLY' ? '☀️' : '🌑';
+                        progressText += `${type} **${game.title}**\n`;
+                        progressText += `Progress: ${progress.NumAwardedToUser}/${progress.NumAchievements} (${progress.UserCompletion})\n`;
 
-            embed.addFields({ 
-                name: '🏆 Game Awards', 
-                value: awardText 
-            });
+                        // Get award status
+                        const award = await Award.findOne({
+                            raUsername: user.raUsername.toLowerCase(),
+                            gameId: game.gameId,
+                            month: currentMonth,
+                            year: currentYear
+                        });
 
-            // Get manual awards
-            const manualAwards = await awardService.getManualAwards(canonicalUsername);
-            if (manualAwards && manualAwards.length > 0) {
-                let awardText = '';
-                for (const award of manualAwards) {
-                    if (award.metadata?.type === 'placement') {
-                        awardText += `${award.metadata.emoji} ${award.metadata.name} - ${award.metadata.month}: ${award.totalAchievements} points\n`;
-                    } else {
-                        awardText += `• ${award.reason}: ${award.totalAchievements} points\n`;
+                        if (award) {
+                            const emojis = [];
+                            if (award.mastered) emojis.push('✨');
+                            else if (award.beaten) emojis.push('⭐');
+                            else if (award.achievementCount > 0) emojis.push('🏁');
+                            
+                            if (emojis.length > 0) {
+                                progressText += `Current Awards: ${emojis.join(' ')}\n`;
+                            }
+                        }
+                        
+                        progressText += '\n';
                     }
                 }
 
-                embed.addFields({
-                    name: '🎖️ Community Awards',
-                    value: awardText
+                if (progressText) {
+                    embed.addFields({ name: '🎮 Current Challenges', value: progressText });
+                }
+            }
+
+            // Get yearly awards
+            const yearlyAwards = await Award.find({
+                raUsername: user.raUsername.toLowerCase(),
+                year: currentYear,
+                isManual: false
+            });
+
+            // Group awards by type
+            const gameAwards = {
+                mastered: [],
+                beaten: [],
+                participation: []
+            };
+
+            const processedGames = new Set();
+            let challengePoints = 0;
+
+            for (const award of yearlyAwards) {
+                const gameKey = `${award.gameId}-${award.month}`;
+                if (processedGames.has(gameKey)) continue;
+                processedGames.add(gameKey);
+
+                const game = await Game.findOne({ gameId: award.gameId });
+                if (!game) continue;
+
+                const points = award.getPoints();
+                challengePoints += points;
+
+                if (award.mastered) {
+                    gameAwards.mastered.push(`${game.title} (${points} pts)`);
+                } else if (award.beaten) {
+                    gameAwards.beaten.push(`${game.title} (${points} pts)`);
+                } else if (award.achievementCount > 0) {
+                    gameAwards.participation.push(`${game.title} (${points} pt)`);
+                }
+            }
+
+            // Add game awards to embed
+            let awardsText = '';
+            if (gameAwards.mastered.length > 0) {
+                awardsText += '**Mastered Games** ✨\n';
+                gameAwards.mastered.forEach(game => awardsText += `• ${game}\n`);
+                awardsText += '\n';
+            }
+            if (gameAwards.beaten.length > 0) {
+                awardsText += '**Beaten Games** ⭐\n';
+                gameAwards.beaten.forEach(game => awardsText += `• ${game}\n`);
+                awardsText += '\n';
+            }
+            if (gameAwards.participation.length > 0) {
+                awardsText += '**Participation** 🏁\n';
+                gameAwards.participation.forEach(game => awardsText += `• ${game}\n`);
+            }
+
+            if (awardsText) {
+                embed.addFields({ name: '🏆 Game Awards', value: awardsText });
+            }
+
+            // Get manual awards
+            const manualAwards = await Award.find({
+                raUsername: user.raUsername.toLowerCase(),
+                year: currentYear,
+                isManual: true
+            });
+
+            let manualPoints = 0;
+            if (manualAwards.length > 0) {
+                let manualText = '';
+                manualAwards.forEach(award => {
+                    manualPoints += award.manualPoints;
+                    manualText += `• ${award.reason}: ${award.manualPoints} points\n`;
                 });
+
+                embed.addFields({ name: '🎖️ Community Awards', value: manualText });
             }
 
             // Add points summary
             embed.addFields({
                 name: '📊 Points Summary',
                 value: 
-                    `Total: ${yearlyStats.totalPoints}\n` +
-                    `• Challenge: ${yearlyStats.challengePoints}\n` +
-                    `• Community: ${yearlyStats.manualPoints}`
+                    `Total: ${challengePoints + manualPoints}\n` +
+                    `• Challenge: ${challengePoints}\n` +
+                    `• Community: ${manualPoints}`
             });
 
             await loadingMsg.delete();
             await message.channel.send({ embeds: [embed] });
+
         } catch (error) {
             console.error('Error showing profile:', error);
             await message.reply('Error getting profile data. Please try again.');
