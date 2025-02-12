@@ -1,42 +1,25 @@
-// File: src/models/Game.js
+// File: src/models/User.js
 const mongoose = require('mongoose');
 
-const gameSchema = new mongoose.Schema({
-    gameId: {
+const userSchema = new mongoose.Schema({
+    raUsername: {
         type: String,
         required: true
     },
-    title: {
-        type: String,
-        required: true
-    },
-    type: {
-        type: String,
-        enum: ['MONTHLY', 'SHADOW'],
-        required: true
-    },
-    month: {
-        type: Number,
-        required: true,
-        min: 1,
-        max: 12
-    },
-    year: {
-        type: Number,
-        required: true
-    },
-    // Achievement IDs required for completion
-    winConditions: [{
-        type: String
-    }],
-    // Whether all win conditions must be met (true) or just one (false)
-    requireAllWinConditions: {
+    isActive: {
         type: Boolean,
-        default: false
+        default: true
+    },
+    joinDate: {
+        type: Date,
+        default: Date.now
     }
+}, { timestamps: true });
+
+// Add case-insensitive index
+userSchema.index({ raUsername: 1 }, { 
+    unique: true,
+    collation: { locale: 'en', strength: 2 } // Makes the index case-insensitive
 });
 
-// Index for finding current games
-gameSchema.index({ month: 1, year: 1, type: 1 });
-
-module.exports = mongoose.model('Game', gameSchema);
+module.exports = mongoose.model('User', userSchema);
