@@ -1,13 +1,10 @@
 // File: src/models/Award.js
-
 const mongoose = require('mongoose');
-const { AwardType } = require('../enums/AwardType');
 
 const awardSchema = new mongoose.Schema({
     raUsername: {
         type: String,
-        required: true,
-        set: v => v.toLowerCase()  // Normalize username on save
+        required: true
     },
     gameId: {
         type: String,
@@ -21,13 +18,6 @@ const awardSchema = new mongoose.Schema({
         type: Number,
         required: true
     },
-    // Award type using enum
-    award: {
-        type: Number,
-        enum: Object.values(AwardType),
-        default: AwardType.NONE,
-        required: true
-    },
     // Achievement tracking
     achievementCount: {
         type: Number,
@@ -39,83 +29,40 @@ const awardSchema = new mongoose.Schema({
         required: true,
         default: 0
     },
-    userCompletion: {
-        type: String,
-        required: true,
-        default: "0.00%"
+    beaten: {
+        type: Boolean,
+        default: false
     },
-    // New fields for manual awards
-    reason: {
-        type: String,
-        default: null  // Stores the reason for manual point awards
+    mastered: {
+        type: Boolean,
+        default: false
     },
-    awardedBy: {
-        type: String,
-        default: null  // Stores who awarded the points
+    // For manual awards (points given by admins)
+    isManual: {
+        type: Boolean,
+        default: false
     },
-    // Timestamps
-    lastChecked: {
-        type: Date,
-        required: true,
-        default: Date.now
+    manualPoints: {
+        type: Number,
+        default: 0
     },
-    awardedAt: {
-        type: Date,
-        default: Date.now
-    }
-}, {
-    timestamps: true  // Adds createdAt and updatedAt
-});
+    reason: String,
+    awardedBy: String
+}, { timestamps: true });
 
-// Indexes for efficient queries
-awardSchema.index({ raUsername: 1, gameId: 1, year: 1, month: 1 }, { unique: true });
+// Indexes
+awardSchema.index({ raUsername: 1, gameId: 1, month: 1, year: 1 }, { unique: true });
 awardSchema.index({ raUsername: 1, year: 1 });
-awardSchema.index({ lastChecked: 1 });
 
-// Virtual getter for point value
-awardSchema.virtual('points').get(function() {
-    if (this.gameId === 'manual') {
-        return this.totalAchievements; // For manual awards, totalAchievements stores the points
-    }
-    return AwardType.getPoints(this.award);
-});
-
-// Add some helper methods
-awardSchema.methods = {
-    isManualAward() {
-        return this.gameId === 'manual';
-    },
-
-    getDisplayName() {
-        if (this.isManualAward()) {
-            return this.reason || 'Community Award';
-        }
-        return AwardFunctions.getName(this.award);
-    },
-
-    getPoints() {
-        return this.points;
-    }
-};
-
-// Add some static methods for common queries
-awardSchema.statics = {
-    async getUserYearlyPoints(username, year) {
-        const awards = await this.find({
-            raUsername: username,
-            year: year
-        });
-
-        return awards.reduce((total, award) => total + award.points, 0);
-    },
-
-    async getManualAwards(username, year) {
-        return await this.find({
-            raUsername: username,
-            gameId: 'manual',
-            year: year
-        }).sort({ awardedAt: -1 });
-    }
+// Helper method to calculate points
+awardSchema.methods.getPoints = function() {
+    if (this.isManual) return this.manualPoints;
+    
+    let points = 0;
+    if (this.achievementCount > 0) points += 1; // Participation
+    if (this.beaten) points += 3;               // Beaten bonus
+    if (this.mastered) points += 3;             // Mastery bonus
+    return points;
 };
 
 module.exports = mongoose.model('Award', awardSchema);
