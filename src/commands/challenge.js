@@ -14,105 +14,6 @@ function getTimeRemaining() {
     return `${days}d ${hours}h ${minutes}m`;
 }
 
-async function displayChallenge(game, raAPI, awardService) {
-    try {
-        const gameInfo = await raAPI.getGameInfo(game.gameId);
-        if (!gameInfo) {
-            throw new Error(`Unable to fetch game info for ${game.title}`);
-        }
-
-        const embed = new EmbedBuilder()
-            .setColor('#0099ff')
-            .setTitle(game.title)
-            .setURL(`https://retroachievements.org/game/${game.gameId}`);
-
-        // Set images if available
-        if (gameInfo.ImageIcon) {
-            embed.setThumbnail(`https://retroachievements.org${gameInfo.ImageIcon}`);
-        }
-        if (gameInfo.ImageBoxArt) {
-            embed.setImage(`https://retroachievements.org${gameInfo.ImageBoxArt}`);
-        }
-
-        // Add game details
-        let details = '';
-        details += `**Console:** ${gameInfo.Console}\n`;
-        details += `**Genre:** ${gameInfo.Genre || 'N/A'}\n`;
-        details += `**Developer:** ${gameInfo.Developer || 'N/A'}\n`;
-        details += `**Publisher:** ${gameInfo.Publisher || 'N/A'}\n`;
-        details += `**Release Date:** ${gameInfo.Released || 'N/A'}\n`;
-        details += `**Total Achievements:** ${game.numAchievements}\n\n`;
-        
-        // Add time remaining
-        details += `**Time Remaining:** ${getTimeRemaining()}\n`;
-
-        // Add progression requirements if any
-        if (game.progression && game.progression.length > 0) {
-            details += `\n**Progression Required:** ${game.requireProgression ? 'Yes' : 'No'}\n`;
-            if (game.requireProgression) {
-                details += `• Must complete ${game.progression.length} progression achievements in order\n`;
-            }
-        }
-
-        // Add win conditions
-        if (game.winCondition && game.winCondition.length > 0) {
-            details += `**Win Conditions Required:** ${game.requireAllWinConditions ? 'All' : 'Any'}\n`;
-            details += `• Must complete ${game.requireAllWinConditions ? 'all' : 'at least one of'} ${game.winCondition.length} win condition achievement(s)\n`;
-        }
-
-        // Add awards explanation
-        let awards = '';
-        awards += '**Participation Award** 🏁\n';
-        awards += '• Earn at least 1 achievement\n';
-        awards += '• Worth 1 point\n\n';
-
-        awards += '**Beaten Award** ⭐\n';
-        if (game.progression && game.progression.length > 0) {
-            awards += '• Complete progression achievements (if required)\n';
-        }
-        awards += `• Complete ${game.requireAllWinConditions ? 'all' : 'any'} win condition achievement(s)\n`;
-        awards += '• Worth 3 points\n\n';
-
-        if (game.type === 'MONTHLY' && game.masteryCheck) {
-            awards += '**Mastery Award** ✨\n';
-            awards += '• Complete 100% of the achievements\n';
-            awards += '• Worth 3 additional points\n';
-        }
-
-        embed.addFields(
-            { name: 'Game Information', value: details },
-            { name: 'Awards and Points', value: awards }
-        );
-
-        // Add achievement progress tracking info
-        if (game.progression && game.progression.length > 0) {
-            let progressionInfo = '';
-            for (const achievementId of game.progression) {
-                try {
-                    const achievementInfo = await raAPI.getAchievementInfo(game.gameId, achievementId);
-                    if (achievementInfo) {
-                        progressionInfo += `• ${achievementInfo.Title}\n`;
-                    }
-                } catch (error) {
-                    console.error(`Error fetching achievement info for ${achievementId}:`, error);
-                }
-            }
-            
-            if (progressionInfo) {
-                embed.addFields({
-                    name: 'Progression Achievements',
-                    value: progressionInfo
-                });
-            }
-        }
-
-        return embed;
-    } catch (error) {
-        console.error('Error creating challenge embed:', error);
-        throw error;
-    }
-}
-
 module.exports = {
     name: 'challenge',
     description: 'Shows current challenge information',
@@ -140,11 +41,64 @@ module.exports = {
 
             const loadingMsg = await message.channel.send('Fetching challenge information...');
 
-            // Get required services from client
-            const { raAPI, awardService } = message.client;
+            // Get game info from RA
+            const gameInfo = await message.client.raAPI('API_GetGame.php', {
+                i: game.gameId
+            });
 
-            const embed = await displayChallenge(game, raAPI, awardService);
-            
+            if (!gameInfo) {
+                await loadingMsg.delete();
+                return message.reply('Error fetching game information.');
+            }
+
+            const embed = new EmbedBuilder()
+                .setColor(type === 'monthly' ? '#00BFFF' : '#FFD700')
+                .setTitle(game.title)
+                .setURL(`https://retroachievements.org/game/${game.gameId}`);
+
+            if (gameInfo.ImageIcon) {
+                embed.setThumbnail(`https://retroachievements.org${gameInfo.ImageIcon}`);
+            }
+            if (gameInfo.ImageBoxArt) {
+                embed.setImage(`https://retroachievements.org${gameInfo.ImageBoxArt}`);
+            }
+
+            let details = '';
+            details += `**Console:** ${gameInfo.Console}\n`;
+            details += `**Genre:** ${gameInfo.Genre || 'N/A'}\n`;
+            details += `**Developer:** ${gameInfo.Developer || 'N/A'}\n`;
+            details += `**Publisher:** ${gameInfo.Publisher || 'N/A'}\n`;
+            details += `**Release Date:** ${gameInfo.Released || 'N/A'}\n`;
+            details += `**Total Achievements:** ${gameInfo.NumAchievements}\n\n`;
+            details += `**Time Remaining:** ${getTimeRemaining()}\n`;
+
+            embed.addFields({ name: 'Game Information', value: details });
+
+            let requirements = '';
+            requirements += '**Point Values:**\n';
+            requirements += '• Participation (1 point): Earn at least 1 achievement\n';
+            requirements += '• Beaten (3 points): Complete win condition(s)\n';
+            if (type === 'monthly') {
+                requirements += '• Mastery (3 points): Complete 100% of achievements\n\n';
+            }
+
+            if (game.winConditions.length > 0) {
+                requirements += '**Win Conditions:**\n';
+                requirements += game.requireAllWinConditions 
+                    ? '• Must complete ALL of the following:\n'
+                    : '• Must complete ANY of the following:\n';
+                
+                // Get achievement info for win conditions
+                for (const achievementId of game.winConditions) {
+                    if (gameInfo.Achievements && gameInfo.Achievements[achievementId]) {
+                        const achievement = gameInfo.Achievements[achievementId];
+                        requirements += `• ${achievement.Title}\n`;
+                    }
+                }
+            }
+
+            embed.addFields({ name: 'Requirements', value: requirements });
+
             await loadingMsg.delete();
             await message.channel.send({ embeds: [embed] });
 
