@@ -1,7 +1,5 @@
-// File: src/models/Award.js
-
-const mongoose = require('mongoose');
-const { AwardType } = require('../enums/AwardType');
+import mongoose from 'mongoose';
+import { AwardType } from '../config/config.js';
 
 const awardSchema = new mongoose.Schema({
     raUsername: {
@@ -44,7 +42,7 @@ const awardSchema = new mongoose.Schema({
         required: true,
         default: "0.00%"
     },
-    // New fields for manual awards
+    // Manual award fields
     reason: {
         type: String,
         default: null  // Stores the reason for manual point awards
@@ -64,58 +62,79 @@ const awardSchema = new mongoose.Schema({
         default: Date.now
     }
 }, {
-    timestamps: true  // Adds createdAt and updatedAt
+    timestamps: true
 });
 
-// Indexes for efficient queries
-awardSchema.index({ raUsername: 1, gameId: 1, year: 1, month: 1 }, { unique: true });
-awardSchema.index({ raUsername: 1, year: 1 });
-awardSchema.index({ lastChecked: 1 });
+// Add indexes for common queries
+awardSchema.index({ raUsername: 1, month: 1, year: 1 });
+awardSchema.index({ month: 1, year: 1 }); // For leaderboard queries
 
-// Virtual getter for point value
-awardSchema.virtual('points').get(function() {
-    if (this.gameId === 'manual') {
-        return this.totalAchievements; // For manual awards, totalAchievements stores the points
-    }
-    return AwardType.getPoints(this.award);
-});
-
-// Add some helper methods
-awardSchema.methods = {
-    isManualAward() {
-        return this.gameId === 'manual';
-    },
-
-    getDisplayName() {
-        if (this.isManualAward()) {
-            return this.reason || 'Community Award';
-        }
-        return AwardFunctions.getName(this.award);
-    },
-
-    getPoints() {
-        return this.points;
+// Static method to calculate points
+awardSchema.statics.calculatePoints = function(award) {
+    switch (award) {
+        case AwardType.PARTICIPATION:
+            return 1;
+        case AwardType.BEATEN:
+        case AwardType.MASTERY:
+            return 3;
+        default:
+            return 0;
     }
 };
 
-// Add some static methods for common queries
-awardSchema.statics = {
-    async getUserYearlyPoints(username, year) {
-        const awards = await this.find({
-            raUsername: username,
-            year: year
-        });
+// Method to get user's total points for a specific month/year
+awardSchema.statics.getUserMonthlyPoints = async function(raUsername, month, year) {
+    const awards = await this.find({
+        raUsername: raUsername.toLowerCase(),
+        month,
+        year
+    });
 
-        return awards.reduce((total, award) => total + award.points, 0);
-    },
-
-    async getManualAwards(username, year) {
-        return await this.find({
-            raUsername: username,
-            gameId: 'manual',
-            year: year
-        }).sort({ awardedAt: -1 });
-    }
+    return awards.reduce((total, award) => {
+        return total + this.calculatePoints(award.award);
+    }, 0);
 };
 
-module.exports = mongoose.model('Award', awardSchema);
+// Method to get user's total points for a year
+awardSchema.statics.getUserYearlyPoints = async function(raUsername, year) {
+    const awards = await this.find({
+        raUsername: raUsername.toLowerCase(),
+        year
+    });
+
+    return awards.reduce((total, award) => {
+        return total + this.calculatePoints(award.award);
+    }, 0);
+};
+
+// Method to get monthly leaderboard
+awardSchema.statics.getMonthlyLeaderboard = async function(month, year) {
+    const awards = await this.find({ month, year });
+    return this.calculateLeaderboard(awards);
+};
+
+// Method to get yearly leaderboard
+awardSchema.statics.getYearlyLeaderboard = async function(year) {
+    const awards = await this.find({ year });
+    return this.calculateLeaderboard(awards);
+};
+
+// Helper method to calculate leaderboard from awards
+awardSchema.statics.calculateLeaderboard = function(awards) {
+    const pointsMap = new Map();
+
+    // Calculate points for each user
+    awards.forEach(award => {
+        const username = award.raUsername;
+        const points = this.calculatePoints(award.award);
+        pointsMap.set(username, (pointsMap.get(username) || 0) + points);
+    });
+
+    // Convert to array and sort
+    return Array.from(pointsMap.entries())
+        .map(([username, points]) => ({ username, points }))
+        .sort((a, b) => b.points - a.points);
+};
+
+export const Award = mongoose.model('Award', awardSchema);
+export default Award;

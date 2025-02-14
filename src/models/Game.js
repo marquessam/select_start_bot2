@@ -1,5 +1,4 @@
-// File: src/models/Game.js
-const mongoose = require('mongoose');
+import mongoose from 'mongoose';
 
 const gameSchema = new mongoose.Schema({
     gameId: {
@@ -51,4 +50,19 @@ const gameSchema = new mongoose.Schema({
     }
 });
 
-module.exports = mongoose.model('Game', gameSchema);
+// Add indexes for common queries
+gameSchema.index({ type: 1, month: 1, year: 1 });
+gameSchema.index({ active: 1 });
+
+// Add methods for game status checks
+gameSchema.methods.isCurrentGame = function() {
+    const now = new Date();
+    return this.month === now.getMonth() + 1 && this.year === now.getFullYear();
+};
+
+gameSchema.methods.isEligibleForMastery = function() {
+    return this.type === 'MONTHLY' && this.masteryCheck;
+};
+
+export const Game = mongoose.model('Game', gameSchema);
+export default Game;

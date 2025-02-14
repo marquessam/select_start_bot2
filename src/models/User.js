@@ -1,17 +1,11 @@
-// File: src/models/User.js
-const mongoose = require('mongoose');
+import mongoose from 'mongoose';
 
 const userSchema = new mongoose.Schema({
     // Store the canonical (proper case) username
     raUsername: {
         type: String,
         required: true,
-        unique: true,
-        set: function(username) {
-            // Store the username exactly as provided
-            // The UsernameUtils class will handle canonicalization
-            return username;
-        }
+        unique: true
     },
     // Store lowercase version for case-insensitive lookups
     raUsernameLower: {
@@ -21,6 +15,11 @@ const userSchema = new mongoose.Schema({
         set: function(username) {
             return username.toLowerCase();
         }
+    },
+    discordId: {
+        type: String,
+        required: true,
+        unique: true
     },
     isActive: {
         type: Boolean,
@@ -33,98 +32,76 @@ const userSchema = new mongoose.Schema({
     joinDate: {
         type: Date,
         default: Date.now
+    },
+    // Track total points for quick access
+    totalPoints: {
+        type: Number,
+        default: 0
+    },
+    yearlyPoints: {
+        type: Map,
+        of: Number,
+        default: () => new Map()
+    },
+    monthlyPoints: {
+        type: Map,
+        of: Number,
+        default: () => new Map()
     }
 }, {
-    timestamps: true, // Adds createdAt and updatedAt fields
-    strict: true // Only allow fields defined in the schema
+    timestamps: true,
+    strict: true
 });
 
-// Add case-insensitive index on the lowercase field
-userSchema.index({ raUsernameLower: 1 }, { 
-    unique: true,
-    collation: { locale: 'en', strength: 2 }
-});
-
-// Add standard index on canonical username
-userSchema.index({ raUsername: 1 }, { unique: true });
-
-// Add index for active users
+// Add index for active users query only
+// We don't need to add indexes for raUsernameLower or discordId as they're already indexed due to unique: true
 userSchema.index({ isActive: 1 });
 
-// Pre-save middleware to ensure raUsernameLower is always set
-userSchema.pre('save', function(next) {
-    if (this.raUsername) {
-        this.raUsernameLower = this.raUsername.toLowerCase();
-    }
-    next();
-});
-
-// Static methods for common operations
-userSchema.statics = {
-    /**
-     * Find a user by username (case-insensitive)
-     */
-    async findByUsername(username) {
-        return this.findOne({
-            raUsernameLower: username.toLowerCase()
-        });
-    },
-
-    /**
-     * Find a user by canonical username (case-sensitive)
-     */
-    async findByCanonicalUsername(username) {
-        return this.findOne({
-            raUsername: username
-        });
-    },
-
-    /**
-     * Get all active users
-     */
-    async getActiveUsers() {
-        return this.find({ isActive: true });
-    }
+// Static method to find user by RetroAchievements username (case insensitive)
+userSchema.statics.findByRAUsername = function(username) {
+    return this.findOne({ raUsernameLower: username.toLowerCase() });
 };
 
-// Instance methods
-userSchema.methods = {
-    /**
-     * Update the canonical username
-     */
-    async updateCanonicalUsername(newCanonicalUsername) {
-        this.raUsername = newCanonicalUsername;
-        this.raUsernameLower = newCanonicalUsername.toLowerCase();
-        return this.save();
-    },
-
-    /**
-     * Deactivate user
-     */
-    async deactivate() {
-        this.isActive = false;
-        return this.save();
-    },
-
-    /**
-     * Reactivate user
-     */
-    async reactivate() {
-        this.isActive = true;
-        return this.save();
-    }
+// Static method to find user by Discord ID
+userSchema.statics.findByDiscordId = function(discordId) {
+    return this.findOne({ discordId });
 };
 
-// Virtual getter for profile URL
-userSchema.virtual('profileUrl').get(function() {
-    return `https://retroachievements.org/user/${this.raUsername}`;
-});
+// Method to update points
+userSchema.methods.updatePoints = function(month, year, points) {
+    // Update monthly points
+    const monthKey = `${year}-${month}`;
+    this.monthlyPoints.set(monthKey, (this.monthlyPoints.get(monthKey) || 0) + points);
+    
+    // Update yearly points
+    this.yearlyPoints.set(year.toString(), (this.yearlyPoints.get(year.toString()) || 0) + points);
+    
+    // Update total points
+    this.totalPoints += points;
+};
 
-// Virtual getter for profile picture URL
-userSchema.virtual('profilePicUrl').get(function() {
-    return `https://retroachievements.org/UserPic/${this.raUsername}.png`;
-});
+// Method to get user's points for a specific month
+userSchema.methods.getMonthlyPoints = function(month, year) {
+    const monthKey = `${year}-${month}`;
+    return this.monthlyPoints.get(monthKey) || 0;
+};
 
-const User = mongoose.model('User', userSchema);
+// Method to get user's points for a specific year
+userSchema.methods.getYearlyPoints = function(year) {
+    return this.yearlyPoints.get(year.toString()) || 0;
+};
 
-module.exports = User;
+// Method to format user data for display
+userSchema.methods.formatUserProfile = function() {
+    const currentYear = new Date().getFullYear();
+    return {
+        username: this.raUsername,
+        totalPoints: this.totalPoints,
+        yearlyPoints: this.getYearlyPoints(currentYear),
+        joinDate: this.joinDate,
+        isActive: this.isActive
+    };
+};
+
+export const User = mongoose.model('User', userSchema);
+export default User;
