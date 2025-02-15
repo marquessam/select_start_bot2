@@ -2,6 +2,7 @@ import achievementTracker from './achievementTracker.js';
 import leaderboardService from './leaderboardService.js';
 import nominationService from './nominationService.js';
 import retroAPI from './retroAPI.js';
+import arcadeService from './arcadeService.js';
 
 // Initialize services that require setup
 export const initializeServices = async (client, config) => {
@@ -21,7 +22,8 @@ export {
     achievementTracker,
     leaderboardService,
     nominationService,
-    retroAPI
+    retroAPI,
+    arcadeService
 };
 
 export default {
@@ -29,5 +31,6 @@ export default {
     leaderboardService,
     nominationService,
     retroAPI,
+    arcadeService,
     initializeServices
 };

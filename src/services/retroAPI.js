@@ -1,5 +1,6 @@
 import { buildAuthorization, getGame, getGameExtended, getUserProfile, getUserRecentAchievements, 
-    getUserSummary, getGameInfoAndUserProgress } from '@retroachievements/api';
+    getUserSummary, getGameInfoAndUserProgress, getGameRankAndScore, getUserCompletedGames,
+    getUserAwards, getGameList, getConsoleIds } from '@retroachievements/api';
 import { config } from '../config/config.js';
 
 class RetroAchievementsService {
@@ -87,17 +88,24 @@ class RetroAchievementsService {
     }
 
     /**
-     * Get user information
+     * Get user information including profile image and stats
      * @param {string} username - RetroAchievements username
      * @returns {Promise<Object>} User information
      */
     async getUserInfo(username) {
         try {
-            const user = await getUserSummary(this.authorization, {
-                username
-            });
+            const [summary, profile, awards] = await Promise.all([
+                getUserSummary(this.authorization, { username }),
+                getUserProfile(this.authorization, { username }),
+                getUserAwards(this.authorization, { username })
+            ]);
 
-            return user;
+            return {
+                ...summary,
+                ...profile,
+                awards,
+                profileImageUrl: `https://retroachievements.org${profile.userPic}`
+            };
         } catch (error) {
             console.error(`Error fetching user info for ${username}:`, error);
             throw error;
@@ -105,19 +113,70 @@ class RetroAchievementsService {
     }
 
     /**
-     * Get user profile information
-     * @param {string} username - RetroAchievements username
-     * @returns {Promise<Object>} User profile information
+     * Get game leaderboard rankings
+     * @param {string} gameId - RetroAchievements game ID
+     * @returns {Promise<Array>} Leaderboard entries
      */
-    async getUserProfile(username) {
+    async getGameRankAndScore(gameId) {
         try {
-            const profile = await getUserProfile(this.authorization, {
+            const rankings = await getGameRankAndScore(this.authorization, {
+                gameId: parseInt(gameId),
+                type: 'score' // or 'hardcore' based on your needs
+            });
+
+            return rankings;
+        } catch (error) {
+            console.error(`Error fetching rankings for game ${gameId}:`, error);
+            throw error;
+        }
+    }
+
+    /**
+     * Get list of games for a console
+     * @param {number} consoleId - RetroAchievements console ID
+     * @returns {Promise<Array>} List of games
+     */
+    async getConsoleGames(consoleId) {
+        try {
+            const games = await getGameList(this.authorization, {
+                consoleId: parseInt(consoleId)
+            });
+
+            return games;
+        } catch (error) {
+            console.error(`Error fetching games for console ${consoleId}:`, error);
+            throw error;
+        }
+    }
+
+    /**
+     * Get list of all consoles
+     * @returns {Promise<Array>} List of consoles
+     */
+    async getConsoles() {
+        try {
+            const consoles = await getConsoleIds(this.authorization);
+            return consoles;
+        } catch (error) {
+            console.error('Error fetching console list:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Get user's completed games
+     * @param {string} username - RetroAchievements username
+     * @returns {Promise<Array>} List of completed games
+     */
+    async getUserCompletedGames(username) {
+        try {
+            const completed = await getUserCompletedGames(this.authorization, {
                 username
             });
 
-            return profile;
+            return completed;
         } catch (error) {
-            console.error(`Error fetching profile for ${username}:`, error);
+            console.error(`Error fetching completed games for ${username}:`, error);
             throw error;
         }
     }

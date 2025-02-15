@@ -47,8 +47,34 @@ const gameSchema = new mongoose.Schema({
     active: {
         type: Boolean,
         default: true
+    },
+    meta: {
+        type: new mongoose.Schema({
+            pieces: [String],
+            description: String,
+            revealed: {
+                type: Boolean,
+                default: false
+            }
+        }, { _id: false }),
+        default: null
     }
 });
+
+// Add method to check if shadow game is revealed
+gameSchema.methods.isShadowGameRevealed = function() {
+    return this.type === 'SHADOW' && this.meta?.revealed === true;
+};
+
+// Add method to get meta pieces
+gameSchema.methods.getMetaPieces = function() {
+    return this.meta?.pieces || [];
+};
+
+// Add method to get meta description
+gameSchema.methods.getMetaDescription = function() {
+    return this.meta?.description || 'No meta challenge description available.';
+};
 
 // Add indexes for common queries
 gameSchema.index({ type: 1, month: 1, year: 1 });
