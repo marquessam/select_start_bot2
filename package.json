@@ -9,7 +9,7 @@
     "deploy": "node src/deploy-commands.js",
     "dev": "nodemon src/index.js",
     "lint": "eslint src/",
-    "lint:fix": "eslint src/ --fix",
+    "lint:fix": "eslint src/ --fix"
   },
   "dependencies": {
     "@discordjs/builders": "^1.4.0",
