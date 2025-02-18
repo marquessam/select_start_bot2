@@ -194,6 +194,18 @@ class LeaderboardService {
                 month: currentMonth
             });
 
+            // Get activity metrics
+            const activityEmoji = {
+                'VERY_ACTIVE': '🌟',
+                'ACTIVE': '⭐',
+                'INACTIVE': '💤'
+            };
+
+            const activityStats = user.achievementStats;
+            const daysSinceLastAchievement = activityStats.lastAchievement ? 
+                Math.floor((new Date() - activityStats.lastAchievement) / (24 * 60 * 60 * 1000)) : 
+                'N/A';
+
             // Create embed
             const embed = new EmbedBuilder()
                 .setColor('#00ff00')
@@ -214,8 +226,21 @@ class LeaderboardService {
                         name: 'Monthly Points', 
                         value: user.getMonthlyPoints(currentMonth, currentYear).toString(),
                         inline: true 
+                    },
+                    {
+                        name: 'Community Activity',
+                        value: [
+                            `Status: ${activityEmoji[user.activityTier]} ${user.activityTier}`,
+                            `Recent Achievements: ${activityStats.dailyCount} today, ${activityStats.weeklyCount} this week`,
+                            `Last Achievement: ${daysSinceLastAchievement === 'N/A' ? 'Never' : `${daysSinceLastAchievement} days ago`}`,
+                            `Arcade Points: ${user.getCurrentArcadePoints()}`,
+                            `Nominations Left: ${2 - (user.monthlyNominations.get(`${currentYear}-${currentMonth}`) || 0)}/2`,
+                            `Votes Left: ${2 - (user.monthlyVotes.get(`${currentYear}-${currentMonth}`) || 0)}/2`
+                        ].join('\n'),
+                        inline: false
                     }
                 )
+                .setImage(`https://retroachievements.org/UserPic/${user.raUsername}.png`)
                 .setTimestamp();
 
             // Add current games progress

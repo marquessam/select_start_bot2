@@ -16,7 +16,10 @@ export const config = {
         token: process.env.DISCORD_TOKEN,
         clientId: process.env.DISCORD_CLIENT_ID,
         guildId: process.env.DISCORD_GUILD_ID,
-        achievementChannelId: process.env.ACHIEVEMENT_CHANNEL
+        achievementChannelId: process.env.ACHIEVEMENT_CHANNEL,
+        registrationChannelId: process.env.REGISTRATION_CHANNEL,
+        registrationMonitorChannelId: process.env.REGISTRATION_MONITOR_CHANNEL,
+        shadowGameChannelId: process.env.SHADOW_GAME_CHANNEL
     },
     
     // RetroAchievements API Configuration
@@ -51,15 +54,27 @@ export function validateConfig() {
         'DISCORD_CLIENT_ID',
         'DISCORD_GUILD_ID',
         'RA_API_KEY',
-        'MONGODB_URI',
-        'ACHIEVEMENT_CHANNEL'
+        'MONGODB_URI'
+    ];
+
+    const optional = [
+        'ACHIEVEMENT_CHANNEL',
+        'REGISTRATION_CHANNEL',
+        'REGISTRATION_MONITOR_CHANNEL',
+        'SHADOW_GAME_CHANNEL'
     ];
 
     const missing = required.filter(key => !process.env[key]);
+    const missingOptional = optional.filter(key => !process.env[key]);
 
     if (missing.length > 0) {
         throw new Error(`Missing required environment variables: ${missing.join(', ')}\n` +
             'Please check your .env file and ensure all required variables are set.');
+    }
+
+    if (missingOptional.length > 0) {
+        console.warn(`Warning: Missing optional environment variables: ${missingOptional.join(', ')}\n` +
+            'Some features may be disabled until these are configured.');
     }
 }
 

@@ -6,7 +6,7 @@ import { config } from '../config/config.js';
 class RetroAchievementsService {
     constructor() {
         this.authorization = buildAuthorization({
-            username: process.env.RA_USERNAME,
+            userName: process.env.RA_USERNAME,
             webApiKey: config.retroAchievements.apiKey
         });
     }
@@ -188,9 +188,10 @@ class RetroAchievementsService {
      */
     async validateUser(username) {
         try {
-            await this.getUserProfile(username);
+            await getUserProfile(this.authorization, { username });
             return true;
         } catch (error) {
+            console.log(error);
             return false;
         }
     }

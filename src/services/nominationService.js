@@ -33,6 +33,17 @@ class NominationService {
                 throw new Error('This game has already been nominated this month');
             }
 
+            // Check user's monthly nomination limit
+            const userNominations = await Nomination.countDocuments({
+                userId,
+                voteMonth,
+                status: { $in: ['PENDING', 'APPROVED', 'SELECTED'] }
+            });
+
+            if (userNominations >= 2) {
+                throw new Error('Monthly nomination limit reached');
+            }
+
             // Create new nomination
             const nomination = new Nomination({
                 userId,

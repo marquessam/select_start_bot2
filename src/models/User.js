@@ -22,10 +22,14 @@ const userSchema = new mongoose.Schema({
         unique: true
     },
     // Activity tracking
-    activityStatus: {
+    activityTier: {
         type: String,
-        enum: ['INACTIVE', 'ACTIVE', 'PARTICIPATING'],
-        default: 'INACTIVE'
+        enum: ['VERY_ACTIVE', 'ACTIVE', 'INACTIVE'],
+        default: 'ACTIVE'
+    },
+    activityScore: {
+        type: Number,
+        default: 0
     },
     lastActivity: {
         type: Date,
@@ -34,6 +38,16 @@ const userSchema = new mongoose.Schema({
     lastChecked: {
         type: Date,
         default: Date.now
+    },
+    // Achievement tracking
+    achievementStats: {
+        type: new mongoose.Schema({
+            dailyCount: { type: Number, default: 0 },
+            weeklyCount: { type: Number, default: 0 },
+            monthlyCount: { type: Number, default: 0 },
+            lastAchievement: Date
+        }, { _id: false }),
+        default: () => ({})
     },
     joinDate: {
         type: Date,
@@ -128,18 +142,83 @@ userSchema.methods.getYearlyPoints = function(year) {
     return this.yearlyPoints.get(year.toString()) || 0;
 };
 
-// Method to update activity status
-userSchema.methods.updateActivityStatus = function() {
+// Method to update activity tier based on achievement stats and participation
+userSchema.methods.updateActivityTier = function() {
     const now = new Date();
-    const thirtyDaysAgo = new Date(now - 30 * 24 * 60 * 60 * 1000);
+    const stats = this.achievementStats;
     
-    if (this.lastActivity < thirtyDaysAgo) {
-        this.activityStatus = 'INACTIVE';
-    } else if (this.activityStatus === 'INACTIVE') {
-        this.activityStatus = 'ACTIVE';
+    // Calculate days since last achievement
+    const daysSinceLastAchievement = stats.lastAchievement ? 
+        Math.floor((now - stats.lastAchievement) / (24 * 60 * 60 * 1000)) : 30;
+    
+    // Get current month and year
+    const currentMonth = now.getMonth() + 1;
+    const currentYear = now.getFullYear();
+    const monthKey = `${currentYear}-${currentMonth}`;
+    
+    // Check if user has participation in current month
+    const hasCurrentParticipation = this.monthlyPoints.get(monthKey) > 0;
+    
+    // Weight recent achievements more heavily and consider participation
+    const score = (stats.dailyCount * 4) + 
+                 (stats.weeklyCount * 2) + 
+                 (stats.monthlyCount) - 
+                 (daysSinceLastAchievement * 0.5) +
+                 (hasCurrentParticipation ? 15 : 0); // Bonus for current month participation
+    
+    this.activityScore = Math.max(0, score);
+    
+    // Update tier based on score and participation
+    if (hasCurrentParticipation && this.activityScore >= 40) {
+        this.activityTier = 'VERY_ACTIVE';
+    } else if (hasCurrentParticipation || this.activityScore >= 20) {
+        this.activityTier = 'ACTIVE';
+    } else {
+        this.activityTier = 'INACTIVE';
     }
     
     this.lastActivity = now;
+};
+
+// Method to record a new achievement
+userSchema.methods.recordAchievement = function() {
+    const now = new Date();
+    const stats = this.achievementStats;
+    
+    // Update achievement counts
+    stats.dailyCount++;
+    stats.weeklyCount++;
+    stats.monthlyCount++;
+    stats.lastAchievement = now;
+    
+    // Reset counts if needed
+    const oneDayAgo = new Date(now - 24 * 60 * 60 * 1000);
+    const oneWeekAgo = new Date(now - 7 * 24 * 60 * 60 * 1000);
+    const oneMonthAgo = new Date(now - 30 * 24 * 60 * 60 * 1000);
+    
+    if (this.lastChecked < oneDayAgo) stats.dailyCount = 1;
+    if (this.lastChecked < oneWeekAgo) stats.weeklyCount = 1;
+    if (this.lastChecked < oneMonthAgo) stats.monthlyCount = 1;
+    
+    this.lastChecked = now;
+    this.updateActivityTier();
+};
+
+// Method to get API call frequency based on activity tier and time of day
+userSchema.methods.getApiCallFrequency = function() {
+    const hour = new Date().getHours();
+    const isActiveHours = hour >= 8 && hour <= 23; // 8 AM to 11 PM
+    
+    switch (this.activityTier) {
+        case 'VERY_ACTIVE':
+            return isActiveHours ? 5 * 60 * 1000 : 15 * 60 * 1000; // 5 min during active hours, 15 min otherwise
+        case 'ACTIVE':
+            return isActiveHours ? 15 * 60 * 1000 : 30 * 60 * 1000; // 15 min during active hours, 30 min otherwise
+        case 'INACTIVE':
+            return isActiveHours ? 30 * 60 * 1000 : 60 * 60 * 1000; // 30 min during active hours, 1 hour otherwise
+        default:
+            return 30 * 60 * 1000; // 30 minutes (fallback)
+    }
 };
 
 // Method to add arcade points

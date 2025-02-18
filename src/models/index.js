@@ -20,10 +20,7 @@ mongoose.set('strictQuery', true);
 
 export const connectDB = async () => {
     try {
-        const conn = await mongoose.connect(config.mongodb.uri, {
-            useNewUrlParser: true,
-            useUnifiedTopology: true,
-        });
+        const conn = await mongoose.connect(config.mongodb.uri);
 
         console.log(`MongoDB Connected: ${conn.connection.host}`);
         

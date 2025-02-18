@@ -1,6 +1,7 @@
 import { EmbedBuilder } from 'discord.js';
 import { Award, Game, PlayerProgress, User } from '../models/index.js';
 import retroAPI from './retroAPI.js';
+import activityTracker from './activityTracker.js';
 import { AwardType } from '../config/config.js';
 
 class AchievementTracker {
@@ -14,9 +15,11 @@ class AchievementTracker {
      * @param {string} channelId - Discord channel ID for achievement announcements
      */
     setAchievementChannel(channelId) {
-        this.achievementChannel = this.client.channels.cache.get(channelId);
-        if (!this.achievementChannel) {
-            throw new Error('Achievement channel not found');
+        if (channelId) {
+            this.achievementChannel = this.client.channels.cache.get(channelId);
+            if (!this.achievementChannel) {
+                console.warn(`Warning: Achievement channel ${channelId} not found`);
+            }
         }
     }
 
@@ -25,11 +28,11 @@ class AchievementTracker {
      */
     async checkAllUsers() {
         try {
-            const users = await User.find({ isActive: true });
-            console.log(`Checking achievements for ${users.length} users`);
+            const activeUsers = await activityTracker.getActiveUsers();
+            console.log(`Checking achievements for ${activeUsers.length} active users`);
 
-            for (const user of users) {
-                await this.checkUserAchievements(user.raUsername);
+            for (const username of activeUsers) {
+                await this.checkUserAchievements(username);
             }
         } catch (error) {
             console.error('Error checking all users:', error);
@@ -88,10 +91,13 @@ class AchievementTracker {
 
             // Check if achievement has already been announced
             if (progress.shouldAnnounceAchievement(achievement.achievementId)) {
-                // Update progress
+                // Update progress and record achievement for activity tracking
                 progress.currentAchievements++;
                 progress.announcedAchievements.push(achievement.achievementId);
                 progress.lastAchievementTimestamp = new Date(achievement.dateEarned);
+                
+                // Record achievement for activity tracking
+                await activityTracker.recordAchievement(username);
 
                 // If this is a current game, check for progression/win conditions
                 if (game) {
@@ -141,6 +147,17 @@ class AchievementTracker {
 
             // Only update if award type has changed
             if (awardType !== progress.lastAwardType) {
+                // Calculate time window for the award
+                const startDate = new Date(game.year, game.month - 1, 1, 0, 0, 0, 0);
+                const endDate = new Date(game.year, game.month, 0, 23, 59, 59, 999);
+                const now = new Date();
+
+                // Validate time window
+                if (now < startDate || now > endDate) {
+                    console.log(`Award for ${username} outside valid time window for ${game.title}`);
+                    return;
+                }
+
                 const award = await Award.findOneAndUpdate(
                     {
                         raUsername: username,
@@ -153,7 +170,9 @@ class AchievementTracker {
                         achievementCount: progress.currentAchievements,
                         totalAchievements: progress.totalGameAchievements,
                         userCompletion: progress.getCompletionPercentage() + '%',
-                        lastChecked: new Date()
+                        lastChecked: new Date(),
+                        startDate,
+                        endDate
                     },
                     { upsert: true, new: true }
                 );
