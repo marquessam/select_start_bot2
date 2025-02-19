@@ -19,7 +19,7 @@ const userSchema = new mongoose.Schema({
     discordId: {
         type: String,
         required: true,
-        unique: true
+        sparse: true
     },
     // Activity tracking
     activityTier: {
