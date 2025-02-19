@@ -1,5 +1,5 @@
-const mongoose = require('mongoose');
-const { AwardType } = require('../enums/AwardType');
+import mongoose from 'mongoose';
+import { AwardType } from '../config/config.js';
 
 const playerProgressSchema = new mongoose.Schema({
     raUsername: {
@@ -22,15 +22,66 @@ const playerProgressSchema = new mongoose.Schema({
         enum: Object.values(AwardType),
         default: AwardType.NONE
     },
-    // We'll use this to track which achievements have been announced
+    // Track which achievements have been announced
     announcedAchievements: [{
         type: String  // Achievement IDs
+    }],
+    // Track achievement counts for quick access
+    currentAchievements: {
+        type: Number,
+        default: 0
+    },
+    totalGameAchievements: {
+        type: Number,
+        default: 0
+    },
+    // Track progression and win conditions separately
+    progressionCompleted: [{
+        type: String  // Achievement IDs that match progression requirements
+    }],
+    winConditionsCompleted: [{
+        type: String  // Achievement IDs that match win conditions
     }]
 }, {
     timestamps: true
 });
 
-// Index for efficient queries
+// Add indexes for common queries
 playerProgressSchema.index({ raUsername: 1, gameId: 1 }, { unique: true });
+playerProgressSchema.index({ lastAchievementTimestamp: 1 });
 
-module.exports = mongoose.model('PlayerProgress', playerProgressSchema);
+// Helper methods for progress calculations
+playerProgressSchema.methods.getCompletionPercentage = function() {
+    if (this.totalGameAchievements === 0) return 0;
+    return ((this.currentAchievements / this.totalGameAchievements) * 100).toFixed(2);
+};
+
+playerProgressSchema.methods.hasParticipation = function() {
+    return this.currentAchievements > 0;
+};
+
+playerProgressSchema.methods.hasBeaten = function(game) {
+    // Check if all required progression achievements are completed
+    const hasProgression = !game.requireProgression || 
+        game.progression.every(achId => this.progressionCompleted.includes(achId));
+
+    // Check if win conditions are met based on game requirements
+    const hasWinConditions = game.requireAllWinConditions ?
+        game.winCondition.every(achId => this.winConditionsCompleted.includes(achId)) :
+        game.winCondition.some(achId => this.winConditionsCompleted.includes(achId));
+
+    return hasProgression && hasWinConditions;
+};
+
+playerProgressSchema.methods.hasMastery = function(game) {
+    if (!game.masteryCheck || game.type !== 'MONTHLY') return false;
+    return this.currentAchievements === this.totalGameAchievements;
+};
+
+// Method to check if an achievement should be announced
+playerProgressSchema.methods.shouldAnnounceAchievement = function(achievementId) {
+    return !this.announcedAchievements.includes(achievementId);
+};
+
+export const PlayerProgress = mongoose.model('PlayerProgress', playerProgressSchema);
+export default PlayerProgress;

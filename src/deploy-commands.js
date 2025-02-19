@@ -1,62 +1,52 @@
-// File: src/deploy-commands.js
-require('dotenv').config();
-const { REST, Routes } = require('discord.js');
-const fs = require('node:fs');
-const path = require('node:path');
+import { REST, Routes } from 'discord.js';
+import { config } from './config/config.js';
+import { readdirSync } from 'fs';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const commands = [];
-console.log('Starting command registration process...');
+const commandsPath = join(__dirname, 'commands');
 
-// Log environment variables (excluding sensitive data)
-console.log('CLIENT_ID exists:', !!process.env.CLIENT_ID);
-console.log('DISCORD_TOKEN exists:', !!process.env.DISCORD_TOKEN);
+// Load admin commands
+const adminCommandsPath = join(commandsPath, 'admin');
+const adminCommandFiles = readdirSync(adminCommandsPath).filter(file => file.endsWith('.js'));
 
-// Grab all command files
-const commandsPath = path.join(__dirname, 'commands');
-console.log('Commands directory:', commandsPath);
-
-const commandFiles = fs.readdirSync(commandsPath).filter(file => 
-    file.endsWith('.js') && 
-    file !== 'index.js'
-);
-console.log('Found command files:', commandFiles);
-
-for (const file of commandFiles) {
-    try {
-        const filePath = path.join(commandsPath, file);
-        const command = require(filePath);
-        
-        if (command.data && typeof command.data.toJSON === 'function') {
-            commands.push(command.data.toJSON());
-            console.log(`Successfully loaded command: ${file}`);
-        } else {
-            console.log(`Command ${file} is missing required data property`);
-        }
-    } catch (error) {
-        console.error(`Error loading command ${file}:`, error);
+for (const file of adminCommandFiles) {
+    const filePath = join(adminCommandsPath, file);
+    const command = await import(`file://${filePath}`);
+    if ('data' in command.default && 'execute' in command.default) {
+        commands.push(command.default.data.toJSON());
     }
 }
 
-console.log('Commands to register:', commands);
+// Load user commands
+const userCommandsPath = join(commandsPath, 'user');
+const userCommandFiles = readdirSync(userCommandsPath).filter(file => file.endsWith('.js'));
 
-const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
-
-(async () => {
-    try {
-        console.log(`Started refreshing ${commands.length} application (/) commands.`);
-
-        const data = await rest.put(
-            Routes.applicationCommands(process.env.CLIENT_ID),
-            { body: commands },
-        );
-
-        console.log(`Successfully reloaded ${data.length} application (/) commands.`);
-        console.log('Registered commands:', data.map(cmd => cmd.name));
-    } catch (error) {
-        console.error('Error deploying commands:', error);
-        console.error('Error details:', error.message);
-        if (error.response) {
-            console.error('API Response:', error.response.data);
-        }
+for (const file of userCommandFiles) {
+    const filePath = join(userCommandsPath, file);
+    const command = await import(`file://${filePath}`);
+    if ('data' in command.default && 'execute' in command.default) {
+        commands.push(command.default.data.toJSON());
     }
-})();
+}
+
+// Construct and prepare REST module
+const rest = new REST().setToken(config.discord.token);
+
+// Deploy commands
+try {
+    console.log(`Started refreshing ${commands.length} application (/) commands.`);
+
+    // The put method is used to fully refresh all commands
+    const data = await rest.put(
+        Routes.applicationGuildCommands(config.discord.clientId, config.discord.guildId),
+        { body: commands },
+    );
+
+    console.log(`Successfully reloaded ${data.length} application (/) commands.`);
+} catch (error) {
+    console.error(error);
+}

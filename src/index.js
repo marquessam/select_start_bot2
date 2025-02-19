@@ -1,324 +1,116 @@
-// File: src/index.js
-const { 
-    Client, 
-    GatewayIntentBits, 
-    Collection, 
-    Events 
-} = require('discord.js');
-const mongoose = require('mongoose');
-const fs = require('fs');
-const path = require('path');
+import { Client, Collection, Events, GatewayIntentBits } from 'discord.js';
+import { config, validateConfig } from './config/config.js';
+import { connectDB } from './models/index.js';
+import { initializeServices, achievementTracker } from './services/index.js';
+import { readdirSync } from 'fs';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
+import cron from 'node-cron';
 
-// Import core utilities and initializers
-const { initializeGames } = require('./utils/initializeGames');
-const { initializeUsers } = require('./utils/initializeUsers');
-const UsernameUtils = require('./utils/usernameUtils');
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
-// Import all services
-const UserTracker = require('./services/userTracker');
-const Scheduler = require('./services/scheduler');
-const LeaderboardService = require('./services/leaderboardService');
-const RetroAchievementsAPI = require('./services/retroAchievements');
-const AchievementFeedService = require('./services/achievementFeedService');
-const AchievementTrackingService = require('./services/achievementTrackingService');
-const AwardService = require('./services/awardService');
+// Validate environment variables
+validateConfig();
 
-// Load environment variables
-require('dotenv').config();
-
-// Verify Railway environment variables
-const requiredRailwayVars = [
-    'DISCORD_TOKEN',
-    'MONGODB_URI',
-    'RA_USERNAME',
-    'RA_API_KEY'
-];
-
-// Verify .env environment variables
-const requiredDotEnvVars = [
-    'ACHIEVEMENT_FEED_CHANNEL',
-    'REGISTRATION_CHANNEL_ID'
-];
-
-const missingRailwayVars = requiredRailwayVars.filter(varName => !process.env[varName]);
-const missingDotEnvVars = requiredDotEnvVars.filter(varName => !process.env[varName]);
-
-if (missingRailwayVars.length > 0) {
-    console.error('Missing required Railway environment variables:', missingRailwayVars.join(', '));
-    process.exit(1);
-}
-
-if (missingDotEnvVars.length > 0) {
-    console.error('Missing required .env variables:', missingDotEnvVars.join(', '));
-    process.exit(1);
-}
-
-// Create Discord client with required intents
+// Create Discord client
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent,
+        GatewayIntentBits.GuildMembers
     ]
 });
 
-// Initialize collections
+// Initialize commands collection
 client.commands = new Collection();
 
-// Global services
-let raAPI;
-let usernameUtils;
-let userTracker;
-let scheduler;
-let leaderboardService;
-let achievementFeedService;
-let achievementTrackingService;
-let awardService;
+// Load commands
+const loadCommands = async () => {
+    const commandsPath = join(__dirname, 'commands');
 
-/**
- * Load commands from the commands directory
- */
-async function loadCommands() {
-    const commandsPath = path.join(__dirname, 'commands');
-    const commandFiles = fs.readdirSync(commandsPath)
-        .filter(file => file.endsWith('.js') && file !== 'index.js');
+    // Load admin commands
+    const adminCommandsPath = join(commandsPath, 'admin');
+    const adminCommandFiles = readdirSync(adminCommandsPath).filter(file => file.endsWith('.js'));
 
-    for (const file of commandFiles) {
-        try {
-            const filePath = path.join(commandsPath, file);
-            const command = require(filePath);
-            
-            if (command.name && typeof command.execute === 'function') {
-                client.commands.set(command.name.toLowerCase(), command);
-                console.log(`Loaded command: ${command.name}`);
-            } else {
-                console.warn(`Command file ${file} is missing required name or execute property`);
-            }
-        } catch (error) {
-            console.error(`Error loading command file ${file}:`, error);
+    for (const file of adminCommandFiles) {
+        const filePath = join(adminCommandsPath, file);
+        const command = await import(`file://${filePath}`);
+        if ('data' in command.default && 'execute' in command.default) {
+            client.commands.set(command.default.data.name, command.default);
         }
     }
-}
 
-/**
- * Initialize MongoDB connection
- */
-async function initializeMongoDB() {
+    // Load user commands
+    const userCommandsPath = join(commandsPath, 'user');
+    const userCommandFiles = readdirSync(userCommandsPath).filter(file => file.endsWith('.js'));
+
+    for (const file of userCommandFiles) {
+        const filePath = join(userCommandsPath, file);
+        const command = await import(`file://${filePath}`);
+        if ('data' in command.default && 'execute' in command.default) {
+            client.commands.set(command.default.data.name, command.default);
+        }
+    }
+};
+
+// Handle interactions
+client.on(Events.InteractionCreate, async interaction => {
+    if (!interaction.isChatInputCommand()) return;
+
+    const command = client.commands.get(interaction.commandName);
+    if (!command) return;
+
     try {
-        await mongoose.connect(process.env.MONGODB_URI);
-        console.log('Connected to MongoDB');
+        await command.execute(interaction);
     } catch (error) {
-        console.error('Error connecting to MongoDB:', error);
-        throw error;
-    }
-}
-
-/**
- * Initialize all required services
- */
-async function initializeServices() {
-    try {
-        // Initialize core services first
-        raAPI = new RetroAchievementsAPI(
-            process.env.RA_USERNAME,
-            process.env.RA_API_KEY
-        );
-        console.log('RetroAchievements API client initialized');
+        console.error('Error executing command:', error);
+        const errorMessage = {
+            content: 'There was an error executing this command.',
+            ephemeral: true
+        };
         
-        // Initialize username utilities
-        usernameUtils = new UsernameUtils(raAPI);
-        console.log('Username utilities initialized');
-        
-        // Initialize user tracker with usernameUtils
-        userTracker = new UserTracker(usernameUtils);
-        await userTracker.initialize();
-        console.log('User tracker initialized');
-        
-        // Initialize achievement feed service
-        achievementFeedService = new AchievementFeedService(client, usernameUtils);
-        await achievementFeedService.initialize();
-        console.log('Achievement feed service initialized');
-        
-        // Initialize award service
-        awardService = new AwardService(achievementFeedService, usernameUtils);
-        console.log('Award service initialized');
-        
-        // Initialize achievement tracking service
-        achievementTrackingService = new AchievementTrackingService(
-            raAPI,
-            usernameUtils,
-            achievementFeedService
-        );
-        console.log('Achievement tracking service initialized');
-        
-        // Initialize scheduler with tracking service
-        scheduler = new Scheduler(client, achievementTrackingService);
-        await scheduler.initialize();
-        scheduler.startAll();
-        console.log('Scheduler initialized and started');
-        
-        // FIX: Pass usernameUtils instance to LeaderboardService
-        leaderboardService = new LeaderboardService(usernameUtils);
-        console.log('Leaderboard service initialized');
-        
-        // Store services on client for global access
-        Object.assign(client, {
-            userTracker,
-            scheduler,
-            leaderboardService,
-            achievementFeedService,
-            achievementTrackingService,
-            awardService,
-            raAPI,
-            usernameUtils
-        });
-        
-        // Verify services are properly attached
-        const requiredServices = [
-            'userTracker',
-            'scheduler',
-            'leaderboardService',
-            'achievementFeedService',
-            'achievementTrackingService',
-            'awardService',
-            'raAPI',
-            'usernameUtils'
-        ];
-        
-        const missingServices = requiredServices.filter(service => !client[service]);
-        if (missingServices.length > 0) {
-            throw new Error(`Missing required services: ${missingServices.join(', ')}`);
+        if (interaction.replied || interaction.deferred) {
+            await interaction.followUp(errorMessage);
+        } else {
+            await interaction.reply(errorMessage);
         }
-        
-        console.log('All services successfully attached to client');
-        
-        // Initialize users with usernameUtils
-        await initializeUsers(usernameUtils);
-        console.log('Users initialized');
-        
-        await initializeGames();
-        console.log('Games initialized');
-        
-        // Update leaderboard caches
-        await leaderboardService.updateAllLeaderboards();
-        console.log('Leaderboard caches updated on startup');
-        
-        // Schedule periodic leaderboard refresh
-        setInterval(() => {
-            leaderboardService.updateAllLeaderboards()
-                .then(() => console.log('Leaderboard caches refreshed successfully.'))
-                .catch(err => console.error('Error refreshing leaderboard caches:', err));
-        }, 5 * 60 * 1000); // Every 5 minutes
-    } catch (error) {
-        console.error('Error initializing services:', error);
-        throw error;
     }
-}
+});
 
-/**
- * Graceful shutdown handler
- */
-async function shutdown() {
-    console.log('Shutting down gracefully...');
-    
+// Handle ready event
+client.once(Events.ClientReady, async () => {
     try {
-        if (scheduler) {
-            await scheduler.shutdown();
-            console.log('Scheduler shut down');
-        }
-        
-        await mongoose.connection.close();
-        console.log('MongoDB connection closed');
-        
-        // Destroy the Discord client
-        if (client) {
-            client.destroy();
-            console.log('Discord client destroyed');
-        }
-    } catch (error) {
-        console.error('Error during shutdown:', error);
-    } finally {
-        process.exit(0);
-    }
-}
-
-/**
- * Main initialization function
- */
-async function main() {
-    try {
-        // Connect to MongoDB first
-        await initializeMongoDB();
-        console.log('MongoDB connected');
-        
-        // Login to Discord
-        await client.login(process.env.DISCORD_TOKEN);
         console.log(`Logged in as ${client.user.tag}`);
-        
-        // Wait for client to be ready
-        await new Promise((resolve) => {
-            if (client.isReady()) resolve();
-            else client.once('ready', resolve);
-        });
-        console.log('Discord client is ready');
-        
-        // Initialize all services
-        await initializeServices();
-        console.log('All services initialized');
-        
-        // Load commands last (after services are available)
+
+        // Connect to MongoDB
+        await connectDB();
+        console.log('Connected to MongoDB');
+
+        // Initialize services
+        await initializeServices(client, config);
+        console.log('Services initialized');
+
+        // Load commands
         await loadCommands();
         console.log('Commands loaded');
-        
+
+        // Schedule achievement checks
+        cron.schedule(`*/${config.bot.updateInterval} * * * *`, () => {
+            console.log('Running scheduled achievement check...');
+            achievementTracker.checkAllUsers().catch(error => {
+                console.error('Error in scheduled achievement check:', error);
+            });
+        });
+
+        console.log('Bot is ready!');
     } catch (error) {
-        console.error('Error during startup:', error);
+        console.error('Error during initialization:', error);
         process.exit(1);
     }
-}
-
-// Event Handlers
-
-// Ready event
-client.on('ready', () => {
-    console.log(`Logged in as ${client.user.tag}`);
-    console.log('Achievement Feed Channel:', process.env.ACHIEVEMENT_FEED_CHANNEL);
-    console.log('Registration Channel:', process.env.REGISTRATION_CHANNEL_ID);
 });
 
-// Message handler
-client.on(Events.MessageCreate, async message => {
-    try {
-        // Ignore messages from bots
-        if (message.author.bot) return;
-        
-        // Process RetroAchievements profile links if in registration channel
-        if (message.channel.id === process.env.REGISTRATION_CHANNEL_ID) {
-            await userTracker.processMessage(message);
-            return;
-        }
-        
-        // Handle commands with prefix "!"
-        if (message.content.startsWith('!')) {
-            const args = message.content.slice(1).trim().split(/ +/);
-            const commandName = args.shift().toLowerCase();
-            
-            const command = client.commands.get(commandName);
-            if (!command) return;
-            
-            try {
-                await command.execute(message, args);
-            } catch (error) {
-                console.error('Error executing command:', error);
-                await message.reply('There was an error executing that command.');
-            }
-        }
-    } catch (error) {
-        console.error('Error in message handler:', error);
-    }
-});
-
-// Error handlers
-client.on('error', error => {
+// Handle errors
+client.on(Events.Error, error => {
     console.error('Discord client error:', error);
 });
 
@@ -326,17 +118,8 @@ process.on('unhandledRejection', error => {
     console.error('Unhandled promise rejection:', error);
 });
 
-process.on('uncaughtException', error => {
-    console.error('Uncaught exception:', error);
-    shutdown();
-});
-
-// Handle termination signals
-process.on('SIGTERM', shutdown);
-process.on('SIGINT', shutdown);
-
-// Start the bot
-main().catch(error => {
-    console.error('Fatal error during startup:', error);
+// Login to Discord
+client.login(config.discord.token).catch(error => {
+    console.error('Error logging in to Discord:', error);
     process.exit(1);
 });
