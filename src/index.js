@@ -1,11 +1,13 @@
 import { Client, Collection, Events, GatewayIntentBits } from 'discord.js';
 import { config, validateConfig } from './config/config.js';
 import { connectDB } from './models/index.js';
-import { initializeServices, achievementTracker } from './services/index.js';
 import { readdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import cron from 'node-cron';
+import statsUpdateService from './services/statsUpdateService.js';
+import achievementFeedService from './services/achievementFeedService.js';
+import monthlyTasksService from './services/monthlyTasksService.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -86,21 +88,50 @@ client.once(Events.ClientReady, async () => {
         await connectDB();
         console.log('Connected to MongoDB');
 
-        // Initialize services
-        await initializeServices(client, config);
-        console.log('Services initialized');
-
         // Load commands
         await loadCommands();
         console.log('Commands loaded');
 
-        // Schedule achievement checks
-        cron.schedule(`*/${config.bot.updateInterval} * * * *`, () => {
-            console.log('Running scheduled achievement check...');
-            achievementTracker.checkAllUsers().catch(error => {
-                console.error('Error in scheduled achievement check:', error);
+        // Set client for services
+        achievementFeedService.setClient(client);
+        monthlyTasksService.setClient(client);
+
+        // Schedule stats updates every 30 minutes
+        cron.schedule('*/30 * * * *', () => {
+            console.log('Running scheduled stats update...');
+            statsUpdateService.start().catch(error => {
+                console.error('Error in scheduled stats update:', error);
             });
         });
+
+        // Schedule achievement feed checks every 15 minutes
+        cron.schedule('*/15 * * * *', () => {
+            console.log('Running achievement feed check...');
+            achievementFeedService.start().catch(error => {
+                console.error('Error in achievement feed check:', error);
+            });
+        });
+
+        // Schedule monthly tasks on the 1st of each month at 00:01
+        cron.schedule('1 0 1 * *', () => {
+            console.log('Running monthly tasks...');
+            monthlyTasksService.clearAllNominations().catch(error => {
+                console.error('Error clearing nominations:', error);
+            });
+            
+            // Create voting poll after a short delay to ensure nominations are cleared
+            setTimeout(() => {
+                monthlyTasksService.createVotingPoll().catch(error => {
+                    console.error('Error creating voting poll:', error);
+                });
+            }, 5000); // 5 second delay
+        });
+
+        // Run initial stats update
+        await statsUpdateService.start();
+        
+        // Run initial achievement feed check
+        await achievementFeedService.start();
 
         console.log('Bot is ready!');
     } catch (error) {
