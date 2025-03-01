@@ -1,4 +1,4 @@
-# RetroAchievements Discord Challenge Bot
+# Select Start Discord Bot
 
 A Discord bot for managing monthly RetroAchievements challenges, tracking user progress, and maintaining leaderboards.
 
