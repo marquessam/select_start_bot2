@@ -17,6 +17,8 @@ export const config = {
         clientId: process.env.DISCORD_CLIENT_ID,
         guildId: process.env.DISCORD_GUILD_ID,
         achievementChannelId: process.env.ACHIEVEMENT_CHANNEL,
+        announcementChannelId: process.env.ANNOUNCEMENT_CHANNEL,
+        votingChannelId: process.env.VOTING_CHANNEL,
         registrationChannelId: process.env.REGISTRATION_CHANNEL,
         registrationMonitorChannelId: process.env.REGISTRATION_MONITOR_CHANNEL,
         shadowGameChannelId: process.env.SHADOW_GAME_CHANNEL
@@ -59,6 +61,8 @@ export function validateConfig() {
 
     const optional = [
         'ACHIEVEMENT_CHANNEL',
+        'ANNOUNCEMENT_CHANNEL',
+        'VOTING_CHANNEL',
         'REGISTRATION_CHANNEL',
         'REGISTRATION_MONITOR_CHANNEL',
         'SHADOW_GAME_CHANNEL'
