@@ -7,9 +7,9 @@ export default {
     data: new SlashCommandBuilder()
         .setName('register')
         .setDescription('Register a new user for challenges')
-        .addUserOption(option =>
+        .addStringOption(option =>
             option.setName('discord_user')
-            .setDescription('The Discord user to register')
+            .setDescription('The Discord username or ID (can be for users not on server)')
             .setRequired(true))
         .addStringOption(option =>
             option.setName('ra_username')
@@ -28,13 +28,44 @@ export default {
         await interaction.deferReply();
 
         try {
-            const discordUser = interaction.options.getUser('discord_user');
+            const discordUserInput = interaction.options.getString('discord_user');
             const raUsername = interaction.options.getString('ra_username');
+            
+            let discordId = discordUserInput;
+            let discordTag = discordUserInput;
+            
+            // Try to fetch the Discord user if they're on the server
+            try {
+                // Check if input looks like a Discord ID (all numbers)
+                if (/^\d+$/.test(discordUserInput)) {
+                    const user = await interaction.client.users.fetch(discordUserInput);
+                    if (user) {
+                        discordId = user.id;
+                        discordTag = user.tag;
+                    }
+                } else {
+                    // Try to find the user in the server members by username
+                    const guild = interaction.guild;
+                    const members = await guild.members.fetch();
+                    const member = members.find(m => 
+                        m.user.username.toLowerCase() === discordUserInput.toLowerCase() || 
+                        m.user.tag.toLowerCase() === discordUserInput.toLowerCase()
+                    );
+                    
+                    if (member) {
+                        discordId = member.user.id;
+                        discordTag = member.user.tag;
+                    }
+                }
+            } catch (error) {
+                console.log(`User not found on server, continuing with provided input: ${discordUserInput}`);
+                // We'll continue with the provided input
+            }
 
             // Check if user already exists
             const existingUser = await User.findOne({
                 $or: [
-                    { discordId: discordUser.id },
+                    { discordId },
                     { raUsername: { $regex: new RegExp(`^${raUsername}$`, 'i') } }
                 ]
             });
@@ -42,7 +73,7 @@ export default {
             if (existingUser) {
                 return interaction.editReply(
                     'This user is already registered. ' +
-                    `${existingUser.discordId === discordUser.id ? 'Discord ID' : 'RA username'} is already in use.`
+                    `${existingUser.discordId === discordId ? 'Discord user' : 'RA username'} is already in use.`
                 );
             }
 
@@ -55,7 +86,7 @@ export default {
             // Create new user
             const user = new User({
                 raUsername,
-                discordId: discordUser.id
+                discordId
             });
 
             await user.save();
@@ -65,11 +96,11 @@ export default {
 
             return interaction.editReply({
                 content: `Successfully registered user!\n` +
-                    `Discord: ${discordUser.tag}\n` +
+                    `Discord: ${discordTag}\n` +
                     `RA Username: ${raUsername}\n` +
                     `RA Profile: https://retroachievements.org/user/${raUsername}\n` +
-                    `Total Points: ${raUserInfo.points}\n` +
-                    `Total Games: ${raUserInfo.totalGames}`
+                    `Total Points: ${raUserInfo?.points || 'N/A'}\n` +
+                    `Total Games: ${raUserInfo?.totalGames || 'N/A'}`
             });
 
         } catch (error) {
