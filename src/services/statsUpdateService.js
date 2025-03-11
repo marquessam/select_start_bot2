@@ -75,13 +75,25 @@ class StatsUpdateService {
                 challenge.monthly_challange_gameid
             );
 
-            // Calculate points for monthly challenge
+            // Check for specific achievements
+            const requiredAchievements = challenge.monthly_challange_achievement_ids || [];
+            const userAchievements = monthlyProgress.achievements || {};
+            
+            // Count how many of the required achievements the user has earned
+            let earnedRequiredCount = 0;
+            for (const achievementId of requiredAchievements) {
+                if (userAchievements[achievementId] && userAchievements[achievementId].dateEarned) {
+                    earnedRequiredCount++;
+                }
+            }
+            
+            // Calculate points for monthly challenge based on specific achievements
             let monthlyPoints = 0;
-            if (monthlyProgress.numAwardedToUser === challenge.monthly_challange_game_total) {
+            if (earnedRequiredCount === requiredAchievements.length && requiredAchievements.length > 0) {
                 monthlyPoints = 3; // Mastery
-            } else if (monthlyProgress.numAwardedToUser >= challenge.monthly_challange_goal) {
+            } else if (earnedRequiredCount >= challenge.monthly_challange_goal) {
                 monthlyPoints = 2; // Beaten
-            } else if (monthlyProgress.numAwardedToUser > 0) {
+            } else if (earnedRequiredCount > 0) {
                 monthlyPoints = 1; // Participation
             }
 
@@ -96,13 +108,25 @@ class StatsUpdateService {
                     challenge.shadow_challange_gameid
                 );
 
-                // Calculate points for shadow challenge
+                // Check for specific shadow achievements
+                const requiredShadowAchievements = challenge.shadow_challange_achievement_ids || [];
+                const userShadowAchievements = shadowProgress.achievements || {};
+                
+                // Count how many of the required shadow achievements the user has earned
+                let earnedRequiredShadowCount = 0;
+                for (const achievementId of requiredShadowAchievements) {
+                    if (userShadowAchievements[achievementId] && userShadowAchievements[achievementId].dateEarned) {
+                        earnedRequiredShadowCount++;
+                    }
+                }
+                
+                // Calculate points for shadow challenge based on specific achievements
                 let shadowPoints = 0;
-                if (shadowProgress.numAwardedToUser === challenge.shadow_challange_game_total) {
+                if (earnedRequiredShadowCount === requiredShadowAchievements.length && requiredShadowAchievements.length > 0) {
                     shadowPoints = 3;
-                } else if (shadowProgress.numAwardedToUser >= challenge.shadow_challange_goal) {
+                } else if (earnedRequiredShadowCount >= challenge.shadow_challange_goal) {
                     shadowPoints = 2;
-                } else if (shadowProgress.numAwardedToUser > 0) {
+                } else if (earnedRequiredShadowCount > 0) {
                     shadowPoints = 1;
                 }
 

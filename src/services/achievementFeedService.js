@@ -13,7 +13,6 @@ const AWARD_EMOJIS = {
 class AchievementFeedService {
     constructor() {
         this.client = null;
-        this.lastProgressMap = new Map(); // Store last known progress for each user
     }
 
     setClient(client) {
@@ -69,9 +68,26 @@ class AchievementFeedService {
     }
 
     async checkUserProgress(user, challenge, channel) {
-        const userKey = user.raUsername;
-        
         try {
+            // Get the challenge date key for storing in the database
+            const challengeDateKey = Challenge.formatDateKey ? 
+                Challenge.formatDateKey(challenge.date) : 
+                challenge.date.toISOString().split('T')[0];
+            
+            // Initialize announcedAchievements for this challenge if it doesn't exist
+            if (!user.announcedAchievements) {
+                user.announcedAchievements = new Map();
+            }
+            
+            // Get or initialize the achievement record for this challenge
+            let achievementRecord = user.announcedAchievements.get(challengeDateKey);
+            if (!achievementRecord) {
+                achievementRecord = {
+                    monthly: { award: null, achieved: 0 },
+                    shadow: { award: null, achieved: 0 }
+                };
+            }
+
             // Get current progress for monthly challenge
             const monthlyProgress = await retroAPI.getUserGameProgress(
                 user.raUsername,
@@ -81,41 +97,51 @@ class AchievementFeedService {
             // Get game info
             const gameInfo = await retroAPI.getGameInfo(challenge.monthly_challange_gameid);
 
-            // Calculate current award level
+            // Check for specific achievements
+            const requiredAchievements = challenge.monthly_challange_achievement_ids || [];
+            const userAchievements = monthlyProgress.achievements || {};
+            
+            // Count how many of the required achievements the user has earned
+            let earnedRequiredCount = 0;
+            for (const achievementId of requiredAchievements) {
+                if (userAchievements[achievementId] && userAchievements[achievementId].dateEarned) {
+                    earnedRequiredCount++;
+                }
+            }
+            
+            // Calculate current award level based on specific achievements
             let currentAward = null;
-            if (monthlyProgress.numAwardedToUser === challenge.monthly_challange_game_total) {
+            if (earnedRequiredCount === requiredAchievements.length && requiredAchievements.length > 0) {
                 currentAward = 'MASTERY';
-            } else if (monthlyProgress.numAwardedToUser >= challenge.monthly_challange_goal) {
+            } else if (earnedRequiredCount >= challenge.monthly_challange_goal) {
                 currentAward = 'BEATEN';
-            } else if (monthlyProgress.numAwardedToUser > 0) {
+            } else if (earnedRequiredCount > 0) {
                 currentAward = 'PARTICIPATION';
             }
 
-            // Get previous progress from our map
-            const lastProgress = this.lastProgressMap.get(userKey) || {
-                monthly: { achieved: 0, award: null },
-                shadow: { achieved: 0, award: null }
-            };
-
             // Check if award level has changed
-            if (currentAward && currentAward !== lastProgress.monthly.award) {
+            if (currentAward && currentAward !== achievementRecord.monthly.award) {
                 // User has reached a new award level, announce it
                 await this.announceAchievement(
                     channel,
                     user,
                     gameInfo,
                     currentAward,
-                    monthlyProgress.numAwardedToUser,
-                    challenge.monthly_challange_game_total,
+                    earnedRequiredCount,
+                    requiredAchievements.length,
                     false
                 );
+                
+                // Update the achievement record
+                achievementRecord.monthly = {
+                    award: currentAward,
+                    achieved: earnedRequiredCount
+                };
+                
+                // Save to database
+                user.announcedAchievements.set(challengeDateKey, achievementRecord);
+                await user.save();
             }
-
-            // Update last known progress
-            lastProgress.monthly = {
-                achieved: monthlyProgress.numAwardedToUser,
-                award: currentAward
-            };
 
             // Check shadow challenge if it's revealed
             if (challenge.shadow_challange_revealed && challenge.shadow_challange_gameid) {
@@ -126,39 +152,52 @@ class AchievementFeedService {
 
                 const shadowGameInfo = await retroAPI.getGameInfo(challenge.shadow_challange_gameid);
 
-                // Calculate current shadow award level
+                // Check for specific shadow achievements
+                const requiredShadowAchievements = challenge.shadow_challange_achievement_ids || [];
+                const userShadowAchievements = shadowProgress.achievements || {};
+                
+                // Count how many of the required shadow achievements the user has earned
+                let earnedRequiredShadowCount = 0;
+                for (const achievementId of requiredShadowAchievements) {
+                    if (userShadowAchievements[achievementId] && userShadowAchievements[achievementId].dateEarned) {
+                        earnedRequiredShadowCount++;
+                    }
+                }
+                
+                // Calculate current shadow award level based on specific achievements
                 let currentShadowAward = null;
-                if (shadowProgress.numAwardedToUser === challenge.shadow_challange_game_total) {
+                if (earnedRequiredShadowCount === requiredShadowAchievements.length && requiredShadowAchievements.length > 0) {
                     currentShadowAward = 'MASTERY';
-                } else if (shadowProgress.numAwardedToUser >= challenge.shadow_challange_goal) {
+                } else if (earnedRequiredShadowCount >= challenge.shadow_challange_goal) {
                     currentShadowAward = 'BEATEN';
-                } else if (shadowProgress.numAwardedToUser > 0) {
+                } else if (earnedRequiredShadowCount > 0) {
                     currentShadowAward = 'PARTICIPATION';
                 }
 
                 // Check if shadow award level has changed
-                if (currentShadowAward && currentShadowAward !== lastProgress.shadow.award) {
+                if (currentShadowAward && currentShadowAward !== achievementRecord.shadow.award) {
                     // User has reached a new shadow award level, announce it
                     await this.announceAchievement(
                         channel,
                         user,
                         shadowGameInfo,
                         currentShadowAward,
-                        shadowProgress.numAwardedToUser,
-                        challenge.shadow_challange_game_total,
+                        earnedRequiredShadowCount,
+                        requiredShadowAchievements.length,
                         true
                     );
+                    
+                    // Update the achievement record
+                    achievementRecord.shadow = {
+                        award: currentShadowAward,
+                        achieved: earnedRequiredShadowCount
+                    };
+                    
+                    // Save to database
+                    user.announcedAchievements.set(challengeDateKey, achievementRecord);
+                    await user.save();
                 }
-
-                // Update last known shadow progress
-                lastProgress.shadow = {
-                    achieved: shadowProgress.numAwardedToUser,
-                    award: currentShadowAward
-                };
             }
-
-            // Save updated progress to our map
-            this.lastProgressMap.set(userKey, lastProgress);
 
         } catch (error) {
             console.error(`Error checking achievements for user ${user.raUsername}:`, error);

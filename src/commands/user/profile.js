@@ -76,13 +76,25 @@ export default {
                 // Achievements
                 const mainGameInfo = mainGameProgress;
                 
-                // Calculate award level for monthly challenge
+                // Check for specific achievements
+                const requiredAchievements = currentChallenge.monthly_challange_achievement_ids || [];
+                const userAchievements = mainGameProgress.achievements || {};
+                
+                // Count how many of the required achievements the user has earned
+                let earnedRequiredCount = 0;
+                for (const achievementId of requiredAchievements) {
+                    if (userAchievements[achievementId] && userAchievements[achievementId].dateEarned) {
+                        earnedRequiredCount++;
+                    }
+                }
+                
+                // Calculate award level for monthly challenge based on specific achievements
                 let monthlyPoints = 0;
-                if (mainGameProgress.numAwardedToUser === currentChallenge.monthly_challange_game_total) {
+                if (earnedRequiredCount === requiredAchievements.length && requiredAchievements.length > 0) {
                     monthlyPoints = 3; // Mastery
-                } else if (mainGameProgress.numAwardedToUser >= currentChallenge.monthly_challange_goal) {
+                } else if (earnedRequiredCount >= currentChallenge.monthly_challange_goal) {
                     monthlyPoints = 2; // Beaten
-                } else if (mainGameProgress.numAwardedToUser > 0) {
+                } else if (earnedRequiredCount > 0) {
                     monthlyPoints = 1; // Participation
                 }
                 
@@ -92,10 +104,12 @@ export default {
                 
                 currentGamesProgress.push({
                     title: mainGameInfo.title,
-                    earned: mainGameProgress.numAwardedToUser,
-                    total: currentChallenge.monthly_challange_game_total,
+                    earned: earnedRequiredCount,
+                    total: requiredAchievements.length,
                     goal: currentChallenge.monthly_challange_goal,
-                    percentage: (mainGameProgress.numAwardedToUser / currentChallenge.monthly_challange_game_total * 100).toFixed(2)
+                    percentage: requiredAchievements.length > 0 ? 
+                        (earnedRequiredCount / requiredAchievements.length * 100).toFixed(2) : "0.00",
+                    specificAchievements: true
                 });
 
                 // If shadow challenge is revealed, get its progress too
@@ -106,13 +120,25 @@ export default {
                     );
                     const shadowGameInfo = shadowGameProgress;
 
-                    // Calculate award level for shadow challenge
+                    // Check for specific shadow achievements
+                    const requiredShadowAchievements = currentChallenge.shadow_challange_achievement_ids || [];
+                    const userShadowAchievements = shadowGameProgress.achievements || {};
+                    
+                    // Count how many of the required shadow achievements the user has earned
+                    let earnedRequiredShadowCount = 0;
+                    for (const achievementId of requiredShadowAchievements) {
+                        if (userShadowAchievements[achievementId] && userShadowAchievements[achievementId].dateEarned) {
+                            earnedRequiredShadowCount++;
+                        }
+                    }
+                    
+                    // Calculate award level for shadow challenge based on specific achievements
                     let shadowPoints = 0;
-                    if (shadowGameProgress.numAwardedToUser === currentChallenge.shadow_challange_game_total) {
+                    if (earnedRequiredShadowCount === requiredShadowAchievements.length && requiredShadowAchievements.length > 0) {
                         shadowPoints = 3; // Mastery
-                    } else if (shadowGameProgress.numAwardedToUser >= currentChallenge.shadow_challange_goal) {
+                    } else if (earnedRequiredShadowCount >= currentChallenge.shadow_challange_goal) {
                         shadowPoints = 2; // Beaten
-                    } else if (shadowGameProgress.numAwardedToUser > 0) {
+                    } else if (earnedRequiredShadowCount > 0) {
                         shadowPoints = 1; // Participation
                     }
                     
@@ -121,10 +147,12 @@ export default {
 
                     currentGamesProgress.push({
                         title: shadowGameInfo.title,
-                        earned: shadowGameProgress.numAwardedToUser,
-                        total: currentChallenge.shadow_challange_game_total,
+                        earned: earnedRequiredShadowCount,
+                        total: requiredShadowAchievements.length,
                         goal: currentChallenge.shadow_challange_goal,
-                        percentage: (shadowGameProgress.numAwardedToUser / currentChallenge.shadow_challange_game_total * 100).toFixed(2)
+                        percentage: requiredShadowAchievements.length > 0 ? 
+                            (earnedRequiredShadowCount / requiredShadowAchievements.length * 100).toFixed(2) : "0.00",
+                        specificAchievements: true
                     });
                 }
                 
@@ -153,27 +181,41 @@ export default {
                     const progress = await retroAPI.getUserGameProgress(raUsername, challenge.monthly_challange_gameid);
                     const gameInfo = progress;
                     
-                    if (progress.numAwardedToUser === challenge.monthly_challange_game_total) {
+                    // Check for specific achievements
+                    const requiredAchievements = challenge.monthly_challange_achievement_ids || [];
+                    const userAchievements = progress.achievements || {};
+                    
+                    // Count how many of the required achievements the user has earned
+                    let earnedRequiredCount = 0;
+                    for (const achievementId of requiredAchievements) {
+                        if (userAchievements[achievementId] && userAchievements[achievementId].dateEarned) {
+                            earnedRequiredCount++;
+                        }
+                    }
+                    
+                    if (earnedRequiredCount === requiredAchievements.length && requiredAchievements.length > 0) {
                         masteredGames.push({
                             title: gameInfo.title,
-                            earned: progress.numAwardedToUser,
-                            total: challenge.monthly_challange_game_total
+                            earned: earnedRequiredCount,
+                            total: requiredAchievements.length
                         });
                         challengePoints += 3;
-                    } else if (progress.numAwardedToUser >= challenge.monthly_challange_goal) {
+                    } else if (earnedRequiredCount >= challenge.monthly_challange_goal) {
                         beatenGames.push({
                             title: gameInfo.title,
-                            earned: progress.numAwardedToUser,
-                            total: challenge.monthly_challange_game_total,
-                            percentage: (progress.numAwardedToUser / challenge.monthly_challange_game_total * 100).toFixed(2)
+                            earned: earnedRequiredCount,
+                            total: requiredAchievements.length,
+                            percentage: requiredAchievements.length > 0 ? 
+                                (earnedRequiredCount / requiredAchievements.length * 100).toFixed(2) : "0.00"
                         });
                         challengePoints += 2;
-                    } else if (progress.numAwardedToUser > 0) {
+                    } else if (earnedRequiredCount > 0) {
                         participationGames.push({
                             title: gameInfo.title,
-                            earned: progress.numAwardedToUser,
-                            total: challenge.monthly_challange_game_total,
-                            percentage: (progress.numAwardedToUser / challenge.monthly_challange_game_total * 100).toFixed(2)
+                            earned: earnedRequiredCount,
+                            total: requiredAchievements.length,
+                            percentage: requiredAchievements.length > 0 ? 
+                                (earnedRequiredCount / requiredAchievements.length * 100).toFixed(2) : "0.00"
                         });
                         challengePoints += 1;
                     }
@@ -203,7 +245,8 @@ export default {
 
                     currentChallengesField += `**${game.title}**\n` +
                         `Progress: ${game.earned}/${game.total} (${game.percentage}%)\n` +
-                        `Current Award: ${award}\n\n`;
+                        `Current Award: ${award}\n` +
+                        `${game.specificAchievements ? 'Based on specific achievements' : ''}\n\n`;
                 }
                 embed.addFields({ name: '📊 Current Challenges', value: currentChallengesField || 'No current challenges' });
             }
