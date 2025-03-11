@@ -10,6 +10,11 @@ const challengeSchema = new mongoose.Schema({
         type: String,
         required: true
     },
+    monthly_challange_achievement_ids: {
+        type: [String],
+        required: true,
+        default: []
+    },
     monthly_challange_goal: {
         type: Number,
         required: true
@@ -21,6 +26,11 @@ const challengeSchema = new mongoose.Schema({
     shadow_challange_gameid: {
         type: String,
         required: false
+    },
+    shadow_challange_achievement_ids: {
+        type: [String],
+        required: false,
+        default: []
     },
     shadow_challange_goal: {
         type: Number,

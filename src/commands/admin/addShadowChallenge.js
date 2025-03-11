@@ -11,6 +11,10 @@ export default {
             option.setName('gameid')
             .setDescription('The RetroAchievements Game ID for the shadow game')
             .setRequired(true))
+        .addStringOption(option =>
+            option.setName('achievement_ids')
+            .setDescription('Comma-separated list of achievement IDs for the shadow challenge')
+            .setRequired(true))
         .addIntegerOption(option =>
             option.setName('goal')
             .setDescription('Number of achievements needed for beaten status')
@@ -30,7 +34,15 @@ export default {
 
         try {
             const gameId = interaction.options.getString('gameid');
+            const achievementIdsInput = interaction.options.getString('achievement_ids');
             const goal = interaction.options.getInteger('goal');
+            
+            // Parse achievement IDs
+            const achievementIds = achievementIdsInput.split(',').map(id => id.trim()).filter(id => id);
+            
+            if (achievementIds.length === 0) {
+                return interaction.editReply('Please provide at least one achievement ID.');
+            }
 
             // Get current date and find current month's challenge
             const now = new Date();
@@ -68,6 +80,7 @@ export default {
 
             // Update the current challenge with shadow game information
             currentChallenge.shadow_challange_gameid = gameId;
+            currentChallenge.shadow_challange_achievement_ids = achievementIds;
             currentChallenge.shadow_challange_goal = goal;
             currentChallenge.shadow_challange_game_total = totalAchievements;
             currentChallenge.shadow_challange_revealed = false;
@@ -76,7 +89,8 @@ export default {
 
             return interaction.editReply({
                 content: `Something stirs in the deep...\n` +
-                    `The shadow challenge will remain hidden until revealed.`
+                    `The shadow challenge will remain hidden until revealed.\n` +
+                    `Specific achievements required: ${achievementIds.length}`
             });
 
         } catch (error) {

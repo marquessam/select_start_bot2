@@ -3,7 +3,7 @@ import mongoose from 'mongoose';
 import { config } from '../config/config.js';
 import { User } from '../models/User.js';
 import { Challenge } from '../models/Challenge.js';
-import { withTransaction } from 'dbUtils.js';
+import { withTransaction } from './dbUtils.js';
 
 // Connect to MongoDB
 const connectDB = async () => {

@@ -23,6 +23,10 @@ export default {
             .setMinValue(2000)
             .setMaxValue(2100)
             .setRequired(true))
+        .addStringOption(option =>
+            option.setName('achievement_ids')
+            .setDescription('Comma-separated list of achievement IDs for the challenge')
+            .setRequired(true))
         .addIntegerOption(option =>
             option.setName('goal')
             .setDescription('Number of achievements needed for beaten status')
@@ -44,7 +48,15 @@ export default {
             const gameId = interaction.options.getString('gameid');
             const month = interaction.options.getInteger('month');
             const year = interaction.options.getInteger('year');
+            const achievementIdsInput = interaction.options.getString('achievement_ids');
             const goal = interaction.options.getInteger('goal');
+            
+            // Parse achievement IDs
+            const achievementIds = achievementIdsInput.split(',').map(id => id.trim()).filter(id => id);
+            
+            if (achievementIds.length === 0) {
+                return interaction.editReply('Please provide at least one achievement ID.');
+            }
 
             // Get game info to validate game exists
             const gameInfo = await retroAPI.getGameInfoExtended(gameId);
@@ -79,6 +91,7 @@ export default {
             const challenge = new Challenge({
                 date: challengeDate,
                 monthly_challange_gameid: gameId,
+                monthly_challange_achievement_ids: achievementIds,
                 monthly_challange_goal: goal,
                 monthly_challange_game_total: totalAchievements,
                 shadow_challange_revealed: false
@@ -88,7 +101,8 @@ export default {
 
             return interaction.editReply({
                 content: `Monthly challenge created for ${gameInfo.title} (${month}/${year})\n` +
-                    `Goal: ${goal} achievements out of ${totalAchievements} total achievements.`
+                    `Goal: ${goal} achievements out of ${totalAchievements} total achievements.\n` +
+                    `Specific achievements required: ${achievementIds.length}`
             });
 
         } catch (error) {
