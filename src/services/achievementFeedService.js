@@ -326,7 +326,7 @@ class AchievementFeedService {
 
             // Create embed
             const embed = new EmbedBuilder()
-                .setTitle(`${AWARD_EMOJIS[awardLevel]} New Achievement Unlocked!`)
+                .setTitle(`${AWARD_EMOJIS[awardLevel]} Challenge Complete!`)
                 .setColor(this.getColorForAward(awardLevel))
                 .setTimestamp();
 
