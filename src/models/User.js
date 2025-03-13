@@ -70,11 +70,6 @@ const userSchema = new mongoose.Schema({
         },
         default: () => new Map()
     },
-    // Add this new field to track achievement IDs that have been announced
-    announcedAchievementIds: {
-        type: [String],
-        default: []
-    },
     communityAwards: [communityAwardSchema],
     nominations: [nominationSchema]
 }, {
@@ -123,23 +118,6 @@ userSchema.methods.getPoints = function(date) {
 userSchema.methods.getShadowPoints = function(date) {
     const dateKey = this.constructor.formatDateKey(date instanceof Date ? date : new Date(date));
     return this.shadowChallenges.get(dateKey) || 0;
-};
-
-// Method to check if an achievement has been announced
-userSchema.methods.isAchievementAnnounced = function(achievementId) {
-    return this.announcedAchievementIds.includes(achievementId);
-};
-
-// Method to mark an achievement as announced
-userSchema.methods.markAchievementAnnounced = function(achievementId) {
-    if (!this.announcedAchievementIds.includes(achievementId)) {
-        this.announcedAchievementIds.push(achievementId);
-        
-        // Limit the size of the array to prevent excessive growth
-        if (this.announcedAchievementIds.length > 1000) {
-            this.announcedAchievementIds = this.announcedAchievementIds.slice(-1000);
-        }
-    }
 };
 
 // Method to get user's community awards for a specific year
