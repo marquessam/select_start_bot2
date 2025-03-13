@@ -301,6 +301,96 @@ class RetroAchievementsService {
             return false;
         }
     }
+
+    /**
+     * Get leaderboard entries for a specific leaderboard
+     * @param {number} leaderboardId - RetroAchievements leaderboard ID
+     * @param {number} offset - Starting position (0-based)
+     * @param {number} count - Number of entries to retrieve
+     * @returns {Promise<Array>} List of leaderboard entries
+     */
+    async getLeaderboardEntries(leaderboardId, offset = 0, count = 100) {
+        try {
+            // Use the rate limiter to make the API call
+            const entries = await this.rateLimiter.add(() => 
+                this.apiRequest(`leaderboard?i=${leaderboardId}&o=${offset}&c=${count}`)
+            );
+
+            // Process and standardize the entries
+            return this.processLeaderboardEntries(entries);
+        } catch (error) {
+            console.error(`Error fetching leaderboard entries for leaderboard ${leaderboardId}:`, error);
+            throw error;
+        }
+    }
+
+    /**
+     * Process leaderboard entries to standardize the format
+     * @param {Object|Array} data - Raw API response
+     * @returns {Array} Standardized leaderboard entries
+     */
+    processLeaderboardEntries(data) {
+        // Handle different API response formats
+        let entries = [];
+        
+        if (data.Results && Array.isArray(data.Results)) {
+            entries = data.Results.map(result => result.UserEntry || result);
+        } else if (Array.isArray(data)) {
+            entries = data;
+        } else if (data.Entries && Array.isArray(data.Entries)) {
+            entries = data.Entries;
+        } else if (typeof data === 'object') {
+            entries = Object.values(data);
+        }
+
+        // Convert entries to a standard format
+        return entries
+            .filter(entry => {
+                // Filter out invalid entries
+                const hasUser = Boolean(entry && (entry.User || entry.user));
+                const hasScore = Boolean(entry && (entry.Score || entry.score || entry.FormattedScore || entry.formattedScore));
+                return hasUser && hasScore;
+            })
+            .map(entry => {
+                // Standardize entry format
+                const rawUser = entry.User || entry.user || '';
+                const apiRank = entry.Rank || entry.rank || '0';
+                const formattedScore = entry.FormattedScore || entry.formattedScore;
+                const fallbackScore = entry.Score || entry.score || '0';
+                const trackTime = formattedScore ? formattedScore.trim() : fallbackScore.toString();
+                
+                return {
+                    ApiRank: parseInt(apiRank, 10),
+                    User: rawUser.trim(),
+                    TrackTime: trackTime,
+                    DateSubmitted: entry.DateSubmitted || entry.dateSubmitted || null,
+                };
+            })
+            .filter(entry => !isNaN(entry.ApiRank) && entry.User.length > 0);
+    }
+
+    /**
+     * Make a direct API request to the RetroAchievements API
+     * @param {string} endpoint - API endpoint
+     * @returns {Promise<Object>} API response
+     */
+    async apiRequest(endpoint) {
+        const baseUrl = 'https://retroachievements.org/API/';
+        const url = `${baseUrl}${endpoint}&z=${this.authorization.userName}&y=${this.authorization.webApiKey}`;
+        
+        try {
+            const response = await fetch(url);
+            
+            if (!response.ok) {
+                throw new Error(`API request failed with status ${response.status}`);
+            }
+            
+            return await response.json();
+        } catch (error) {
+            console.error(`API request failed: ${error.message}`);
+            throw error;
+        }
+    }
 }
 
 // Create and export a singleton instance
