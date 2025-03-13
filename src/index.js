@@ -8,7 +8,6 @@ import cron from 'node-cron';
 import statsUpdateService from './services/statsUpdateService.js';
 import achievementFeedService from './services/achievementFeedService.js';
 import monthlyTasksService from './services/monthlyTasksService.js';
-import arcadeService from './services/arcadeService.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -96,7 +95,6 @@ client.once(Events.ClientReady, async () => {
         // Set client for services
         achievementFeedService.setClient(client);
         monthlyTasksService.setClient(client);
-        arcadeService.setClient(client);
 
         // Schedule stats updates every 30 minutes
         cron.schedule('*/30 * * * *', () => {
@@ -129,23 +127,11 @@ client.once(Events.ClientReady, async () => {
             }, 5000); // 5 second delay
         });
 
-        // Schedule arcade service to run daily at 00:15 (just after midnight)
-        // This will check for completed racing challenges and award points
-        cron.schedule('15 0 * * *', () => {
-            console.log('Running scheduled arcade service...');
-            arcadeService.start().catch(error => {
-                console.error('Error in scheduled arcade service:', error);
-            });
-        });
-
         // Run initial stats update
         await statsUpdateService.start();
         
         // Run initial achievement feed check
         await achievementFeedService.start();
-        
-        // Run initial arcade service check
-        await arcadeService.start();
 
         console.log('Bot is ready!');
     } catch (error) {
