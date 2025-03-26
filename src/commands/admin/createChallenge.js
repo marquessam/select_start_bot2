@@ -76,16 +76,12 @@ export default {
             const challengeDate = new Date(year, month - 1, 1);
 
             // Check if a challenge already exists for this month
-            const existingChallenge = await Challenge.findOne({
+            const existingChallenge = await Challenge.findOneAndDelete({
                 date: {
                     $gte: challengeDate,
                     $lt: new Date(year, month, 1)
                 }
             });
-
-            if (existingChallenge) {
-                return interaction.editReply('A challenge already exists for this month.');
-            }
 
             // Create new challenge
             const challenge = new Challenge({
@@ -99,12 +95,22 @@ export default {
 
             await challenge.save();
 
-            return interaction.editReply({
-                content: `Monthly challenge created for ${gameInfo.title} (${month}/${year})\n` +
-                    `Required progression achievements: ${progressionAchievements.length}\n` +
-                    `Required win achievements: ${winAchievements.length}\n` +
-                    `Mastery: ${totalAchievements} total achievements.\n`
-            });
+            if (existingChallenge) {
+                return interaction.editReply({
+                    content: `Monthly challenge replaced for ${gameInfo.title} (${month}/${year})\n` +
+                        `(No longer ${existingChallenge.monthly_challange_gameid})\n` +
+                        `Required progression achievements: ${progressionAchievements.length}\n` +
+                        `Required win achievements: ${winAchievements.length}\n` +
+                        `Mastery: ${totalAchievements} total achievements.\n`
+                });
+            } else {
+                return interaction.editReply({
+                    content: `Monthly challenge created for ${gameInfo.title} (${month}/${year})\n` +
+                        `Required progression achievements: ${progressionAchievements.length}\n` +
+                        `Required win achievements: ${winAchievements.length}\n` +
+                        `Mastery: ${totalAchievements} total achievements.\n`
+                });
+            }
 
         } catch (error) {
             console.error('Error creating challenge:', error);
