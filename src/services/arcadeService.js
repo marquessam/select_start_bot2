@@ -73,7 +73,7 @@ class ArcadeService {
             }
             
             // Get all registered users
-            const users = await User.find({ isActive: true });
+            const users = await User.find({});
             
             // Create mapping of RA usernames (lowercase) to canonical usernames
             const registeredUsers = new Map();
@@ -82,9 +82,11 @@ class ArcadeService {
             }
             
             // Filter entries to only show registered users
-            const filteredEntries = allEntries.filter(entry => 
-                entry.User && registeredUsers.has(entry.User.toLowerCase())
-            );
+            const filteredEntries = allEntries.filter(entry => {
+                if (!entry.User) return false;
+                const username = entry.User.toLowerCase().trim();
+                return username && registeredUsers.has(username);
+            });
 
             if (filteredEntries.length === 0) {
                 console.log('No registered users found in the leaderboard');

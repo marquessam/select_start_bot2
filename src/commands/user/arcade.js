@@ -125,9 +125,9 @@ export default {
                 return interaction.editReply('No leaderboard entries found for this board.');
             }
             
-            // Get all registered users
-            const users = await User.find({ isActive: true });
-            
+            // Get all registered users (remove the non-existent isActive filter)
+            const users = await User.find({});
+
             // Create mapping of RA usernames (lowercase) to canonical usernames
             const registeredUsers = new Map();
             for (const user of users) {
@@ -135,9 +135,11 @@ export default {
             }
             
             // Filter entries to only show registered users
-            const filteredEntries = leaderboardEntries.filter(entry => 
-                entry.User && registeredUsers.has(entry.User.toLowerCase())
-            );
+            const filteredEntries = leaderboardEntries.filter(entry => {
+                if (!entry.User) return false;
+                const username = entry.User.toLowerCase().trim();
+                return username && registeredUsers.has(username);
+            });
             
             // Build the leaderboard embed
             const embed = new EmbedBuilder()
@@ -213,7 +215,7 @@ export default {
             }
             
             // Get all registered users
-            const users = await User.find({ isActive: true });
+            const users = await User.find({});
             
             // Create mapping of RA usernames (lowercase) to canonical usernames
             const registeredUsers = new Map();
@@ -222,9 +224,11 @@ export default {
             }
             
             // Filter entries to only show registered users
-            const filteredEntries = leaderboardEntries.filter(entry => 
-                entry.User && registeredUsers.has(entry.User.toLowerCase())
-            );
+            const filteredEntries = leaderboardEntries.filter(entry => {
+                if (!entry.User) return false;
+                const username = entry.User.toLowerCase().trim();
+                return username && registeredUsers.has(username);
+            });
             
             // Build the leaderboard embed
             const embed = new EmbedBuilder()
