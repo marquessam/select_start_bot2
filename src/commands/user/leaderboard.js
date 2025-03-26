@@ -60,9 +60,9 @@ export default {
                     let points = 0;
 
                     // Get the user's earned achievements from the progress data
-                    const userEarnedAchievements = progress.achievements
-                        .filter(ach => ach.dateEarned !== null)
-                        .map(ach => ach.id);
+                    const userEarnedAchievements = Object.entries(progress.achievements)
+                        .filter(([id, data]) => data.dateEarned !== null)
+                        .map(([id, data]) => id);
 
                     // Check if user has all progression achievements
                     const hasAllProgressionAchievements = currentChallenge.monthly_challange_progression_achievements.every(
