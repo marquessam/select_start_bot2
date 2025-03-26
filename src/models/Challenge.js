@@ -15,13 +15,19 @@ const challengeSchema = new mongoose.Schema({
         required: true,
         default: []
     },
-    monthly_challange_goal: {
-        type: Number,
-        required: true
-    },
     monthly_challange_game_total: {
         type: Number,
         required: true
+    },
+    monthly_challange_progression_achievements: {
+        type: [String],
+        required: false,
+        default: []
+    },
+    monthly_challange_win_achievements: {
+        type: [String],
+        required: false,
+        default: []
     },
     shadow_challange_gameid: {
         type: String,
@@ -32,13 +38,19 @@ const challengeSchema = new mongoose.Schema({
         required: false,
         default: []
     },
-    shadow_challange_goal: {
-        type: Number,
-        required: false
-    },
     shadow_challange_game_total: {
         type: Number,
         required: false
+    },
+    shadow_challange_progression_achievements: {
+        type: [String],
+        required: false,
+        default: []
+    },
+    shadow_challange_win_achievements: {
+        type: [String],
+        required: false,
+        default: []
     },
     shadow_challange_revealed: {
         type: Boolean,

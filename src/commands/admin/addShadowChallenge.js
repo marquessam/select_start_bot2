@@ -12,14 +12,13 @@ export default {
             .setDescription('The RetroAchievements Game ID for the shadow game')
             .setRequired(true))
         .addStringOption(option =>
-            option.setName('achievement_ids')
-            .setDescription('Comma-separated list of achievement IDs for the shadow challenge')
+            option.setName('progression_achievements')
+            .setDescription('Comma-separated list of progression achievement IDs')
             .setRequired(true))
-        .addIntegerOption(option =>
-            option.setName('goal')
-            .setDescription('Number of achievements needed for beaten status')
-            .setRequired(true)
-            .setMinValue(1)),
+        .addStringOption(option =>
+            option.setName('win_achievements')
+            .setDescription('Comma-separated list of win achievement IDs')
+            .setRequired(false)),
 
     async execute(interaction) {
         // Check if user has admin role
@@ -34,14 +33,15 @@ export default {
 
         try {
             const gameId = interaction.options.getString('gameid');
-            const achievementIdsInput = interaction.options.getString('achievement_ids');
-            const goal = interaction.options.getInteger('goal');
+            const progressionAchievementsInput = interaction.options.getString('progression_achievements');
+            const winAchievementsInput = interaction.options.getString('win_achievements');
             
-            // Parse achievement IDs
-            const achievementIds = achievementIdsInput.split(',').map(id => id.trim()).filter(id => id);
+            // Parse progression and win achievements
+            const progressionAchievements = progressionAchievementsInput.split(',').map(id => id.trim()).filter(id => id);
+            const winAchievements = winAchievementsInput ? winAchievementsInput.split(',').map(id => id.trim()).filter(id => id) : [];
             
-            if (achievementIds.length === 0) {
-                return interaction.editReply('Please provide at least one achievement ID.');
+            if (progressionAchievements.length === 0) {
+                return interaction.editReply('Please provide at least one progression achievement ID.');
             }
 
             // Get current date and find current month's challenge
@@ -80,8 +80,8 @@ export default {
 
             // Update the current challenge with shadow game information
             currentChallenge.shadow_challange_gameid = gameId;
-            currentChallenge.shadow_challange_achievement_ids = achievementIds;
-            currentChallenge.shadow_challange_goal = goal;
+            currentChallenge.shadow_challange_progression_achievements = progressionAchievements;
+            currentChallenge.shadow_challange_win_achievements = winAchievements;
             currentChallenge.shadow_challange_game_total = totalAchievements;
             currentChallenge.shadow_challange_revealed = false;
 
@@ -89,8 +89,7 @@ export default {
 
             return interaction.editReply({
                 content: `Something stirs in the deep...\n` +
-                    `The shadow challenge will remain hidden until revealed.\n` +
-                    `Specific achievements required: ${achievementIds.length}`
+                    `The shadow challenge will remain hidden until revealed.\n`
             });
 
         } catch (error) {

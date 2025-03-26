@@ -39,17 +39,21 @@ export default {
                 // Format dates
                 const startDate = currentMonthStart.toISOString().split('T')[0];
                 
+                // Get progression and win achievement counts
+                const progressionCount = currentChallenge.monthly_challange_progression_achievements.length;
+                const winCount = currentChallenge.monthly_challange_win_achievements.length;
+                
                 // Build challenge text
                 let challengeText = 
                     `**GAME:** "${gameInfo.title}"\n` +
                     `**DATES:** ${startDate} to ${lastDayOfMonth}\n\n` +
                     `**POINTS AVAILABLE:**\n` +
                     `- Participation: 1 point\n` +
-                    `- Game Completion: 3 points (${currentChallenge.monthly_challange_goal} achievements)\n` +
-                    `- Mastery: 3 points (${currentChallenge.monthly_challange_game_total} achievements)\n\n` +
+                    `- Beaten: 3 points\n` +
+                    `- Mastery: 3 points\n\n` +
                     `**RULES:**\n` +
-                    `- Complete at least ${currentChallenge.monthly_challange_goal} of ${currentChallenge.monthly_challange_game_total} achievements\n` +
-                    `- Earn "beaten" status by reaching the goal\n` +
+                    `- To earn "beaten" status, all ${progressionCount} progression achievements must be completed` +
+                    (winCount > 0 ? ` and at least one of the ${winCount} win achievements must be earned` : '') + `\n` +
                     `- Earn "mastery" status by completing all achievements`;
                 
                 embed.addFields({ name: 'MONTHLY CHALLENGE', value: challengeText });
@@ -70,11 +74,16 @@ export default {
                     // Shadow game is revealed - show the game info
                     const shadowGameInfo = await retroAPI.getGameInfo(currentChallenge.shadow_challange_gameid);
                     
+                    // Get progression and win achievement counts for shadow
+                    const progressionCount = currentChallenge.shadow_challange_progression_achievements.length;
+                    const winCount = currentChallenge.shadow_challange_win_achievements.length;
+                    
                     let shadowText = 
                         `**GAME:** ${shadowGameInfo.title}\n\n` +
                         `**POINTS AVAILABLE:**\n` +
                         `- Participation: 1 point\n` +
-                        `- Completion: 3 points (${currentChallenge.shadow_challange_goal} achievements)\n` +
+                        `- Completion: 3 points (requires all ${progressionCount} progression achievements` +
+                        (winCount > 0 ? ` and at least one win achievement` : '') + `)\n` +
                         `- Mastery: 3 points (${currentChallenge.shadow_challange_game_total} achievements)\n\n` +
                         `This challenge runs parallel to the monthly challenge.`;
                     

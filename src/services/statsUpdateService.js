@@ -87,13 +87,38 @@ class StatsUpdateService {
                 }
             }
             
-            // Calculate points for monthly challenge based on specific achievements
+            // Check for progression achievements
+            const progressionAchievements = challenge.monthly_challange_progression_achievements || [];
+            let earnedProgressionCount = 0;
+            for (const achievementId of progressionAchievements) {
+                if (userAchievements[achievementId] && userAchievements[achievementId].dateEarned) {
+                    earnedProgressionCount++;
+                }
+            }
+            
+            // Check for win achievements
+            const winAchievements = challenge.monthly_challange_win_achievements || [];
+            let earnedWinCount = 0;
+            for (const achievementId of winAchievements) {
+                if (userAchievements[achievementId] && userAchievements[achievementId].dateEarned) {
+                    earnedWinCount++;
+                }
+            }
+            
+            // Calculate points for monthly challenge based on progression and win achievements
             let monthlyPoints = 0;
+            
+            // For mastery, all achievements must be earned
             if (earnedRequiredCount === requiredAchievements.length && requiredAchievements.length > 0) {
                 monthlyPoints = 3; // Mastery
-            } else if (earnedRequiredCount >= challenge.monthly_challange_goal) {
+            } 
+            // For beaten status, all progression achievements must be earned AND at least one win achievement (if any exist)
+            else if (earnedProgressionCount === progressionAchievements.length && 
+                     (winAchievements.length === 0 || earnedWinCount > 0)) {
                 monthlyPoints = 2; // Beaten
-            } else if (earnedRequiredCount > 0) {
+            } 
+            // For participation, at least one achievement must be earned
+            else if (earnedRequiredCount > 0) {
                 monthlyPoints = 1; // Participation
             }
 
@@ -120,14 +145,39 @@ class StatsUpdateService {
                     }
                 }
                 
-                // Calculate points for shadow challenge based on specific achievements
+                // Check for progression shadow achievements
+                const progressionShadowAchievements = challenge.shadow_challange_progression_achievements || [];
+                let earnedProgressionShadowCount = 0;
+                for (const achievementId of progressionShadowAchievements) {
+                    if (userShadowAchievements[achievementId] && userShadowAchievements[achievementId].dateEarned) {
+                        earnedProgressionShadowCount++;
+                    }
+                }
+                
+                // Check for win shadow achievements
+                const winShadowAchievements = challenge.shadow_challange_win_achievements || [];
+                let earnedWinShadowCount = 0;
+                for (const achievementId of winShadowAchievements) {
+                    if (userShadowAchievements[achievementId] && userShadowAchievements[achievementId].dateEarned) {
+                        earnedWinShadowCount++;
+                    }
+                }
+                
+                // Calculate points for shadow challenge based on progression and win achievements
                 let shadowPoints = 0;
+                
+                // For mastery, all achievements must be earned
                 if (earnedRequiredShadowCount === requiredShadowAchievements.length && requiredShadowAchievements.length > 0) {
-                    shadowPoints = 3;
-                } else if (earnedRequiredShadowCount >= challenge.shadow_challange_goal) {
-                    shadowPoints = 2;
-                } else if (earnedRequiredShadowCount > 0) {
-                    shadowPoints = 1;
+                    shadowPoints = 3; // Mastery
+                } 
+                // For beaten status, all progression achievements must be earned AND at least one win achievement (if any exist)
+                else if (earnedProgressionShadowCount === progressionShadowAchievements.length && 
+                         (winShadowAchievements.length === 0 || earnedWinShadowCount > 0)) {
+                    shadowPoints = 2; // Beaten
+                } 
+                // For participation, at least one achievement must be earned
+                else if (earnedRequiredShadowCount > 0) {
+                    shadowPoints = 1; // Participation
                 }
 
                 // Update shadow challenge progress

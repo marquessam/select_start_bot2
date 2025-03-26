@@ -69,42 +69,15 @@ class AchievementFeedService {
 
     async checkUserProgress(user, challenge, channel) {
         try {
-            // Get the challenge date key for storing in the database
-            const challengeDateKey = Challenge.formatDateKey ? 
-                Challenge.formatDateKey(challenge.date) : 
-                challenge.date.toISOString().split('T')[0];
-            
-            // Initialize announcedAchievements for this challenge if it doesn't exist
-            if (!user.announcedAchievements) {
-                user.announcedAchievements = new Map();
-            }
-            
-            // Get or initialize the achievement record for this challenge
-            let achievementRecord = user.announcedAchievements.get(challengeDateKey);
-            if (!achievementRecord) {
-                achievementRecord = {
-                    monthly: { award: null, achieved: 0, announcedAchievements: [] },
-                    shadow: { award: null, achieved: 0, announcedAchievements: [] }
-                };
-            }
-            
-            // Ensure the announcedAchievements arrays exist
-            if (!achievementRecord.monthly.announcedAchievements) {
-                achievementRecord.monthly.announcedAchievements = [];
-            }
-            if (!achievementRecord.shadow.announcedAchievements) {
-                achievementRecord.shadow.announcedAchievements = [];
-            }
-
             // Get current progress for monthly challenge
             const monthlyProgress = await retroAPI.getUserGameProgress(
                 user.raUsername,
                 challenge.monthly_challange_gameid
             );
-
+    
             // Get game info
             const gameInfo = await retroAPI.getGameInfo(challenge.monthly_challange_gameid);
-
+    
             // Check for specific achievements
             const requiredAchievements = challenge.monthly_challange_achievement_ids || [];
             const userAchievements = monthlyProgress.achievements || {};
@@ -117,8 +90,11 @@ class AchievementFeedService {
                 if (userAchievements[achievementId] && userAchievements[achievementId].dateEarned) {
                     earnedRequiredCount++;
                     
+                    // Generate unique achievement identifier string
+                    const achievementIdentifier = achievementId.toString();
+                    
                     // Check if this achievement has already been announced
-                    if (!achievementRecord.monthly.announcedAchievements.includes(achievementId)) {
+                    if (!user.announcedAchievements.includes(achievementIdentifier)) {
                         // This is a newly earned achievement, announce it
                         await this.announceIndividualAchievement(
                             channel,
@@ -129,27 +105,48 @@ class AchievementFeedService {
                         );
                         
                         // Add to the list of announced achievements
-                        achievementRecord.monthly.announcedAchievements.push(achievementId);
+                        user.announcedAchievements.push(achievementIdentifier);
                         
                         // Save to database after each announcement to prevent duplicates
-                        user.announcedAchievements.set(challengeDateKey, achievementRecord);
                         await user.save();
                     }
                 }
             }
             
-            // Calculate current award level based on specific achievements
+            // Check for progression achievements
+            const progressionAchievements = challenge.monthly_challange_progression_achievements || [];
+            let earnedProgressionCount = 0;
+            for (const achievementId of progressionAchievements) {
+                if (userAchievements[achievementId] && userAchievements[achievementId].dateEarned) {
+                    earnedProgressionCount++;
+                }
+            }
+            
+            // Check for win achievements
+            const winAchievements = challenge.monthly_challange_win_achievements || [];
+            let earnedWinCount = 0;
+            for (const achievementId of winAchievements) {
+                if (userAchievements[achievementId] && userAchievements[achievementId].dateEarned) {
+                    earnedWinCount++;
+                }
+            }
+            
+            // Calculate current award level based on progression and win achievements
             let currentAward = null;
             if (earnedRequiredCount === requiredAchievements.length && requiredAchievements.length > 0) {
                 currentAward = 'MASTERY';
-            } else if (earnedRequiredCount >= challenge.monthly_challange_goal) {
+            } else if (earnedProgressionCount === progressionAchievements.length && 
+                       (winAchievements.length === 0 || earnedWinCount > 0)) {
                 currentAward = 'BEATEN';
             } else if (earnedRequiredCount > 0) {
                 currentAward = 'PARTICIPATION';
             }
-
-            // Check if award level has changed
-            if (currentAward && currentAward !== achievementRecord.monthly.award) {
+    
+            // Generate award identifier
+            const monthlyAwardIdentifier = `award:${challenge.monthly_challange_gameid}:${currentAward}`;
+            
+            // Check if award has been announced
+            if (currentAward && !user.announcedAchievements.includes(monthlyAwardIdentifier)) {
                 // User has reached a new award level, announce it
                 await this.announceAchievement(
                     channel,
@@ -161,26 +158,20 @@ class AchievementFeedService {
                     false
                 );
                 
-                // Update the achievement record
-                achievementRecord.monthly = {
-                    award: currentAward,
-                    achieved: earnedRequiredCount
-                };
-                
-                // Save to database
-                user.announcedAchievements.set(challengeDateKey, achievementRecord);
+                // Add to announced achievements
+                user.announcedAchievements.push(monthlyAwardIdentifier);
                 await user.save();
             }
-
+    
             // Check shadow challenge if it's revealed
             if (challenge.shadow_challange_revealed && challenge.shadow_challange_gameid) {
                 const shadowProgress = await retroAPI.getUserGameProgress(
                     user.raUsername,
                     challenge.shadow_challange_gameid
                 );
-
+    
                 const shadowGameInfo = await retroAPI.getGameInfo(challenge.shadow_challange_gameid);
-
+    
                 // Check for specific shadow achievements
                 const requiredShadowAchievements = challenge.shadow_challange_achievement_ids || [];
                 const userShadowAchievements = shadowProgress.achievements || {};
@@ -193,8 +184,11 @@ class AchievementFeedService {
                     if (userShadowAchievements[achievementId] && userShadowAchievements[achievementId].dateEarned) {
                         earnedRequiredShadowCount++;
                         
+                        // Generate unique achievement identifier string
+                        const shadowAchievementIdentifier = achievementId.toString();
+                        
                         // Check if this achievement has already been announced
-                        if (!achievementRecord.shadow.announcedAchievements.includes(achievementId)) {
+                        if (!user.announcedAchievements.includes(shadowAchievementIdentifier)) {
                             // This is a newly earned achievement, announce it
                             await this.announceIndividualAchievement(
                                 channel,
@@ -205,27 +199,48 @@ class AchievementFeedService {
                             );
                             
                             // Add to the list of announced achievements
-                            achievementRecord.shadow.announcedAchievements.push(achievementId);
+                            user.announcedAchievements.push(shadowAchievementIdentifier);
                             
                             // Save to database after each announcement to prevent duplicates
-                            user.announcedAchievements.set(challengeDateKey, achievementRecord);
                             await user.save();
                         }
                     }
                 }
                 
-                // Calculate current shadow award level based on specific achievements
+                // Check for progression shadow achievements
+                const progressionShadowAchievements = challenge.shadow_challange_progression_achievements || [];
+                let earnedProgressionShadowCount = 0;
+                for (const achievementId of progressionShadowAchievements) {
+                    if (userShadowAchievements[achievementId] && userShadowAchievements[achievementId].dateEarned) {
+                        earnedProgressionShadowCount++;
+                    }
+                }
+                
+                // Check for win shadow achievements
+                const winShadowAchievements = challenge.shadow_challange_win_achievements || [];
+                let earnedWinShadowCount = 0;
+                for (const achievementId of winShadowAchievements) {
+                    if (userShadowAchievements[achievementId] && userShadowAchievements[achievementId].dateEarned) {
+                        earnedWinShadowCount++;
+                    }
+                }
+                
+                // Calculate current shadow award level based on progression and win achievements
                 let currentShadowAward = null;
                 if (earnedRequiredShadowCount === requiredShadowAchievements.length && requiredShadowAchievements.length > 0) {
                     currentShadowAward = 'MASTERY';
-                } else if (earnedRequiredShadowCount >= challenge.shadow_challange_goal) {
+                } else if (earnedProgressionShadowCount === progressionShadowAchievements.length && 
+                           (winShadowAchievements.length === 0 || earnedWinShadowCount > 0)) {
                     currentShadowAward = 'BEATEN';
                 } else if (earnedRequiredShadowCount > 0) {
                     currentShadowAward = 'PARTICIPATION';
                 }
-
-                // Check if shadow award level has changed
-                if (currentShadowAward && currentShadowAward !== achievementRecord.shadow.award) {
+    
+                // Generate shadow award identifier
+                const shadowAwardIdentifier = `award:${challenge.shadow_challange_gameid}:${currentShadowAward}`;
+                
+                // Check if shadow award has been announced
+                if (currentShadowAward && !user.announcedAchievements.includes(shadowAwardIdentifier)) {
                     // User has reached a new shadow award level, announce it
                     await this.announceAchievement(
                         channel,
@@ -237,18 +252,12 @@ class AchievementFeedService {
                         true
                     );
                     
-                    // Update the achievement record
-                    achievementRecord.shadow = {
-                        award: currentShadowAward,
-                        achieved: earnedRequiredShadowCount
-                    };
-                    
-                    // Save to database
-                    user.announcedAchievements.set(challengeDateKey, achievementRecord);
+                    // Add to announced achievements
+                    user.announcedAchievements.push(shadowAwardIdentifier);
                     await user.save();
                 }
             }
-
+    
         } catch (error) {
             console.error(`Error checking achievements for user ${user.raUsername}:`, error);
         }

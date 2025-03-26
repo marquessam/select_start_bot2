@@ -24,14 +24,13 @@ export default {
             .setMaxValue(2100)
             .setRequired(true))
         .addStringOption(option =>
-            option.setName('achievement_ids')
-            .setDescription('Comma-separated list of achievement IDs for the challenge')
+            option.setName('progression_achievements')
+            .setDescription('Comma-separated list of progression achievement IDs')
             .setRequired(true))
-        .addIntegerOption(option =>
-            option.setName('goal')
-            .setDescription('Number of achievements needed for beaten status')
-            .setRequired(true)
-            .setMinValue(1)),
+        .addStringOption(option =>
+            option.setName('win_achievements')
+            .setDescription('Comma-separated list of win achievement IDs')
+            .setRequired(false)),
 
     async execute(interaction) {
         // Check if user has admin role
@@ -48,14 +47,15 @@ export default {
             const gameId = interaction.options.getString('gameid');
             const month = interaction.options.getInteger('month');
             const year = interaction.options.getInteger('year');
-            const achievementIdsInput = interaction.options.getString('achievement_ids');
-            const goal = interaction.options.getInteger('goal');
+            const progressionAchievementsInput = interaction.options.getString('progression_achievements');
+            const winAchievementsInput = interaction.options.getString('win_achievements');
             
-            // Parse achievement IDs
-            const achievementIds = achievementIdsInput.split(',').map(id => id.trim()).filter(id => id);
+            // Parse progression and win achievements
+            const progressionAchievements = progressionAchievementsInput.split(',').map(id => id.trim()).filter(id => id);
+            const winAchievements = winAchievementsInput ? winAchievementsInput.split(',').map(id => id.trim()).filter(id => id) : [];
             
-            if (achievementIds.length === 0) {
-                return interaction.editReply('Please provide at least one achievement ID.');
+            if (progressionAchievements.length === 0) {
+                return interaction.editReply('Please provide at least one progression achievement ID.');
             }
 
             // Get game info to validate game exists
@@ -91,8 +91,8 @@ export default {
             const challenge = new Challenge({
                 date: challengeDate,
                 monthly_challange_gameid: gameId,
-                monthly_challange_achievement_ids: achievementIds,
-                monthly_challange_goal: goal,
+                monthly_challange_progression_achievements: progressionAchievements,
+                monthly_challange_win_achievements: winAchievements,
                 monthly_challange_game_total: totalAchievements,
                 shadow_challange_revealed: false
             });
@@ -101,8 +101,9 @@ export default {
 
             return interaction.editReply({
                 content: `Monthly challenge created for ${gameInfo.title} (${month}/${year})\n` +
-                    `Goal: ${goal} achievements out of ${totalAchievements} total achievements.\n` +
-                    `Specific achievements required: ${achievementIds.length}`
+                    `Required progression achievements: ${progressionAchievements.length}\n` +
+                    `Required win achievements: ${winAchievements.length}\n` +
+                    `Mastery: ${totalAchievements} total achievements.\n`
             });
 
         } catch (error) {
