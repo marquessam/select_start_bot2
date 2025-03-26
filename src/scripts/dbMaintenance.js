@@ -17,88 +17,6 @@ const connectDB = async () => {
     }
 };
 
-// Display database statistics
-const showStats = async () => {
-    console.log('\n=== Database Statistics ===');
-    
-    const userCount = await User.countDocuments();
-    console.log(`Users: ${userCount}`);
-    
-    const challengeCount = await Challenge.countDocuments();
-    console.log(`Challenges: ${challengeCount}`);
-    
-    // Get current month's challenge
-    const now = new Date();
-    const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    const nextMonthStart = new Date(now.getFullYear(), now.getMonth() + 1, 1);
-    
-    const currentChallenge = await Challenge.findOne({
-        date: {
-            $gte: currentMonthStart,
-            $lt: nextMonthStart
-        }
-    });
-    
-    if (currentChallenge) {
-        console.log('\n=== Current Challenge ===');
-        console.log(`Date: ${currentChallenge.date.toISOString().split('T')[0]}`);
-        console.log(`Main Game ID: ${currentChallenge.monthly_challange_gameid}`);
-        console.log(`Main Goal: ${currentChallenge.monthly_challange_goal}/${currentChallenge.monthly_challange_game_total}`);
-        
-        if (currentChallenge.shadow_challange_gameid) {
-            console.log(`Shadow Game ID: ${currentChallenge.shadow_challange_gameid}`);
-            console.log(`Shadow Goal: ${currentChallenge.shadow_challange_goal}/${currentChallenge.shadow_challange_game_total}`);
-            console.log(`Shadow Revealed: ${currentChallenge.shadow_challange_revealed ? 'Yes' : 'No'}`);
-        } else {
-            console.log('No shadow challenge set');
-        }
-    } else {
-        console.log('\nNo current challenge found');
-    }
-    
-    // Get nomination stats
-    const usersWithNominations = await User.find({ 'nominations.0': { $exists: true } });
-    const nominationCount = usersWithNominations.reduce((total, user) => {
-        return total + user.getCurrentNominations().length;
-    }, 0);
-    
-    console.log(`\nCurrent Month Nominations: ${nominationCount}`);
-    
-    // Get participation stats
-    if (currentChallenge) {
-        const monthKey = User.formatDateKey(currentChallenge.date);
-        
-        const participationStats = {
-            mastery: 0,
-            beaten: 0,
-            participation: 0,
-            none: 0
-        };
-        
-        const users = await User.find({});
-        
-        for (const user of users) {
-            const progress = user.monthlyChallenges.get(monthKey);
-            
-            if (!progress) {
-                participationStats.none++;
-            } else if (progress.progress === 3) {
-                participationStats.mastery++;
-            } else if (progress.progress === 2) {
-                participationStats.beaten++;
-            } else if (progress.progress === 1) {
-                participationStats.participation++;
-            }
-        }
-        
-        console.log('\n=== Current Challenge Participation ===');
-        console.log(`Mastery: ${participationStats.mastery}`);
-        console.log(`Beaten: ${participationStats.beaten}`);
-        console.log(`Participation: ${participationStats.participation}`);
-        console.log(`No Progress: ${participationStats.none}`);
-    }
-};
-
 // Fix inconsistent date keys
 const fixDateKeys = async () => {
     console.log('\n=== Fixing Inconsistent Date Keys ===');
@@ -204,9 +122,6 @@ const main = async () => {
     const command = args[0] || 'stats';
     
     switch (command) {
-        case 'stats':
-            await showStats();
-            break;
         case 'fix-date-keys':
             await fixDateKeys();
             break;
@@ -214,7 +129,6 @@ const main = async () => {
             await checkOrphanedEntries();
             break;
         case 'all':
-            await showStats();
             await fixDateKeys();
             await checkOrphanedEntries();
             break;

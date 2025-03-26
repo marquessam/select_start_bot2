@@ -57,18 +57,8 @@ const userSchema = new mongoose.Schema({
         default: () => new Map()
     },
     announcedAchievements: {
-        type: Map,
-        of: {
-            monthly: {
-                award: String,
-                achieved: Number
-            },
-            shadow: {
-                award: String,
-                achieved: Number
-            }
-        },
-        default: () => new Map()
+        type: [String],
+        default: []
     },
     communityAwards: [communityAwardSchema],
     nominations: [nominationSchema]

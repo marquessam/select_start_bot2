@@ -59,10 +59,27 @@ export default {
                     let award = '';
                     let points = 0;
 
-                    if (progress.numAwardedToUser === currentChallenge.monthly_challange_game_total) {
+                    // Get the user's earned achievements from the progress data
+                    const userEarnedAchievements = Object.entries(progress.achievements)
+                        .filter(([id, data]) => data.dateEarned !== null)
+                        .map(([id, data]) => id);
+
+                    // Check if user has all progression achievements
+                    const hasAllProgressionAchievements = currentChallenge.monthly_challange_progression_achievements.every(
+                        id => userEarnedAchievements.includes(id)
+                    );
+
+                    // Check if user has at least one win condition (if any exist)
+                    const hasWinCondition = currentChallenge.monthly_challange_win_achievements.length === 0 || 
+                    currentChallenge.monthly_challange_win_achievements.some(id => userEarnedAchievements.includes(id));
+
+                    // Check if user has all achievements in the game
+                    const hasAllAchievements = progress.numAwardedToUser === currentChallenge.monthly_challange_game_total;
+
+                    if (hasAllAchievements) {
                         award = AWARD_EMOJIS.MASTERY;
                         points = 3;
-                    } else if (progress.numAwardedToUser >= currentChallenge.monthly_challange_goal) {
+                    } else if (hasAllProgressionAchievements && hasWinCondition) {
                         award = AWARD_EMOJIS.BEATEN;
                         points = 3;
                     } else {
