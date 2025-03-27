@@ -88,7 +88,7 @@ export default {
 
                 // Check if user has at least one win condition (if any exist)
                 const hasWinCondition = currentChallenge.monthly_challange_win_achievements.length === 0 || 
-                currentChallenge.monthly_challange_win_achievements.some(id => userEarnedAchievements.includes(id));
+                    currentChallenge.monthly_challange_win_achievements.some(id => userEarnedAchievements.includes(id));
 
                 // Check if user has all achievements in the game
                 const hasAllAchievements = mainGameProgress.numAwardedToUser === currentChallenge.monthly_challange_game_total;
@@ -142,7 +142,7 @@ export default {
 
                     // Check if user has at least one shadow win condition (if any exist)
                     hasShadowWinCondition = currentChallenge.shadow_challange_win_achievements.length === 0 || 
-                    currentChallenge.shadow_challange_win_achievements.some(id => userEarnedShadowAchievements.includes(id));
+                        currentChallenge.shadow_challange_win_achievements.some(id => userEarnedShadowAchievements.includes(id));
 
                     // Check if user has all achievements in the shadow game
                     hasAllShadowAchievements = shadowGameProgress.numAwardedToUser === currentChallenge.shadow_challange_game_total;
