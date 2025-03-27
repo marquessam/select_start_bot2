@@ -112,7 +112,7 @@ class AchievementFeedService {
 
         // Get the user's earned achievements
         const userEarnedAchievements = Object.entries(progress.achievements)
-            .filter(([id, data]) => data.dateEarned !== null)
+            .filter(([id, data]) => data.hasOwnProperty('dateEarned'))
             .map(([id, data]) => id);
 
         // Announce individual achievements for progression and win conditions
