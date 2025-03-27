@@ -78,7 +78,7 @@ export default {
                 
                 // Get the user's earned achievements from the progress data
                 const userEarnedAchievements = Object.entries(mainGameProgress.achievements)
-                    .filter(([id, data]) => data.dateEarned !== null)
+                    .filter(([id, data]) => data.hasOwnProperty('dateEarned'))
                     .map(([id, data]) => id);
 
                 // Check if user has all progression achievements
@@ -132,7 +132,7 @@ export default {
 
                     // Get the user's earned achievements from the shadow game progress data
                     const userEarnedShadowAchievements = Object.entries(shadowGameProgress.achievements)
-                        .filter(([id, data]) => data.dateEarned !== null)
+                        .filter(([id, data]) => data.hasOwnProperty('dateEarned'))
                         .map(([id, data]) => id);
 
                     // Check if user has all shadow progression achievements

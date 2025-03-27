@@ -61,7 +61,7 @@ export default {
 
                     // Get the user's earned achievements from the progress data
                     const userEarnedAchievements = Object.entries(progress.achievements)
-                        .filter(([id, data]) => data.dateEarned !== null)
+                        .filter(([id, data]) => data.hasOwnProperty('dateEarned'))
                         .map(([id, data]) => id);
 
                     // Check if user has all progression achievements
