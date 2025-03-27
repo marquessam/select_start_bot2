@@ -62,9 +62,14 @@ class AchievementFeedService {
             return;
         }
 
+        // Prune inactive users from discord
+        await this.pruneInactiveUsers();
+
         // Check each user's progress
         for (const user of users) {
-            await this.checkUserProgress(user, currentChallenge, announcementChannel);
+            if (await this.isGuildMember(user.discordId)) {
+                await this.checkUserProgress(user, currentChallenge, announcementChannel);
+            }
         }
     }
 
@@ -350,6 +355,47 @@ class AchievementFeedService {
         } catch (error) {
             console.error('Error getting announcement channel:', error);
             return null;
+        }
+    }
+
+    async pruneInactiveUsers() {
+        if (!this.client) return null;
+
+        try {
+            // Get the guild
+            const guild = await this.client.guilds.fetch(config.discord.guildId);
+            if (!guild) {
+                console.error('Guild not found');
+                return null;
+            }
+
+            // Prune the inactive users
+            await guild.members.prune({ dry: false, days: 14 });
+        } catch (error) {
+            console.error('Error pruning inactive users:', error);
+            return null;
+        }
+    }
+
+    async isGuildMember(discordId) {
+        try {
+            const guild = await this.client.guilds.fetch(config.discord.guildId);
+          
+            // If the guild doesn't exist or the bot isn't in it
+            if (!guild) {
+                console.error('Guild not found');
+                return null;
+            }
+          
+            // Try to get the member from the guild
+            const member = await guild.members.fetch(discordId);
+          
+            // If member exists in the cache, they're a member
+            return !!member;
+          
+        } catch (error) {
+            console.error('Error checking guild membership:', error);
+            return false;
         }
     }
 }
