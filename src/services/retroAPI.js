@@ -1,6 +1,7 @@
 import { buildAuthorization, getGame, getGameExtended, getUserProfile, getUserRecentAchievements, 
     getUserSummary, getGameInfoAndUserProgress, getGameRankAndScore, getUserCompletedGames,
     getUserAwards, getGameList, getConsoleIds, getAchievementCount } from '@retroachievements/api';
+import { User } from '../models/User.js';
 import { config } from '../config/config.js';
 
 /**
@@ -389,6 +390,78 @@ class RetroAchievementsService {
         } catch (error) {
             console.error(`API request failed: ${error.message}`);
             throw error;
+        }
+    }
+
+    /**
+     * Fetch recent achievements for all registered users
+     * @returns {Promise<Array>} Array of user objects with their recent achievements
+     */
+    async fetchAllRecentAchievements() {
+        try {
+            console.log('Fetching ALL recent achievements...');
+    
+            // Get all users
+            const users = await User.find({});
+            
+            if (!users || users.length === 0) {
+                console.warn('No users found, returning empty achievements list.');
+                return [];
+            }
+    
+            // Configuration
+            const ACHIEVEMENTS_PER_USER = 25;
+            const USER_CHUNK_SIZE = 5;
+            const CHUNK_DELAY_MS = 5000; // 5 seconds between batches to respect rate limits
+    
+            const allAchievements = [];
+    
+            // Process users in chunks to avoid hammering the API
+            for (let i = 0; i < users.length; i += USER_CHUNK_SIZE) {
+                const userChunk = users.slice(i, i + USER_CHUNK_SIZE);
+                
+                const chunkPromises = userChunk.map(async user => {
+                    try {
+                        // Use the rate limiter to make the API call
+                        const recentData = await this.rateLimiter.add(() => 
+                            getUserRecentAchievements(this.authorization, {
+                                username: user.raUsername,
+                                count: ACHIEVEMENTS_PER_USER
+                            })
+                        );
+    
+                        // Make sure we have an array even if the API returns something unexpected
+                        const achievements = Array.isArray(recentData) ? recentData : [];
+                        
+                        // Log success for debugging
+                        if (achievements.length > 0) {
+                            console.log(`Found ${achievements.length} recent achievements for ${user.raUsername}`);
+                        }
+                        
+                        return { username: user.raUsername, achievements };
+                    } catch (error) {
+                        console.error(`Error fetching achievements for ${user.raUsername}:`, error);
+                        return { username: user.raUsername, achievements: [] };
+                    }
+                });
+    
+                const chunkResults = await Promise.all(chunkPromises);
+                allAchievements.push(...chunkResults);
+    
+                // Add delay between chunks if more chunks remain
+                if (i + USER_CHUNK_SIZE < users.length) {
+                    await new Promise(resolve => setTimeout(resolve, CHUNK_DELAY_MS));
+                }
+            }
+    
+            // Log the total number of achievements found
+            const totalAchievements = allAchievements.reduce((total, user) => total + user.achievements.length, 0);
+            console.log(`Found a total of ${totalAchievements} recent achievements across ${allAchievements.length} users`);
+    
+            return allAchievements;
+        } catch (error) {
+            console.error('Error in fetchAllRecentAchievements:', error);
+            return [];
         }
     }
 }
