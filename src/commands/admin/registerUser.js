@@ -17,13 +17,6 @@ export default {
             .setRequired(true)),
 
     async execute(interaction) {
-        // Check if user has admin role
-        if (!interaction.member.roles.cache.has(config.bot.roles.admin)) {
-            return interaction.reply({
-                content: 'You do not have permission to use this command.',
-                ephemeral: true
-            });
-        }
 
         await interaction.deferReply();
 
