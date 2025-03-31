@@ -277,12 +277,14 @@ export default {
                     name: 'Communication Channels',
                     value: '**#general-chat**\n' +
                            '• General discussion and community chat\n\n' +
-                           '**#retroachievements**\n' +
-                           '• Share your RA profile for verification\n\n' +
                            '**#monthly-challenge**\n' +
                            '• Discuss current challenges\n' +
                            '• Share tips and strategies\n\n' +
-                           '**#bot-commands**\n' +
+                           '**#shadow-game**\n' +
+                           '• Discuss the shadow game challenge/share clues\n\n' +
+                           '**#the-arcade**\n' +
+                           '• Discuss the arcade board challenges\n\n' +
+                           '**#bot-terminal**\n' +
                            '• All bot commands should be used here'
                 }
             )
