@@ -57,7 +57,7 @@ const userSchema = new mongoose.Schema({
         default: () => new Map()
     },
     announcedAchievements: {
-        type: [String],
+        type: [{ type: Object }],
         default: []
     },
     communityAwards: [communityAwardSchema],
