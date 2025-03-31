@@ -1,134 +1,188 @@
-#!/usr/bin/env node
-import { connect } from 'mongoose';
-import { Challenge } from '../models/Challenge.js';
-import retroAPI from '../services/retroAPI.js';
-import { config } from '../config/config.js';
-import dotenv from 'dotenv';
+import { SlashCommandBuilder } from 'discord.js';
+import { User } from '../../models/User.js';
+import { Challenge } from '../../models/Challenge.js';
+import retroAPI from '../../services/retroAPI.js';
+import { config } from '../../config/config.js';
 
-// Load environment variables
-dotenv.config();
-
-// Connect to MongoDB
-const connectDB = async () => {
-  try {
-    await connect(config.mongodb.uri);
-    console.log('MongoDB Connected');
-    return true;
-  } catch (error) {
-    console.error(`MongoDB Connection Error: ${error.message}`);
-    return false;
-  }
-};
-
-const createHistoricalChallenge = async (year, month, gameId, progressionAchievements, winAchievements, shadowGameId, shadowProgressionAchievements, shadowWinAchievements) => {
-  try {
-    // Format date for first day of the month
-    const challengeDate = new Date(year, month - 1, 1);
-    
-    // Check if challenge already exists for this month
-    const existingChallenge = await Challenge.findOne({
-      date: {
-        $gte: challengeDate,
-        $lt: new Date(year, month, 1) // First day of next month
-      }
-    });
-
-    if (existingChallenge) {
-      console.log(`Challenge already exists for ${month}/${year}. Skipping.`);
-      return false;
-    }
-
-    // Get main game info
-    const gameInfo = await retroAPI.getGameInfoExtended(gameId);
-    if (!gameInfo) {
-      console.error(`Game ID ${gameId} not found. Skipping.`);
-      return false;
-    }
-    
-    // Get total achievements for main game
-    const mainTotalAchievements = Object.keys(gameInfo.achievements).length;
-    
-    // Create shadow game variables
-    let shadowTotalAchievements = 0;
-    let shadowGameRevealed = true; // Historical shadow games should be revealed
-    
-    // If shadow game exists, get its info
-    if (shadowGameId) {
-      try {
-        const shadowGameInfo = await retroAPI.getGameInfoExtended(shadowGameId);
-        if (shadowGameInfo) {
-          shadowTotalAchievements = Object.keys(shadowGameInfo.achievements).length;
-        } else {
-          console.warn(`Shadow game ID ${shadowGameId} not found. Shadow game will be incomplete.`);
+// Helper function for processing historical challenges
+async function processHistoricalChallenges(user) {
+    try {
+        // Get all challenges
+        const allChallenges = await Challenge.find({}).sort({ date: 1 });
+        
+        // Process each challenge
+        for (const challenge of allChallenges) {
+            const dateKey = User.formatDateKey(challenge.date);
+            
+            // Skip if user already has data for this challenge
+            if (user.monthlyChallenges.has(dateKey)) {
+                continue;
+            }
+            
+            // Process main challenge
+            if (challenge.monthly_challange_gameid) {
+                try {
+                    const progress = await retroAPI.getUserGameProgress(
+                        user.raUsername, 
+                        challenge.monthly_challange_gameid
+                    );
+                    
+                    // Calculate points based on achievements
+                    let monthlyPoints = 0;
+                    
+                    if (progress.numAwardedToUser > 0) {
+                        // Get user earned achievements
+                        const userEarnedAchievements = Object.entries(progress.achievements)
+                            .filter(([id, data]) => data.hasOwnProperty('dateEarned'))
+                            .map(([id, data]) => id);
+                        
+                        // Check progression and win conditions
+                        const hasAllProgressionAchievements = challenge.monthly_challange_progression_achievements.every(
+                            id => userEarnedAchievements.includes(id)
+                        );
+                        
+                        const hasWinCondition = challenge.monthly_challange_win_achievements.length === 0 || 
+                            challenge.monthly_challange_win_achievements.some(id => userEarnedAchievements.includes(id));
+                        
+                        const hasAllAchievements = progress.numAwardedToUser === challenge.monthly_challange_game_total;
+                        
+                        if (hasAllAchievements) {
+                            monthlyPoints = 3; // Mastery
+                        } else if (hasAllProgressionAchievements && hasWinCondition) {
+                            monthlyPoints = 3; // Beaten
+                        } else {
+                            monthlyPoints = 1; // Participation
+                        }
+                        
+                        // Update monthly challenge progress
+                        user.monthlyChallenges.set(dateKey, { progress: monthlyPoints });
+                    }
+                } catch (error) {
+                    console.error(`Error processing main challenge for ${user.raUsername}:`, error);
+                }
+            }
+            
+            // Process shadow challenge
+            if (challenge.shadow_challange_gameid) {
+                try {
+                    const shadowProgress = await retroAPI.getUserGameProgress(
+                        user.raUsername, 
+                        challenge.shadow_challange_gameid
+                    );
+                    
+                    // Calculate points based on achievements
+                    let shadowPoints = 0;
+                    
+                    if (shadowProgress.numAwardedToUser > 0) {
+                        // Get user earned achievements
+                        const userEarnedAchievements = Object.entries(shadowProgress.achievements)
+                            .filter(([id, data]) => data.hasOwnProperty('dateEarned'))
+                            .map(([id, data]) => id);
+                        
+                        // Check progression and win conditions
+                        const hasAllProgressionAchievements = challenge.shadow_challange_progression_achievements.every(
+                            id => userEarnedAchievements.includes(id)
+                        );
+                        
+                        const hasWinCondition = challenge.shadow_challange_win_achievements.length === 0 || 
+                            challenge.shadow_challange_win_achievements.some(id => userEarnedAchievements.includes(id));
+                        
+                        const hasAllAchievements = shadowProgress.numAwardedToUser === challenge.shadow_challange_game_total;
+                        
+                        if (hasAllAchievements) {
+                            shadowPoints = 3; // Mastery
+                        } else if (hasAllProgressionAchievements && hasWinCondition) {
+                            shadowPoints = 3; // Beaten
+                        } else {
+                            shadowPoints = 1; // Participation
+                        }
+                        
+                        // Update shadow challenge progress
+                        user.shadowChallenges.set(dateKey, { progress: shadowPoints });
+                    }
+                } catch (error) {
+                    console.error(`Error processing shadow challenge for ${user.raUsername}:`, error);
+                }
+            }
         }
-      } catch (error) {
-        console.error(`Error fetching shadow game info: ${error.message}`);
-      }
+        
+        // Save user with updated challenge data
+        await user.save();
+        console.log(`Historical challenge data processed for ${user.raUsername}`);
+        
+    } catch (error) {
+        console.error(`Error processing historical challenges for ${user.raUsername}:`, error);
     }
+}
 
-    // Create the challenge
-    const challenge = new Challenge({
-      date: challengeDate,
-      monthly_challange_gameid: gameId,
-      monthly_challange_progression_achievements: progressionAchievements,
-      monthly_challange_win_achievements: winAchievements,
-      monthly_challange_game_total: mainTotalAchievements,
-      shadow_challange_gameid: shadowGameId || null,
-      shadow_challange_progression_achievements: shadowProgressionAchievements || [],
-      shadow_challange_win_achievements: shadowWinAchievements || [],
-      shadow_challange_game_total: shadowTotalAchievements,
-      shadow_challange_revealed: shadowGameRevealed
-    });
+export default {
+    data: new SlashCommandBuilder()
+        .setName('register')
+        .setDescription('Register a new user for challenges')
+        .addUserOption(option =>
+            option.setName('discord_user')
+            .setDescription('The Discord username or ID (can be for users not on server)')
+            .setRequired(true))
+        .addStringOption(option =>
+            option.setName('ra_username')
+            .setDescription('The RetroAchievements username')
+            .setRequired(true)),
 
-    await challenge.save();
-    console.log(`Challenge created for ${month}/${year}: ${gameInfo.title}`);
-    
-    if (shadowGameId) {
-      console.log(`Shadow challenge for ${month}/${year}: Game ID ${shadowGameId}`);
+    async execute(interaction) {
+        await interaction.deferReply();
+
+        try {
+            const discordUser = interaction.options.getUser('discord_user');
+            const raUsername = interaction.options.getString('ra_username');
+
+            // Check if user already exists
+            const existingUser = await User.findOne({
+                $or: [
+                    { discordId: discordUser.id },
+                    { raUsername: { $regex: new RegExp(`^${raUsername}$`, 'i') } }
+                ]
+            });
+
+            if (existingUser) {
+                return interaction.editReply(
+                    'This user is already registered. ' +
+                    `${existingUser.discordId === discordUser.id ? 'Discord ID' : 'RA username'} is already in use.`
+                );
+            }
+
+            // Validate RA username exists
+            const isValidUser = await retroAPI.validateUser(raUsername);
+            if (!isValidUser) {
+                return interaction.editReply('Invalid RetroAchievements username. Please check the username and try again.');
+            }
+
+            // Create new user
+            const user = new User({
+                raUsername,
+                discordId: discordUser.id
+            });
+
+            await user.save();
+
+            // Process historical challenges for this user
+            await processHistoricalChallenges(user);
+
+            // Get user info for a more detailed response
+            const raUserInfo = await retroAPI.getUserInfo(raUsername);
+
+            return interaction.editReply({
+                content: `Successfully registered user!\n` +
+                    `Discord: ${discordUser.tag}\n` +
+                    `RA Username: ${raUsername}\n` +
+                    `RA Profile: https://retroachievements.org/user/${raUsername}\n` +
+                    `Total Points: ${raUserInfo.points}\n` +
+                    `Total Games: ${raUserInfo.totalGames}\n\n` +
+                    `Historical challenge data has been processed.`
+            });
+
+        } catch (error) {
+            console.error('Error registering user:', error);
+            return interaction.editReply('An error occurred while registering the user. Please try again.');
+        }
     }
-    
-    return true;
-  } catch (error) {
-    console.error(`Error creating challenge for ${month}/${year}: ${error.message}`);
-    return false;
-  }
 };
-
-// Main function
-const importHistoricalChallenges = async () => {
-  // Connect to the database
-  const connected = await connectDB();
-  if (!connected) {
-    process.exit(1);
-  }
-
-  console.log('Starting import of historical challenges...');
-  
-  // January 2025
-  await createHistoricalChallenge(
-    2025, 1, // Year, Month
-    319, // Chrono Trigger
-    [2080, 2081, 2085, 2090, 2191, 2100, 2108, 2129, 2133], // Progression
-    [2266, 2281], // Win Condition
-    10024, // Shadow Game: Mario Tennis
-    [], // Shadow Progression (empty array - you may need to fill this)
-    [48411, 48412] // Shadow Win Condition
-  );
-  
-  // February 2025
-  await createHistoricalChallenge(
-    2025, 2, // Year, Month
-    355, // A Link to the Past
-    [944, 2192, 2282, 980, 2288, 2291, 2292, 2296, 2315, 2336, 2351, 2357, 2359, 2361, 2365, 2334, 2354, 2368, 2350, 2372, 2387], // Progression
-    [2389], // Win Condition
-    274, // Shadow Game: UN Squadron
-    [6413, 6414, 6415, 6416, 6417, 6418, 6419, 6420, 6421], // Shadow Progression
-    [6422] // Shadow Win Condition
-  );
-  
-  console.log('Import completed.');
-  process.exit(0);
-};
-
-// Run the import
-importHistoricalChallenges();
