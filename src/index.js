@@ -7,6 +7,7 @@ import { fileURLToPath } from 'url';
 import cron from 'node-cron';
 import statsUpdateService from './services/statsUpdateService.js';
 import achievementFeedService from './services/achievementFeedService.js';
+import enhancedAchievementFeedService from './services/enhancedAchievementFeedService.js';
 import monthlyTasksService from './services/monthlyTasksService.js';
 import arcadeService from './services/arcadeService.js';
 
@@ -95,6 +96,7 @@ client.once(Events.ClientReady, async () => {
 
         // Set client for services
         achievementFeedService.setClient(client);
+        enhancedAchievementFeedService.setClient(client);
         monthlyTasksService.setClient(client);
         arcadeService.setClient(client);
 
@@ -111,6 +113,14 @@ client.once(Events.ClientReady, async () => {
             console.log('Running achievement feed check...');
             achievementFeedService.start().catch(error => {
                 console.error('Error in achievement feed check:', error);
+            });
+        });
+        
+        // Schedule enhanced achievement feed checks every 15 minutes
+        cron.schedule('*/15 * * * *', () => {
+            console.log('Running enhanced achievement feed check...');
+            enhancedAchievementFeedService.start().catch(error => {
+                console.error('Error in enhanced achievement feed check:', error);
             });
         });
 
@@ -143,6 +153,9 @@ client.once(Events.ClientReady, async () => {
         
         // Run initial achievement feed check
         await achievementFeedService.start();
+        
+        // Run initial enhanced achievement feed check
+        await enhancedAchievementFeedService.start();
         
         // Run initial arcade service check
         await arcadeService.start();
