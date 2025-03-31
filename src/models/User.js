@@ -61,7 +61,15 @@ const userSchema = new mongoose.Schema({
         default: []
     },
     communityAwards: [communityAwardSchema],
-    nominations: [nominationSchema]
+    nominations: [nominationSchema],
+    lastAchievementCheck: {
+        type: Number,
+        default: 0
+    },
+    isActive: {
+        type: Boolean,
+        default: true
+    }
 }, {
     timestamps: true,
     strict: true
