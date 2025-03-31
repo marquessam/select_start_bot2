@@ -60,8 +60,16 @@ export default {
                 return interaction.editReply('No challenge exists for the current month. Create a monthly challenge first.');
             }
 
+            let replacedShadowGame = null;
             if (currentChallenge.shadow_challange_gameid) {
-                return interaction.editReply('A shadow challenge already exists for this month.');
+                // Save existing shadow game info for the response message
+                try {
+                    const oldGameInfo = await retroAPI.getGameInfo(currentChallenge.shadow_challange_gameid);
+                    replacedShadowGame = oldGameInfo.title;
+                } catch (error) {
+                    console.error('Error fetching old shadow game info:', error);
+                    replacedShadowGame = currentChallenge.shadow_challange_gameid;
+                }
             }
 
             // Get game info to validate game exists
@@ -83,14 +91,32 @@ export default {
             currentChallenge.shadow_challange_progression_achievements = progressionAchievements;
             currentChallenge.shadow_challange_win_achievements = winAchievements;
             currentChallenge.shadow_challange_game_total = totalAchievements;
-            currentChallenge.shadow_challange_revealed = false;
+            // Keep the current revealed status if replacing an existing shadow challenge
+            if (!currentChallenge.shadow_challange_revealed) {
+                currentChallenge.shadow_challange_revealed = false;
+            }
 
             await currentChallenge.save();
 
-            return interaction.editReply({
-                content: `Something stirs in the deep...\n` +
-                    `The shadow challenge will remain hidden until revealed.\n`
-            });
+            if (replacedShadowGame) {
+                return interaction.editReply({
+                    content: `Shadow challenge replaced for ${gameInfo.title}\n` +
+                        `(No longer ${replacedShadowGame})\n` +
+                        `Required progression achievements: ${progressionAchievements.length}\n` +
+                        `Required win achievements: ${winAchievements.length}\n` +
+                        `Mastery: ${totalAchievements} total achievements.\n` +
+                        `Visibility: ${currentChallenge.shadow_challange_revealed ? 'Revealed' : 'Hidden'}`
+                });
+            } else {
+                return interaction.editReply({
+                    content: `Something stirs in the deep...\n` +
+                        `Shadow challenge created for ${gameInfo.title}\n` +
+                        `Required progression achievements: ${progressionAchievements.length}\n` +
+                        `Required win achievements: ${winAchievements.length}\n` +
+                        `Mastery: ${totalAchievements} total achievements.\n` +
+                        `The shadow challenge will remain hidden until revealed.`
+                });
+            }
 
         } catch (error) {
             console.error('Error adding shadow challenge:', error);
