@@ -22,6 +22,7 @@ const POINTS = {
     PARTICIPATION: 1
 };
 
+// TODO: Revert this back to just the current month.
 function isDateInCurrentMonth(dateString) {
     // Parse the input date string
     const inputDate = new Date(dateString.replace(' ', 'T'));
@@ -29,24 +30,10 @@ function isDateInCurrentMonth(dateString) {
     // Get the current date
     const currentDate = new Date();
     
-    // Get the first day of the current month
-    const firstDayOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
-    
-    // Get the last day of the previous month
-    const lastDayOfPrevMonth = new Date(firstDayOfMonth);
-    lastDayOfPrevMonth.setDate(lastDayOfPrevMonth.getDate() - 1);
-    
-    // Check if the input date is in the current month
-    const isCurrentMonth = inputDate.getMonth() === currentDate.getMonth() && 
-                           inputDate.getFullYear() === currentDate.getFullYear();
-                           
-    // Check if the input date is the last day of the previous month
-    const isLastDayOfPrevMonth = inputDate.getDate() === lastDayOfPrevMonth.getDate() &&
-                                inputDate.getMonth() === lastDayOfPrevMonth.getMonth() &&
-                                inputDate.getFullYear() === lastDayOfPrevMonth.getFullYear();
-    
-    return isCurrentMonth || isLastDayOfPrevMonth;
-  }
+    // Check if the input date's month and year match the current month and year
+    return (inputDate.getMonth() === currentDate.getMonth() || inputDate.getMonth() === currentDate.getMonth() - 1) && 
+           inputDate.getFullYear() === currentDate.getFullYear();
+}
 
 export default {
     data: new SlashCommandBuilder()
@@ -295,21 +282,37 @@ export default {
                         // Calculate completion percentage
                         const percentage = (progress.numAwardedToUser / challenge.monthly_challange_game_total * 100).toFixed(1);
                         
+                        // Check if this is a current month challenge
+                        const challengeDate = new Date(dateStr);
+                        const isCurrentMonth = challengeDate.getMonth() === now.getMonth() && 
+                                              challengeDate.getFullYear() === now.getFullYear();
+                        
                         // Determine which array to add to based on completion state and stored progress value
                         const progressValue = data.progress || 0;
                         
-                        if (progressValue > 2) {
-                            // This would be either Mastery or Beaten status
-                            if (progress.numAwardedToUser === challenge.monthly_challange_game_total) {
-                                masteredGames.push({
-                                    title: progress.title,
-                                    date: new Date(dateStr),
-                                    earned: progress.numAwardedToUser,
-                                    total: challenge.monthly_challange_game_total,
-                                    percentage
-                                });
-                            } else {
-                                beatenGames.push({
+                        // Skip current month challenges for the past game awards section
+                        if (!isCurrentMonth) {
+                            if (progressValue > 2) {
+                                // This would be either Mastery or Beaten status
+                                if (progress.numAwardedToUser === challenge.monthly_challange_game_total) {
+                                    masteredGames.push({
+                                        title: progress.title,
+                                        date: new Date(dateStr),
+                                        earned: progress.numAwardedToUser,
+                                        total: challenge.monthly_challange_game_total,
+                                        percentage
+                                    });
+                                } else {
+                                    beatenGames.push({
+                                        title: progress.title,
+                                        date: new Date(dateStr),
+                                        earned: progress.numAwardedToUser,
+                                        total: challenge.monthly_challange_game_total,
+                                        percentage
+                                    });
+                                }
+                            } else if (progressValue === 1) {
+                                participationGames.push({
                                     title: progress.title,
                                     date: new Date(dateStr),
                                     earned: progress.numAwardedToUser,
@@ -317,14 +320,6 @@ export default {
                                     percentage
                                 });
                             }
-                        } else if (progressValue === 1) {
-                            participationGames.push({
-                                title: progress.title,
-                                date: new Date(dateStr),
-                                earned: progress.numAwardedToUser,
-                                total: challenge.monthly_challange_game_total,
-                                percentage
-                            });
                         }
                     } catch (error) {
                         console.error(`Error getting game progress for ${dateStr}:`, error);
@@ -344,8 +339,14 @@ export default {
                         // Calculate completion percentage
                         const percentage = (progress.numAwardedToUser / challenge.shadow_challange_game_total * 100).toFixed(1);
                         
+                        // Check if this is a current month challenge
+                        const challengeDate = new Date(dateStr);
+                        const isCurrentMonth = challengeDate.getMonth() === now.getMonth() && 
+                                              challengeDate.getFullYear() === now.getFullYear();
+                        
                         // Only add to completed lists if the game has at least some progress
-                        if (progress.numAwardedToUser > 0) {
+                        // and is not from the current month
+                        if (progress.numAwardedToUser > 0 && !isCurrentMonth) {
                             const shadowTitle = `${progress.title} (Shadow)`;
                             
                             // Determine which array to add to based on completion state and stored progress value
