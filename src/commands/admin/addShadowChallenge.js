@@ -107,8 +107,12 @@ export default {
             targetChallenge.shadow_challange_progression_achievements = progressionAchievements;
             targetChallenge.shadow_challange_win_achievements = winAchievements;
             targetChallenge.shadow_challange_game_total = totalAchievements;
-            // Keep the current revealed status if replacing an existing shadow challenge
-            if (!targetChallenge.shadow_challange_revealed) {
+            
+            // Automatically reveal shadow games for past months
+            if (month < now.getMonth() + 1 || year < now.getFullYear()) {
+                targetChallenge.shadow_challange_revealed = true;
+            } else if (!targetChallenge.shadow_challange_revealed) {
+                // For current or future months, keep shadow games hidden by default
                 targetChallenge.shadow_challange_revealed = false;
             }
 
@@ -119,6 +123,9 @@ export default {
                                "July", "August", "September", "October", "November", "December"];
             const monthName = monthNames[month - 1];
 
+            // Determine if it was auto-revealed
+            const autoRevealed = (month < now.getMonth() + 1 || year < now.getFullYear());
+            
             if (replacedShadowGame) {
                 return interaction.editReply({
                     content: `Shadow challenge for ${monthName} ${year} replaced with ${gameInfo.title}\n` +
@@ -126,16 +133,17 @@ export default {
                         `Required progression achievements: ${progressionAchievements.length}\n` +
                         `Required win achievements: ${winAchievements.length}\n` +
                         `Mastery: ${totalAchievements} total achievements.\n` +
-                        `Visibility: ${targetChallenge.shadow_challange_revealed ? 'Revealed' : 'Hidden'}`
+                        `Visibility: ${targetChallenge.shadow_challange_revealed ? 'Revealed' : 'Hidden'}` +
+                        (autoRevealed ? ' (Auto-revealed as past challenge)' : '')
                 });
             } else {
                 return interaction.editReply({
-                    content: `Something stirs in the deep...\n` +
-                        `Shadow challenge for ${monthName} ${year} created: ${gameInfo.title}\n` +
+                    content: `Shadow challenge for ${monthName} ${year} created: ${gameInfo.title}\n` +
                         `Required progression achievements: ${progressionAchievements.length}\n` +
                         `Required win achievements: ${winAchievements.length}\n` +
                         `Mastery: ${totalAchievements} total achievements.\n` +
-                        `The shadow challenge will remain hidden until revealed.`
+                        `Visibility: ${targetChallenge.shadow_challange_revealed ? 'Revealed' : 'Hidden'}` +
+                        (autoRevealed ? ' (Auto-revealed as past challenge)' : '')
                 });
             }
 
