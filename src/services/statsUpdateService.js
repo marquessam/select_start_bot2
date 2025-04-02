@@ -119,9 +119,17 @@ class StatsUpdateService {
             // Calculate points for monthly challenge based on progression and win achievements
             let monthlyPoints = 0;
             
-            // To get mastery points this month, user must have earned at least one achievement this month
-            // AND have the game 100% completed now
-            if (achievementsEarnedThisMonth.length > 0 && monthlyProgress.numAwardedToUser === challenge.monthly_challange_game_total) {
+            // For mastery points, ALL achievements must have been earned this month
+            // Check if user has earned all required achievements this month
+            const allAchievementsEarnedThisMonth = Object.entries(userAchievements)
+                .filter(([id, data]) => data.dateEarned)
+                .every(([id, data]) => {
+                    const earnedDate = new Date(data.dateEarned);
+                    return earnedDate >= currentMonthStart;
+                });
+            
+            // For mastery, ALL achievements must be earned THIS MONTH
+            if (monthlyProgress.numAwardedToUser === challenge.monthly_challange_game_total && allAchievementsEarnedThisMonth) {
                 monthlyPoints = 3; // Mastery
             } 
             // For beaten status, the user must have all progression achievements AND at least one win achievement (if any required)
@@ -188,12 +196,19 @@ class StatsUpdateService {
                     allEarnedShadowAchievements.includes(id)
                 );
                 
+                // For shadow mastery, ALL achievements must have been earned this month
+                const allShadowAchievementsEarnedThisMonth = Object.entries(userShadowAchievements)
+                    .filter(([id, data]) => data.dateEarned)
+                    .every(([id, data]) => {
+                        const earnedDate = new Date(data.dateEarned);
+                        return earnedDate >= currentMonthStart;
+                    });
+                
                 // Calculate points for shadow challenge based on progression and win achievements
                 let shadowPoints = 0;
                 
-                // To get mastery points this month, user must have earned at least one achievement this month
-                // AND have the game 100% completed now
-                if (shadowAchievementsEarnedThisMonth.length > 0 && shadowProgress.numAwardedToUser === challenge.shadow_challange_game_total) {
+                // For mastery, ALL achievements must be earned THIS MONTH
+                if (shadowProgress.numAwardedToUser === challenge.shadow_challange_game_total && allShadowAchievementsEarnedThisMonth) {
                     shadowPoints = 3; // Mastery
                 } 
                 // For beaten status, the user must have all progression achievements AND at least one win achievement (if any required)
