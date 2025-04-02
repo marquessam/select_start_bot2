@@ -3,8 +3,8 @@ import { User } from '../../models/User.js';
 import retroAPI from '../../services/retroAPI.js';
 import { config } from '../../config/config.js';
 
-// Historical challenge data for January through April 2025
-const HISTORICAL_CHALLENGES = [
+// Historical data (defined outside the export)
+const HISTORICAL_DATA = [
     {
         month: 1, // January
         year: 2025,
@@ -84,7 +84,7 @@ const HISTORICAL_CHALLENGES = [
 export default {
     data: new SlashCommandBuilder()
         .setName('processhistorical')
-        .setDescription('Process historical challenge data for users')
+        .setDescription('Process historical challenge data')
         .addSubcommand(subcommand =>
             subcommand
                 .setName('all')
@@ -131,16 +131,15 @@ export default {
                     return interaction.editReply('All users have already been processed. Use the reset subcommand if you need to reprocess any users.');
                 }
                 
-                await interaction.editReply(`Starting to process historical data for ${users.length} users. This may take some time...`);
-                
                 let processedCount = 0;
                 let updatedCount = 0;
+                
+                await interaction.editReply(`Starting to process historical data for ${users.length} users...`);
                 
                 for (const user of users) {
                     let changesDetected = false;
                     
-                    // Process each historical challenge except the current month
-                    for (const challenge of HISTORICAL_CHALLENGES) {
+                    for (const challenge of HISTORICAL_DATA) {
                         // Skip current month's challenge
                         if (challenge.year === currentYear && challenge.month === currentMonth) {
                             continue;
@@ -151,73 +150,39 @@ export default {
                         
                         // Process main challenge
                         if (challenge.main && !user.monthlyChallenges.has(dateKey)) {
-                            try {
-                                const progress = await this.processGame(
-                                    user.raUsername,
-                                    challenge.main.gameId,
-                                    challenge.main.progression,
-                                    challenge.main.win,
-                                    challenge.main.total
-                                );
-                                
-                                if (progress) {
-                                    user.monthlyChallenges.set(dateKey, { progress: progress.points });
-                                    changesDetected = true;
-                                }
-                                
-                                // Wait to respect API rate limits
-                                await new Promise(resolve => setTimeout(resolve, 1000));
-                            } catch (error) {
-                                console.error(`Error processing main challenge for ${user.raUsername}:`, error);
+                            const progress = await this.processGame(user.raUsername, challenge.main);
+                            if (progress) {
+                                user.monthlyChallenges.set(dateKey, { progress: progress.points });
+                                changesDetected = true;
                             }
                         }
                         
                         // Process shadow challenge
                         if (challenge.shadow && !user.shadowChallenges.has(dateKey)) {
-                            try {
-                                const progress = await this.processGame(
-                                    user.raUsername,
-                                    challenge.shadow.gameId,
-                                    challenge.shadow.progression,
-                                    challenge.shadow.win,
-                                    challenge.shadow.total
-                                );
-                                
-                                if (progress) {
-                                    user.shadowChallenges.set(dateKey, { progress: progress.points });
-                                    changesDetected = true;
-                                }
-                                
-                                // Wait to respect API rate limits
-                                await new Promise(resolve => setTimeout(resolve, 1000));
-                            } catch (error) {
-                                console.error(`Error processing shadow challenge for ${user.raUsername}:`, error);
+                            const progress = await this.processGame(user.raUsername, challenge.shadow);
+                            if (progress) {
+                                user.shadowChallenges.set(dateKey, { progress: progress.points });
+                                changesDetected = true;
                             }
                         }
                     }
                     
-                    // Mark user as processed
+                    // Mark user as processed and save
                     user.historicalDataProcessed = true;
                     await user.save();
                     
                     processedCount++;
-                    if (changesDetected) {
-                        updatedCount++;
-                    }
+                    if (changesDetected) updatedCount++;
                     
-                    // Update the reply periodically to show progress
+                    // Update progress every 5 users
                     if (processedCount % 5 === 0 || processedCount === users.length) {
-                        await interaction.editReply(`Processing historical data: ${processedCount}/${users.length} users processed (${updatedCount} updated)...`);
+                        await interaction.editReply(`Processing: ${processedCount}/${users.length} users (${updatedCount} updated)`);
                     }
-                    
-                    // Add a delay between users to respect API rate limits
-                    await new Promise(resolve => setTimeout(resolve, 2000));
                 }
                 
-                return interaction.editReply(`Historical data processing complete! Processed ${processedCount} users, updated ${updatedCount} user records.`);
+                return interaction.editReply(`Complete! Processed ${processedCount} users, updated ${updatedCount} user records.`);
                 
             } else if (subcommand === 'user') {
-                // Process a specific user
                 const raUsername = interaction.options.getString('username');
                 
                 const user = await User.findOne({ 
@@ -225,15 +190,14 @@ export default {
                 });
                 
                 if (!user) {
-                    return interaction.editReply(`User "${raUsername}" not found. Please check the username or register the user first.`);
+                    return interaction.editReply(`User "${raUsername}" not found. Please check the username.`);
                 }
                 
                 await interaction.editReply(`Processing historical data for ${user.raUsername}...`);
                 
                 let changesDetected = false;
                 
-                // Process each historical challenge except the current month
-                for (const challenge of HISTORICAL_CHALLENGES) {
+                for (const challenge of HISTORICAL_DATA) {
                     // Skip current month's challenge
                     if (challenge.year === currentYear && challenge.month === currentMonth) {
                         continue;
@@ -244,54 +208,26 @@ export default {
                     
                     // Process main challenge
                     if (challenge.main) {
-                        try {
-                            const progress = await this.processGame(
-                                user.raUsername,
-                                challenge.main.gameId,
-                                challenge.main.progression,
-                                challenge.main.win,
-                                challenge.main.total
-                            );
-                            
-                            if (progress) {
-                                user.monthlyChallenges.set(dateKey, { progress: progress.points });
-                                changesDetected = true;
-                                await interaction.editReply(`Processing ${user.raUsername}: Found progress on ${challenge.main.name} (${challenge.month}/${challenge.year})`);
-                            }
-                            
-                            // Wait to respect API rate limits
-                            await new Promise(resolve => setTimeout(resolve, 1000));
-                        } catch (error) {
-                            console.error(`Error processing main challenge for ${user.raUsername}:`, error);
+                        const progress = await this.processGame(user.raUsername, challenge.main);
+                        if (progress) {
+                            user.monthlyChallenges.set(dateKey, { progress: progress.points });
+                            changesDetected = true;
+                            await interaction.editReply(`Found progress for ${user.raUsername} on ${challenge.main.name}`);
                         }
                     }
                     
                     // Process shadow challenge
                     if (challenge.shadow) {
-                        try {
-                            const progress = await this.processGame(
-                                user.raUsername,
-                                challenge.shadow.gameId,
-                                challenge.shadow.progression,
-                                challenge.shadow.win,
-                                challenge.shadow.total
-                            );
-                            
-                            if (progress) {
-                                user.shadowChallenges.set(dateKey, { progress: progress.points });
-                                changesDetected = true;
-                                await interaction.editReply(`Processing ${user.raUsername}: Found progress on ${challenge.shadow.name} (Shadow) (${challenge.month}/${challenge.year})`);
-                            }
-                            
-                            // Wait to respect API rate limits
-                            await new Promise(resolve => setTimeout(resolve, 1000));
-                        } catch (error) {
-                            console.error(`Error processing shadow challenge for ${user.raUsername}:`, error);
+                        const progress = await this.processGame(user.raUsername, challenge.shadow);
+                        if (progress) {
+                            user.shadowChallenges.set(dateKey, { progress: progress.points });
+                            changesDetected = true;
+                            await interaction.editReply(`Found progress for ${user.raUsername} on ${challenge.shadow.name} (Shadow)`);
                         }
                     }
                 }
                 
-                // Mark user as processed
+                // Mark user as processed and save
                 user.historicalDataProcessed = true;
                 await user.save();
                 
@@ -302,7 +238,6 @@ export default {
                 }
                 
             } else if (subcommand === 'reset') {
-                // Reset a user's processed flag
                 const raUsername = interaction.options.getString('username');
                 
                 const user = await User.findOne({ 
@@ -317,40 +252,40 @@ export default {
                 user.historicalDataProcessed = false;
                 await user.save();
                 
-                return interaction.editReply(`Successfully reset the historical data processed flag for ${user.raUsername}. You can now process their data again.`);
+                return interaction.editReply(`Reset the processed flag for ${user.raUsername}. You can now process them again.`);
             }
         } catch (error) {
             console.error('Error processing historical data:', error);
-            return interaction.editReply('An error occurred while processing historical data. Please check the logs for details.');
+            return interaction.editReply('An error occurred while processing historical data. Check the logs for details.');
         }
     },
 
-    // Helper method to process a user's achievements for a game
-    async processGame(username, gameId, progressionIds, winIds, totalAchievements) {
+    // Process a single game for a user
+    async processGame(username, game) {
         try {
-            const progress = await retroAPI.getUserGameProgress(username, gameId);
+            const progress = await retroAPI.getUserGameProgress(username, game.gameId);
             
-            // Get user earned achievement ids
+            // Get earned achievements
             const userEarnedAchievements = Object.entries(progress.achievements)
                 .filter(([id, data]) => data.hasOwnProperty('dateEarned'))
                 .map(([id, data]) => id);
             
-            // Check if user has all progression achievements
-            const hasAllProgressionAchievements = progressionIds.every(
+            // Check progress conditions
+            const hasAllProgressionAchievements = game.progression.every(
                 id => userEarnedAchievements.includes(id)
             );
-
-            // Check if user has at least one win condition (if any exist)
-            const hasWinCondition = winIds.length === 0 || 
-                winIds.some(id => userEarnedAchievements.includes(id));
-
-            // Check if user has all achievements in the game
-            const hasAllAchievements = progress.numAwardedToUser === totalAchievements;
             
+            const hasWinCondition = game.win.length === 0 || 
+                game.win.some(id => userEarnedAchievements.includes(id));
+            
+            const hasAllAchievements = progress.numAwardedToUser === game.total;
+            
+            // Return null if user hasn't started this game
             if (progress.numAwardedToUser === 0) {
-                return null; // User hasn't started this game
+                return null;
             }
             
+            // Calculate points
             let points = 1; // Participation
             if (hasAllAchievements || (hasAllProgressionAchievements && hasWinCondition)) {
                 points = 3; // Beaten or Mastery
@@ -361,7 +296,7 @@ export default {
                 points
             };
         } catch (error) {
-            console.error(`Error processing game achievements for ${username} in game ${gameId}:`, error);
+            console.error(`Error processing game achievements for ${username} in game ${game.gameId}:`, error);
             return null;
         }
     }
