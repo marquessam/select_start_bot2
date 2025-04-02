@@ -187,12 +187,6 @@ export default {
 
             // Process monthly challenges data from user document
             for (const [dateStr, data] of user.monthlyChallenges) {
-                // Skip current month when adding to historical lists
-                const gameDate = new Date(dateStr);
-                if (gameDate.getMonth() === now.getMonth() && gameDate.getFullYear() === now.getFullYear()) {
-                    continue;
-                }
-                
                 const challenge = challengeMap.get(dateStr);
                 
                 if (challenge) {
@@ -253,12 +247,6 @@ export default {
             
             // Process shadow challenges data from user document
             for (const [dateStr, data] of user.shadowChallenges) {
-                // Skip current month when adding to historical lists
-                const gameDate = new Date(dateStr);
-                if (gameDate.getMonth() === now.getMonth() && gameDate.getFullYear() === now.getFullYear()) {
-                    continue;
-                }
-                
                 const challenge = challengeMap.get(dateStr);
                 
                 // Only process if the challenge exists and has a shadow game
@@ -399,8 +387,7 @@ export default {
             }
 
             if (gameAwardsField) {
-                // Changed "Game Awards" to "2025 Games" as requested
-                embed.addFields({ name: '🎮 2025 Games', value: gameAwardsField });
+                embed.addFields({ name: '🎮 Game Awards', value: gameAwardsField });
             }
 
             // Community Awards Section
