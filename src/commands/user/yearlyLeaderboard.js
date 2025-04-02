@@ -34,6 +34,10 @@ export default {
         .addBooleanOption(option =>
             option.setName('sync')
                 .setDescription('Sync with RetroAchievements API (admin only, slower but more accurate)')
+                .setRequired(false))
+        .addStringOption(option =>
+            option.setName('username')
+                .setDescription('Only sync this specific user (admin only, requires sync:true)')
                 .setRequired(false)),
 
     async execute(interaction) {
@@ -87,28 +91,57 @@ export default {
             // Calculate points and update database if needed
             const userPoints = [];
             
-            for (const user of users) {
-                // Regular database approach for most users
-                if (!shouldSync) {
-                    const points = this.calculatePointsFromDatabase(user, selectedYear);
-                    if (points.totalPoints > 0) {
-                        userPoints.push(points);
-                    }
-                    continue;
-                }
-                
-                // For admins using sync option: recalculate directly from RetroAPI similar to profile.js
+            // If we're only syncing a specific user
+            if (shouldSync && targetUser) {
                 try {
-                    const points = await this.syncAndCalculatePoints(user, challengeMap, selectedYear);
+                    const points = await this.syncAndCalculatePoints(targetUser, challengeMap, selectedYear);
                     if (points.totalPoints > 0) {
                         userPoints.push(points);
                     }
                 } catch (error) {
-                    console.error(`Error syncing data for user ${user.raUsername}:`, error);
-                    // Fallback to database approach if API sync fails
-                    const points = this.calculatePointsFromDatabase(user, selectedYear);
+                    console.error(`Error syncing data for user ${targetUser.raUsername}:`, error);
+                    // Fallback to database approach
+                    const points = this.calculatePointsFromDatabase(targetUser, selectedYear);
                     if (points.totalPoints > 0) {
                         userPoints.push(points);
+                    }
+                }
+                
+                // Add all other users using database method
+                for (const user of users) {
+                    if (user.raUsername !== targetUser.raUsername) {
+                        const points = this.calculatePointsFromDatabase(user, selectedYear);
+                        if (points.totalPoints > 0) {
+                            userPoints.push(points);
+                        }
+                    }
+                }
+            }
+            // Regular approach for all users
+            else {
+                for (const user of users) {
+                    // Regular database approach for most users
+                    if (!shouldSync) {
+                        const points = this.calculatePointsFromDatabase(user, selectedYear);
+                        if (points.totalPoints > 0) {
+                            userPoints.push(points);
+                        }
+                        continue;
+                    }
+                    
+                    // For admins using sync option: recalculate directly from RetroAPI similar to profile.js
+                    try {
+                        const points = await this.syncAndCalculatePoints(user, challengeMap, selectedYear);
+                        if (points.totalPoints > 0) {
+                            userPoints.push(points);
+                        }
+                    } catch (error) {
+                        console.error(`Error syncing data for user ${user.raUsername}:`, error);
+                        // Fallback to database approach if API sync fails
+                        const points = this.calculatePointsFromDatabase(user, selectedYear);
+                        if (points.totalPoints > 0) {
+                            userPoints.push(points);
+                        }
                     }
                 }
             }
@@ -243,6 +276,9 @@ export default {
             const challengeDate = new Date(dateStr);
             if (challengeDate.getFullYear() !== selectedYear) continue;
             
+            // Add rate limiting delay to prevent overwhelming the API
+            await new Promise(resolve => setTimeout(resolve, 1000)); // 1 second delay between API calls
+            
             // Process monthly challenge
             if (challenge.monthly_challange_gameid) {
                 try {
@@ -309,6 +345,9 @@ export default {
                     }
                 }
             }
+            
+            // Add another rate limiting delay before shadow challenge
+            await new Promise(resolve => setTimeout(resolve, 1000)); // 1 second delay
             
             // Process shadow challenge
             if (challenge.shadow_challange_gameid) {
