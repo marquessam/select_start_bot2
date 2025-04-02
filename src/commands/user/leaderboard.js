@@ -232,7 +232,7 @@ export default {
                             const rankEmoji = currentRank <= 3 ? RANK_EMOJIS[currentRank] : `#${currentRank}`;
                             leaderboardText += `${rankEmoji} ${tiedUsers.map(u => 
                                 `**${u.username}** ${u.award}\n` +
-                                `${u.achieved}/${currentChallenge.monthly_challange_game_total} (${u.percentage}%) - ${u.earnedThisMonth} this month`
+                                `${u.achieved}/${currentChallenge.monthly_challange_game_total} (${u.percentage}%)`
                             ).join('\n')}\n\n`;
                         }
 
@@ -249,7 +249,7 @@ export default {
                     const rankEmoji = currentRank <= 3 ? RANK_EMOJIS[currentRank] : `#${currentRank}`;
                     leaderboardText += `${rankEmoji} ${tiedUsers.map(u => 
                         `**${u.username}** ${u.award}\n` +
-                        `${u.achieved}/${currentChallenge.monthly_challange_game_total} (${u.percentage}%) - ${u.earnedThisMonth} this month`
+                        `${u.achieved}/${currentChallenge.monthly_challange_game_total} (${u.percentage}%)`
                     ).join('\n')}\n\n`;
                 }
 
