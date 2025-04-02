@@ -20,7 +20,7 @@ const POINTS = {
 const SHADOW_MAX_POINTS = POINTS.BEATEN;
 
 // Number of users to show per embed
-const USERS_PER_PAGE = 10;
+const USERS_PER_PAGE = 15;
 
 export default {
     data: new SlashCommandBuilder()
@@ -423,27 +423,25 @@ export default {
                 embed.setDescription(description);
             }
             
-            // Generate leaderboard text for this page - more compact format
+            // Generate leaderboard text for this page - super compact format
             let leaderboardText = '';
             
             usersOnPage.forEach((user) => {
                 // Use the assigned rank that accounts for ties
                 const rankEmoji = user.rank <= 3 ? RANK_EMOJIS[user.rank] : `${user.rank}.`;
                 
-                // Create a compact display of the user's stats
-                leaderboardText += 
-                    `${rankEmoji} **${user.username}** - ${user.totalPoints} points\n` +
-                    `└ Monthly: ${user.challengePoints} | Community: ${user.communityPoints}\n` +
-                    `└ ✨ ${user.stats.mastery} Mastery, ⭐ ${user.stats.beaten} Beaten, 🏁 ${user.stats.participation} Participation\n`;
+                // Create an ultra-compact display using one line per user
+                const monthlyStats = `✨${user.stats.mastery} ⭐${user.stats.beaten} 🏁${user.stats.participation}`;
                 
-                // Only show shadow line if they have shadow achievements
+                // Generate shadow stats only if they have any
+                let shadowStats = "None";
                 if (user.stats.shadowBeaten > 0 || user.stats.shadowParticipation > 0) {
-                    leaderboardText += `└ Shadow: ⭐ ${user.stats.shadowBeaten} Beaten, 🏁 ${user.stats.shadowParticipation} Participation\n`;
-                } else {
-                    leaderboardText += `└ Shadow: None\n`;
+                    shadowStats = `⭐${user.stats.shadowBeaten} 🏁${user.stats.shadowParticipation}`;
                 }
                 
-                leaderboardText += '\n';
+                leaderboardText += 
+                    `${rankEmoji} **${user.username}** - ${user.totalPoints} pts\n` +
+                    `└ Monthly: ${user.challengePoints} | Community: ${user.communityPoints} | M: ${monthlyStats} | S: ${shadowStats}\n\n`;
             });
             
             embed.addFields({ name: 'Rankings', value: leaderboardText });
@@ -452,14 +450,7 @@ export default {
             if (page === totalPages - 1) {
                 embed.addFields({
                     name: 'Point System',
-                    value: '**Monthly Challenge**\n' +
-                           '✨ Mastery: 7 points (all achievements)\n' +
-                           '⭐ Beaten: 4 points (progression + win requirements)\n' +
-                           '🏁 Participation: 1 point (any achievement)\n\n' +
-                           '**Shadow Challenge** (ineligible for mastery)\n' +
-                           '⭐ Beaten: 4 points maximum\n' +
-                           '🏁 Participation: 1 point\n\n' +
-                           '🌟 Community awards: Variable points'
+                    value: '✨ Mastery: 7pts | ⭐ Beaten: 4pts | 🏁 Participation: 1pt | Shadow games ineligible for mastery'
                 });
             }
             
