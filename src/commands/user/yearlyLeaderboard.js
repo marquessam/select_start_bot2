@@ -8,18 +8,18 @@ const RANK_EMOJIS = {
     3: '🥉'
 };
 
-// Award points constants - using the same hierarchical values from profile.js
+// Award points constants - with hierarchical values matching profile.js exactly
 const POINTS = {
-    MASTERY: 7,         // Profile now uses 7 to represent MASTERY (3+3+1)
-    BEATEN: 4,          // Profile now uses 4 to represent BEATEN (3+1)
-    PARTICIPATION: 1    // Participation is still 1 point
+    MASTERY: 7,          // Mastery (3+3+1)
+    BEATEN: 4,           // Beaten (3+1)
+    PARTICIPATION: 1     // Participation
 };
 
-// Shadow games are limited to beaten status maximum - just like in profile.js
-const SHADOW_MAX_POINTS = POINTS.BEATEN;  // Shadow can only go up to "Beaten" (4 points)
+// Shadow games are limited to beaten status maximum (4 points)
+const SHADOW_MAX_POINTS = POINTS.BEATEN;
 
-// Number of users to show per embed (to avoid message size limits)
-const USERS_PER_PAGE = 5;
+// Number of users to show per embed
+const USERS_PER_PAGE = 10;
 
 export default {
     data: new SlashCommandBuilder()
@@ -57,12 +57,14 @@ export default {
             // Get all users
             const users = await User.find({});
 
-            // Calculate total points for each user
-            const userPoints = users.map(user => {
+            // Calculate points exactly as the profile.js command does
+            const userPoints = [];
+            
+            for (const user of users) {
                 let challengePoints = 0;
-                let participationCount = 0;
-                let beatenCount = 0;
                 let masteryCount = 0;
+                let beatenCount = 0;
+                let participationCount = 0;
                 let shadowBeatenCount = 0;
                 let shadowParticipationCount = 0;
 
@@ -70,7 +72,6 @@ export default {
                 for (const [dateStr, data] of user.monthlyChallenges.entries()) {
                     const challengeDate = new Date(dateStr);
                     if (challengeDate.getFullYear() === selectedYear) {
-                        // Calculate points based on the hierarchical points system from profile.js
                         if (data.progress === 3) {
                             // Mastery (7 points)
                             masteryCount++;
@@ -87,13 +88,12 @@ export default {
                     }
                 }
 
-                // Process shadow challenges
-                // Important: Shadow games are ineligible for mastery
+                // Process shadow challenges (capped at Beaten status)
                 for (const [dateStr, data] of user.shadowChallenges.entries()) {
                     const challengeDate = new Date(dateStr);
                     if (challengeDate.getFullYear() === selectedYear) {
                         if (data.progress === 2) {
-                            // Beaten for shadow (4 points max)
+                            // Beaten for shadow (4 points)
                             shadowBeatenCount++;
                             challengePoints += SHADOW_MAX_POINTS;
                         } else if (data.progress === 1) {
@@ -101,36 +101,36 @@ export default {
                             shadowParticipationCount++;
                             challengePoints += POINTS.PARTICIPATION;
                         }
-                        // No mastery points for shadow challenges as per profile.js
                     }
                 }
 
                 // Get community awards points
                 const communityPoints = user.getCommunityPointsForYear(selectedYear);
-                const communityAwards = user.getCommunityAwardsForYear(selectedYear);
 
-                return {
-                    username: user.raUsername,
-                    totalPoints: challengePoints + communityPoints,
-                    challengePoints,
-                    communityPoints,
-                    communityAwards,
-                    stats: {
-                        mastery: masteryCount,
-                        beaten: beatenCount,
-                        participation: participationCount,
-                        shadowBeaten: shadowBeatenCount,
-                        shadowParticipation: shadowParticipationCount
-                    }
-                };
-            });
+                const totalPoints = challengePoints + communityPoints;
+                
+                // Only include users with points
+                if (totalPoints > 0) {
+                    userPoints.push({
+                        username: user.raUsername,
+                        totalPoints,
+                        challengePoints,
+                        communityPoints,
+                        stats: {
+                            mastery: masteryCount,
+                            beaten: beatenCount,
+                            participation: participationCount,
+                            shadowBeaten: shadowBeatenCount,
+                            shadowParticipation: shadowParticipationCount
+                        }
+                    });
+                }
+            }
 
-            // Sort users by total points and filter out those with 0 points
-            const sortedUsers = userPoints
-                .filter(user => user.totalPoints > 0)
-                .sort((a, b) => b.totalPoints - a.totalPoints);
+            // Sort users by total points (descending)
+            userPoints.sort((a, b) => b.totalPoints - a.totalPoints);
 
-            if (sortedUsers.length === 0) {
+            if (userPoints.length === 0) {
                 const embed = new EmbedBuilder()
                     .setTitle(`🏆 ${selectedYear} Yearly Leaderboard`)
                     .setDescription(`Total Challenges: ${challenges.length}`)
@@ -144,8 +144,22 @@ export default {
                 return interaction.editReply({ embeds: [embed] });
             }
 
-            // Create pages of embeds
-            const embeds = this.createPaginatedEmbeds(sortedUsers, selectedYear, challenges.length);
+            // Handle ties by assigning the same rank to users with equal points
+            let currentRank = 1;
+            let currentPoints = userPoints[0].totalPoints;
+            let usersProcessed = 0;
+            
+            for (let i = 0; i < userPoints.length; i++) {
+                if (userPoints[i].totalPoints < currentPoints) {
+                    currentRank = usersProcessed + 1;
+                    currentPoints = userPoints[i].totalPoints;
+                }
+                userPoints[i].rank = currentRank;
+                usersProcessed++;
+            }
+
+            // Create pages of embeds with proper tie handling
+            const embeds = this.createPaginatedEmbeds(userPoints, selectedYear, challenges.length);
 
             // Send the first embed as a reply to the command
             await interaction.editReply({ embeds: [embeds[0]] });
@@ -161,17 +175,17 @@ export default {
         }
     },
 
-    createPaginatedEmbeds(sortedUsers, selectedYear, challengeCount) {
+    createPaginatedEmbeds(userPoints, selectedYear, challengeCount) {
         const embeds = [];
 
         // Calculate how many pages we need
-        const totalPages = Math.ceil(sortedUsers.length / USERS_PER_PAGE);
+        const totalPages = Math.ceil(userPoints.length / USERS_PER_PAGE);
         
         for (let page = 0; page < totalPages; page++) {
             // Get users for this page
             const startIndex = page * USERS_PER_PAGE;
-            const endIndex = Math.min((page + 1) * USERS_PER_PAGE, sortedUsers.length);
-            const usersOnPage = sortedUsers.slice(startIndex, endIndex);
+            const endIndex = Math.min((page + 1) * USERS_PER_PAGE, userPoints.length);
+            const usersOnPage = userPoints.slice(startIndex, endIndex);
             
             // Create embed for this page
             const embed = new EmbedBuilder()
@@ -184,24 +198,27 @@ export default {
                 embed.setDescription(`Total Challenges: ${challengeCount}`);
             }
             
-            // Generate leaderboard text for this page
+            // Generate leaderboard text for this page - more compact format
             let leaderboardText = '';
             
-            usersOnPage.forEach((user, index) => {
-                const rank = startIndex + index + 1;
-                const rankEmoji = rank <= 3 ? RANK_EMOJIS[rank] : `${rank}.`;
+            usersOnPage.forEach((user) => {
+                // Use the assigned rank that accounts for ties
+                const rankEmoji = user.rank <= 3 ? RANK_EMOJIS[user.rank] : `${user.rank}.`;
                 
-                // Simplify the display for shadow stats if they have none
-                const shadowStatsText = (user.stats.shadowBeaten > 0 || user.stats.shadowParticipation > 0) ?
-                    `└ Shadow: ⭐ ${user.stats.shadowBeaten} Beaten, 🏁 ${user.stats.shadowParticipation} Participation\n` :
-                    `└ Shadow: None\n`;
-                
+                // Create a compact display of the user's stats
                 leaderboardText += 
                     `${rankEmoji} **${user.username}** - ${user.totalPoints} points\n` +
                     `└ Monthly: ${user.challengePoints} | Community: ${user.communityPoints}\n` +
-                    `└ ✨ ${user.stats.mastery} Mastery, ⭐ ${user.stats.beaten} Beaten, 🏁 ${user.stats.participation} Participation\n` +
-                    shadowStatsText + 
-                    '\n';
+                    `└ ✨ ${user.stats.mastery} Mastery, ⭐ ${user.stats.beaten} Beaten, 🏁 ${user.stats.participation} Participation\n`;
+                
+                // Only show shadow line if they have shadow achievements
+                if (user.stats.shadowBeaten > 0 || user.stats.shadowParticipation > 0) {
+                    leaderboardText += `└ Shadow: ⭐ ${user.stats.shadowBeaten} Beaten, 🏁 ${user.stats.shadowParticipation} Participation\n`;
+                } else {
+                    leaderboardText += `└ Shadow: None\n`;
+                }
+                
+                leaderboardText += '\n';
             });
             
             embed.addFields({ name: 'Rankings', value: leaderboardText });
