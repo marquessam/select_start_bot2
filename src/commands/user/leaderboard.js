@@ -147,8 +147,8 @@ export default {
 
                     return {
                         username: user.raUsername,
-                        achieved: progress.numAwardedToUser,
-                        percentage: (progress.numAwardedToUser / currentChallenge.monthly_challange_game_total * 100).toFixed(2),
+                        achieved: allEarnedAchievements.length,
+                        percentage: (allEarnedAchievements.length / currentChallenge.monthly_challange_game_total * 100).toFixed(2),
                         award,
                         points,
                         earnedThisMonth: achievementsEarnedThisMonth.length
