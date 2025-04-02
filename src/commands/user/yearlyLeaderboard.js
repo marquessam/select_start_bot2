@@ -8,12 +8,15 @@ const RANK_EMOJIS = {
     3: '🥉'
 };
 
-// Award points constants
+// Award points constants - using the same hierarchical values from profile.js
 const POINTS = {
-    MASTERY: 3,
-    BEATEN: 3,
-    PARTICIPATION: 1
+    MASTERY: 7,         // Profile now uses 7 to represent MASTERY (3+3+1)
+    BEATEN: 4,          // Profile now uses 4 to represent BEATEN (3+1)
+    PARTICIPATION: 1    // Participation is still 1 point
 };
+
+// Shadow games are limited to beaten status maximum - just like in profile.js
+const SHADOW_MAX_POINTS = POINTS.BEATEN;  // Shadow can only go up to "Beaten" (4 points)
 
 export default {
     data: new SlashCommandBuilder()
@@ -57,46 +60,45 @@ export default {
                 let participationCount = 0;
                 let beatenCount = 0;
                 let masteryCount = 0;
+                let shadowBeatenCount = 0;
+                let shadowParticipationCount = 0;
 
-                // Calculate points from monthly challenges
-                for (const [dateStr, data] of user.monthlyChallenges) {
+                // Process monthly challenges
+                for (const [dateStr, data] of user.monthlyChallenges.entries()) {
                     const challengeDate = new Date(dateStr);
                     if (challengeDate.getFullYear() === selectedYear) {
-                        // Calculate points based on the highest achievement level
+                        // Calculate points based on the hierarchical points system from profile.js
                         if (data.progress === 3) {
-                            // Mastery: award full points (mastery + beaten + participation)
+                            // Mastery (7 points)
                             masteryCount++;
-                            challengePoints += POINTS.MASTERY + POINTS.BEATEN + POINTS.PARTICIPATION;
+                            challengePoints += POINTS.MASTERY;
                         } else if (data.progress === 2) {
-                            // Beaten: award beaten points + participation
+                            // Beaten (4 points)
                             beatenCount++;
-                            challengePoints += POINTS.BEATEN + POINTS.PARTICIPATION;
+                            challengePoints += POINTS.BEATEN;
                         } else if (data.progress === 1) {
-                            // Participation only
+                            // Participation (1 point)
                             participationCount++;
                             challengePoints += POINTS.PARTICIPATION;
                         }
                     }
                 }
 
-                // Calculate points from shadow challenges
-                for (const [dateStr, data] of user.shadowChallenges) {
+                // Process shadow challenges
+                // Important: Shadow games are ineligible for mastery
+                for (const [dateStr, data] of user.shadowChallenges.entries()) {
                     const challengeDate = new Date(dateStr);
                     if (challengeDate.getFullYear() === selectedYear) {
-                        // Calculate points based on the highest achievement level
-                        if (data.progress === 3) {
-                            // Mastery: award full points (mastery + beaten + participation)
-                            masteryCount++;
-                            challengePoints += POINTS.MASTERY + POINTS.BEATEN + POINTS.PARTICIPATION;
-                        } else if (data.progress === 2) {
-                            // Beaten: award beaten points + participation
-                            beatenCount++;
-                            challengePoints += POINTS.BEATEN + POINTS.PARTICIPATION;
+                        if (data.progress === 2) {
+                            // Beaten for shadow (4 points max)
+                            shadowBeatenCount++;
+                            challengePoints += SHADOW_MAX_POINTS;
                         } else if (data.progress === 1) {
-                            // Participation only
-                            participationCount++;
+                            // Participation for shadow (1 point)
+                            shadowParticipationCount++;
                             challengePoints += POINTS.PARTICIPATION;
                         }
+                        // No mastery points for shadow challenges as per profile.js
                     }
                 }
 
@@ -113,7 +115,9 @@ export default {
                     stats: {
                         mastery: masteryCount,
                         beaten: beatenCount,
-                        participation: participationCount
+                        participation: participationCount,
+                        shadowBeaten: shadowBeatenCount,
+                        shadowParticipation: shadowParticipationCount
                     }
                 };
             });
@@ -151,8 +155,9 @@ export default {
                             const rankEmoji = currentRank <= 3 ? RANK_EMOJIS[currentRank] : `${currentRank}.`;
                             leaderboardText += `${rankEmoji} ${tiedUsers.map(u => 
                                 `**${u.username}** - ${u.totalPoints} points\n` +
-                                `└ Challenge: ${u.challengePoints} | Community: ${u.communityPoints}\n` +
-                                `└ ✨ ${u.stats.mastery} Mastery, ⭐ ${u.stats.beaten} Beaten, 🏁 ${u.stats.participation} Participation`
+                                `└ Monthly: ${u.challengePoints} | Community: ${u.communityPoints}\n` +
+                                `└ ✨ ${u.stats.mastery} Mastery, ⭐ ${u.stats.beaten} Beaten, 🏁 ${u.stats.participation} Participation\n` +
+                                `└ Shadow: ⭐ ${u.stats.shadowBeaten} Beaten, 🏁 ${u.stats.shadowParticipation} Participation`
                             ).join('\n')}\n\n`;
                         }
 
@@ -168,8 +173,9 @@ export default {
                     const rankEmoji = currentRank <= 3 ? RANK_EMOJIS[currentRank] : `${currentRank}.`;
                     leaderboardText += `${rankEmoji} ${tiedUsers.map(u => 
                         `**${u.username}** - ${u.totalPoints} points\n` +
-                        `└ Challenge: ${u.challengePoints} | Community: ${u.communityPoints}\n` +
-                        `└ ✨ ${u.stats.mastery} Mastery, ⭐ ${u.stats.beaten} Beaten, 🏁 ${u.stats.participation} Participation`
+                        `└ Monthly: ${u.challengePoints} | Community: ${u.communityPoints}\n` +
+                        `└ ✨ ${u.stats.mastery} Mastery, ⭐ ${u.stats.beaten} Beaten, 🏁 ${u.stats.participation} Participation\n` +
+                        `└ Shadow: ⭐ ${u.stats.shadowBeaten} Beaten, 🏁 ${u.stats.shadowParticipation} Participation`
                     ).join('\n')}\n\n`;
                 }
 
@@ -179,12 +185,16 @@ export default {
                 });
             }
 
-            // Add point system explanation
+            // Add point system explanation - updated to match profile.js
             embed.addFields({
                 name: 'Point System',
-                value: '✨ Mastery: 7 points (3+3+1)\n' +
-                       '⭐ Beaten: 4 points (3+1)\n' +
-                       '🏁 Participation: 1 point\n' +
+                value: '**Monthly Challenge**\n' +
+                       '✨ Mastery: 7 points (all achievements)\n' +
+                       '⭐ Beaten: 4 points (progression + win requirements)\n' +
+                       '🏁 Participation: 1 point (any achievement)\n\n' +
+                       '**Shadow Challenge** (ineligible for mastery)\n' +
+                       '⭐ Beaten: 4 points maximum\n' +
+                       '🏁 Participation: 1 point\n\n' +
                        '🌟 Community awards: Variable points',
                 inline: true
             });
