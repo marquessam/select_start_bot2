@@ -22,6 +22,11 @@ const POINTS = {
     PARTICIPATION: 1
 };
 
+// Function to check if a date is in the current month
+function isCurrentMonth(date, now) {
+    return date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear();
+}
+
 // TODO: Revert this back to just the current month.
 function isDateInCurrentMonth(dateString) {
     // Parse the input date string
@@ -80,6 +85,16 @@ export default {
                     $lt: nextMonthStart
                 }
             });
+
+            // Get ALL challenges for processing past awards
+            const allChallenges = await Challenge.find({}).sort({ date: -1 });
+            
+            // Create a map for faster challenge lookups
+            const challengeMap = new Map();
+            for (const challenge of allChallenges) {
+                const dateKey = User.formatDateKey(challenge.date);
+                challengeMap.set(dateKey, challenge);
+            }
 
             // Get user's RA info
             const raUserInfo = await retroAPI.getUserInfo(raUsername);
@@ -250,9 +265,6 @@ export default {
                         });
                     }
                 }
-                
-                // Save the updated user data
-                await user.save();
             }
 
             // Calculate awards and points
@@ -261,131 +273,152 @@ export default {
             let participationGames = [];
             let communityPoints = 0;
             
-            // Get all challenges (not just current month's)
-            const allChallenges = await Challenge.find({}).sort({ date: -1 });
-            
-            // Create a map for faster challenge lookups
-            const challengeMap = new Map();
+            // Process past challenges data
+            // Important addition: Process all past challenges even if not in user's monthlyChallenges
             for (const challenge of allChallenges) {
-                const dateKey = User.formatDateKey(challenge.date);
-                challengeMap.set(dateKey, challenge);
-            }
-
-            // Process monthly challenges data from user document
-            for (const [dateStr, data] of user.monthlyChallenges) {
-                const challenge = challengeMap.get(dateStr);
+                const challengeDate = challenge.date;
                 
-                if (challenge) {
-                    try {
-                        const progress = await retroAPI.getUserGameProgress(raUsername, challenge.monthly_challange_gameid);
-                            
+                // Skip current month's challenge for past awards section
+                if (isCurrentMonth(challengeDate, now)) {
+                    continue;
+                }
+                
+                const dateKey = User.formatDateKey(challengeDate);
+                const userData = user.monthlyChallenges.get(dateKey);
+                
+                // Check if user has progress for this challenge or attempt to fetch it
+                try {
+                    // This is a past challenge - get progress
+                    const progress = await retroAPI.getUserGameProgress(
+                        raUsername, 
+                        challenge.monthly_challange_gameid
+                    );
+                    
+                    // If user has earned at least one achievement
+                    if (progress.numAwardedToUser > 0) {
                         // Calculate completion percentage
                         const percentage = (progress.numAwardedToUser / challenge.monthly_challange_game_total * 100).toFixed(1);
                         
-                        // Check if this is a current month challenge
-                        const challengeDate = new Date(dateStr);
-                        const isCurrentMonth = challengeDate.getMonth() === now.getMonth() && 
-                                              challengeDate.getFullYear() === now.getFullYear();
-                        
-                        // Determine which array to add to based on completion state and stored progress value
-                        const progressValue = data.progress || 0;
-                        
-                        // Skip current month challenges for the past game awards section
-                        if (!isCurrentMonth) {
-                            if (progressValue > 2) {
-                                // This would be either Mastery or Beaten status
-                                if (progress.numAwardedToUser === challenge.monthly_challange_game_total) {
-                                    masteredGames.push({
-                                        title: progress.title,
-                                        date: new Date(dateStr),
-                                        earned: progress.numAwardedToUser,
-                                        total: challenge.monthly_challange_game_total,
-                                        percentage
-                                    });
-                                } else {
-                                    beatenGames.push({
-                                        title: progress.title,
-                                        date: new Date(dateStr),
-                                        earned: progress.numAwardedToUser,
-                                        total: challenge.monthly_challange_game_total,
-                                        percentage
-                                    });
-                                }
-                            } else if (progressValue === 1) {
-                                participationGames.push({
-                                    title: progress.title,
-                                    date: new Date(dateStr),
-                                    earned: progress.numAwardedToUser,
-                                    total: challenge.monthly_challange_game_total,
-                                    percentage
-                                });
+                        // Determine status based on achievement count
+                        if (progress.numAwardedToUser === challenge.monthly_challange_game_total) {
+                            // Mastery
+                            masteredGames.push({
+                                title: progress.title,
+                                date: challengeDate,
+                                earned: progress.numAwardedToUser,
+                                total: challenge.monthly_challange_game_total,
+                                percentage
+                            });
+                            
+                            // Save this to user's record if not already present
+                            if (!userData || userData.progress < 3) {
+                                user.monthlyChallenges.set(dateKey, { progress: 3 });
+                            }
+                        } else if (userData && userData.progress === 2) {
+                            // Beaten (use stored status)
+                            beatenGames.push({
+                                title: progress.title,
+                                date: challengeDate,
+                                earned: progress.numAwardedToUser,
+                                total: challenge.monthly_challange_game_total,
+                                percentage
+                            });
+                        } else if (userData && userData.progress === 1) {
+                            // Participation
+                            participationGames.push({
+                                title: progress.title,
+                                date: challengeDate,
+                                earned: progress.numAwardedToUser,
+                                total: challenge.monthly_challange_game_total,
+                                percentage
+                            });
+                        } else {
+                            // No stored status, but has some achievements - add as participation
+                            participationGames.push({
+                                title: progress.title,
+                                date: challengeDate,
+                                earned: progress.numAwardedToUser,
+                                total: challenge.monthly_challange_game_total,
+                                percentage
+                            });
+                            
+                            // Save participation status if not already present
+                            if (!userData) {
+                                user.monthlyChallenges.set(dateKey, { progress: 1 });
                             }
                         }
-                    } catch (error) {
-                        console.error(`Error getting game progress for ${dateStr}:`, error);
                     }
-                }
-            }
-            
-            // Process shadow challenges data from user document
-            for (const [dateStr, data] of user.shadowChallenges) {
-                const challenge = challengeMap.get(dateStr);
-                
-                // Only process if the challenge exists and has a shadow game
-                if (challenge && challenge.shadow_challange_gameid) {
-                    try {
-                        const progress = await retroAPI.getUserGameProgress(raUsername, challenge.shadow_challange_gameid);
-                            
-                        // Calculate completion percentage
-                        const percentage = (progress.numAwardedToUser / challenge.shadow_challange_game_total * 100).toFixed(1);
+                    
+                    // Also check shadow games for past months
+                    if (challenge.shadow_challange_gameid && challenge.shadow_challange_revealed) {
+                        const shadowProgress = await retroAPI.getUserGameProgress(
+                            raUsername, 
+                            challenge.shadow_challange_gameid
+                        );
                         
-                        // Check if this is a current month challenge
-                        const challengeDate = new Date(dateStr);
-                        const isCurrentMonth = challengeDate.getMonth() === now.getMonth() && 
-                                              challengeDate.getFullYear() === now.getFullYear();
-                        
-                        // Only add to completed lists if the game has at least some progress
-                        // and is not from the current month
-                        if (progress.numAwardedToUser > 0 && !isCurrentMonth) {
-                            const shadowTitle = `${progress.title} (Shadow)`;
+                        if (shadowProgress.numAwardedToUser > 0) {
+                            // Calculate completion percentage
+                            const percentage = (shadowProgress.numAwardedToUser / challenge.shadow_challange_game_total * 100).toFixed(1);
+                            const shadowTitle = `${shadowProgress.title} (Shadow)`;
                             
-                            // Determine which array to add to based on completion state and stored progress value
-                            const progressValue = data.progress || 0;
+                            const shadowUserData = user.shadowChallenges.get(dateKey);
                             
-                            if (progressValue > 2) {
-                                // This would be either Mastery or Beaten status
-                                if (progress.numAwardedToUser === challenge.shadow_challange_game_total) {
-                                    masteredGames.push({
-                                        title: shadowTitle,
-                                        date: new Date(dateStr),
-                                        earned: progress.numAwardedToUser,
-                                        total: challenge.shadow_challange_game_total,
-                                        percentage
-                                    });
-                                } else {
-                                    beatenGames.push({
-                                        title: shadowTitle,
-                                        date: new Date(dateStr),
-                                        earned: progress.numAwardedToUser,
-                                        total: challenge.shadow_challange_game_total,
-                                        percentage
-                                    });
-                                }
-                            } else if (progressValue === 1) {
-                                participationGames.push({
+                            if (shadowProgress.numAwardedToUser === challenge.shadow_challange_game_total) {
+                                // Mastery
+                                masteredGames.push({
                                     title: shadowTitle,
-                                    date: new Date(dateStr),
-                                    earned: progress.numAwardedToUser,
+                                    date: challengeDate,
+                                    earned: shadowProgress.numAwardedToUser,
                                     total: challenge.shadow_challange_game_total,
                                     percentage
                                 });
+                                
+                                // Save this to user's record if not already present
+                                if (!shadowUserData || shadowUserData.progress < 3) {
+                                    user.shadowChallenges.set(dateKey, { progress: 3 });
+                                }
+                            } else if (shadowUserData && shadowUserData.progress === 2) {
+                                // Beaten (use stored status)
+                                beatenGames.push({
+                                    title: shadowTitle,
+                                    date: challengeDate,
+                                    earned: shadowProgress.numAwardedToUser,
+                                    total: challenge.shadow_challange_game_total,
+                                    percentage
+                                });
+                            } else if (shadowUserData && shadowUserData.progress === 1) {
+                                // Participation
+                                participationGames.push({
+                                    title: shadowTitle,
+                                    date: challengeDate,
+                                    earned: shadowProgress.numAwardedToUser,
+                                    total: challenge.shadow_challange_game_total,
+                                    percentage
+                                });
+                            } else {
+                                // No stored status, but has some achievements - add as participation
+                                participationGames.push({
+                                    title: shadowTitle,
+                                    date: challengeDate,
+                                    earned: shadowProgress.numAwardedToUser,
+                                    total: challenge.shadow_challange_game_total,
+                                    percentage
+                                });
+                                
+                                // Save participation status if not already present
+                                if (!shadowUserData) {
+                                    user.shadowChallenges.set(dateKey, { progress: 1 });
+                                }
                             }
                         }
-                    } catch (error) {
-                        console.error(`Error getting shadow game progress for ${dateStr}:`, error);
                     }
+                } catch (error) {
+                    console.error(`Error processing past challenge for ${dateKey}:`, error);
                 }
             }
+            
+            // Save user with possibly updated challenge records
+            await user.save();
 
             // Get community awards for the current year
             const currentYear = new Date().getFullYear();
