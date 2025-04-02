@@ -22,6 +22,7 @@ const POINTS = {
     PARTICIPATION: 1
 };
 
+// TODO: Revert this back to just the current month.
 function isDateInCurrentMonth(dateString) {
     // Parse the input date string
     const inputDate = new Date(dateString.replace(' ', 'T'));
@@ -30,20 +31,9 @@ function isDateInCurrentMonth(dateString) {
     const currentDate = new Date();
     
     // Check if the input date's month and year match the current month and year
-    return inputDate.getMonth() === currentDate.getMonth() && 
+    return (inputDate.getMonth() === currentDate.getMonth() || inputDate.getMonth() === currentDate.getMonth() - 1) && 
            inputDate.getFullYear() === currentDate.getFullYear();
 }
-
-function isDateInCurrentYear(dateString) {
-    // Parse the input date string
-    const inputDate = new Date(dateString.replace(' ', 'T'));
-    
-    // Get the current date
-    const currentDate = new Date();
-    
-    // Check if the input date's year matches the current year
-    return inputDate.getFullYear() === currentDate.getFullYear();
-  }
 
 export default {
     data: new SlashCommandBuilder()
