@@ -15,6 +15,13 @@ const RANK_EMOJIS = {
     3: '🥉'
 };
 
+// Award points constants - with hierarchical values
+const POINTS = {
+    MASTERY: 3,
+    BEATEN: 3,
+    PARTICIPATION: 1
+};
+
 export default {
     data: new SlashCommandBuilder()
         .setName('profile')
@@ -97,7 +104,7 @@ export default {
                     monthlyPoints = 3; // Mastery
                     award = 'Mastery';
                 } else if (hasAllProgressionAchievements && hasWinCondition) {
-                    monthlyPoints = 3; // Beaten
+                    monthlyPoints = 3; // Beaten - using this same value for database consistency
                     award = 'Beaten';
                 } else if (mainGameProgress.numAwardedToUser > 0) {
                     monthlyPoints = 1; // Participation
@@ -144,10 +151,10 @@ export default {
                     let shadowPoints = 0;
                     let award = 'Participation';
                     if (hasAllShadowAchievements) {
-                        shadowPoints = 3; // Mastery
+                        shadowPoints = 3; // Mastery - using this same value for database consistency
                         award = 'Mastery';
                     } else if (hasAllShadowProgressionAchievements && hasShadowWinCondition) {
-                        shadowPoints = 3; // Beaten
+                        shadowPoints = 3; // Beaten - using this same value for database consistency
                         award = 'Beaten';
                     } else if (shadowGameProgress.numAwardedToUser > 0) {
                         shadowPoints = 1; // Participation
@@ -323,31 +330,34 @@ export default {
                 .setThumbnail(raUserInfo.profileImageUrl)
                 .setColor('#0099ff');
 
-            // Current Challenges Section
+            // Current Challenges Section - Using hierarchical points calculation
             let challengePoints = 0;
             if (currentGamesProgress.length > 0) {
                 let currentChallengesField = '';
                 for (const game of currentGamesProgress) {
                     let award = '';
                     let awardText = '';
+                    let pointsEarned = 0;
                 
                     if (game.award === 'Mastery') {
                         award = AWARD_EMOJIS.MASTERY;
                         awardText = 'Mastery - All achievements completed';
-                        challengePoints += 3;
+                        pointsEarned = POINTS.MASTERY + POINTS.BEATEN + POINTS.PARTICIPATION; // 7 points
                     } else if (game.award === 'Beaten') {
                         award = AWARD_EMOJIS.BEATEN;
                         awardText = 'Beaten - All progression + at least 1 win condition';
-                        challengePoints += 3;
+                        pointsEarned = POINTS.BEATEN + POINTS.PARTICIPATION; // 4 points
                     } else if (game.earned > 0) {
                         award = AWARD_EMOJIS.PARTICIPATION;
                         awardText = 'Participation';
-                        challengePoints += 1;
+                        pointsEarned = POINTS.PARTICIPATION; // 1 point
                     }
+                    
+                    challengePoints += pointsEarned;
                     
                     currentChallengesField += `**${game.title}**\n` +
                         `Progress: ${game.earned}/${game.total} (${game.percentage}%)\n` +
-                        `Current Award: ${award} ${awardText}\n\n`;
+                        `Current Award: ${award} ${awardText} (${pointsEarned} points)\n\n`;
                 }
                 embed.addFields({ name: '📊 Current Challenges', value: currentChallengesField || 'No current challenges' });
             }
@@ -361,7 +371,7 @@ export default {
             let gameAwardsField = '';
             
             if (masteredGames.length > 0) {
-                gameAwardsField += `**Mastered Games ${AWARD_EMOJIS.MASTERY}**\n`;
+                gameAwardsField += `**Mastered Games ${AWARD_EMOJIS.MASTERY} (7 points each)**\n`;
                 masteredGames.forEach(game => {
                     const monthYear = game.date.toLocaleString('default', { month: 'short', year: 'numeric' });
                     gameAwardsField += `${game.title}: ${game.earned}/${game.total} (${game.percentage}%)\n`;
@@ -370,7 +380,7 @@ export default {
             }
 
             if (beatenGames.length > 0) {
-                gameAwardsField += `**Beaten Games ${AWARD_EMOJIS.BEATEN}**\n`;
+                gameAwardsField += `**Beaten Games ${AWARD_EMOJIS.BEATEN} (4 points each)**\n`;
                 beatenGames.forEach(game => {
                     const monthYear = game.date.toLocaleString('default', { month: 'short', year: 'numeric' });
                     gameAwardsField += `${game.title}: ${game.earned}/${game.total} (${game.percentage}%)\n`;
@@ -379,7 +389,7 @@ export default {
             }
 
             if (participationGames.length > 0) {
-                gameAwardsField += `**Participation ${AWARD_EMOJIS.PARTICIPATION}**\n`;
+                gameAwardsField += `**Participation ${AWARD_EMOJIS.PARTICIPATION} (1 point each)**\n`;
                 participationGames.forEach(game => {
                     const monthYear = game.date.toLocaleString('default', { month: 'short', year: 'numeric' });
                     gameAwardsField += `${game.title}: ${game.earned}/${game.total} (${game.percentage}%)\n`;
@@ -404,7 +414,15 @@ export default {
                 embed.addFields({ name: '🏅 Community Awards', value: communityAwardsField });
             }
 
-            // Points Summary Section
+            // Points Summary Section - Using hierarchical point calculation
+            let totalHistoricalPoints = 0;
+            // Calculate historical mastery points (7 each)
+            totalHistoricalPoints += masteredGames.length * (POINTS.MASTERY + POINTS.BEATEN + POINTS.PARTICIPATION);
+            // Calculate historical beaten points (4 each)
+            totalHistoricalPoints += beatenGames.length * (POINTS.BEATEN + POINTS.PARTICIPATION);
+            // Calculate historical participation points (1 each)
+            totalHistoricalPoints += participationGames.length * POINTS.PARTICIPATION;
+            
             const totalPoints = challengePoints + communityPoints;
             const pointsSummary = `Total: ${totalPoints}\n` +
                 `Challenge: ${challengePoints}\n` +
