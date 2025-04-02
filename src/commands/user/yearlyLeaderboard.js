@@ -8,6 +8,13 @@ const RANK_EMOJIS = {
     3: '🥉'
 };
 
+// Award points constants
+const POINTS = {
+    MASTERY: 3,
+    BEATEN: 3,
+    PARTICIPATION: 1
+};
+
 export default {
     data: new SlashCommandBuilder()
         .setName('yearlyboard')
@@ -55,15 +62,19 @@ export default {
                 for (const [dateStr, data] of user.monthlyChallenges) {
                     const challengeDate = new Date(dateStr);
                     if (challengeDate.getFullYear() === selectedYear) {
+                        // Calculate points based on the highest achievement level
                         if (data.progress === 3) {
+                            // Mastery: award full points (mastery + beaten + participation)
                             masteryCount++;
-                            challengePoints += 3;
+                            challengePoints += POINTS.MASTERY + POINTS.BEATEN + POINTS.PARTICIPATION;
                         } else if (data.progress === 2) {
+                            // Beaten: award beaten points + participation
                             beatenCount++;
-                            challengePoints += 3;
+                            challengePoints += POINTS.BEATEN + POINTS.PARTICIPATION;
                         } else if (data.progress === 1) {
+                            // Participation only
                             participationCount++;
-                            challengePoints += 1;
+                            challengePoints += POINTS.PARTICIPATION;
                         }
                     }
                 }
@@ -72,15 +83,19 @@ export default {
                 for (const [dateStr, data] of user.shadowChallenges) {
                     const challengeDate = new Date(dateStr);
                     if (challengeDate.getFullYear() === selectedYear) {
+                        // Calculate points based on the highest achievement level
                         if (data.progress === 3) {
+                            // Mastery: award full points (mastery + beaten + participation)
                             masteryCount++;
-                            challengePoints += 3;
+                            challengePoints += POINTS.MASTERY + POINTS.BEATEN + POINTS.PARTICIPATION;
                         } else if (data.progress === 2) {
+                            // Beaten: award beaten points + participation
                             beatenCount++;
-                            challengePoints += 3;
+                            challengePoints += POINTS.BEATEN + POINTS.PARTICIPATION;
                         } else if (data.progress === 1) {
+                            // Participation only
                             participationCount++;
-                            challengePoints += 1;
+                            challengePoints += POINTS.PARTICIPATION;
                         }
                     }
                 }
@@ -137,7 +152,7 @@ export default {
                             leaderboardText += `${rankEmoji} ${tiedUsers.map(u => 
                                 `**${u.username}** - ${u.totalPoints} points\n` +
                                 `└ Challenge: ${u.challengePoints} | Community: ${u.communityPoints}\n` +
-                                `└ 🏆 ${u.stats.mastery} Mastery, ⭐ ${u.stats.beaten} Beaten, 🏁 ${u.stats.participation} Participation`
+                                `└ ✨ ${u.stats.mastery} Mastery, ⭐ ${u.stats.beaten} Beaten, 🏁 ${u.stats.participation} Participation`
                             ).join('\n')}\n\n`;
                         }
 
@@ -154,7 +169,7 @@ export default {
                     leaderboardText += `${rankEmoji} ${tiedUsers.map(u => 
                         `**${u.username}** - ${u.totalPoints} points\n` +
                         `└ Challenge: ${u.challengePoints} | Community: ${u.communityPoints}\n` +
-                        `└ 🏆 ${u.stats.mastery} Mastery, ⭐ ${u.stats.beaten} Beaten, 🏁 ${u.stats.participation} Participation`
+                        `└ ✨ ${u.stats.mastery} Mastery, ⭐ ${u.stats.beaten} Beaten, 🏁 ${u.stats.participation} Participation`
                     ).join('\n')}\n\n`;
                 }
 
@@ -167,8 +182,8 @@ export default {
             // Add point system explanation
             embed.addFields({
                 name: 'Point System',
-                value: '🏆 Mastery: 3 points\n' +
-                       '⭐ Beaten: 3 points\n' +
+                value: '✨ Mastery: 7 points (3+3+1)\n' +
+                       '⭐ Beaten: 4 points (3+1)\n' +
                        '🏁 Participation: 1 point\n' +
                        '🌟 Community awards: Variable points',
                 inline: true
