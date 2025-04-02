@@ -73,6 +73,14 @@ export default {
                         return null;
                     }
 
+                    // For mastery, ALL achievements must have been earned this month
+                    const allAchievementsEarnedThisMonth = Object.entries(userAchievements)
+                        .filter(([id, data]) => data.dateEarned)
+                        .every(([id, data]) => {
+                            const earnedDate = new Date(data.dateEarned);
+                            return earnedDate >= currentMonthStart;
+                        });
+
                     // Get the user's earned achievements from the progress data
                     const allEarnedAchievements = Object.entries(progress.achievements)
                         .filter(([id, data]) => data.hasOwnProperty('dateEarned'))
@@ -106,9 +114,8 @@ export default {
                     // Check if user has all achievements in the game
                     const hasAllAchievements = progress.numAwardedToUser === currentChallenge.monthly_challange_game_total;
 
-                    // To get mastery points this month, user must have earned at least one achievement this month
-                    // AND have the game 100% completed now
-                    if (achievementsEarnedThisMonth.length > 0 && hasAllAchievements) {
+                    // For mastery, ALL achievements must be earned THIS MONTH
+                    if (hasAllAchievements && allAchievementsEarnedThisMonth) {
                         award = AWARD_EMOJIS.MASTERY;
                         points = 3;
                     } 
@@ -229,9 +236,9 @@ export default {
             // Add legend
             embed.addFields({
                 name: 'Legend',
-                value: `${AWARD_EMOJIS.MASTERY} Mastery (3 points)\n` +
-                       `${AWARD_EMOJIS.BEATEN} Beaten (3 points)\n` +
-                       `${AWARD_EMOJIS.PARTICIPATION} Participation (1 point)`,
+                value: `${AWARD_EMOJIS.MASTERY} Mastery (3 points) - All achievements must be earned this month\n` +
+                       `${AWARD_EMOJIS.BEATEN} Beaten (3 points) - Must complete all progression requirements this month\n` +
+                       `${AWARD_EMOJIS.PARTICIPATION} Participation (1 point) - At least one achievement earned this month`,
                 inline: true
             });
 
