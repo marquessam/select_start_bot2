@@ -61,10 +61,15 @@ const userSchema = new mongoose.Schema({
         default: []
     },
     communityAwards: [communityAwardSchema],
-    nominations: [nominationSchema]
+    nominations: [nominationSchema],
+    // New field to track if historical data has been processed
+    historicalDataProcessed: {
+        type: Boolean,
+        default: false
+    }
 }, {
     timestamps: true,
-    strict: true
+    strict: false // Allow additional fields to be added
 });
 
 // Static method to find user by RetroAchievements username (case insensitive)
