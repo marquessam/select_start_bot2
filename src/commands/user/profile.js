@@ -22,7 +22,6 @@ const POINTS = {
     PARTICIPATION: 1
 };
 
-// TODO: Revert this back to just the current month.
 function isDateInCurrentMonth(dateString) {
     // Parse the input date string
     const inputDate = new Date(dateString.replace(' ', 'T'));
@@ -30,10 +29,24 @@ function isDateInCurrentMonth(dateString) {
     // Get the current date
     const currentDate = new Date();
     
-    // Check if the input date's month and year match the current month and year
-    return (inputDate.getMonth() === currentDate.getMonth() || inputDate.getMonth() === currentDate.getMonth() - 1) && 
-           inputDate.getFullYear() === currentDate.getFullYear();
-}
+    // Get the first day of the current month
+    const firstDayOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
+    
+    // Get the last day of the previous month
+    const lastDayOfPrevMonth = new Date(firstDayOfMonth);
+    lastDayOfPrevMonth.setDate(lastDayOfPrevMonth.getDate() - 1);
+    
+    // Check if the input date is in the current month
+    const isCurrentMonth = inputDate.getMonth() === currentDate.getMonth() && 
+                           inputDate.getFullYear() === currentDate.getFullYear();
+                           
+    // Check if the input date is the last day of the previous month
+    const isLastDayOfPrevMonth = inputDate.getDate() === lastDayOfPrevMonth.getDate() &&
+                                inputDate.getMonth() === lastDayOfPrevMonth.getMonth() &&
+                                inputDate.getFullYear() === lastDayOfPrevMonth.getFullYear();
+    
+    return isCurrentMonth || isLastDayOfPrevMonth;
+  }
 
 export default {
     data: new SlashCommandBuilder()
