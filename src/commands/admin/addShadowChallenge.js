@@ -6,7 +6,7 @@ import { config } from '../../config/config.js';
 export default {
     data: new SlashCommandBuilder()
         .setName('addshadow')
-        .setDescription('Add a shadow challenge to the current month')
+        .setDescription('Add a shadow challenge to a specific month')
         .addStringOption(option =>
             option.setName('gameid')
             .setDescription('The RetroAchievements Game ID for the shadow game')
@@ -18,6 +18,18 @@ export default {
         .addStringOption(option =>
             option.setName('win_achievements')
             .setDescription('Comma-separated list of win achievement IDs')
+            .setRequired(false))
+        .addIntegerOption(option =>
+            option.setName('month')
+            .setDescription('Month (1-12, defaults to current month)')
+            .setMinValue(1)
+            .setMaxValue(12)
+            .setRequired(false))
+        .addIntegerOption(option =>
+            option.setName('year')
+            .setDescription('Year (defaults to current year)')
+            .setMinValue(2000)
+            .setMaxValue(2100)
             .setRequired(false)),
 
     async execute(interaction) {
@@ -36,6 +48,11 @@ export default {
             const progressionAchievementsInput = interaction.options.getString('progression_achievements');
             const winAchievementsInput = interaction.options.getString('win_achievements');
             
+            // Get month and year parameters (optional)
+            const now = new Date();
+            const month = interaction.options.getInteger('month') || (now.getMonth() + 1); // Month is 0-indexed in JS
+            const year = interaction.options.getInteger('year') || now.getFullYear();
+            
             // Parse progression and win achievements
             const progressionAchievements = progressionAchievementsInput.split(',').map(id => id.trim()).filter(id => id);
             const winAchievements = winAchievementsInput ? winAchievementsInput.split(',').map(id => id.trim()).filter(id => id) : [];
@@ -44,31 +61,30 @@ export default {
                 return interaction.editReply('Please provide at least one progression achievement ID.');
             }
 
-            // Get current date and find current month's challenge
-            const now = new Date();
-            const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-            const nextMonthStart = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+            // Get date range for the specified month
+            const monthStart = new Date(year, month - 1, 1);
+            const nextMonthStart = new Date(year, month, 1);
 
-            const currentChallenge = await Challenge.findOne({
+            const targetChallenge = await Challenge.findOne({
                 date: {
-                    $gte: currentMonthStart,
+                    $gte: monthStart,
                     $lt: nextMonthStart
                 }
             });
 
-            if (!currentChallenge) {
-                return interaction.editReply('No challenge exists for the current month. Create a monthly challenge first.');
+            if (!targetChallenge) {
+                return interaction.editReply(`No challenge exists for ${month}/${year}. Create a monthly challenge first using /createchallenge.`);
             }
 
             let replacedShadowGame = null;
-            if (currentChallenge.shadow_challange_gameid) {
+            if (targetChallenge.shadow_challange_gameid) {
                 // Save existing shadow game info for the response message
                 try {
-                    const oldGameInfo = await retroAPI.getGameInfo(currentChallenge.shadow_challange_gameid);
+                    const oldGameInfo = await retroAPI.getGameInfo(targetChallenge.shadow_challange_gameid);
                     replacedShadowGame = oldGameInfo.title;
                 } catch (error) {
                     console.error('Error fetching old shadow game info:', error);
-                    replacedShadowGame = currentChallenge.shadow_challange_gameid;
+                    replacedShadowGame = targetChallenge.shadow_challange_gameid;
                 }
             }
 
@@ -86,31 +102,36 @@ export default {
             
             const totalAchievements = Object.keys(achievements).length;
 
-            // Update the current challenge with shadow game information
-            currentChallenge.shadow_challange_gameid = gameId;
-            currentChallenge.shadow_challange_progression_achievements = progressionAchievements;
-            currentChallenge.shadow_challange_win_achievements = winAchievements;
-            currentChallenge.shadow_challange_game_total = totalAchievements;
+            // Update the challenge with shadow game information
+            targetChallenge.shadow_challange_gameid = gameId;
+            targetChallenge.shadow_challange_progression_achievements = progressionAchievements;
+            targetChallenge.shadow_challange_win_achievements = winAchievements;
+            targetChallenge.shadow_challange_game_total = totalAchievements;
             // Keep the current revealed status if replacing an existing shadow challenge
-            if (!currentChallenge.shadow_challange_revealed) {
-                currentChallenge.shadow_challange_revealed = false;
+            if (!targetChallenge.shadow_challange_revealed) {
+                targetChallenge.shadow_challange_revealed = false;
             }
 
-            await currentChallenge.save();
+            await targetChallenge.save();
+
+            // Get month name for display
+            const monthNames = ["January", "February", "March", "April", "May", "June",
+                               "July", "August", "September", "October", "November", "December"];
+            const monthName = monthNames[month - 1];
 
             if (replacedShadowGame) {
                 return interaction.editReply({
-                    content: `Shadow challenge replaced for ${gameInfo.title}\n` +
+                    content: `Shadow challenge for ${monthName} ${year} replaced with ${gameInfo.title}\n` +
                         `(No longer ${replacedShadowGame})\n` +
                         `Required progression achievements: ${progressionAchievements.length}\n` +
                         `Required win achievements: ${winAchievements.length}\n` +
                         `Mastery: ${totalAchievements} total achievements.\n` +
-                        `Visibility: ${currentChallenge.shadow_challange_revealed ? 'Revealed' : 'Hidden'}`
+                        `Visibility: ${targetChallenge.shadow_challange_revealed ? 'Revealed' : 'Hidden'}`
                 });
             } else {
                 return interaction.editReply({
                     content: `Something stirs in the deep...\n` +
-                        `Shadow challenge created for ${gameInfo.title}\n` +
+                        `Shadow challenge for ${monthName} ${year} created: ${gameInfo.title}\n` +
                         `Required progression achievements: ${progressionAchievements.length}\n` +
                         `Required win achievements: ${winAchievements.length}\n` +
                         `Mastery: ${totalAchievements} total achievements.\n` +
