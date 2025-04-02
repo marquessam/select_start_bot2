@@ -3,7 +3,7 @@ import { User } from '../../models/User.js';
 import retroAPI from '../../services/retroAPI.js';
 import { config } from '../../config/config.js';
 
-// List of historical challenges for 2025 (January through April)
+// Historical challenge data for January through April 2025
 const HISTORICAL_CHALLENGES = [
     {
         month: 1, // January
@@ -13,14 +13,14 @@ const HISTORICAL_CHALLENGES = [
             name: "Chrono Trigger",
             progression: ["2080", "2081", "2085", "2090", "2191", "2100", "2108", "2129", "2133"],
             win: ["2266", "2281"],
-            total: 77 // You may need to adjust this value based on the actual total
+            total: 77
         },
         shadow: {
             gameId: "10024",
             name: "Mario Tennis",
             progression: [],
             win: ["48411", "48412"],
-            total: 97 // You may need to adjust this value based on the actual total
+            total: 97
         }
     },
     {
@@ -32,14 +32,14 @@ const HISTORICAL_CHALLENGES = [
             progression: ["944", "2192", "2282", "980", "2288", "2291", "2292", "2296", "2315", "2336", "2351", 
                           "2357", "2359", "2361", "2365", "2334", "2354", "2368", "2350", "2372", "2387"],
             win: ["2389"],
-            total: 109 // You may need to adjust this value based on the actual total
+            total: 109
         },
         shadow: {
             gameId: "274",
             name: "UN Squadron",
             progression: ["6413", "6414", "6415", "6416", "6417", "6418", "6419", "6420", "6421"],
             win: ["6422"],
-            total: 23 // You may need to adjust this value based on the actual total
+            total: 28
         }
     },
     {
@@ -50,7 +50,7 @@ const HISTORICAL_CHALLENGES = [
             name: "Mega Man X5",
             progression: ["87067", "87078", "87079"],
             win: ["87083", "87084", "87085"],
-            total: 53 // You may need to adjust this value based on the actual total
+            total: 53
         },
         shadow: {
             gameId: "7181",
@@ -58,7 +58,7 @@ const HISTORICAL_CHALLENGES = [
             progression: ["171381", "171382", "171383", "171384", "171385", 
                           "171386", "171387", "171388", "171389", "171390"],
             win: ["171391"],
-            total: 103 // You may need to adjust this value based on the actual total
+            total: 103
         }
     },
     {
@@ -69,63 +69,17 @@ const HISTORICAL_CHALLENGES = [
             name: "Ape Escape",
             progression: ["97947", "97948", "97950", "97951", "97953", "97954"],
             win: ["97955"],
-            total: 63 // You may need to adjust this value based on the actual total
+            total: 63
         },
         shadow: {
             gameId: "506",
             name: "Advance Wars",
             progression: ["11353", "11355", "11357", "11359", "11487", "11488"],
             win: ["11489"],
-            total: 92 // You may need to adjust this value based on the actual total
+            total: 92
         }
     }
 ];
-
-// Helper function to process a user's achievements for a specific game
-async function processGameAchievements(username, gameId, progressionIds, winIds, totalAchievements) {
-    try {
-        const progress = await retroAPI.getUserGameProgress(username, gameId);
-        
-        // Get user earned achievement ids
-        const userEarnedAchievements = Object.entries(progress.achievements)
-            .filter(([id, data]) => data.hasOwnProperty('dateEarned'))
-            .map(([id, data]) => id);
-        
-        // Check if user has all progression achievements
-        const hasAllProgressionAchievements = progressionIds.every(
-            id => userEarnedAchievements.includes(id)
-        );
-
-        // Check if user has at least one win condition (if any exist)
-        const hasWinCondition = winIds.length === 0 || 
-            winIds.some(id => userEarnedAchievements.includes(id));
-
-        // Check if user has all achievements in the game
-        const hasAllAchievements = progress.numAwardedToUser === totalAchievements;
-        
-        if (progress.numAwardedToUser === 0) {
-            return null; // User hasn't started this game
-        }
-        
-        let points = 1; // Participation
-        if (hasAllAchievements || (hasAllProgressionAchievements && hasWinCondition)) {
-            points = 3; // Beaten or Mastery
-        }
-        
-        return {
-            earned: progress.numAwardedToUser,
-            points
-        };
-    } catch (error) {
-        console.error(`Error processing game achievements for ${username} in game ${gameId}:`, error);
-        return null;
-    }
-}
-
-// Helper function to delay between API calls to respect rate limits
-function delay(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-}
 
 export default {
     data: new SlashCommandBuilder()
@@ -146,7 +100,7 @@ export default {
         .addSubcommand(subcommand =>
             subcommand
                 .setName('reset')
-                .setDescription('Reset a user\'s processed flag so they can be processed again')
+                .setDescription('Reset a user\'s processed flag')
                 .addStringOption(option =>
                     option.setName('username')
                     .setDescription('RetroAchievements username')
@@ -198,7 +152,7 @@ export default {
                         // Process main challenge
                         if (challenge.main && !user.monthlyChallenges.has(dateKey)) {
                             try {
-                                const mainProgress = await processGameAchievements(
+                                const progress = await this.processGame(
                                     user.raUsername,
                                     challenge.main.gameId,
                                     challenge.main.progression,
@@ -206,22 +160,22 @@ export default {
                                     challenge.main.total
                                 );
                                 
-                                // Wait to respect API rate limits
-                                await delay(1000);
-                                
-                                if (mainProgress) {
-                                    user.monthlyChallenges.set(dateKey, { progress: mainProgress.points });
+                                if (progress) {
+                                    user.monthlyChallenges.set(dateKey, { progress: progress.points });
                                     changesDetected = true;
                                 }
+                                
+                                // Wait to respect API rate limits
+                                await new Promise(resolve => setTimeout(resolve, 1000));
                             } catch (error) {
-                                console.error(`Error processing historical main challenge for ${user.raUsername}:`, error);
+                                console.error(`Error processing main challenge for ${user.raUsername}:`, error);
                             }
                         }
                         
                         // Process shadow challenge
                         if (challenge.shadow && !user.shadowChallenges.has(dateKey)) {
                             try {
-                                const shadowProgress = await processGameAchievements(
+                                const progress = await this.processGame(
                                     user.raUsername,
                                     challenge.shadow.gameId,
                                     challenge.shadow.progression,
@@ -229,15 +183,15 @@ export default {
                                     challenge.shadow.total
                                 );
                                 
-                                // Wait to respect API rate limits
-                                await delay(1000);
-                                
-                                if (shadowProgress) {
-                                    user.shadowChallenges.set(dateKey, { progress: shadowProgress.points });
+                                if (progress) {
+                                    user.shadowChallenges.set(dateKey, { progress: progress.points });
                                     changesDetected = true;
                                 }
+                                
+                                // Wait to respect API rate limits
+                                await new Promise(resolve => setTimeout(resolve, 1000));
                             } catch (error) {
-                                console.error(`Error processing historical shadow challenge for ${user.raUsername}:`, error);
+                                console.error(`Error processing shadow challenge for ${user.raUsername}:`, error);
                             }
                         }
                     }
@@ -257,7 +211,7 @@ export default {
                     }
                     
                     // Add a delay between users to respect API rate limits
-                    await delay(2000);
+                    await new Promise(resolve => setTimeout(resolve, 2000));
                 }
                 
                 return interaction.editReply(`Historical data processing complete! Processed ${processedCount} users, updated ${updatedCount} user records.`);
@@ -291,7 +245,7 @@ export default {
                     // Process main challenge
                     if (challenge.main) {
                         try {
-                            const mainProgress = await processGameAchievements(
+                            const progress = await this.processGame(
                                 user.raUsername,
                                 challenge.main.gameId,
                                 challenge.main.progression,
@@ -299,23 +253,23 @@ export default {
                                 challenge.main.total
                             );
                             
-                            if (mainProgress) {
-                                user.monthlyChallenges.set(dateKey, { progress: mainProgress.points });
+                            if (progress) {
+                                user.monthlyChallenges.set(dateKey, { progress: progress.points });
                                 changesDetected = true;
                                 await interaction.editReply(`Processing ${user.raUsername}: Found progress on ${challenge.main.name} (${challenge.month}/${challenge.year})`);
                             }
                             
                             // Wait to respect API rate limits
-                            await delay(1000);
+                            await new Promise(resolve => setTimeout(resolve, 1000));
                         } catch (error) {
-                            console.error(`Error processing historical main challenge for ${user.raUsername}:`, error);
+                            console.error(`Error processing main challenge for ${user.raUsername}:`, error);
                         }
                     }
                     
                     // Process shadow challenge
                     if (challenge.shadow) {
                         try {
-                            const shadowProgress = await processGameAchievements(
+                            const progress = await this.processGame(
                                 user.raUsername,
                                 challenge.shadow.gameId,
                                 challenge.shadow.progression,
@@ -323,16 +277,16 @@ export default {
                                 challenge.shadow.total
                             );
                             
-                            if (shadowProgress) {
-                                user.shadowChallenges.set(dateKey, { progress: shadowProgress.points });
+                            if (progress) {
+                                user.shadowChallenges.set(dateKey, { progress: progress.points });
                                 changesDetected = true;
                                 await interaction.editReply(`Processing ${user.raUsername}: Found progress on ${challenge.shadow.name} (Shadow) (${challenge.month}/${challenge.year})`);
                             }
                             
                             // Wait to respect API rate limits
-                            await delay(1000);
+                            await new Promise(resolve => setTimeout(resolve, 1000));
                         } catch (error) {
-                            console.error(`Error processing historical shadow challenge for ${user.raUsername}:`, error);
+                            console.error(`Error processing shadow challenge for ${user.raUsername}:`, error);
                         }
                     }
                 }
@@ -368,6 +322,47 @@ export default {
         } catch (error) {
             console.error('Error processing historical data:', error);
             return interaction.editReply('An error occurred while processing historical data. Please check the logs for details.');
+        }
+    },
+
+    // Helper method to process a user's achievements for a game
+    async processGame(username, gameId, progressionIds, winIds, totalAchievements) {
+        try {
+            const progress = await retroAPI.getUserGameProgress(username, gameId);
+            
+            // Get user earned achievement ids
+            const userEarnedAchievements = Object.entries(progress.achievements)
+                .filter(([id, data]) => data.hasOwnProperty('dateEarned'))
+                .map(([id, data]) => id);
+            
+            // Check if user has all progression achievements
+            const hasAllProgressionAchievements = progressionIds.every(
+                id => userEarnedAchievements.includes(id)
+            );
+
+            // Check if user has at least one win condition (if any exist)
+            const hasWinCondition = winIds.length === 0 || 
+                winIds.some(id => userEarnedAchievements.includes(id));
+
+            // Check if user has all achievements in the game
+            const hasAllAchievements = progress.numAwardedToUser === totalAchievements;
+            
+            if (progress.numAwardedToUser === 0) {
+                return null; // User hasn't started this game
+            }
+            
+            let points = 1; // Participation
+            if (hasAllAchievements || (hasAllProgressionAchievements && hasWinCondition)) {
+                points = 3; // Beaten or Mastery
+            }
+            
+            return {
+                earned: progress.numAwardedToUser,
+                points
+            };
+        } catch (error) {
+            console.error(`Error processing game achievements for ${username} in game ${gameId}:`, error);
+            return null;
         }
     }
 };
