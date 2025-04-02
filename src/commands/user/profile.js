@@ -103,20 +103,8 @@ export default {
                     currentChallenge.monthly_challange_gameid
                 );
                 
-                // Check for achievements earned during the challenge month
-                const userAchievements = mainGameProgress.achievements || {};
-                
-                // Filter achievements earned during the current month
-                let achievementsEarnedThisMonth = Object.entries(userAchievements)
-                    .filter(([id, data]) => {
-                        if (!data.dateEarned) return false;
-                        const earnedDate = new Date(data.dateEarned);
-                        return earnedDate >= currentMonthStart;
-                    })
-                    .map(([id]) => id);
-
                 // Get the user's earned achievements (all-time)
-                const allEarnedAchievements = Object.entries(mainGameProgress.achievements)
+                const achievementsEarnedThisMonth = Object.entries(mainGameProgress.achievements)
                     .filter(([id, data]) => data.hasOwnProperty('dateEarned') && isDateInCurrentMonth(data.dateEarned))
                     .map(([id, data]) => id);
 
@@ -134,12 +122,12 @@ export default {
                 
                 // Count total valid progression achievements (either earned this month or previously)
                 const totalValidProgressionAchievements = progressionAchievements.filter(id => 
-                    allEarnedAchievements.includes(id)
+                    achievementsEarnedThisMonth.includes(id)
                 );
                 
                 // Count total valid win achievements (either earned this month or previously)
                 const totalValidWinAchievements = winAchievements.filter(id => 
-                    allEarnedAchievements.includes(id)
+                    achievementsEarnedThisMonth.includes(id)
                 );
 
                 // Calculate award level for monthly challenge based on specific achievements
@@ -177,9 +165,9 @@ export default {
                 if (achievementsEarnedThisMonth.length > 0) {
                     currentGamesProgress.push({
                         title: mainGameProgress.title,
-                        earned: mainGameProgress.numAwardedToUser,
+                        earned: achievementsEarnedThisMonth.length,
                         total: currentChallenge.monthly_challange_game_total,
-                        percentage: (mainGameProgress.numAwardedToUser / currentChallenge.monthly_challange_game_total * 100).toFixed(1),
+                        percentage: (achievementsEarnedThisMonth.length / currentChallenge.monthly_challange_game_total * 100).toFixed(1),
                         award: award,
                         earnedThisMonth: achievementsEarnedThisMonth.length
                     });
@@ -266,7 +254,7 @@ export default {
                             title: shadowGameProgress.title + " (Shadow)",
                             earned: shadowGameProgress.numAwardedToUser,
                             total: currentChallenge.shadow_challange_game_total,
-                            percentage: (shadowGameProgress.numAwardedToUser / currentChallenge.shadow_challange_game_total * 100).toFixed(1),
+                            percentage: (shadowAchievementsEarnedThisMonth.length / currentChallenge.shadow_challange_game_total * 100).toFixed(1),
                             award: shadowAward,
                             earnedThisMonth: shadowAchievementsEarnedThisMonth.length
                         });
