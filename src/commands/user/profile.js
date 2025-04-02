@@ -272,6 +272,7 @@ export default {
             let beatenGames = [];
             let participationGames = [];
             let communityPoints = 0;
+            let pastChallengePoints = 0; // Track points from past challenges
             
             // Process past challenges data
             // Important addition: Process all past challenges even if not in user's monthlyChallenges
@@ -310,6 +311,9 @@ export default {
                                 percentage
                             });
                             
+                            // Add points to past challenge total
+                            pastChallengePoints += POINTS.MASTERY;
+                            
                             // Save this to user's record if not already present
                             if (!userData || userData.progress < 3) {
                                 user.monthlyChallenges.set(dateKey, { progress: 3 });
@@ -323,6 +327,9 @@ export default {
                                 total: challenge.monthly_challange_game_total,
                                 percentage
                             });
+                            
+                            // Add points to past challenge total
+                            pastChallengePoints += POINTS.BEATEN;
                         } else if (userData && userData.progress === 1) {
                             // Participation
                             participationGames.push({
@@ -332,6 +339,9 @@ export default {
                                 total: challenge.monthly_challange_game_total,
                                 percentage
                             });
+                            
+                            // Add points to past challenge total
+                            pastChallengePoints += POINTS.PARTICIPATION;
                         } else {
                             // No stored status, but has some achievements - add as participation
                             participationGames.push({
@@ -341,6 +351,9 @@ export default {
                                 total: challenge.monthly_challange_game_total,
                                 percentage
                             });
+                            
+                            // Add points to past challenge total
+                            pastChallengePoints += POINTS.PARTICIPATION;
                             
                             // Save participation status if not already present
                             if (!userData) {
@@ -373,6 +386,9 @@ export default {
                                     percentage
                                 });
                                 
+                                // Add points to past challenge total
+                                pastChallengePoints += POINTS.MASTERY;
+                                
                                 // Save this to user's record if not already present
                                 if (!shadowUserData || shadowUserData.progress < 3) {
                                     user.shadowChallenges.set(dateKey, { progress: 3 });
@@ -386,6 +402,9 @@ export default {
                                     total: challenge.shadow_challange_game_total,
                                     percentage
                                 });
+                                
+                                // Add points to past challenge total
+                                pastChallengePoints += POINTS.BEATEN;
                             } else if (shadowUserData && shadowUserData.progress === 1) {
                                 // Participation
                                 participationGames.push({
@@ -395,6 +414,9 @@ export default {
                                     total: challenge.shadow_challange_game_total,
                                     percentage
                                 });
+                                
+                                // Add points to past challenge total
+                                pastChallengePoints += POINTS.PARTICIPATION;
                             } else {
                                 // No stored status, but has some achievements - add as participation
                                 participationGames.push({
@@ -404,6 +426,9 @@ export default {
                                     total: challenge.shadow_challange_game_total,
                                     percentage
                                 });
+                                
+                                // Add points to past challenge total
+                                pastChallengePoints += POINTS.PARTICIPATION;
                                 
                                 // Save participation status if not already present
                                 if (!shadowUserData) {
@@ -424,6 +449,20 @@ export default {
             const currentYear = new Date().getFullYear();
             const communityAwards = user.getCommunityAwardsForYear(currentYear);
             communityPoints = user.getCommunityPointsForYear(currentYear);
+
+            // Calculate total challenge points (current + past)
+            let currentChallengePoints = 0;
+            currentGamesProgress.forEach(game => {
+                if (game.award === 'Mastery') {
+                    currentChallengePoints += POINTS.MASTERY;
+                } else if (game.award === 'Beaten') {
+                    currentChallengePoints += POINTS.BEATEN;
+                } else if (game.earned > 0) {
+                    currentChallengePoints += POINTS.PARTICIPATION;
+                }
+            });
+
+            const totalChallengePoints = currentChallengePoints + pastChallengePoints;
 
             // Create embed
             const embed = new EmbedBuilder()
@@ -538,10 +577,10 @@ export default {
                 embed.addFields({ name: '🏅 Community Awards', value: 'No community awards yet.' });
             }
 
-            // Points Summary Section
-            const totalPoints = challengePoints + communityPoints;
+            // Points Summary Section - Now includes past challenge points
+            const totalPoints = totalChallengePoints + communityPoints;
             const pointsSummary = `**Total Current Points:** ${totalPoints}\n` +
-                `**Monthly Challenges:** ${challengePoints}\n` +
+                `**Monthly Challenges:** ${totalChallengePoints}\n` +
                 `**Community Awards:** ${communityPoints}\n\n` +
                 `*Note: Only achievements earned during the current month count toward challenge points.*`;
 
