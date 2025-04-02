@@ -15,6 +15,18 @@ const RANK_EMOJIS = {
     3: '🥉'
 };
 
+function isDateInCurrentMonth(dateString) {
+    // Parse the input date string
+    const inputDate = new Date(dateString.replace(' ', 'T'));
+    
+    // Get the current date
+    const currentDate = new Date();
+    
+    // Check if the input date's month and year match the current month and year
+    return inputDate.getMonth() === currentDate.getMonth() && 
+           inputDate.getFullYear() === currentDate.getFullYear();
+}
+
 export default {
     data: new SlashCommandBuilder()
         .setName('leaderboard')
@@ -83,7 +95,7 @@ export default {
 
                     // Get the user's earned achievements from the progress data
                     const allEarnedAchievements = Object.entries(progress.achievements)
-                        .filter(([id, data]) => data.hasOwnProperty('dateEarned'))
+                        .filter(([id, data]) => data.hasOwnProperty('dateEarned') && isDateInCurrentMonth(data.dateEarned))
                         .map(([id, data]) => id);
 
                     // Check for progression achievements earned this month
@@ -117,7 +129,7 @@ export default {
                     // For mastery, ALL achievements must be earned THIS MONTH
                     if (hasAllAchievements && allAchievementsEarnedThisMonth) {
                         award = AWARD_EMOJIS.MASTERY;
-                        points = 3;
+                        points = 7;
                     } 
                     // For beaten status, the user must have all progression achievements AND at least one win achievement (if any required)
                     // AND at least one of those achievements must have been earned this month
@@ -125,7 +137,7 @@ export default {
                              (winAchievements.length === 0 || totalValidWinAchievements.length > 0) &&
                              (earnedProgressionInMonth.length > 0 || earnedWinInMonth.length > 0)) {
                         award = AWARD_EMOJIS.BEATEN;
-                        points = 3;
+                        points = 4;
                     }
                     // For participation, at least one achievement must be earned this month
                     else if (achievementsEarnedThisMonth.length > 0) {

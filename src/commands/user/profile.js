@@ -17,8 +17,8 @@ const RANK_EMOJIS = {
 
 // Award points constants - with hierarchical values
 const POINTS = {
-    MASTERY: 3,
-    BEATEN: 3,
+    MASTERY: 7,
+    BEATEN: 4,
     PARTICIPATION: 1
 };
 
@@ -147,12 +147,12 @@ export default {
                 let award = 'None';
                 
                 // Check if user has all achievements in the game
-                const hasAllAchievements = mainGameProgress.numAwardedToUser === currentChallenge.monthly_challange_game_total;
+                const hasAllAchievements = achievementsEarnedThisMonth.length === currentChallenge.monthly_challange_game_total;
 
                 // To get mastery points this month, user must have earned at least one achievement this month
                 // AND have the game 100% completed now
                 if (achievementsEarnedThisMonth.length > 0 && hasAllAchievements) {
-                    monthlyPoints = 3; // Mastery
+                    monthlyPoints = 7; // Mastery
                     award = 'Mastery';
                 } 
                 // For beaten status, the user must have all progression achievements AND at least one win achievement (if any required)
@@ -160,7 +160,7 @@ export default {
                 else if (totalValidProgressionAchievements.length === progressionAchievements.length && 
                          (winAchievements.length === 0 || totalValidWinAchievements.length > 0) &&
                          (earnedProgressionInMonth.length > 0 || earnedWinInMonth.length > 0)) {
-                    monthlyPoints = 3; // Beaten - using this same value for database consistency
+                    monthlyPoints = 4; // Beaten - using this same value for database consistency
                     award = 'Beaten';
                 } 
                 // For participation, at least one achievement must be earned this month
@@ -236,12 +236,12 @@ export default {
                     let shadowAward = 'None';
                     
                     // Check if user has all achievements in the shadow game
-                    const hasAllShadowAchievements = shadowGameProgress.numAwardedToUser === currentChallenge.shadow_challange_game_total;
+                    const hasAllShadowAchievements = shadowAchievementsEarnedThisMonth.length === currentChallenge.shadow_challange_game_total;
 
                     // To get mastery points this month, user must have earned at least one achievement this month
                     // AND have the game 100% completed now
                     if (shadowAchievementsEarnedThisMonth.length > 0 && hasAllShadowAchievements) {
-                        shadowPoints = 3; // Mastery
+                        shadowPoints = 7; // Mastery
                         shadowAward = 'Mastery';
                     } 
                     // For beaten status, the user must have all progression achievements AND at least one win achievement (if any required)
@@ -249,7 +249,7 @@ export default {
                     else if (totalValidShadowProgressionAchievements.length === progressionShadowAchievements.length && 
                              (winShadowAchievements.length === 0 || totalValidShadowWinAchievements.length > 0) &&
                              (earnedShadowProgressionInMonth.length > 0 || earnedShadowWinInMonth.length > 0)) {
-                        shadowPoints = 3; // Beaten - using this same value for database consistency
+                        shadowPoints = 4; // Beaten - using this same value for database consistency
                         shadowAward = 'Beaten';
                     } 
                     // For participation, at least one achievement must be earned this month
@@ -307,7 +307,7 @@ export default {
                         // Determine which array to add to based on completion state and stored progress value
                         const progressValue = data.progress || 0;
                         
-                        if (progressValue === 3) {
+                        if (progressValue > 2) {
                             // This would be either Mastery or Beaten status
                             if (progress.numAwardedToUser === challenge.monthly_challange_game_total) {
                                 masteredGames.push({
@@ -360,7 +360,7 @@ export default {
                             // Determine which array to add to based on completion state and stored progress value
                             const progressValue = data.progress || 0;
                             
-                            if (progressValue === 3) {
+                            if (progressValue > 2) {
                                 // This would be either Mastery or Beaten status
                                 if (progress.numAwardedToUser === challenge.shadow_challange_game_total) {
                                     masteredGames.push({
