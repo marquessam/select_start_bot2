@@ -25,14 +25,14 @@ const HISTORICAL_CHALLENGES = [
             name: "Chrono Trigger",
             progression: ["2080", "2081", "2085", "2090", "2191", "2100", "2108", "2129", "2133"],
             win: ["2266", "2281"],
-            total: 108 // You may need to adjust this value based on the actual total
+            total: 77 // You may need to adjust this value based on the actual total
         },
         shadow: {
             gameId: "10024",
             name: "Mario Tennis",
             progression: [],
             win: ["48411", "48412"],
-            total: 36 // You may need to adjust this value based on the actual total
+            total: 97 // You may need to adjust this value based on the actual total
         }
     },
     {
@@ -44,14 +44,14 @@ const HISTORICAL_CHALLENGES = [
             progression: ["944", "2192", "2282", "980", "2288", "2291", "2292", "2296", "2315", "2336", "2351", 
                           "2357", "2359", "2361", "2365", "2334", "2354", "2368", "2350", "2372", "2387"],
             win: ["2389"],
-            total: 85 // You may need to adjust this value based on the actual total
+            total: 109 // You may need to adjust this value based on the actual total
         },
         shadow: {
             gameId: "274",
             name: "UN Squadron",
             progression: ["6413", "6414", "6415", "6416", "6417", "6418", "6419", "6420", "6421"],
             win: ["6422"],
-            total: 15 // You may need to adjust this value based on the actual total
+            total: 28 // You may need to adjust this value based on the actual total
         }
     },
     {
@@ -62,7 +62,7 @@ const HISTORICAL_CHALLENGES = [
             name: "Mega Man X5",
             progression: ["87067", "87078", "87079"],
             win: ["87083", "87084", "87085"],
-            total: 46 // You may need to adjust this value based on the actual total
+            total: 53 // You may need to adjust this value based on the actual total
         },
         shadow: {
             gameId: "7181",
@@ -70,7 +70,7 @@ const HISTORICAL_CHALLENGES = [
             progression: ["171381", "171382", "171383", "171384", "171385", 
                           "171386", "171387", "171388", "171389", "171390"],
             win: ["171391"],
-            total: 25 // You may need to adjust this value based on the actual total
+            total: 103 // You may need to adjust this value based on the actual total
         }
     },
     {
@@ -81,14 +81,14 @@ const HISTORICAL_CHALLENGES = [
             name: "Ape Escape",
             progression: ["97947", "97948", "97950", "97951", "97953", "97954"],
             win: ["97955"],
-            total: 68 // You may need to adjust this value based on the actual total
+            total: 63 // You may need to adjust this value based on the actual total
         },
         shadow: {
             gameId: "506",
             name: "Advance Wars",
             progression: ["11353", "11355", "11357", "11359", "11487", "11488"],
             win: ["11489"],
-            total: 48 // You may need to adjust this value based on the actual total
+            total: 92 // You may need to adjust this value based on the actual total
         }
     }
 ];
