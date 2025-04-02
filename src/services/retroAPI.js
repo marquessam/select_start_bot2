@@ -2,54 +2,7 @@ import { buildAuthorization, getGame, getGameExtended, getUserProfile, getUserRe
     getUserSummary, getGameInfoAndUserProgress, getGameRankAndScore, getUserCompletedGames,
     getUserAwards, getGameList, getConsoleIds, getAchievementCount } from '@retroachievements/api';
 import { config } from '../config/config.js';
-
-/**
- * Simple rate limiter to prevent exceeding API rate limits
- */
-class RateLimiter {
-    constructor(rateLimitSeconds = 3) {
-        this.rateLimitSeconds = rateLimitSeconds;
-        this.queue = [];
-        this.processing = false;
-    }
-
-    /**
-     * Add a function to the rate limiter queue
-     * @param {Function} fn - Function to execute
-     * @returns {Promise<any>} Result of the function
-     */
-    async add(fn) {
-        return new Promise((resolve, reject) => {
-            this.queue.push({ fn, resolve, reject });
-            this.process();
-        });
-    }
-
-    /**
-     * Process the queue
-     */
-    async process() {
-        if (this.processing || this.queue.length === 0) return;
-        
-        this.processing = true;
-        
-        const { fn, resolve, reject } = this.queue.shift();
-        
-        try {
-            const result = await fn();
-            resolve(result);
-        } catch (error) {
-            reject(error);
-        } finally {
-            this.processing = false;
-            
-            // Wait for the rate limit before processing the next item
-            setTimeout(() => {
-                this.process();
-            }, 1000 * this.rateLimitSeconds);
-        }
-    }
-}
+import EnhancedRateLimiter from './EnhancedRateLimiter.js';
 
 class RetroAchievementsService {
     constructor() {
@@ -58,8 +11,45 @@ class RetroAchievementsService {
             webApiKey: config.retroAchievements.apiKey
         });
         
-        // Create a rate limiter with 1 request per second
-        this.rateLimiter = new RateLimiter(1);
+        // Create an enhanced rate limiter with conservative settings
+        this.rateLimiter = new EnhancedRateLimiter({
+            requestsPerMinute: 30,     // Lower than the recommended 40/min
+            baseDelayMs: 2000,         // 2 seconds between requests
+            maxRetries: 3,             // Retry up to 3 times
+            retryBackoffMultiplier: 2  // Double wait time after each failure
+        });
+        
+        // Cache for API responses
+        this.cache = new Map();
+        this.cacheLifetime = 15 * 60 * 1000; // 15 minutes
+    }
+    
+    /**
+     * Try to get response from cache before making an API request
+     * @param {string} cacheKey - Unique identifier for the cache entry
+     * @param {Function} fetchFn - Function to fetch data if not in cache
+     * @param {string} endpointName - Name for tracking purposes
+     * @returns {Promise<any>} Response data
+     */
+    async getWithCache(cacheKey, fetchFn, endpointName) {
+        // Check if we have a valid cache entry
+        const cachedItem = this.cache.get(cacheKey);
+        if (cachedItem && (Date.now() - cachedItem.timestamp) < this.cacheLifetime) {
+            console.log(`Cache hit for ${endpointName}: ${cacheKey}`);
+            return cachedItem.data;
+        }
+        
+        // Not in cache, use rate limiter to fetch
+        console.log(`Cache miss for ${endpointName}: ${cacheKey}`);
+        const data = await this.rateLimiter.add(fetchFn, endpointName);
+        
+        // Store in cache
+        this.cache.set(cacheKey, {
+            timestamp: Date.now(),
+            data
+        });
+        
+        return data;
     }
 
     /**
@@ -70,15 +60,17 @@ class RetroAchievementsService {
      */
     async getUserGameProgress(username, gameId) {
         try {
-            // Use the rate limiter to make the API call
-            const progress = await this.rateLimiter.add(() => 
-                getGameInfoAndUserProgress(this.authorization, {
+            const cacheKey = `progress:${username}:${gameId}`;
+            const endpointName = 'getUserGameProgress';
+            
+            return await this.getWithCache(
+                cacheKey,
+                () => getGameInfoAndUserProgress(this.authorization, {
                     gameId: gameId,
                     userName: username
-                })
+                }),
+                endpointName
             );
-
-            return progress;
         } catch (error) {
             console.error(`Error fetching game progress for ${username} in game ${gameId}:`, error);
             throw error;
@@ -92,14 +84,16 @@ class RetroAchievementsService {
      */
     async getGameInfoExtended(gameId) {
         try {
-            // Use the rate limiter to make the API call
-            const game = await this.rateLimiter.add(() => 
-                getGameExtended(this.authorization, {
+            const cacheKey = `gameExtended:${gameId}`;
+            const endpointName = 'getGameInfoExtended';
+            
+            return await this.getWithCache(
+                cacheKey,
+                () => getGameExtended(this.authorization, {
                     gameId: parseInt(gameId)
-                })
+                }),
+                endpointName
             );
-
-            return game;
         } catch (error) {
             console.error(`Error fetching achievements for game ${gameId}:`, error);
             throw error;
@@ -113,11 +107,15 @@ class RetroAchievementsService {
      */
     async getGameAchievementCount(gameId) {
         try {
-            // Use the rate limiter to make the API call
-            const game = await this.rateLimiter.add(() => 
-                getAchievementCount(this.authorization, {
+            const cacheKey = `achievementCount:${gameId}`;
+            const endpointName = 'getGameAchievementCount';
+            
+            const game = await this.getWithCache(
+                cacheKey,
+                () => getAchievementCount(this.authorization, {
                     gameId: parseInt(gameId)
-                })
+                }),
+                endpointName
             );
 
             return game.achievementIds.length;
@@ -135,14 +133,30 @@ class RetroAchievementsService {
      */
     async getUserRecentAchievements(username, count = 50) {
         try {
-            // Use the rate limiter to make the API call
-            const achievements = await this.rateLimiter.add(() => 
-                getUserRecentAchievements(this.authorization, {
+            const cacheKey = `recentAchievements:${username}:${count}`;
+            const endpointName = 'getUserRecentAchievements';
+            
+            // Use a shorter cache lifetime for recent achievements
+            const cachedItem = this.cache.get(cacheKey);
+            if (cachedItem && (Date.now() - cachedItem.timestamp) < (5 * 60 * 1000)) { // 5 minutes
+                console.log(`Cache hit for ${endpointName}: ${cacheKey}`);
+                return cachedItem.data;
+            }
+            
+            const achievements = await this.rateLimiter.add(
+                () => getUserRecentAchievements(this.authorization, {
                     username,
                     count
-                })
+                }),
+                endpointName
             );
-
+            
+            // Store in cache
+            this.cache.set(cacheKey, {
+                timestamp: Date.now(),
+                data: achievements
+            });
+            
             return achievements;
         } catch (error) {
             console.error(`Error fetching recent achievements for ${username}:`, error);
@@ -157,14 +171,16 @@ class RetroAchievementsService {
      */
     async getGameInfo(gameId) {
         try {
-            // Use the rate limiter to make the API call
-            const game = await this.rateLimiter.add(() => 
-                getGame(this.authorization, {
+            const cacheKey = `game:${gameId}`;
+            const endpointName = 'getGameInfo';
+            
+            return await this.getWithCache(
+                cacheKey,
+                () => getGame(this.authorization, {
                     gameId: parseInt(gameId)
-                })
+                }),
+                endpointName
             );
-
-            return game;
         } catch (error) {
             console.error(`Error fetching game info for ${gameId}:`, error);
             throw error;
@@ -178,25 +194,37 @@ class RetroAchievementsService {
      */
     async getUserInfo(username) {
         try {
-            // Use the rate limiter for each API call
-            const summary = await this.rateLimiter.add(() => 
-                getUserSummary(this.authorization, { userName: username })
-            );
+            const cacheKey = `userInfo:${username}`;
+            const endpointName = 'getUserInfo';
             
-            const profile = await this.rateLimiter.add(() => 
-                getUserProfile(this.authorization, { userName: username })
+            return await this.getWithCache(
+                cacheKey,
+                async () => {
+                    // Make API calls sequentially with rate limiting between each
+                    const summary = await this.rateLimiter.add(
+                        () => getUserSummary(this.authorization, { userName: username }),
+                        'getUserSummary'
+                    );
+                    
+                    const profile = await this.rateLimiter.add(
+                        () => getUserProfile(this.authorization, { userName: username }),
+                        'getUserProfile'
+                    );
+                    
+                    const awards = await this.rateLimiter.add(
+                        () => getUserAwards(this.authorization, { userName: username }),
+                        'getUserAwards'
+                    );
+        
+                    return {
+                        ...summary,
+                        ...profile,
+                        awards,
+                        profileImageUrl: `https://retroachievements.org${profile.userPic}`
+                    };
+                },
+                endpointName
             );
-            
-            const awards = await this.rateLimiter.add(() => 
-                getUserAwards(this.authorization, { userName: username })
-            );
-
-            return {
-                ...summary,
-                ...profile,
-                awards,
-                profileImageUrl: `https://retroachievements.org${profile.userPic}`
-            };
         } catch (error) {
             console.error(`Error fetching user info for ${username}:`, error);
             throw error;
@@ -210,95 +238,20 @@ class RetroAchievementsService {
      */
     async getGameRankAndScore(gameId) {
         try {
-            // Use the rate limiter to make the API call
-            const rankings = await this.rateLimiter.add(() => 
-                getGameRankAndScore(this.authorization, {
+            const cacheKey = `rankings:${gameId}`;
+            const endpointName = 'getGameRankAndScore';
+            
+            return await this.getWithCache(
+                cacheKey,
+                () => getGameRankAndScore(this.authorization, {
                     gameId: parseInt(gameId),
                     type: 'high-scores'
-                })
+                }),
+                endpointName
             );
-
-            return rankings;
         } catch (error) {
             console.error(`Error fetching rankings for game ${gameId}:`, error);
             throw error;
-        }
-    }
-
-    /**
-     * Get list of games for a console
-     * @param {number} consoleId - RetroAchievements console ID
-     * @returns {Promise<Array>} List of games
-     */
-    async getConsoleGames(consoleId) {
-        try {
-            // Use the rate limiter to make the API call
-            const games = await this.rateLimiter.add(() => 
-                getGameList(this.authorization, {
-                    consoleId: parseInt(consoleId)
-                })
-            );
-
-            return games;
-        } catch (error) {
-            console.error(`Error fetching games for console ${consoleId}:`, error);
-            throw error;
-        }
-    }
-
-    /**
-     * Get list of all consoles
-     * @returns {Promise<Array>} List of consoles
-     */
-    async getConsoles() {
-        try {
-            // Use the rate limiter to make the API call
-            const consoles = await this.rateLimiter.add(() => 
-                getConsoleIds(this.authorization)
-            );
-            return consoles;
-        } catch (error) {
-            console.error('Error fetching console list:', error);
-            throw error;
-        }
-    }
-
-    /**
-     * Get user's completed games
-     * @param {string} username - RetroAchievements username
-     * @returns {Promise<Array>} List of completed games
-     */
-    async getUserCompletedGames(username) {
-        try {
-            // Use the rate limiter to make the API call
-            const completed = await this.rateLimiter.add(() => 
-                getUserCompletedGames(this.authorization, {
-                    username
-                })
-            );
-
-            return completed;
-        } catch (error) {
-            console.error(`Error fetching completed games for ${username}:`, error);
-            throw error;
-        }
-    }
-
-    /**
-     * Validate that a user exists
-     * @param {string} username - RetroAchievements username
-     * @returns {Promise<boolean>} Whether the user exists
-     */
-    async validateUser(username) {
-        try {
-            // Use the rate limiter to make the API call
-            await this.rateLimiter.add(() => 
-                getUserProfile(this.authorization, { userName: username })
-            );
-            return true;
-        } catch (error) {
-            console.log(error);
-            return false;
         }
     }
 
@@ -311,9 +264,13 @@ class RetroAchievementsService {
      */
     async getLeaderboardEntries(leaderboardId, offset = 0, count = 100) {
         try {
-            // Use the rate limiter to make the API call
-            const entries = await this.rateLimiter.add(() => 
-                this.apiRequest(`API_GetLeaderboardEntries.php?i=${leaderboardId}&o=${offset}&c=${count}`)
+            const cacheKey = `leaderboard:${leaderboardId}:${offset}:${count}`;
+            const endpointName = 'getLeaderboardEntries';
+            
+            const entries = await this.getWithCache(
+                cacheKey,
+                () => this.apiRequest(`API_GetLeaderboardEntries.php?i=${leaderboardId}&o=${offset}&c=${count}`),
+                endpointName
             );
 
             // Process and standardize the entries
@@ -324,6 +281,71 @@ class RetroAchievementsService {
         }
     }
 
+    /**
+     * Validate that a user exists
+     * @param {string} username - RetroAchievements username
+     * @returns {Promise<boolean>} Whether the user exists
+     */
+    async validateUser(username) {
+        try {
+            // Use direct call without caching for validation
+            await this.rateLimiter.add(
+                () => getUserProfile(this.authorization, { userName: username }),
+                'validateUser'
+            );
+            return true;
+        } catch (error) {
+            console.log(`User validation failed for ${username}:`, error.message);
+            return false;
+        }
+    }
+
+    /**
+     * Clear cache entries
+     * @param {string} prefix - Optional prefix to clear only specific entries
+     */
+    clearCache(prefix = null) {
+        if (prefix) {
+            // Clear entries that start with the prefix
+            const keysToDelete = [];
+            for (const key of this.cache.keys()) {
+                if (key.startsWith(prefix)) {
+                    keysToDelete.push(key);
+                }
+            }
+            
+            keysToDelete.forEach(key => this.cache.delete(key));
+            console.log(`Cleared ${keysToDelete.length} cache entries with prefix ${prefix}`);
+        } else {
+            // Clear all cache
+            const count = this.cache.size;
+            this.cache.clear();
+            console.log(`Cleared all ${count} cache entries`);
+        }
+    }
+
+    /**
+     * Make a direct API request to the RetroAchievements API
+     * @param {string} endpoint - API endpoint
+     * @returns {Promise<Object>} API response
+     */
+    async apiRequest(endpoint) {
+        const baseUrl = 'https://retroachievements.org/API/';
+        const url = `${baseUrl}${endpoint}&z=${this.authorization.userName}&y=${this.authorization.webApiKey}`;
+        
+        return this.rateLimiter.add(async () => {
+            const response = await fetch(url);
+            
+            if (!response.ok) {
+                const error = new Error(`API request failed with status ${response.status}`);
+                error.status = response.status;
+                throw error;
+            }
+            
+            return await response.json();
+        }, `apiRequest:${endpoint.split('?')[0]}`);
+    }
+    
     /**
      * Process leaderboard entries to standardize the format
      * @param {Object|Array} data - Raw API response
@@ -368,28 +390,12 @@ class RetroAchievementsService {
             })
             .filter(entry => !isNaN(entry.ApiRank) && entry.User.length > 0);
     }
-
+    
     /**
-     * Make a direct API request to the RetroAchievements API
-     * @param {string} endpoint - API endpoint
-     * @returns {Promise<Object>} API response
+     * Get rate limiter statistics
      */
-    async apiRequest(endpoint) {
-        const baseUrl = 'https://retroachievements.org/API/';
-        const url = `${baseUrl}${endpoint}&z=${this.authorization.userName}&y=${this.authorization.webApiKey}`;
-        
-        try {
-            const response = await fetch(url);
-            
-            if (!response.ok) {
-                throw new Error(`API request failed with status ${response.status}`);
-            }
-            
-            return await response.json();
-        } catch (error) {
-            console.error(`API request failed: ${error.message}`);
-            throw error;
-        }
+    getRateLimiterStats() {
+        return this.rateLimiter.getStats();
     }
 }
 
