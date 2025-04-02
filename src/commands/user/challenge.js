@@ -2,6 +2,15 @@ import { SlashCommandBuilder, EmbedBuilder } from 'discord.js';
 import { Challenge } from '../../models/Challenge.js';
 import retroAPI from '../../services/retroAPI.js';
 
+// Helper function to check if a challenge is from a past month
+function isPastChallenge(challengeDate) {
+    const now = new Date();
+    // Challenge is in the past if it's from a previous month or previous year
+    return (challengeDate.getFullYear() < now.getFullYear()) ||
+           (challengeDate.getFullYear() === now.getFullYear() && 
+            challengeDate.getMonth() < now.getMonth());
+}
+
 export default {
     data: new SlashCommandBuilder()
         .setName('challenge')
@@ -70,7 +79,11 @@ export default {
 
             // Shadow game display based on revealed status
             if (currentChallenge && currentChallenge.shadow_challange_gameid) {
-                if (currentChallenge.shadow_challange_revealed) {
+                // Check if it's a past challenge (automatically revealed) or currently revealed
+                const isPast = isPastChallenge(currentChallenge.date);
+                const isRevealed = isPast || currentChallenge.shadow_challange_revealed;
+                
+                if (isRevealed) {
                     // Shadow game is revealed - show the game info
                     const shadowGameInfo = await retroAPI.getGameInfo(currentChallenge.shadow_challange_gameid);
                     
