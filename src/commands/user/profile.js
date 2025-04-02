@@ -185,14 +185,8 @@ export default {
                 challengeMap.set(dateKey, challenge);
             }
 
-            // Get current month-year string for filtering out current challenge
-            const currentDateStr = currentChallenge ? User.formatDateKey(currentChallenge.date) : '';
-
             // Process monthly challenges data from user document
             for (const [dateStr, data] of user.monthlyChallenges) {
-                // Skip current month's challenge for the 2025 Games section
-                if (dateStr === currentDateStr) continue;
-                
                 const challenge = challengeMap.get(dateStr);
                 
                 if (challenge) {
@@ -253,9 +247,6 @@ export default {
             
             // Process shadow challenges data from user document
             for (const [dateStr, data] of user.shadowChallenges) {
-                // Skip current month's challenge for the 2025 Games section
-                if (dateStr === currentDateStr) continue;
-                
                 const challenge = challengeMap.get(dateStr);
                 
                 // Only process if the challenge exists and has a shadow game
@@ -323,10 +314,6 @@ export default {
             // Get community awards for the current year
             const currentYear = new Date().getFullYear();
             const communityAwards = user.getCommunityAwardsForYear(currentYear);
-            
-            // Sort community awards chronologically (oldest first)
-            communityAwards.sort((a, b) => new Date(a.awardedAt) - new Date(b.awardedAt));
-            
             communityPoints = user.getCommunityPointsForYear(currentYear);
 
             // Create embed
@@ -365,67 +352,55 @@ export default {
                 embed.addFields({ name: '📊 Current Challenges', value: currentChallengesField || 'No current challenges' });
             }
 
-            // 2025 Games Section (replacing "Beaten Games")
-            // Sort games by date (newest first)
+            // Game Awards Section - Sort games by date (newest first)
             const sortByDate = (a, b) => b.date - a.date;
             masteredGames.sort(sortByDate);
             beatenGames.sort(sortByDate);
             participationGames.sort(sortByDate);
             
-            let gamesAwardsField = '';
-            
-            // Count total games completed with beatenGames and masteredGames combined
-            const totalCompletedGames = beatenGames.length + masteredGames.length;
-            
-            // Create the 2025 Games section header with completed count
-            gamesAwardsField += `**2025 Games**\n`;
+            let gameAwardsField = '';
             
             if (masteredGames.length > 0) {
-                gamesAwardsField += `**Mastered Games ${AWARD_EMOJIS.MASTERY}**\n`;
+                gameAwardsField += `**Mastered Games ${AWARD_EMOJIS.MASTERY}**\n`;
                 masteredGames.forEach(game => {
-                    gamesAwardsField += `${game.title}: ${game.earned}/${game.total} (${game.percentage}%)\n`;
+                    const monthYear = game.date.toLocaleString('default', { month: 'short', year: 'numeric' });
+                    gameAwardsField += `${game.title}: ${game.earned}/${game.total} (${game.percentage}%)\n`;
                 });
-                gamesAwardsField += '\n';
+                gameAwardsField += '\n';
             }
 
             if (beatenGames.length > 0) {
-                gamesAwardsField += `**Beaten Games ${AWARD_EMOJIS.BEATEN}**\n`;
+                gameAwardsField += `**Beaten Games ${AWARD_EMOJIS.BEATEN}**\n`;
                 beatenGames.forEach(game => {
-                    gamesAwardsField += `${game.title}: ${game.earned}/${game.total} (${game.percentage}%)\n`;
+                    const monthYear = game.date.toLocaleString('default', { month: 'short', year: 'numeric' });
+                    gameAwardsField += `${game.title}: ${game.earned}/${game.total} (${game.percentage}%)\n`;
                 });
-                gamesAwardsField += '\n';
+                gameAwardsField += '\n';
             }
 
             if (participationGames.length > 0) {
-                gamesAwardsField += `**Participation ${AWARD_EMOJIS.PARTICIPATION}**\n`;
+                gameAwardsField += `**Participation ${AWARD_EMOJIS.PARTICIPATION}**\n`;
                 participationGames.forEach(game => {
-                    gamesAwardsField += `${game.title}: ${game.earned}/${game.total} (${game.percentage}%)\n`;
+                    const monthYear = game.date.toLocaleString('default', { month: 'short', year: 'numeric' });
+                    gameAwardsField += `${game.title}: ${game.earned}/${game.total} (${game.percentage}%)\n`;
                 });
             }
 
-            if (gamesAwardsField) {
-                embed.addFields({ name: `🎮 2025 Games`, value: gamesAwardsField });
+            if (gameAwardsField) {
+                embed.addFields({ name: '🎮 Game Awards', value: gameAwardsField });
             }
 
-            // Community Awards Section - Already sorted chronologically (oldest first)
+            // Community Awards Section
             if (communityAwards.length > 0) {
                 let communityAwardsField = '';
-                
                 communityAwards.forEach(award => {
                     const awardDate = new Date(award.awardedAt).toLocaleDateString('en-US', {
                         year: 'numeric',
                         month: 'short',
                         day: 'numeric'
                     });
-                    
-                    // Use rank emoji if available, otherwise use star emoji
-                    const rankEmoji = award.rank && RANK_EMOJIS[award.rank] 
-                        ? RANK_EMOJIS[award.rank] 
-                        : '🌟';
-                        
-                    communityAwardsField += `${rankEmoji} **${award.month} - ${award.title}** (${award.points} points) - ${awardDate}\n`;
+                    communityAwardsField += `🌟 **${award.title}** (${award.points} points) - ${awardDate}\n`;
                 });
-                
                 embed.addFields({ name: '🏅 Community Awards', value: communityAwardsField });
             }
 
