@@ -22,6 +22,14 @@ const POINTS = {
     PARTICIPATION: 1
 };
 
+// Helper function to check if a challenge is from a past month
+function isPastChallenge(challengeDate, now) {
+    // Challenge is in the past if it's from a previous month or previous year
+    return (challengeDate.getFullYear() < now.getFullYear()) ||
+           (challengeDate.getFullYear() === now.getFullYear() && 
+            challengeDate.getMonth() < now.getMonth());
+}
+
 // Function to check if a date is in the current month
 function isCurrentMonth(date, now) {
     return date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear();
@@ -362,8 +370,10 @@ export default {
                         }
                     }
                     
-                    // Also check shadow games for past months
-                    if (challenge.shadow_challange_gameid && challenge.shadow_challange_revealed) {
+                    // Also check shadow games for past months - ALWAYS process them regardless of revealed flag
+                    // For past months, we treat all shadow games as revealed
+                    if (challenge.shadow_challange_gameid) {
+                        // Always process shadow games for past challenges
                         const shadowProgress = await retroAPI.getUserGameProgress(
                             raUsername, 
                             challenge.shadow_challange_gameid
