@@ -22,6 +22,29 @@ const POINTS = {
     PARTICIPATION: 1
 };
 
+function isDateInCurrentMonth(dateString) {
+    // Parse the input date string
+    const inputDate = new Date(dateString.replace(' ', 'T'));
+    
+    // Get the current date
+    const currentDate = new Date();
+    
+    // Check if the input date's month and year match the current month and year
+    return inputDate.getMonth() === currentDate.getMonth() && 
+           inputDate.getFullYear() === currentDate.getFullYear();
+}
+
+function isDateInCurrentYear(dateString) {
+    // Parse the input date string
+    const inputDate = new Date(dateString.replace(' ', 'T'));
+    
+    // Get the current date
+    const currentDate = new Date();
+    
+    // Check if the input date's year matches the current year
+    return inputDate.getFullYear() === currentDate.getFullYear();
+  }
+
 export default {
     data: new SlashCommandBuilder()
         .setName('profile')
@@ -94,7 +117,7 @@ export default {
 
                 // Get the user's earned achievements (all-time)
                 const allEarnedAchievements = Object.entries(mainGameProgress.achievements)
-                    .filter(([id, data]) => data.hasOwnProperty('dateEarned'))
+                    .filter(([id, data]) => data.hasOwnProperty('dateEarned') && isDateInCurrentMonth(data.dateEarned))
                     .map(([id, data]) => id);
 
                 // Check for progression achievements earned this month
@@ -183,7 +206,7 @@ export default {
 
                     // Get all shadow achievements earned (all-time)
                     const allEarnedShadowAchievements = Object.entries(shadowGameProgress.achievements)
-                        .filter(([id, data]) => data.hasOwnProperty('dateEarned'))
+                        .filter(([id, data]) => data.hasOwnProperty('dateEarned') && isDateInCurrentMonth(data.dateEarned))
                         .map(([id, data]) => id);
 
                     // Check for progression shadow achievements earned this month
@@ -277,11 +300,6 @@ export default {
                 if (challenge) {
                     try {
                         const progress = await retroAPI.getUserGameProgress(raUsername, challenge.monthly_challange_gameid);
-                        
-                        // Get user achieved count
-                        const userEarnedAchievements = Object.entries(progress.achievements)
-                            .filter(([id, ach]) => ach.dateEarned !== null)
-                            .map(([id, ach]) => id);
                             
                         // Calculate completion percentage
                         const percentage = (progress.numAwardedToUser / challenge.monthly_challange_game_total * 100).toFixed(1);
@@ -331,11 +349,6 @@ export default {
                 if (challenge && challenge.shadow_challange_gameid) {
                     try {
                         const progress = await retroAPI.getUserGameProgress(raUsername, challenge.shadow_challange_gameid);
-                        
-                        // Get user achieved count
-                        const userEarnedAchievements = Object.entries(progress.achievements)
-                            .filter(([id, ach]) => ach.dateEarned !== null)
-                            .map(([id, ach]) => id);
                             
                         // Calculate completion percentage
                         const percentage = (progress.numAwardedToUser / challenge.shadow_challange_game_total * 100).toFixed(1);
