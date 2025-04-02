@@ -5,10 +5,7 @@ import retroAPI from './retroAPI.js';
 class StatsUpdateService {
     constructor() {
         this.isUpdating = false;
-        this.batchSize = 5; // Process users in small batches
-        this.delayBetweenUsers = 5000; // 5 seconds between users
-        this.delayBetweenBatches = 60000; // 1 minute between batches
-        this.lastUpdateTime = 0;
+        this.updateInterval = 30 * 60 * 1000; // 30 minutes in milliseconds
     }
 
     async start() {
@@ -17,22 +14,9 @@ class StatsUpdateService {
             return;
         }
 
-        // Check if we're updating too frequently
-        const now = Date.now();
-        const timeSinceLastUpdate = now - this.lastUpdateTime;
-        const minimumInterval = 10 * 60 * 1000; // 10 minutes minimum
-        
-        if (timeSinceLastUpdate < minimumInterval) {
-            console.log(`Stats update requested too soon (${Math.round(timeSinceLastUpdate/1000)}s since last update, minimum is ${minimumInterval/1000}s)`);
-            return;
-        }
-
         try {
-            console.log('Starting stats update service...');
             this.isUpdating = true;
-            this.lastUpdateTime = now;
             await this.updateAllUserStats();
-            console.log('Stats update completed successfully');
         } catch (error) {
             console.error('Error in stats update service:', error);
         } finally {
@@ -43,10 +27,7 @@ class StatsUpdateService {
     async updateAllUserStats() {
         // Get all users
         const users = await User.find({});
-        if (users.length === 0) {
-            console.log('No users found for stats update');
-            return;
-        }
+        if (users.length === 0) return;
 
         // Get current challenge
         const now = new Date();
@@ -60,52 +41,39 @@ class StatsUpdateService {
             }
         });
 
-        if (!currentChallenge) {
-            console.log('No active challenge found for stats update');
-            return;
-        }
+        if (!currentChallenge) return;
 
-        console.log(`Found ${users.length} users for stats update, processing in batches of ${this.batchSize}`);
+        // Calculate delay between each user update to spread them over the interval
+        // Leave 10% buffer at the end of the interval
+        const effectiveInterval = this.updateInterval * 0.9;
+        const delayBetweenUsers = Math.floor(effectiveInterval / users.length);
 
-        // Process users in small batches to avoid overwhelming the RetroAchievements API
-        for (let i = 0; i < users.length; i += this.batchSize) {
-            const userBatch = users.slice(i, i + this.batchSize);
-            console.log(`Processing batch ${Math.floor(i/this.batchSize) + 1} of ${Math.ceil(users.length/this.batchSize)}, with ${userBatch.length} users`);
+        // Update each user's stats with delay
+        for (let i = 0; i < users.length; i++) {
+            const user = users[i];
             
-            // Process each user in the batch sequentially
-            for (const user of userBatch) {
-                try {
-                    await this.updateUserStats(user, currentChallenge, currentMonthStart);
-                    // Add delay between users to avoid rate limits
-                    await new Promise(resolve => setTimeout(resolve, this.delayBetweenUsers));
-                } catch (error) {
-                    console.error(`Error updating stats for user ${user.raUsername}:`, error);
-                    // Continue with next user even if there's an error
-                }
-            }
-            
-            // If this isn't the last batch, wait before processing the next batch
-            if (i + this.batchSize < users.length) {
-                console.log(`Waiting ${this.delayBetweenBatches/1000} seconds before processing next batch...`);
-                await new Promise(resolve => setTimeout(resolve, this.delayBetweenBatches));
-            }
+            // Use setTimeout to spread out the API calls
+            await new Promise(resolve => {
+                setTimeout(async () => {
+                    try {
+                        await this.updateUserStats(user, currentChallenge, currentMonthStart);
+                        resolve();
+                    } catch (error) {
+                        console.error(`Error updating stats for user ${user.raUsername}:`, error);
+                        resolve(); // Continue with next user even if there's an error
+                    }
+                }, i * delayBetweenUsers);
+            });
         }
     }
 
     async updateUserStats(user, challenge, currentMonthStart) {
         try {
-            console.log(`Updating stats for user: ${user.raUsername}`);
-            
             // Get progress for monthly challenge
             const monthlyProgress = await retroAPI.getUserGameProgress(
                 user.raUsername,
                 challenge.monthly_challange_gameid
             );
-
-            if (!monthlyProgress || !monthlyProgress.achievements) {
-                console.log(`No progress data found for ${user.raUsername} on game ${challenge.monthly_challange_gameid}`);
-                return;
-            }
 
             // Check for achievements earned during the challenge month
             const userAchievements = monthlyProgress.achievements || {};
@@ -151,18 +119,28 @@ class StatsUpdateService {
             // Calculate points for monthly challenge based on progression and win achievements
             let monthlyPoints = 0;
             
-            // For mastery points, ALL achievements must have been earned
-            // Check if user has all required achievements 
-            if (monthlyProgress.numAwardedToUser === challenge.monthly_challange_game_total) {
+            // For mastery points, ALL achievements must have been earned this month
+            // Check if user has earned all required achievements this month
+            const allAchievementsEarnedThisMonth = Object.entries(userAchievements)
+                .filter(([id, data]) => data.dateEarned)
+                .every(([id, data]) => {
+                    const earnedDate = new Date(data.dateEarned);
+                    return earnedDate >= currentMonthStart;
+                });
+            
+            // For mastery, ALL achievements must be earned THIS MONTH
+            if (monthlyProgress.numAwardedToUser === challenge.monthly_challange_game_total && allAchievementsEarnedThisMonth) {
                 monthlyPoints = 3; // Mastery
             } 
             // For beaten status, the user must have all progression achievements AND at least one win achievement (if any required)
+            // AND at least one of those achievements must have been earned this month
             else if (totalValidProgressionAchievements.length === progressionAchievements.length && 
-                     (winAchievements.length === 0 || totalValidWinAchievements.length > 0)) {
+                     (winAchievements.length === 0 || totalValidWinAchievements.length > 0) &&
+                     (earnedProgressionInMonth.length > 0 || earnedWinInMonth.length > 0)) {
                 monthlyPoints = 2; // Beaten
             } 
-            // For participation, at least one achievement must be earned
-            else if (allEarnedAchievements.length > 0) {
+            // For participation, at least one achievement must be earned this month
+            else if (achievementsEarnedThisMonth.length > 0) {
                 monthlyPoints = 1; // Participation
             }
 
@@ -172,66 +150,85 @@ class StatsUpdateService {
 
             // If there's a shadow challenge and it's revealed, update that too
             if (challenge.shadow_challange_gameid && challenge.shadow_challange_revealed) {
-                // Add delay before checking shadow challenge
-                await new Promise(resolve => setTimeout(resolve, 2000));
-                
                 const shadowProgress = await retroAPI.getUserGameProgress(
                     user.raUsername,
                     challenge.shadow_challange_gameid
                 );
 
-                if (!shadowProgress || !shadowProgress.achievements) {
-                    console.log(`No shadow progress data found for ${user.raUsername}`);
-                } else {
-                    // Check for shadow achievements earned during the challenge month
-                    const userShadowAchievements = shadowProgress.achievements || {};
+                // Check for shadow achievements earned during the challenge month
+                const userShadowAchievements = shadowProgress.achievements || {};
+                
+                // Filter shadow achievements earned during the current month
+                let shadowAchievementsEarnedThisMonth = Object.entries(userShadowAchievements)
+                    .filter(([id, data]) => {
+                        if (!data.dateEarned) return false;
+                        const earnedDate = new Date(data.dateEarned);
+                        return earnedDate >= currentMonthStart;
+                    })
+                    .map(([id]) => id);
                     
-                    // Filter shadow achievements earned during the current month
-                    let shadowAchievementsEarnedThisMonth = Object.entries(userShadowAchievements)
-                        .filter(([id, data]) => {
-                            if (!data.dateEarned) return false;
-                            const earnedDate = new Date(data.dateEarned);
-                            return earnedDate >= currentMonthStart;
-                        })
-                        .map(([id]) => id);
-                        
-                    console.log(`User ${user.raUsername} has earned ${shadowAchievementsEarnedThisMonth.length} shadow achievements this month`);
-    
-                    // Get all shadow achievements earned (regardless of when)
-                    const allEarnedShadowAchievements = Object.entries(userShadowAchievements)
-                        .filter(([id, data]) => data.dateEarned)
-                        .map(([id]) => id);
-                        
-                    // Check for progression shadow achievements
-                    const progressionShadowAchievements = challenge.shadow_challange_progression_achievements || [];
-                    const allCompletedProgression = progressionShadowAchievements.every(id => 
-                        allEarnedShadowAchievements.includes(id)
-                    );
+                console.log(`User ${user.raUsername} has earned ${shadowAchievementsEarnedThisMonth.length} shadow achievements this month for ${shadowProgress.title}`);
+
+                // Check for progression shadow achievements earned this month
+                const progressionShadowAchievements = challenge.shadow_challange_progression_achievements || [];
+                const earnedShadowProgressionInMonth = progressionShadowAchievements.filter(id => 
+                    shadowAchievementsEarnedThisMonth.includes(id)
+                );
+                
+                // Check for win shadow achievements earned this month
+                const winShadowAchievements = challenge.shadow_challange_win_achievements || [];
+                const earnedShadowWinInMonth = winShadowAchievements.filter(id => 
+                    shadowAchievementsEarnedThisMonth.includes(id)
+                );
+                
+                // Get all shadow achievements earned (regardless of when)
+                const allEarnedShadowAchievements = Object.entries(userShadowAchievements)
+                    .filter(([id, data]) => data.dateEarned)
+                    .map(([id]) => id);
                     
-                    // Check for win shadow achievements
-                    const winShadowAchievements = challenge.shadow_challange_win_achievements || [];
-                    const hasWinAchievement = winShadowAchievements.length === 0 || 
-                        winShadowAchievements.some(id => allEarnedShadowAchievements.includes(id));
-                    
-                    // Calculate points for shadow challenge
-                    let shadowPoints = 0;
-                    
-                    // For shadow games, cap at "Beaten" status (2 points)
-                    if (allCompletedProgression && hasWinAchievement) {
-                        shadowPoints = 2; // Beaten
-                    } 
-                    // For participation, at least one achievement must be earned
-                    else if (allEarnedShadowAchievements.length > 0) {
-                        shadowPoints = 1; // Participation
-                    }
-    
-                    // Update shadow challenge progress
-                    user.shadowChallenges.set(monthKey, { progress: shadowPoints });
+                // Count total valid progression shadow achievements (either earned this month or previously)
+                const totalValidShadowProgressionAchievements = progressionShadowAchievements.filter(id => 
+                    allEarnedShadowAchievements.includes(id)
+                );
+                
+                // Count total valid win shadow achievements (either earned this month or previously)
+                const totalValidShadowWinAchievements = winShadowAchievements.filter(id => 
+                    allEarnedShadowAchievements.includes(id)
+                );
+                
+                // For shadow mastery, ALL achievements must have been earned this month
+                const allShadowAchievementsEarnedThisMonth = Object.entries(userShadowAchievements)
+                    .filter(([id, data]) => data.dateEarned)
+                    .every(([id, data]) => {
+                        const earnedDate = new Date(data.dateEarned);
+                        return earnedDate >= currentMonthStart;
+                    });
+                
+                // Calculate points for shadow challenge based on progression and win achievements
+                let shadowPoints = 0;
+                
+                // For mastery, ALL achievements must be earned THIS MONTH
+                if (shadowProgress.numAwardedToUser === challenge.shadow_challange_game_total && allShadowAchievementsEarnedThisMonth) {
+                    shadowPoints = 3; // Mastery
+                } 
+                // For beaten status, the user must have all progression achievements AND at least one win achievement (if any required)
+                // AND at least one of those achievements must have been earned this month
+                else if (totalValidShadowProgressionAchievements.length === progressionShadowAchievements.length && 
+                         (winShadowAchievements.length === 0 || totalValidShadowWinAchievements.length > 0) &&
+                         (earnedShadowProgressionInMonth.length > 0 || earnedShadowWinInMonth.length > 0)) {
+                    shadowPoints = 2; // Beaten
+                } 
+                // For participation, at least one achievement must be earned this month
+                else if (shadowAchievementsEarnedThisMonth.length > 0) {
+                    shadowPoints = 1; // Participation
                 }
+
+                // Update shadow challenge progress
+                user.shadowChallenges.set(monthKey, { progress: shadowPoints });
             }
 
             await user.save();
-            console.log(`Updated stats for user ${user.raUsername} successfully`);
+            console.log(`Updated stats for user ${user.raUsername}`);
 
         } catch (error) {
             console.error(`Error updating stats for user ${user.raUsername}:`, error);
