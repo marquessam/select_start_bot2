@@ -244,11 +244,10 @@ class AchievementFeedService {
             );
 
             // Add links
-             
-        embed.addFields({
-            name: 'Links',
-            value: `[Game Page](https://retroachievements.org/game/${gameId}) | [User Profile](https://retroachievements.org/user/${user.raUsername})`
-        });
+            embed.addFields({
+                name: 'Links',
+                value: `[Game Page](https://retroachievements.org/game/${gameInfo.id}) | [User Profile](https://retroachievements.org/user/${user.raUsername})`
+            });
 
             // Send the announcement
             await channel.send({ embeds: [embed] });
