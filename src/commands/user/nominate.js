@@ -1,4 +1,4 @@
-import { SlashCommandBuilder } from 'discord.js';
+import { SlashCommandBuilder, EmbedBuilder } from 'discord.js';
 import { User } from '../../models/User.js';
 import retroAPI from '../../services/retroAPI.js';
 
@@ -48,10 +48,38 @@ export default {
 
             await user.save();
 
-            return interaction.editReply({
-                content: `Successfully nominated ${gameInfo.title} for next month's challenge!\n` +
-                    `You have ${2 - (currentNominations.length + 1)} nominations remaining this month.`
-            });
+            // Create an embed for better presentation
+            const embed = new EmbedBuilder()
+                .setTitle(`Game Nominated: ${gameInfo.title}`)
+                .setColor('#00FF00')
+                .setThumbnail(gameInfo.imageIcon ? `https://retroachievements.org${gameInfo.imageIcon}` : null)
+                .setDescription(`You have successfully nominated **${gameInfo.title}** for next month's challenge!`)
+                .addFields(
+                    { 
+                        name: 'Game Details', 
+                        value: `**Console:** ${gameInfo.consoleName}\n**Achievements:** ${gameInfo.achievements ? Object.keys(gameInfo.achievements).length : 'Unknown'}\n[View Game Page](https://retroachievements.org/game/${gameId})`
+                    },
+                    {
+                        name: 'Nominations Remaining', 
+                        value: `You have ${2 - (currentNominations.length + 1)} nomination${(2 - (currentNominations.length + 1)) !== 1 ? 's' : ''} remaining this month.`
+                    },
+                    {
+                        name: 'How Nominations Work',
+                        value: `• Each member can nominate up to 2 games per month\n• At the end of the month, 10 games are randomly selected from all nominations\n• A voting poll is created for the community to select next month's challenge`
+                    },
+                    {
+                        name: 'Tips for Good Nominations',
+                        value: `• Consider platform accessibility (some consoles are harder to emulate)\n• Think about community appeal and playability\n• Games should have a reasonable achievement set (not too easy or too hard)\n• You can view all current nominations with \`/nominations\``
+                    },
+                    {
+                        name: 'Finding Game IDs',
+                        value: `Game IDs can be found in the RetroAchievements URL. For example:\n\`https://retroachievements.org/game/1\` → Game ID is \`1\``
+                    }
+                )
+                .setFooter({ text: 'Thank you for participating in the community challenge selection!' })
+                .setTimestamp();
+
+            return interaction.editReply({ embeds: [embed] });
 
         } catch (error) {
             console.error('Error nominating game:', error);
