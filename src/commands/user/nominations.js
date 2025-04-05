@@ -46,8 +46,36 @@ export default {
             const uniqueGameIds = [...new Set(allNominations.map(nom => nom.gameId))];
 
             // Get game info for all nominated games
-            //const gameInfoPromises = uniqueGameIds.map(gameId => retroAPI.getGameInfo(gameId));
-            //const gamesInfo = await Promise.all(gameInfoPromises);
+            const gameDetailsPromises = uniqueGameIds.map(async (gameId) => {
+                const gameInfo = await retroAPI.getGameInfo(gameId);
+                const gameAchievementCount = await retroAPI.getGameAchievementCount(gameId);
+                return {
+                    id: gameId,
+                    title: gameInfo.title,
+                    console: gameInfo.consoleName,
+                    achievements: gameAchievementCount,
+                    nominations: nominationCounts[gameId]
+                };
+            });
+
+            const gameDetails = await Promise.all(gameDetailsPromises);
+
+            // Group games by console
+            const gamesByConsole = {};
+            gameDetails.forEach(game => {
+                if (!gamesByConsole[game.console]) {
+                    gamesByConsole[game.console] = [];
+                }
+                gamesByConsole[game.console].push(game);
+            });
+
+            // Sort consoles alphabetically
+            const sortedConsoles = Object.keys(gamesByConsole).sort();
+
+            // Sort games alphabetically within each console
+            sortedConsoles.forEach(console => {
+                gamesByConsole[console].sort((a, b) => a.title.localeCompare(b.title));
+            });
 
             // Create embed
             const embed = new EmbedBuilder()
@@ -56,24 +84,23 @@ export default {
                 .setColor('#00BFFF')
                 .setTimestamp();
 
-            // Sort games by nomination count (descending)
-            const sortedGames = uniqueGameIds.sort((a, b) => 
-                nominationCounts[b].count - nominationCounts[a].count
-            );
-
-            // Add fields for each game
-            for (const gameId of sortedGames) {
-                const gameInfo = await retroAPI.getGameInfo(gameId);
-                const gameAchievementCount = await retroAPI.getGameAchievementCount(gameId);
-                const nominations = nominationCounts[gameId];
-                if (nominations && nominations.count > 0) {
-                    embed.addFields({
-                        name: `${gameInfo.title} (${nominations.count} nomination${nominations.count > 1 ? 's' : ''})`,
-                        value: `Achievements: ${gameAchievementCount}\n` +
-                               `Nominated by: ${nominations.nominatedBy.join(', ')}\n` +
-                               `[View Game](https://retroachievements.org/game/${gameId})`
-                    });
+            // Add fields for each console and its games
+            for (const console of sortedConsoles) {
+                const consoleGames = gamesByConsole[console];
+                let gamesText = '';
+                
+                for (const game of consoleGames) {
+                    const nominationInfo = game.nominations;
+                    gamesText += `**${game.title}** (${nominationInfo.count} nomination${nominationInfo.count > 1 ? 's' : ''})\n` +
+                                `Achievements: ${game.achievements}\n` +
+                                `Nominated by: ${nominationInfo.nominatedBy.join(', ')}\n` +
+                                `[View Game](https://retroachievements.org/game/${game.id})\n\n`;
                 }
+                
+                embed.addFields({
+                    name: `📌 ${console}`,
+                    value: gamesText
+                });
             }
 
             // Add footer with total count
