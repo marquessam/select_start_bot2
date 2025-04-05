@@ -138,7 +138,8 @@ class AchievementFeedService {
                         user,
                         gameInfo,
                         achievement,
-                        isShadow
+                        isShadow,
+                        gameId // Pass the game ID
                     );
                     
                     // Add to the list of announced achievements
@@ -189,7 +190,8 @@ class AchievementFeedService {
                 totalAchievements,
                 isShadow,
                 hasAllProgressionAchievements,
-                hasWinCondition
+                hasWinCondition,
+                gameId // Pass the game ID
             );
             
             // Add to announced achievements
@@ -198,28 +200,19 @@ class AchievementFeedService {
         }
     }
 
-    async announceIndividualAchievement(channel, user, gameInfo, achievement, isShadow) {
+    async announceIndividualAchievement(channel, user, gameInfo, achievement, isShadow, gameId) {
         try {
-            // Get Discord user if possible
-            let discordUser = null;
-            try {
-                discordUser = await this.client.users.fetch(user.discordId);
-            } catch (error) {
-                console.error(`Error fetching Discord user for ${user.raUsername}:`, error);
-            }
-
             // Create embed
             const embed = new EmbedBuilder()
                 .setTitle(`🏆 Achievement Unlocked!`)
                 .setColor('#0099ff')
                 .setTimestamp();
 
-            if (discordUser) {
-                embed.setAuthor({
-                    name: discordUser.tag,
-                    iconURL: discordUser.displayAvatarURL()
-                });
-            }
+            // Use RetroAchievements username as the author
+            embed.setAuthor({
+                name: user.raUsername,
+                iconURL: `https://retroachievements.org/UserPic/${user.raUsername}.png` // RetroAchievements avatar
+            });
 
             // Set thumbnail to achievement image if available, otherwise use game image
             if (achievement.badgeUrl) {
@@ -243,10 +236,10 @@ class AchievementFeedService {
                 { name: 'Challenge Type', value: isShadow ? 'Shadow Challenge' : 'Monthly Challenge', inline: true }
             );
 
-            // Add links
+            // Add links - FIXED: Use the passed gameId instead of trying to access gameInfo.id
             embed.addFields({
                 name: 'Links',
-                value: `[Game Page](https://retroachievements.org/game/${gameInfo.id}) | [User Profile](https://retroachievements.org/user/${user.raUsername})`
+                value: `[Game Page](https://retroachievements.org/game/${gameId}) | [User Profile](https://retroachievements.org/user/${user.raUsername})`
             });
 
             // Send the announcement
@@ -257,28 +250,19 @@ class AchievementFeedService {
         }
     }
 
-    async announceAchievement(channel, user, gameInfo, awardLevel, achieved, total, isShadow, hasAllProgression, hasWinCondition) {
+    async announceAchievement(channel, user, gameInfo, awardLevel, achieved, total, isShadow, hasAllProgression, hasWinCondition, gameId) {
         try {
-            // Get Discord user if possible
-            let discordUser = null;
-            try {
-                discordUser = await this.client.users.fetch(user.discordId);
-            } catch (error) {
-                console.error(`Error fetching Discord user for ${user.raUsername}:`, error);
-            }
-
             // Create embed
             const embed = new EmbedBuilder()
                 .setTitle(`${AWARD_EMOJIS[awardLevel]} Challenge Complete!`)
                 .setColor(this.getColorForAward(awardLevel))
                 .setTimestamp();
 
-            if (discordUser) {
-                embed.setAuthor({
-                    name: discordUser.tag,
-                    iconURL: discordUser.displayAvatarURL()
-                });
-            }
+            // Use RetroAchievements username as the author
+            embed.setAuthor({
+                name: user.raUsername,
+                iconURL: `https://retroachievements.org/UserPic/${user.raUsername}.png` // RetroAchievements avatar
+            });
 
             // Set thumbnail to game image if available
             if (gameInfo.imageIcon) {
@@ -311,10 +295,10 @@ class AchievementFeedService {
                 { name: 'Challenge Type', value: isShadow ? 'Shadow Challenge' : 'Monthly Challenge', inline: true }
             );
 
-            // Add links
+            // Add links - FIXED: Use the passed gameId instead of trying to access gameInfo.id
             embed.addFields({
                 name: 'Links',
-                value: `[Game Page](https://retroachievements.org/game/${gameInfo.id}) | [User Profile](https://retroachievements.org/user/${user.raUsername})`
+                value: `[Game Page](https://retroachievements.org/game/${gameId}) | [User Profile](https://retroachievements.org/user/${user.raUsername})`
             });
 
             // Send the announcement
