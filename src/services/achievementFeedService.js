@@ -124,11 +124,13 @@ class AchievementFeedService {
         const achievementsToCheck = [...progressionAchievements, ...winAchievements];
         
         for (const achievementId of achievementsToCheck) {
-            const achievement = Object.entries(progress.achievements).find(([id, data]) => id === achievementId)[1];
+            const achievement = Object.entries(progress.achievements).find(([id, data]) => id === achievementId)?.[1];
             
             if (achievement && achievement.dateEarned) {
-                // Generate unique achievement identifier
-                const achievementIdentifier = `${gameId}:${achievementId}`;
+                // Generate unique achievement identifier with prefix for shadow games
+                const achievementIdentifier = isShadow 
+                    ? `shadow:${gameId}:${achievementId}` 
+                    : `monthly:${gameId}:${achievementId}`;
                 
                 // Check if this achievement has already been announced
                 if (!user.announcedAchievements.includes(achievementIdentifier)) {
@@ -175,8 +177,10 @@ class AchievementFeedService {
             currentAward = 'PARTICIPATION';
         }
 
-        // Generate award identifier
-        const awardIdentifier = `award:${gameId}:${currentAward}`;
+        // Generate award identifier with prefix for shadow games
+        const awardIdentifier = isShadow
+            ? `shadow:award:${gameId}:${currentAward}`
+            : `award:${gameId}:${currentAward}`;
         
         // Check if award has been announced
         if (currentAward && !user.announcedAchievements.includes(awardIdentifier)) {
