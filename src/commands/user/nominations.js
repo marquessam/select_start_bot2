@@ -98,7 +98,7 @@ export default {
                 }
                 
                 embed.addFields({
-                    name: `📌 ${console}`,
+                    name: `▫️ ${console}`,
                     value: gamesText
                 });
             }
