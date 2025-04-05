@@ -62,21 +62,9 @@ export default {
                     {
                         name: 'Nominations Remaining', 
                         value: `You have ${2 - (currentNominations.length + 1)} nomination${(2 - (currentNominations.length + 1)) !== 1 ? 's' : ''} remaining this month.`
-                    },
-                    {
-                        name: 'How Nominations Work',
-                        value: `• Each member can nominate up to 2 games per month\n• At the end of the month, 10 games are randomly selected from all nominations\n• A voting poll is created for the community to select next month's challenge`
-                    },
-                    {
-                        name: 'Tips for Good Nominations',
-                        value: `• Consider platform accessibility (some consoles are harder to emulate)\n• Think about community appeal and playability\n• Games should have a reasonable achievement set (not too easy or too hard)\n• You can view all current nominations with \`/nominations\``
-                    },
-                    {
-                        name: 'Finding Game IDs',
-                        value: `Game IDs can be found in the RetroAchievements URL. For example:\n\`https://retroachievements.org/game/1\` → Game ID is \`1\``
                     }
                 )
-                .setFooter({ text: 'Thank you for participating in the community challenge selection!' })
+                .setFooter({ text: 'View nomination guidelines with /rules category:nominations' })
                 .setTimestamp();
 
             return interaction.editReply({ embeds: [embed] });
