@@ -14,7 +14,8 @@ export default {
                     { name: 'Monthly', value: 'monthly' },
                     { name: 'Shadow', value: 'shadow' },
                     { name: 'Points', value: 'points' },
-                    { name: 'Community', value: 'community' }
+                    { name: 'Community', value: 'community' },
+                    { name: 'Nominations', value: 'nominations' }
                 )),
 
     async execute(interaction) {
@@ -41,6 +42,9 @@ export default {
                 case 'community':
                     await this.displayCommunityRules(interaction);
                     break;
+                case 'nominations':
+                    await this.displayNominationGuidelines(interaction);
+                    break;
                 default:
                     await this.displayRuleCategories(interaction);
             }
@@ -60,7 +64,8 @@ export default {
                 value: '• `/rules category:monthly` - Monthly Challenge Rules & Information\n' +
                       '• `/rules category:shadow` - Shadow Game Challenge Information\n' +
                       '• `/rules category:points` - Point System Rules & Information\n' +
-                      '• `/rules category:community` - Community Guidelines & Discord Rules'
+                      '• `/rules category:community` - Community Guidelines & Discord Rules\n' +
+                      '• `/rules category:nominations` - Game Nomination Guidelines & Process'
             })
             .setTimestamp();
 
@@ -286,6 +291,52 @@ export default {
                            '• Discuss the arcade board challenges\n\n' +
                            '**#bot-terminal**\n' +
                            '• All bot commands should be used here'
+                }
+            )
+            .setTimestamp();
+
+        await interaction.editReply({ embeds: [embed] });
+    },
+
+    async displayNominationGuidelines(interaction) {
+        const embed = new EmbedBuilder()
+            .setTitle('Game Nomination Guidelines')
+            .setColor('#E67E22')
+            .setDescription('Learn how to nominate games for monthly challenges and what makes a good nomination')
+            .addFields(
+                {
+                    name: 'Nomination Process',
+                    value: '• Each member can nominate up to **2 games per month**\n' +
+                           '• At the end of the month, **10 games are randomly selected** from all nominations\n' +
+                           '• A voting poll is created for the community to select next month\'s challenge\n' +
+                           '• The game with the most votes becomes the next monthly challenge'
+                },
+                {
+                    name: 'How to Nominate',
+                    value: '• Use the `/nominate gameid:X` command, where X is the game ID\n' +
+                           '• Game IDs can be found in the RetroAchievements URL, e.g.:\n' +
+                           '  `https://retroachievements.org/game/1` → Game ID is `1`\n' +
+                           '• Use `/nominations` to see all current nominations'
+                },
+                {
+                    name: 'What Makes a Good Nomination',
+                    value: '• **Platform Accessibility**: Consider console availability and emulation difficulty\n' +
+                           '  For example, GameCube games might be harder for some members to play\n' +
+                           '• **Achievement Balance**: Games with a fair mix of easy and challenging achievements\n' +
+                           '• **Game Length**: Ideally completable within a month for dedicated players\n' +
+                           '• **Community Interest**: Games with broad appeal across different player types\n' +
+                           '• **Diversity**: Different genres or consoles from recent challenges'
+                },
+                {
+                    name: 'Voting Information',
+                    value: '• Voting takes place during the last week of each month\n' +
+                           '• You can vote for up to 2 games\n' +
+                           '• Results will be announced before the new month begins\n' +
+                           '• Think about the community when voting, not just your preferences'
+                },
+                {
+                    name: 'Need to Change Your Nomination?',
+                    value: 'If you want to change your nomination, ask an admin to use the `/clearnominations` command to reset your nominations'
                 }
             )
             .setTimestamp();
