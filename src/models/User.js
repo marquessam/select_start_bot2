@@ -25,6 +25,12 @@ const nominationSchema = new mongoose.Schema({
         type: String,
         required: true
     },
+    gameTitle: {
+        type: String
+    },
+    consoleName: {
+        type: String
+    },
     nominatedAt: {
         type: Date,
         default: Date.now
