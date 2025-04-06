@@ -3,6 +3,7 @@ import { Challenge } from '../models/Challenge.js';
 import retroAPI from './retroAPI.js';
 import { EmbedBuilder } from 'discord.js';
 import { config } from '../config/config.js';
+import mongoose from 'mongoose';
 
 class MonthlyTasksService {
     constructor() {
@@ -32,6 +33,9 @@ class MonthlyTasksService {
             }
             
             console.log(`Cleared nominations for ${users.length} users`);
+            
+            // Update nominations for web app
+            await this.updateNominationsForWebapp();
             
             // Announce in the designated channel
             await this.announceNominationsClear();
@@ -115,6 +119,88 @@ class MonthlyTasksService {
             
         } catch (error) {
             console.error('Error creating voting poll:', error);
+        }
+    }
+
+    async updateNominationsForWebapp() {
+        if (!this.client) {
+            console.error('Discord client not set for monthly tasks service');
+            return;
+        }
+
+        try {
+            console.log('Updating nominations for web app...');
+            
+            // Get all users
+            const users = await User.find({});
+            
+            // Get current date in YYYY-MM format for the period key
+            const currentPeriod = new Date().toISOString().slice(0, 7);
+            
+            // Get all current nominations
+            let currentNominations = [];
+            for (const user of users) {
+                const userNominations = user.getCurrentNominations();
+                for (const nom of userNominations) {
+                    let game = "Unknown Game";
+                    let platform = "Unknown Platform";
+                    
+                    // If gameTitle and consoleName are already in the nomination, use them
+                    if (nom.gameTitle && nom.consoleName) {
+                        game = nom.gameTitle;
+                        platform = nom.consoleName;
+                    } else {
+                        // Otherwise, fetch from the API
+                        try {
+                            const gameInfo = await retroAPI.getGameInfo(nom.gameId);
+                            game = gameInfo.title;
+                            platform = gameInfo.consoleName;
+                        } catch (error) {
+                            console.error(`Error fetching game info for ${nom.gameId}:`, error);
+                        }
+                    }
+                    
+                    currentNominations.push({
+                        game,
+                        platform,
+                        discordUsername: user.raUsername,
+                        discordId: user.discordId
+                    });
+                }
+            }
+            
+            // Get MongoDB client
+            const db = mongoose.connection.db;
+            
+            // Get existing nominations document
+            const existingDoc = await db.collection('nominations').findOne({ _id: 'nominations' });
+            
+            let nominations = {};
+            if (existingDoc && existingDoc.nominations) {
+                nominations = existingDoc.nominations;
+            }
+            
+            // Update current period nominations
+            nominations[currentPeriod] = currentNominations;
+            
+            // Update or insert the nominations document
+            await db.collection('nominations').updateOne(
+                { _id: 'nominations' },
+                { $set: { nominations, lastUpdated: new Date() } },
+                { upsert: true }
+            );
+            
+            // Also update the nominations status
+            await db.collection('nominations').updateOne(
+                { _id: 'status' },
+                { $set: { isOpen: true, lastUpdated: new Date() } },
+                { upsert: true }
+            );
+            
+            console.log(`Updated ${currentNominations.length} nominations for web app`);
+            
+        } catch (error) {
+            console.error('Error updating nominations for web app:', error);
         }
     }
 
