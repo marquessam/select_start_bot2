@@ -23,11 +23,13 @@ export default {
                 return interaction.editReply('You are not registered. Please ask an admin to register you first.');
             }
 
-            // Check if the game exists
+            // Check if the game exists and get its details
             const gameInfo = await retroAPI.getGameInfo(gameId);
             if (!gameInfo) {
                 return interaction.editReply('Game not found. Please check the game ID.');
             }
+
+            console.log(`Game info retrieved: ${gameInfo.title} (${gameInfo.consoleName})`);
 
             // Get current nominations
             const currentNominations = user.getCurrentNominations();
@@ -40,7 +42,7 @@ export default {
                 return interaction.editReply('You have already nominated this game this month.');
             }
 
-            // Add the nomination - now with game title and console name
+            // Add the nomination with proper game details
             user.nominations.push({
                 gameId,
                 gameTitle: gameInfo.title,
@@ -49,6 +51,7 @@ export default {
             });
 
             await user.save();
+            console.log(`User ${user.raUsername} nominated ${gameInfo.title} (${gameId})`);
 
             // Create an embed for better presentation
             const embed = new EmbedBuilder()
