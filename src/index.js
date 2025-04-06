@@ -114,6 +114,14 @@ client.once(Events.ClientReady, async () => {
             });
         });
 
+        // Schedule nominations sync for the web app every 15 minutes
+        cron.schedule('*/15 * * * *', () => {
+            console.log('Syncing nominations with web app...');
+            monthlyTasksService.updateNominationsForWebapp().catch(error => {
+                console.error('Error updating nominations for web app:', error);
+            });
+        });
+
         // Schedule monthly tasks on the 1st of each month at 00:01
         cron.schedule('1 0 1 * *', () => {
             console.log('Running monthly tasks...');
@@ -146,6 +154,9 @@ client.once(Events.ClientReady, async () => {
         
         // Run initial arcade service check
         await arcadeService.start();
+        
+        // Run initial nominations sync
+        await monthlyTasksService.updateNominationsForWebapp();
 
         console.log('Bot is ready!');
     } catch (error) {
