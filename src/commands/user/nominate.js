@@ -40,9 +40,11 @@ export default {
                 return interaction.editReply('You have already nominated this game this month.');
             }
 
-            // Add the nomination
+            // Add the nomination - now with game title and console name
             user.nominations.push({
                 gameId,
+                gameTitle: gameInfo.title,
+                consoleName: gameInfo.consoleName,
                 nominatedAt: new Date()
             });
 
