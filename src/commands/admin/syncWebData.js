@@ -1,7 +1,5 @@
-// commands/admin/syncWebData.js
 import { SlashCommandBuilder } from 'discord.js';
 import { config } from '../../config/config.js';
-import statsUpdateService from '../../services/statsUpdateService.js';
 import monthlyTasksService from '../../services/monthlyTasksService.js';
 
 export default {
@@ -21,7 +19,8 @@ export default {
         await interaction.deferReply();
 
         try {
-            await statsUpdateService.syncWebAppData();
+            // Both functions are on monthlyTasksService
+            await monthlyTasksService.syncWebAppData();
             await monthlyTasksService.updateNominationsForWebapp();
             
             return interaction.editReply('Web app data synchronized successfully!');
