@@ -1,6 +1,4 @@
-Absolutely, here's the first half of the updated profile.js file:
 
-```javascript
 import { SlashCommandBuilder, EmbedBuilder } from 'discord.js';
 import { User } from '../../models/User.js';
 import { Challenge } from '../../models/Challenge.js';
