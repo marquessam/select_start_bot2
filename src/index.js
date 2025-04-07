@@ -121,14 +121,6 @@ client.once(Events.ClientReady, async () => {
                 console.error('Error updating nominations for web app:', error);
             });
         });
-        
-        // Schedule web app data sync every 30 minutes
-        cron.schedule('*/30 * * * *', () => {
-            console.log('Syncing web app data...');
-            monthlyTasksService.syncWebAppData().catch(error => {
-                console.error('Error syncing web app data:', error);
-            });
-        });
 
         // Schedule monthly tasks on the 1st of each month at 00:01
         cron.schedule('1 0 1 * *', () => {
@@ -165,9 +157,6 @@ client.once(Events.ClientReady, async () => {
         
         // Run initial nominations sync
         await monthlyTasksService.updateNominationsForWebapp();
-        
-        // Run initial web app data sync
-        await monthlyTasksService.syncWebAppData();
 
         console.log('Bot is ready!');
     } catch (error) {
