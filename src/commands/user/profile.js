@@ -114,7 +114,6 @@ export default {
             const raUserInfo = await retroAPI.getUserInfo(raUsername);
             Here's the second part of the profile.js file:
 
-```javascript
             // Get current game progress and update user's progress in the database
             let currentGamesProgress = [];
             if (currentChallenge) {
@@ -284,10 +283,7 @@ export default {
                     }
                 }
             }
-
-Here's the third part of the profile.js file:
-
-```javascript
+            
             // Calculate awards and points
             let masteredGames = [];
             let beatenGames = [];
@@ -426,9 +422,8 @@ Here's the third part of the profile.js file:
                             }
                         }
                     }
-                    Here's the fourth part of the profile.js file:
-
-```javascript
+                    
+                
                     // Also check shadow games for past months - ALWAYS process them regardless of revealed flag
                     // For past months, we treat all shadow games as revealed
                     if (challenge.shadow_challange_gameid) {
@@ -556,9 +551,7 @@ Here's the third part of the profile.js file:
             });
 
             const totalChallengePoints = currentChallengePoints + pastChallengePoints;
-Here's the fifth and final part of the profile.js file:
 
-```javascript
             // Create embed
             const embed = new EmbedBuilder()
                 .setTitle(`User Profile: ${raUsername}`)
