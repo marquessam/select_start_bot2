@@ -11,9 +11,6 @@ const AWARD_EMOJIS = {
     PARTICIPATION: '🏁'
 };
 
-// Number of recent achievements to fetch per user
-const RECENT_ACHIEVEMENTS_COUNT = 25; // Adjusted to be within safe limits
-
 class AchievementFeedService {
     constructor() {
         this.client = null;
@@ -21,8 +18,6 @@ class AchievementFeedService {
         this.profileImageCache = new Map();
         // Cache TTL in milliseconds (30 minutes)
         this.cacheTTL = 30 * 60 * 1000;
-        // Store last checked time per user
-        this.lastCheckedTimes = new Map();
     }
 
     setClient(client) {
@@ -55,6 +50,10 @@ class AchievementFeedService {
             }
         });
 
+        // Get all users
+        const users = await User.find({});
+        if (users.length === 0) return;
+
         // Get the announcement channel
         const announcementChannel = await this.getAnnouncementChannel();
         if (!announcementChannel) {
@@ -62,25 +61,10 @@ class AchievementFeedService {
             return;
         }
 
-        // Get all users
-        const users = await User.find({});
-        if (users.length === 0) return;
-
-        // Check each user's progress and recent achievements
+        // Check each user's progress
         for (const user of users) {
-            try {
-                if (await this.isGuildMember(user.discordId)) {
-                    // Check challenge-specific achievements if a challenge exists
-                    if (currentChallenge) {
-                        await this.checkUserProgress(user, currentChallenge, announcementChannel);
-                    }
-                    
-                    // Check any recent achievements regardless of game
-                    await this.checkRecentAchievements(user, announcementChannel);
-                }
-            } catch (error) {
-                console.error(`Error processing user ${user.raUsername}:`, error);
-                // Continue to next user
+            if (await this.isGuildMember(user.discordId)) {
+                await this.checkUserProgress(user, currentChallenge, announcementChannel);
             }
         }
     }
@@ -216,112 +200,6 @@ class AchievementFeedService {
         }
     }
 
-    /**
-     * Check for any recent achievements by a user, regardless of game
-     */
-    async checkRecentAchievements(user, channel) {
-        try {
-            // Skip users who don't have valid usernames (prevent 422 errors)
-            if (!user.raUsername || user.raUsername.trim() === '') {
-                console.log(`Skipping user with empty RA username: ${user.discordId}`);
-                return;
-            }
-            
-            // Get the last time we checked for this user
-            const lastChecked = this.lastCheckedTimes.get(user.raUsername) || new Date(0);
-            const now = new Date();
-            
-            // Alternative approach: Use getUserCompletedGames to check for activity first
-            // This can help avoid 422 errors on the getUserRecentAchievements endpoint
-            try {
-                // Get user's completed games first - this is less prone to API errors
-                // and can tell us if the user has any activity
-                const completedGames = await retroAPI.getUserCompletedGames(user.raUsername);
-                
-                // Only proceed if we got a valid response
-                if (!completedGames || typeof completedGames !== 'object') {
-                    console.log(`Skipping user ${user.raUsername} - invalid completed games response`);
-                    return;
-                }
-            } catch (error) {
-                // If we get an error here, the user might not exist or have other issues
-                // Skip getting recent achievements
-                console.error(`Error fetching completed games for ${user.raUsername}: ${error.message}`);
-                return;
-            }
-            
-            // Now try to get recent achievements
-            try {
-                // Get user's recent achievements
-                const recentAchievements = await retroAPI.getUserRecentAchievements(
-                    user.raUsername,
-                    RECENT_ACHIEVEMENTS_COUNT
-                );
-                
-                // Update last checked time
-                this.lastCheckedTimes.set(user.raUsername, now);
-                
-                if (!recentAchievements || recentAchievements.length === 0) {
-                    return;
-                }
-                
-                // Process each achievement
-                for (const achievement of recentAchievements) {
-                    // Skip if missing critical fields
-                    if (!achievement.GameID || !achievement.AchievementID) {
-                        continue;
-                    }
-                    
-                    // Create a unique identifier for this achievement
-                    const achievementIdentifier = `general:${achievement.GameID}:${achievement.AchievementID}`;
-                    
-                    // Check if we've already announced this achievement
-                    if (!user.announcedAchievements.includes(achievementIdentifier)) {
-                        // Check if achievement was earned after the last time we checked
-                        const earnedDate = new Date(achievement.Date);
-                        
-                        // Only announce achievements from the last 4 hours or after the last check
-                        if (earnedDate > lastChecked || (now - earnedDate <= 4 * 3600000)) {
-                            // Get game info for the achievement
-                            const gameInfo = await retroAPI.getGameInfo(achievement.GameID);
-                            
-                            // Transform achievement data to match the format expected by announceIndividualAchievement
-                            const formattedAchievement = {
-                                title: achievement.Title,
-                                description: achievement.Description,
-                                badgeUrl: achievement.BadgeURL.startsWith('http') 
-                                    ? achievement.BadgeURL 
-                                    : `https://retroachievements.org${achievement.BadgeURL}`,
-                                points: achievement.Points
-                            };
-                            
-                            // Announce the achievement
-                            await this.announceIndividualAchievement(
-                                channel,
-                                user,
-                                gameInfo,
-                                formattedAchievement,
-                                'General Gaming', // Type
-                                achievement.GameID
-                            );
-                            
-                            // Add to the list of announced achievements
-                            user.announcedAchievements.push(achievementIdentifier);
-                            
-                            // Save to database after each announcement to prevent duplicates
-                            await user.save();
-                        }
-                    }
-                }
-            } catch (error) {
-                // Handle error but don't stop processing other users
-                console.error(`Error fetching recent achievements for ${user.raUsername}: ${error.message}`);
-            }
-        } catch (error) {
-            console.error(`Error checking recent achievements for user ${user.raUsername}:`, error);
-        }
-    }
-
     // Get user's profile image URL with caching
     async getUserProfileImageUrl(username) {
         // Check if we have a cached entry
@@ -361,9 +239,6 @@ class AchievementFeedService {
                 case 'Shadow Challenge':
                     color = '#9B59B6'; // Purple
                     break;
-                case 'General Gaming':
-                    color = '#2ECC71'; // Green
-                    break;
                 default:
                     color = '#0099ff';
             }
@@ -386,47 +261,24 @@ class AchievementFeedService {
             // Set thumbnail to achievement image if available, otherwise use game image
             if (achievement.badgeUrl) {
                 embed.setThumbnail(achievement.badgeUrl);
-            } else if (gameInfo?.imageIcon) {
+            } else if (gameInfo.imageIcon) {
                 embed.setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`);
             }
 
-            // Build description based on challenge type
-            let description;
-            if (challengeType === 'General Gaming') {
-                description = `**${user.raUsername}** has earned a new achievement!\n\n`;
-            } else {
-                description = `**${user.raUsername}** has earned a new achievement in ${challengeType === 'Shadow Challenge' ? 'the shadow challenge' : 'this month\'s challenge'}!\n\n`;
-            }
-            
+            // Build description
+            let description = `**${user.raUsername}** has earned a new achievement in ${challengeType === 'Shadow Challenge' ? 'the shadow challenge' : 'this month\'s challenge'}!\n\n`;
             description += `**${achievement.title}**\n`;
             if (achievement.description) {
                 description += `*${achievement.description}*\n`;
             }
             
-            // Add points information if available and it's not a challenge achievement
-            if (challengeType === 'General Gaming' && achievement.points) {
-                description += `**Points:** ${achievement.points}\n`;
-            }
-            
             embed.setDescription(description);
 
-            // Add game info - check if gameInfo exists to prevent errors
-            if (gameInfo) {
-                embed.addFields(
-                    { name: 'Game', value: gameInfo.title || 'Unknown Game', inline: true },
-                    { name: 'Type', value: challengeType, inline: true }
-                );
-
-                // Add console info if available
-                if (gameInfo.consoleName) {
-                    embed.addFields({ name: 'System', value: gameInfo.consoleName, inline: true });
-                }
-            } else {
-                embed.addFields(
-                    { name: 'Game', value: 'Unknown Game', inline: true },
-                    { name: 'Type', value: challengeType, inline: true }
-                );
-            }
+            // Add game info
+            embed.addFields(
+                { name: 'Game', value: gameInfo.title, inline: true },
+                { name: 'Challenge Type', value: challengeType, inline: true }
+            );
 
             // Add links
             embed.addFields({
@@ -460,7 +312,7 @@ class AchievementFeedService {
             });
 
             // Set thumbnail to game image if available
-            if (gameInfo?.imageIcon) {
+            if (gameInfo.imageIcon) {
                 embed.setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`);
             }
 
