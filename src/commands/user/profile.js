@@ -290,6 +290,9 @@ export default {
             let communityPoints = 0;
             let pastChallengePoints = 0; // Track points from past challenges
             
+            // Flag to track if we need to update the user data
+            let needDatabaseUpdate = false;
+            
             // Process past challenges data
             // Important addition: Process all past challenges even if not in user's monthlyChallenges
             for (const challenge of allChallenges) {
@@ -333,47 +336,85 @@ export default {
                             // Save this to user's record if not already present
                             if (!userData || userData.progress < 3) {
                                 user.monthlyChallenges.set(dateKey, { progress: 3 });
+                                needDatabaseUpdate = true;
                             }
-                        } else if (userData && userData.progress === 2) {
-                            // Beaten (use stored status)
-                            beatenGames.push({
-                                title: progress.title,
-                                date: challengeDate,
-                                earned: progress.numAwardedToUser,
-                                total: challenge.monthly_challange_game_total,
-                                percentage
-                            });
-                            
-                            // Add points to past challenge total
-                            pastChallengePoints += POINTS.BEATEN;
-                        } else if (userData && userData.progress === 1) {
-                            // Participation
-                            participationGames.push({
-                                title: progress.title,
-                                date: challengeDate,
-                                earned: progress.numAwardedToUser,
-                                total: challenge.monthly_challange_game_total,
-                                percentage
-                            });
-                            
-                            // Add points to past challenge total
-                            pastChallengePoints += POINTS.PARTICIPATION;
                         } else {
-                            // No stored status, but has some achievements - add as participation
-                            participationGames.push({
-                                title: progress.title,
-                                date: challengeDate,
-                                earned: progress.numAwardedToUser,
-                                total: challenge.monthly_challange_game_total,
-                                percentage
-                            });
-                            
-                            // Add points to past challenge total
-                            pastChallengePoints += POINTS.PARTICIPATION;
-                            
-                            // Save participation status if not already present
-                            if (!userData) {
-                                user.monthlyChallenges.set(dateKey, { progress: 1 });
+                            // Get all earned achievements for this game
+                            const earnedAchievements = Object.entries(progress.achievements)
+                                .filter(([id, data]) => data.hasOwnProperty('dateEarned'))
+                                .map(([id]) => id);
+                                
+                            // Check progression and win requirements
+                            const progressionAchievements = challenge.monthly_challange_progression_achievements || [];
+                            const winAchievements = challenge.monthly_challange_win_achievements || [];
+                                
+                            const allProgressionCompleted = progressionAchievements.length > 0 && 
+                                progressionAchievements.every(id => earnedAchievements.includes(id));
+                                
+                            const hasWinCondition = winAchievements.length === 0 || 
+                                winAchievements.some(id => earnedAchievements.includes(id));
+                                
+                            // Check if game is beaten (all progression + at least one win condition)
+                            if (allProgressionCompleted && hasWinCondition) {
+                                // Beaten status
+                                beatenGames.push({
+                                    title: progress.title,
+                                    date: challengeDate,
+                                    earned: progress.numAwardedToUser,
+                                    total: challenge.monthly_challange_game_total,
+                                    percentage
+                                });
+                                
+                                // Add points to past challenge total
+                                pastChallengePoints += POINTS.BEATEN;
+                                
+                                // Update database if needed
+                                if (!userData || userData.progress < 2) {
+                                    user.monthlyChallenges.set(dateKey, { progress: 2 });
+                                    needDatabaseUpdate = true;
+                                }
+                            } else if (userData && userData.progress === 2) {
+                                // If the database already says it's beaten, trust that (backwards compatibility)
+                                beatenGames.push({
+                                    title: progress.title,
+                                    date: challengeDate,
+                                    earned: progress.numAwardedToUser,
+                                    total: challenge.monthly_challange_game_total,
+                                    percentage
+                                });
+                                
+                                // Add points to past challenge total
+                                pastChallengePoints += POINTS.BEATEN;
+                            } else if (userData && userData.progress === 1) {
+                                // Participation
+                                participationGames.push({
+                                    title: progress.title,
+                                    date: challengeDate,
+                                    earned: progress.numAwardedToUser,
+                                    total: challenge.monthly_challange_game_total,
+                                    percentage
+                                });
+                                
+                                // Add points to past challenge total
+                                pastChallengePoints += POINTS.PARTICIPATION;
+                            } else {
+                                // No stored status, but has some achievements - add as participation
+                                participationGames.push({
+                                    title: progress.title,
+                                    date: challengeDate,
+                                    earned: progress.numAwardedToUser,
+                                    total: challenge.monthly_challange_game_total,
+                                    percentage
+                                });
+                                
+                                // Add points to past challenge total
+                                pastChallengePoints += POINTS.PARTICIPATION;
+                                
+                                // Save participation status if not already present
+                                if (!userData) {
+                                    user.monthlyChallenges.set(dateKey, { progress: 1 });
+                                    needDatabaseUpdate = true;
+                                }
                             }
                         }
                     }
@@ -426,6 +467,7 @@ export default {
                                 // Save this to user's record (max 2 for shadow)
                                 if (!shadowUserData || shadowUserData.progress < 2) {
                                     user.shadowChallenges.set(dateKey, { progress: 2 });
+                                    needDatabaseUpdate = true;
                                 }
                             } else {
                                 // Participation
@@ -443,6 +485,7 @@ export default {
                                 // Save participation status if not already present
                                 if (!shadowUserData) {
                                     user.shadowChallenges.set(dateKey, { progress: 1 });
+                                    needDatabaseUpdate = true;
                                 }
                             }
                         }
@@ -453,7 +496,9 @@ export default {
             }
             
             // Save user with possibly updated challenge records
-            await user.save();
+            if (needDatabaseUpdate) {
+                await user.save();
+            }
 
             // Get community awards for the current year
             const currentYear = new Date().getFullYear();
