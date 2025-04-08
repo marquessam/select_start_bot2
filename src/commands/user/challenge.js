@@ -95,7 +95,7 @@ export default {
                         `**GAME:** ${shadowGameInfo.title}\n\n` +
                         `**POINTS AVAILABLE:**\n` +
                         `- Participation: 1 point\n` +
-                        `- Completion: 3 points (requires all ${progressionCount} progression achievements` +
+                        `- Beaten: 3 points (requires all ${progressionCount} progression achievements` +
                         (winCount > 0 ? ` and at least one win achievement` : '') + `)\n\n` +
                         `This challenge runs parallel to the monthly challenge.\n` +
                         `*Note: Shadow games are ineligible for mastery awards.*`;
