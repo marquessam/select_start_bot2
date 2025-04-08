@@ -1,4 +1,4 @@
-// services/retroAPI.js
+// src/services/retroAPI.js
 import { buildAuthorization, getGame, getGameExtended, getUserProfile, getUserRecentAchievements, 
     getUserSummary, getGameInfoAndUserProgress, getGameRankAndScore, getUserCompletedGames,
     getUserAwards, getGameList, getConsoleIds, getAchievementCount } from '@retroachievements/api';
@@ -157,13 +157,14 @@ class RetroAchievementsService {
 
     /**
      * Get user's recently earned achievements
+     * This method uses direct API call instead of the SDK function to avoid 422 errors
      * @param {string} username - RetroAchievements username
      * @param {number} count - Number of achievements to fetch (default: 50)
      * @returns {Promise<Array>} Array of recent achievements
      */
-    async getUserRecentAchievements(username, count = 50) {
-        // For recent achievements, we use a shorter cache period
-        const cacheKey = `recent_achievements_${username}_${count}`;
+    async getUserRecentAchievements(username, count = 10) {
+        // Use a shorter cache period for recent achievements
+        const cacheKey = `recent_achievements_${username.toLowerCase()}_${count}`;
         const cachedData = this.getCachedItem(cacheKey);
         
         // Recent achievements should have a shorter TTL (1 minute)
@@ -172,21 +173,23 @@ class RetroAchievementsService {
         }
         
         try {
-            // Use the rate limiter to make the API call
-            const achievements = await this.rateLimiter.add(() => 
-                getUserRecentAchievements(this.authorization, {
-                    username,
-                    count
-                })
-            );
+            // Make a direct API call to workaround 422 errors
+            const endpoint = `API_GetUserRecentAchievements.php?u=${encodeURIComponent(username)}&c=${count}`;
+            const result = await this.apiRequest(endpoint);
+            
+            if (!result || !Array.isArray(result)) {
+                // Return empty array on invalid response
+                return [];
+            }
             
             // Cache the result
-            this.setCachedItem(cacheKey, achievements);
+            this.setCachedItem(cacheKey, result);
             
-            return achievements;
+            return result;
         } catch (error) {
+            // Return empty array instead of throwing on error
             console.error(`Error fetching recent achievements for ${username}:`, error);
-            throw error;
+            return [];
         }
     }
 
@@ -227,7 +230,7 @@ class RetroAchievementsService {
      * @returns {Promise<Object>} User information
      */
     async getUserInfo(username) {
-        const cacheKey = `user_info_${username}`;
+        const cacheKey = `user_info_${username.toLowerCase()}`;
         const cachedData = this.getCachedItem(cacheKey);
         
         if (cachedData) {
@@ -358,11 +361,12 @@ class RetroAchievementsService {
 
     /**
      * Get user's completed games
+     * Using direct API call to avoid 422 errors
      * @param {string} username - RetroAchievements username
      * @returns {Promise<Array>} List of completed games
      */
     async getUserCompletedGames(username) {
-        const cacheKey = `completed_games_${username}`;
+        const cacheKey = `completed_games_${username.toLowerCase()}`;
         const cachedData = this.getCachedItem(cacheKey);
         
         if (cachedData) {
@@ -370,20 +374,21 @@ class RetroAchievementsService {
         }
         
         try {
-            // Use the rate limiter to make the API call
-            const completed = await this.rateLimiter.add(() => 
-                getUserCompletedGames(this.authorization, {
-                    username
-                })
-            );
+            // Make a direct API call instead of using the SDK function
+            const endpoint = `API_GetUserCompletedGames.php?u=${encodeURIComponent(username)}`;
+            const result = await this.apiRequest(endpoint);
+            
+            // Handle different response formats
+            const completedGames = Array.isArray(result) ? result : (result?.Response || []);
             
             // Cache the result
-            this.setCachedItem(cacheKey, completed);
+            this.setCachedItem(cacheKey, completedGames);
             
-            return completed;
+            return completedGames;
         } catch (error) {
+            // Return empty array on error instead of throwing
             console.error(`Error fetching completed games for ${username}:`, error);
-            throw error;
+            return [];
         }
     }
 
@@ -506,7 +511,7 @@ class RetroAchievementsService {
      * @returns {Promise<Object>} API response
      */
     async apiRequest(endpoint) {
-        const baseUrl = 'https://retroachievements.org/API/';
+        const baseUrl = 'https://retroachievements.org/';
         const url = `${baseUrl}${endpoint}&z=${this.authorization.userName}&y=${this.authorization.webApiKey}`;
         
         try {
@@ -533,6 +538,40 @@ class RetroAchievementsService {
     clearCache() {
         this.cache.clear();
         console.log('Cache cleared');
+    }
+
+    /**
+     * Fetch user activity feed (direct API call)
+     * @param {string} username - RetroAchievements username
+     * @param {number} offset - Starting position
+     * @param {number} count - Number of entries to retrieve
+     * @returns {Promise<Array>} User activity entries
+     */
+    async getUserActivityFeed(username, offset = 0, count = 10) {
+        const cacheKey = `activity_feed_${username.toLowerCase()}_${offset}_${count}`;
+        const cachedData = this.getCachedItem(cacheKey);
+        
+        // Activity feed should have a short TTL (2 minutes)
+        if (cachedData && (Date.now() - this.cache.get(cacheKey).timestamp) < 120000) {
+            return cachedData;
+        }
+        
+        try {
+            // Make a direct API call to the activity feed endpoint
+            const endpoint = `API_GetUserFeed.php?u=${encodeURIComponent(username)}&c=${count}&o=${offset}`;
+            const result = await this.apiRequest(endpoint);
+            
+            // Process the result to extract achievements
+            const activities = Array.isArray(result) ? result : [];
+            
+            // Cache the result
+            this.setCachedItem(cacheKey, activities);
+            
+            return activities;
+        } catch (error) {
+            console.error(`Error fetching activity feed for ${username}:`, error);
+            return [];
+        }
     }
 }
 
