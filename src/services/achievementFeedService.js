@@ -33,14 +33,68 @@ class AchievementFeedService {
 
         try {
             console.log('Starting achievement feed service check...');
-            await this.checkForChallengeAchievements();
+            await this.checkForNewAchievements();
         } catch (error) {
             console.error('Error in achievement feed service:', error);
         }
     }
 
-    async checkForChallengeAchievements() {
-        console.log('Checking for challenge achievements...');
+    async testAchievementChannel() {
+        if (!this.client) {
+            console.error('Discord client not set');
+            return false;
+        }
+
+        try {
+            // Get the channel
+            const channel = await this.getAnnouncementChannel();
+            if (!channel) {
+                console.error('Could not get announcement channel');
+                return false;
+            }
+
+            console.log(`Found announcement channel: ${channel.name} (ID: ${channel.id})`);
+            
+            // Test sending a message
+            try {
+                const testMessage = await channel.send('🔍 Achievement feed test message - please delete');
+                console.log(`Successfully sent test message to channel ${channel.name}, message ID: ${testMessage.id}`);
+                
+                // Delete the test message after a moment
+                setTimeout(async () => {
+                    try {
+                        await testMessage.delete();
+                        console.log('Test message deleted');
+                    } catch (deleteError) {
+                        console.log('Could not delete test message:', deleteError.message);
+                    }
+                }, 5000);
+                
+                return true;
+            } catch (sendError) {
+                console.error(`Failed to send test message to channel: ${sendError.message}`);
+                console.error('This indicates a permissions issue!');
+                
+                // Check permissions explicitly
+                const botUser = this.client.user;
+                if (botUser) {
+                    const permissions = channel.permissionsFor(botUser);
+                    console.log('Bot permissions in channel:');
+                    console.log('- Send Messages:', permissions?.has('SendMessages') ? 'YES' : 'NO');
+                    console.log('- Embed Links:', permissions?.has('EmbedLinks') ? 'YES' : 'NO');
+                    console.log('- View Channel:', permissions?.has('ViewChannel') ? 'YES' : 'NO');
+                }
+                
+                return false;
+            }
+        } catch (error) {
+            console.error('Error testing achievement channel:', error);
+            return false;
+        }
+    }
+
+    async checkForNewAchievements() {
+        console.log('Checking for new achievements...');
         
         // Get current challenge
         const now = new Date();
@@ -54,12 +108,19 @@ class AchievementFeedService {
             }
         });
 
-        if (!currentChallenge) {
-            console.log('No active challenge found for the current month.');
-            return;
-        }
+        // Store monthly and shadow game IDs for quick lookup
+        let monthlyGameId = null;
+        let shadowGameId = null;
         
-        console.log(`Found current challenge with game ID: ${currentChallenge.monthly_challange_gameid}`);
+        if (currentChallenge) {
+            monthlyGameId = currentChallenge.monthly_challange_gameid;
+            if (currentChallenge.shadow_challange_revealed) {
+                shadowGameId = currentChallenge.shadow_challange_gameid;
+            }
+            console.log(`Current monthly game: ${monthlyGameId}, shadow game: ${shadowGameId || 'Not revealed'}`);
+        } else {
+            console.log('No active challenge found for the current month.');
+        }
         
         // Get announcement channel
         const announcementChannel = await this.getAnnouncementChannel();
@@ -79,30 +140,89 @@ class AchievementFeedService {
                 // Verify user is a guild member
                 const isMember = await this.isGuildMember(user.discordId);
                 if (!isMember) {
-                    // console.log(`Skipping user ${user.raUsername} - not a guild member`);
+                    // Skip non-members silently
                     continue;
                 }
                 
                 console.log(`Checking achievements for user: ${user.raUsername}`);
                 
-                // Check monthly challenge
-                await this.checkUserChallengeGame(
-                    user,
-                    announcementChannel,
-                    currentChallenge,
-                    currentChallenge.monthly_challange_gameid,
-                    false // Not a shadow game
-                );
+                // Get user's recent achievements (last 50)
+                const recentAchievements = await retroAPI.getUserRecentAchievements(user.raUsername, 50);
                 
-                // Check shadow challenge if it's revealed
-                if (currentChallenge.shadow_challange_revealed && currentChallenge.shadow_challange_gameid) {
-                    await this.checkUserChallengeGame(
-                        user,
+                if (!recentAchievements || !Array.isArray(recentAchievements) || recentAchievements.length === 0) {
+                    console.log(`No recent achievements found for ${user.raUsername}`);
+                    continue;
+                }
+                
+                console.log(`Found ${recentAchievements.length} recent achievements for ${user.raUsername}`);
+                
+                // Initialize user's announcedAchievements array if it doesn't exist
+                if (!user.announcedAchievements) {
+                    user.announcedAchievements = [];
+                }
+                
+                // Process each achievement
+                for (const achievement of recentAchievements) {
+                    if (!achievement || !achievement.GameID || !achievement.ID) {
+                        console.log('Skipping invalid achievement');
+                        continue;
+                    }
+                    
+                    const gameId = String(achievement.GameID);
+                    const achievementId = achievement.ID;
+                    
+                    // Determine achievement type (monthly, shadow, or regular)
+                    let achievementType = 'regular';
+                    if (gameId === String(monthlyGameId)) {
+                        achievementType = 'monthly';
+                    } else if (gameId === String(shadowGameId)) {
+                        achievementType = 'shadow';
+                    }
+                    
+                    // Create a unique identifier for this achievement
+                    const achievementIdentifier = `${achievementType}:${gameId}:${achievementId}`;
+                    
+                    // Check if already announced
+                    if (user.announcedAchievements.includes(achievementIdentifier)) {
+                        // Already announced, skip
+                        continue;
+                    }
+                    
+                    console.log(`New achievement for ${user.raUsername}: ${achievement.Title} (${achievementType})`);
+                    
+                    // Get game info
+                    const gameInfo = await retroAPI.getGameInfo(gameId);
+                    
+                    // Announce the achievement with proper type
+                    const announced = await this.announceAchievement(
                         announcementChannel,
-                        currentChallenge,
-                        currentChallenge.shadow_challange_gameid,
-                        true // Is a shadow game
+                        user,
+                        gameInfo,
+                        achievement,
+                        achievementType,
+                        gameId
                     );
+                    
+                    if (announced) {
+                        // Add to user's announced achievements
+                        user.announcedAchievements.push(achievementIdentifier);
+                        await user.save();
+                        console.log(`Saved announcement for ${user.raUsername}: ${achievementIdentifier}`);
+                    }
+                    
+                    // Add a small delay between announcements
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                }
+                
+                // Also check for awards for monthly and shadow challenges
+                if (currentChallenge) {
+                    if (monthlyGameId) {
+                        await this.checkForGameAwards(user, announcementChannel, currentChallenge, monthlyGameId, false);
+                    }
+                    
+                    if (shadowGameId) {
+                        await this.checkForGameAwards(user, announcementChannel, currentChallenge, shadowGameId, true);
+                    }
                 }
                 
                 // Add a delay between users to prevent rate limits
@@ -113,78 +233,24 @@ class AchievementFeedService {
             }
         }
         
-        console.log('Finished checking for challenge achievements');
-    }
-
-    async checkUserChallengeGame(user, channel, challenge, gameId, isShadow) {
-        console.log(`Checking ${isShadow ? 'shadow' : 'monthly'} challenge progress for ${user.raUsername}, game ${gameId}`);
-        
-        // Get user's recent achievements (last 50)
-        const recentAchievements = await retroAPI.getUserRecentAchievements(user.raUsername, 50);
-        
-        if (!recentAchievements || !Array.isArray(recentAchievements) || recentAchievements.length === 0) {
-            console.log(`No recent achievements found for ${user.raUsername}`);
-            return;
-        }
-        
-        console.log(`Found ${recentAchievements.length} recent achievements for ${user.raUsername}`);
-        
-        // Filter to only achievements for this game
-        const gameAchievements = recentAchievements.filter(achievement => {
-            return String(achievement.GameID) === String(gameId);
-        });
-        
-        if (gameAchievements.length === 0) {
-            console.log(`No achievements found for ${user.raUsername} in game ${gameId}`);
-            return;
-        }
-        
-        console.log(`Found ${gameAchievements.length} achievements for ${user.raUsername} in game ${gameId}`);
-        
-        // Get game info for the announcement
-        const gameInfo = await retroAPI.getGameInfo(gameId);
-        
-        // Initialize user's announcedAchievements array if it doesn't exist
-        if (!user.announcedAchievements) {
-            user.announcedAchievements = [];
-        }
-        
-        // Announce each achievement that hasn't been announced yet
-        for (const achievement of gameAchievements) {
-            // Create unique achievement identifier
-            const achievementId = achievement.ID;
-            const achievementIdentifier = `${isShadow ? 'shadow' : 'monthly'}:${gameId}:${achievementId}`;
-            
-            // Check if already announced
-            if (user.announcedAchievements.includes(achievementIdentifier)) {
-                continue;
-            }
-            
-            console.log(`Announcing new achievement for ${user.raUsername}: ${achievement.Title}`);
-            
-            // Announce the achievement
-            await this.announceAchievement(
-                channel,
-                user,
-                gameInfo,
-                achievement,
-                isShadow,
-                gameId
-            );
-            
-            // Add to announced achievements
-            user.announcedAchievements.push(achievementIdentifier);
-            await user.save();
-            
-            // Add a small delay between announcements
-            await new Promise(resolve => setTimeout(resolve, 500));
-        }
-        
-        // Also check for awards (mastery, beaten, etc.)
-        await this.checkForGameAwards(user, channel, challenge, gameId, isShadow);
+        console.log('Finished checking for achievements');
     }
 
     async checkForGameAwards(user, channel, challenge, gameId, isShadow) {
+        const gameIdString = String(gameId);
+        console.log(`Checking for awards for ${user.raUsername} in ${isShadow ? 'shadow' : 'monthly'} game ${gameIdString}`);
+        
+        // Skip if already processed
+        const awardIdentifierPrefix = isShadow ? 'shadow:award' : 'monthly:award';
+        const existingAwards = user.announcedAchievements.filter(id => 
+            id.startsWith(`${awardIdentifierPrefix}:${gameIdString}:`)
+        );
+        
+        if (existingAwards.length >= 3) {  // All 3 award types already processed
+            console.log(`All awards already processed for ${user.raUsername} in game ${gameIdString}`);
+            return;
+        }
+        
         // Get user's game progress
         const progress = await retroAPI.getUserGameProgress(user.raUsername, gameId);
         
@@ -240,9 +306,7 @@ class AchievementFeedService {
         }
         
         // Generate award identifier with prefix for shadow games
-        const awardIdentifier = isShadow
-            ? `shadow:award:${gameId}:${currentAward}`
-            : `award:${gameId}:${currentAward}`;
+        const awardIdentifier = `${awardIdentifierPrefix}:${gameIdString}:${currentAward}`;
         
         // Check if award has been announced
         if (user.announcedAchievements.includes(awardIdentifier)) {
@@ -252,7 +316,7 @@ class AchievementFeedService {
         console.log(`Announcing ${currentAward} award for ${user.raUsername} in ${isShadow ? 'shadow' : 'monthly'} challenge`);
         
         // User has reached a new award level, announce it
-        await this.announceGameAward(
+        const announced = await this.announceGameAward(
             channel,
             user,
             gameInfo,
@@ -265,9 +329,11 @@ class AchievementFeedService {
             gameId
         );
         
-        // Add to announced achievements
-        user.announcedAchievements.push(awardIdentifier);
-        await user.save();
+        if (announced) {
+            // Add to announced achievements
+            user.announcedAchievements.push(awardIdentifier);
+            await user.save();
+        }
     }
 
     // Get user's profile image URL with caching
@@ -298,14 +364,29 @@ class AchievementFeedService {
         }
     }
 
-    async announceAchievement(channel, user, gameInfo, achievement, isShadow, gameId) {
+    async announceAchievement(channel, user, gameInfo, achievement, achievementType, gameId) {
         try {
-            console.log(`Creating embed for achievement announcement: ${achievement.Title}`);
+            console.log(`Creating embed for achievement announcement: ${achievement.Title} (${achievementType})`);
+            
+            // Set color and title based on achievement type
+            let color = '#9370DB';  // Default purple for regular achievements
+            let challengeTypeText = "Achievement";
+            let emoji = "🎮";
+            
+            if (achievementType === 'monthly') {
+                color = '#0099ff';  // Blue for monthly
+                challengeTypeText = "Monthly Challenge";
+                emoji = "🏆";
+            } else if (achievementType === 'shadow') {
+                color = '#800080';  // Dark purple for shadow
+                challengeTypeText = "Shadow Challenge";
+                emoji = "👥";
+            }
             
             // Create embed
             const embed = new EmbedBuilder()
-                .setTitle(`🏆 Achievement Unlocked!`)
-                .setColor('#0099ff')
+                .setTitle(`${emoji} Achievement Unlocked!`)
+                .setColor(color)
                 .setTimestamp();
 
             // Get user's profile image URL
@@ -326,19 +407,41 @@ class AchievementFeedService {
             }
 
             // Build description
-            let description = `**${user.raUsername}** has earned a new achievement in ${isShadow ? 'the shadow challenge' : 'this month\'s challenge'}!\n\n`;
+            let description = '';
+            if (achievementType === 'monthly' || achievementType === 'shadow') {
+                description = `**${user.raUsername}** has earned a new achievement in ${achievementType === 'shadow' ? 'the shadow challenge' : 'this month\'s challenge'}!\n\n`;
+            } else {
+                description = `**${user.raUsername}** has earned a new achievement!\n\n`;
+            }
+            
             description += `**${achievement.Title}**\n`;
+            
             if (achievement.Description) {
                 description += `*${achievement.Description}*\n`;
+            }
+            
+            // Add points if available
+            if (achievement.Points) {
+                description += `\nPoints: **${achievement.Points}**`;
             }
             
             embed.setDescription(description);
 
             // Add game info
-            embed.addFields(
-                { name: 'Game', value: gameInfo.title, inline: true },
-                { name: 'Challenge Type', value: isShadow ? 'Shadow Challenge' : 'Monthly Challenge', inline: true }
-            );
+            const fields = [
+                { name: 'Game', value: gameInfo.title, inline: true }
+            ];
+            
+            // Only add challenge type field for challenge games
+            if (achievementType === 'monthly' || achievementType === 'shadow') {
+                fields.push({ 
+                    name: 'Challenge Type', 
+                    value: challengeTypeText, 
+                    inline: true 
+                });
+            }
+            
+            embed.addFields(fields);
 
             // Add links
             embed.addFields({
@@ -349,11 +452,28 @@ class AchievementFeedService {
             console.log(`Sending achievement announcement to channel`);
             
             // Send the announcement
-            await channel.send({ embeds: [embed] });
-            console.log(`Successfully sent achievement announcement`);
+            try {
+                const sentMessage = await channel.send({ embeds: [embed] });
+                console.log(`Successfully sent achievement announcement, message ID: ${sentMessage.id}`);
+                return true;
+            } catch (sendError) {
+                console.error(`Failed to send announcement: ${sendError.message}`);
+                
+                // Try a plain text fallback
+                try {
+                    const fallbackText = `${emoji} **${user.raUsername}** earned "${achievement.Title}" in ${gameInfo.title}`;
+                    await channel.send(fallbackText);
+                    console.log('Sent plain text fallback message');
+                    return true;
+                } catch (fallbackError) {
+                    console.error(`Even fallback message failed: ${fallbackError.message}`);
+                    return false;
+                }
+            }
 
         } catch (error) {
-            console.error('Error announcing individual achievement:', error);
+            console.error('Error announcing achievement:', error);
+            return false;
         }
     }
 
@@ -417,11 +537,29 @@ class AchievementFeedService {
             console.log(`Sending award announcement to channel`);
             
             // Send the announcement
-            await channel.send({ embeds: [embed] });
-            console.log(`Successfully sent award announcement`);
+            try {
+                const sentMessage = await channel.send({ embeds: [embed] });
+                console.log(`Successfully sent award announcement, message ID: ${sentMessage.id}`);
+                return true;
+            } catch (sendError) {
+                console.error(`Failed to send award announcement: ${sendError.message}`);
+                
+                // Try a plain text fallback
+                try {
+                    const emoji = AWARD_EMOJIS[awardLevel];
+                    const fallbackText = `${emoji} **${user.raUsername}** has earned ${awardLevel} status in ${gameInfo.title}!`;
+                    await channel.send(fallbackText);
+                    console.log('Sent plain text fallback message for award');
+                    return true;
+                } catch (fallbackError) {
+                    console.error(`Even fallback message failed: ${fallbackError.message}`);
+                    return false;
+                }
+            }
 
         } catch (error) {
-            console.error('Error announcing achievement award:', error);
+            console.error('Error announcing award:', error);
+            return false;
         }
     }
 
@@ -445,32 +583,40 @@ class AchievementFeedService {
         }
 
         try {
+            // Get the configuration
+            const channelId = config.discord.achievementChannelId;
+            const guildId = config.discord.guildId;
+            
+            console.log(`Looking for channel ID ${channelId} in guild ${guildId}`);
+            
             // Get the guild
-            const guild = await this.client.guilds.fetch(config.discord.guildId);
+            const guild = await this.client.guilds.fetch(guildId);
             if (!guild) {
-                console.error(`Guild not found: ${config.discord.guildId}`);
+                console.error(`Guild not found: ${guildId}`);
                 return null;
             }
 
-            console.log(`Fetching achievement channel: ${config.discord.achievementChannelId}`);
-            
             // Get the channel
-            const channel = await guild.channels.fetch(config.discord.achievementChannelId);
+            const channel = await guild.channels.fetch(channelId);
             if (!channel) {
-                console.error(`Channel not found: ${config.discord.achievementChannelId}`);
+                console.error(`Channel not found: ${channelId}`);
                 return null;
             }
             
-            // Verify permissions
-            const permissions = channel.permissionsFor(this.client.user);
-            if (!permissions || !permissions.has('SendMessages')) {
-                console.error(`Missing permission to send messages in channel: ${channel.name}`);
-                return null;
-            }
+            // Log channel details
+            console.log(`Found channel: ${channel.name} (${channel.type})`);
             
             return channel;
         } catch (error) {
             console.error('Error getting announcement channel:', error);
+            
+            // More specific error handling
+            if (error.code === 10003) {
+                console.error('Channel not found - check ACHIEVEMENT_CHANNEL environment variable');
+            } else if (error.code === 50001) {
+                console.error('Missing access to channel - check bot permissions');
+            }
+            
             return null;
         }
     }
