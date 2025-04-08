@@ -1,4 +1,4 @@
-// src/services/retroAPI.js
+// services/retroAPI.js
 import { buildAuthorization, getGame, getGameExtended, getUserProfile, getUserRecentAchievements, 
     getUserSummary, getGameInfoAndUserProgress, getGameRankAndScore, getUserCompletedGames,
     getUserAwards, getGameList, getConsoleIds, getAchievementCount } from '@retroachievements/api';
@@ -155,135 +155,40 @@ class RetroAchievementsService {
         }
     }
 
- // Updated getUserRecentAchievements method in retroAPI.js
-
-/**
- * Get user's recently earned achievements using a more reliable approach
- * @param {string} username - RetroAchievements username
- * @param {number} count - Number of achievements to fetch (default: 10)
- * @returns {Promise<Array>} Array of recent achievements
- */
-async getUserRecentAchievements(username, count = 10) {
-    // Use a shorter cache period for recent achievements
-    const cacheKey = `recent_achievements_${username.toLowerCase()}_${count}`;
-    const cachedData = this.getCachedItem(cacheKey);
-    
-    // Recent achievements should have a shorter TTL (1 minute)
-    if (cachedData && (Date.now() - this.cache.get(cacheKey).timestamp) < 60000) {
-        return cachedData;
-    }
-    
-    try {
-        // Use the activity feed endpoint instead of the direct recent achievements API
-        // This endpoint is more reliable and usually has proper authorization
-        const userFeed = await this.getUserActivityFeed(username, 0, 50);
+    /**
+     * Get user's recently earned achievements
+     * @param {string} username - RetroAchievements username
+     * @param {number} count - Number of achievements to fetch (default: 50)
+     * @returns {Promise<Array>} Array of recent achievements
+     */
+    async getUserRecentAchievements(username, count = 50) {
+        // For recent achievements, we use a shorter cache period
+        const cacheKey = `recent_achievements_${username}_${count}`;
+        const cachedData = this.getCachedItem(cacheKey);
         
-        // Filter the feed to only include achievement unlocks
-        const recentAchievements = [];
-        
-        if (Array.isArray(userFeed)) {
-            for (const item of userFeed) {
-                // Check if this is an achievement unlock entry
-                if (item && 
-                    (item.type === 'achievement' || item.achievementTitle) && 
-                    item.user && item.user.toLowerCase() === username.toLowerCase()) {
-                    
-                    // Format to match our expected achievement structure
-                    recentAchievements.push({
-                        GameID: item.gameId || item.game,
-                        GameTitle: item.gameTitle || '',
-                        AchievementID: item.achievementId || '',
-                        Title: item.achievementTitle || 'Achievement Unlocked',
-                        Description: item.description || '',
-                        Points: item.points || 0,
-                        BadgeURL: item.badgeUrl || '',
-                        Date: item.date || item.timestamp || new Date().toISOString()
-                    });
-                    
-                    // Limit to requested count
-                    if (recentAchievements.length >= count) {
-                        break;
-                    }
-                }
-            }
+        // Recent achievements should have a shorter TTL (1 minute)
+        if (cachedData && (Date.now() - this.cache.get(cacheKey).timestamp) < 60000) {
+            return cachedData;
         }
         
-        // Backup approach: If activity feed doesn't work, try using the getUserProfile endpoint
-        // which contains recently played games, and then get achievements for those games
-        if (recentAchievements.length === 0) {
-            console.log(`Using backup method to get recent achievements for ${username}`);
+        try {
+            // Use the rate limiter to make the API call
+            const achievements = await this.rateLimiter.add(() => 
+                getUserRecentAchievements(this.authorization, {
+                    username,
+                    count
+                })
+            );
             
-            try {
-                // Get user profile for recently played games
-                const profile = await this.rateLimiter.add(() => 
-                    getUserProfile(this.authorization, { userName: username })
-                );
-                
-                // Get user's achievements for each recently played game
-                if (profile && profile.recentlyPlayedGames && profile.recentlyPlayedGames.length > 0) {
-                    const gameAchievementPromises = [];
-                    
-                    // Only check the most recent 3 games to avoid too many API calls
-                    const gamesToCheck = profile.recentlyPlayedGames.slice(0, 3);
-                    
-                    for (const game of gamesToCheck) {
-                        gameAchievementPromises.push(
-                            this.getUserGameProgress(username, game.gameId)
-                        );
-                    }
-                    
-                    // Wait for all game progress requests to complete
-                    const gameProgressResults = await Promise.all(gameAchievementPromises);
-                    
-                    // Process each game's achievements
-                    for (const gameProgress of gameProgressResults) {
-                        if (gameProgress && gameProgress.achievements) {
-                            // Get the achievements earned by the user
-                            const achievements = Object.entries(gameProgress.achievements)
-                                .filter(([id, data]) => data.dateEarned)
-                                // Sort by date, newest first
-                                .sort((a, b) => new Date(b[1].dateEarned) - new Date(a[1].dateEarned))
-                                .slice(0, count);
-                            
-                            // Format and add to the recent achievements list
-                            for (const [id, ach] of achievements) {
-                                recentAchievements.push({
-                                    GameID: gameProgress.gameId,
-                                    GameTitle: gameProgress.title,
-                                    AchievementID: id,
-                                    Title: ach.title || 'Achievement',
-                                    Description: ach.description || '',
-                                    Points: ach.points || 0,
-                                    BadgeURL: ach.badgeUrl || ach.badge || '',
-                                    Date: ach.dateEarned
-                                });
-                                
-                                // Limit to requested count
-                                if (recentAchievements.length >= count) {
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    
-                    // Sort all achievements by date, newest first
-                    recentAchievements.sort((a, b) => new Date(b.Date) - new Date(a.Date));
-                }
-            } catch (profileError) {
-                console.error(`Error using backup method for ${username}:`, profileError);
-            }
+            // Cache the result
+            this.setCachedItem(cacheKey, achievements);
+            
+            return achievements;
+        } catch (error) {
+            console.error(`Error fetching recent achievements for ${username}:`, error);
+            throw error;
         }
-        
-        // Cache the results
-        this.setCachedItem(cacheKey, recentAchievements);
-        
-        return recentAchievements;
-    } catch (error) {
-        // Return empty array instead of throwing on error
-        console.error(`Error fetching recent achievements for ${username}:`, error);
-        return [];
     }
-}
 
     /**
      * Get game information
@@ -322,7 +227,7 @@ async getUserRecentAchievements(username, count = 10) {
      * @returns {Promise<Object>} User information
      */
     async getUserInfo(username) {
-        const cacheKey = `user_info_${username.toLowerCase()}`;
+        const cacheKey = `user_info_${username}`;
         const cachedData = this.getCachedItem(cacheKey);
         
         if (cachedData) {
@@ -453,12 +358,11 @@ async getUserRecentAchievements(username, count = 10) {
 
     /**
      * Get user's completed games
-     * Using direct API call to avoid 422 errors
      * @param {string} username - RetroAchievements username
      * @returns {Promise<Array>} List of completed games
      */
     async getUserCompletedGames(username) {
-        const cacheKey = `completed_games_${username.toLowerCase()}`;
+        const cacheKey = `completed_games_${username}`;
         const cachedData = this.getCachedItem(cacheKey);
         
         if (cachedData) {
@@ -466,21 +370,20 @@ async getUserRecentAchievements(username, count = 10) {
         }
         
         try {
-            // Make a direct API call instead of using the SDK function
-            const endpoint = `API_GetUserCompletedGames.php?u=${encodeURIComponent(username)}`;
-            const result = await this.apiRequest(endpoint);
-            
-            // Handle different response formats
-            const completedGames = Array.isArray(result) ? result : (result?.Response || []);
+            // Use the rate limiter to make the API call
+            const completed = await this.rateLimiter.add(() => 
+                getUserCompletedGames(this.authorization, {
+                    username
+                })
+            );
             
             // Cache the result
-            this.setCachedItem(cacheKey, completedGames);
+            this.setCachedItem(cacheKey, completed);
             
-            return completedGames;
+            return completed;
         } catch (error) {
-            // Return empty array on error instead of throwing
             console.error(`Error fetching completed games for ${username}:`, error);
-            return [];
+            throw error;
         }
     }
 
@@ -603,7 +506,7 @@ async getUserRecentAchievements(username, count = 10) {
      * @returns {Promise<Object>} API response
      */
     async apiRequest(endpoint) {
-        const baseUrl = 'https://retroachievements.org/';
+        const baseUrl = 'https://retroachievements.org/API/';
         const url = `${baseUrl}${endpoint}&z=${this.authorization.userName}&y=${this.authorization.webApiKey}`;
         
         try {
@@ -630,40 +533,6 @@ async getUserRecentAchievements(username, count = 10) {
     clearCache() {
         this.cache.clear();
         console.log('Cache cleared');
-    }
-
-    /**
-     * Fetch user activity feed (direct API call)
-     * @param {string} username - RetroAchievements username
-     * @param {number} offset - Starting position
-     * @param {number} count - Number of entries to retrieve
-     * @returns {Promise<Array>} User activity entries
-     */
-    async getUserActivityFeed(username, offset = 0, count = 10) {
-        const cacheKey = `activity_feed_${username.toLowerCase()}_${offset}_${count}`;
-        const cachedData = this.getCachedItem(cacheKey);
-        
-        // Activity feed should have a short TTL (2 minutes)
-        if (cachedData && (Date.now() - this.cache.get(cacheKey).timestamp) < 120000) {
-            return cachedData;
-        }
-        
-        try {
-            // Make a direct API call to the activity feed endpoint
-            const endpoint = `API_GetUserFeed.php?u=${encodeURIComponent(username)}&c=${count}&o=${offset}`;
-            const result = await this.apiRequest(endpoint);
-            
-            // Process the result to extract achievements
-            const activities = Array.isArray(result) ? result : [];
-            
-            // Cache the result
-            this.setCachedItem(cacheKey, activities);
-            
-            return activities;
-        } catch (error) {
-            console.error(`Error fetching activity feed for ${username}:`, error);
-            return [];
-        }
     }
 }
 
