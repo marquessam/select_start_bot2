@@ -80,41 +80,58 @@ class AchievementFeedService {
 
             // Process each achievement
             for (const achievement of recentAchievements) {
+                // Skip achievements without necessary data
+                if (!achievement.GameID || !achievement.AchievementID) {
+                    continue;
+                }
+                
                 // Generate a unique identifier for this achievement
                 const achievementIdentifier = `general:${achievement.GameID}:${achievement.AchievementID}`;
                 
                 // Check if this achievement has already been announced
                 if (!announcedAchievements.has(achievementIdentifier)) {
-                    // Get game info for the achievement
-                    const gameInfo = await retroAPI.getGameInfo(achievement.GameID);
-                    
-                    // Format the achievement object to match the expected structure
-                    const formattedAchievement = {
-                        title: achievement.Title,
-                        description: achievement.Description,
-                        badgeUrl: achievement.BadgeURL,
-                        points: achievement.Points,
-                        dateEarned: achievement.Date // Use the date from the recent achievements API
-                    };
-                    
-                    // Announce this achievement
-                    await this.announceIndividualAchievement(
-                        channel,
-                        user,
-                        gameInfo,
-                        formattedAchievement,
-                        'General Achievement', // Use a different type label for non-challenge achievements
-                        achievement.GameID
-                    );
-                    
-                    // Add to the list of announced achievements
-                    user.announcedAchievements.push(achievementIdentifier);
-                    
-                    // Save to database after each announcement to prevent duplicates
-                    await user.save();
-                    
-                    // Add a small delay to avoid rate limits on the Discord API
-                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    try {
+                        // Get game info for the achievement
+                        const gameInfo = await retroAPI.getGameInfo(achievement.GameID);
+                        
+                        // Skip if unable to get game info
+                        if (!gameInfo) {
+                            console.log(`Skipping achievement for game ${achievement.GameID} - unable to fetch game info`);
+                            continue;
+                        }
+                        
+                        // Format the achievement object to match the expected structure
+                        const formattedAchievement = {
+                            title: achievement.Title || 'Achievement Unlocked',
+                            description: achievement.Description || '',
+                            badgeUrl: achievement.BadgeURL || '',
+                            points: achievement.Points || 0,
+                            dateEarned: achievement.Date // Use the date from the recent achievements API
+                        };
+                        
+                        // Announce this achievement
+                        await this.announceIndividualAchievement(
+                            channel,
+                            user,
+                            gameInfo,
+                            formattedAchievement,
+                            'General Achievement', // Use a different type label for non-challenge achievements
+                            achievement.GameID
+                        );
+                        
+                        // Add to the list of announced achievements
+                        user.announcedAchievements.push(achievementIdentifier);
+                        
+                        // Save to database after each announcement to prevent duplicates
+                        await user.save();
+                        
+                        // Add a small delay to avoid rate limits on the Discord API
+                        await new Promise(resolve => setTimeout(resolve, 1000));
+                    } catch (gameInfoError) {
+                        console.error(`Error processing achievement for game ${achievement.GameID}:`, gameInfoError);
+                        // Continue with next achievement
+                        continue;
+                    }
                 }
             }
         } catch (error) {
