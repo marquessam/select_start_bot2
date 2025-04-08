@@ -1,4 +1,4 @@
-// src/services/retroAPI.js
+// services/retroAPI.js
 import { buildAuthorization, getGame, getGameExtended, getUserProfile, getUserRecentAchievements, 
     getUserSummary, getGameInfoAndUserProgress, getGameRankAndScore, getUserCompletedGames,
     getUserAwards, getGameList, getConsoleIds, getAchievementCount } from '@retroachievements/api';
@@ -438,6 +438,44 @@ class RetroAchievementsService {
     }
 
     /**
+     * Get leaderboard entries using direct API request
+     * @param {number} leaderboardId - RetroAchievements leaderboard ID
+     * @returns {Promise<Array>} List of leaderboard entries
+     */
+    async getLeaderboardEntriesDirect(leaderboardId) {
+        try {
+            const cacheKey = `direct_leaderboard_${leaderboardId}`;
+            const cachedData = this.getCachedItem(cacheKey);
+            
+            if (cachedData) {
+                return cachedData;
+            }
+            
+            // Make direct API request to the RetroAchievements leaderboard endpoint
+            const url = `https://retroachievements.org/API/API_GetLeaderboardEntries.php?i=${leaderboardId}&o=0&c=100&z=${process.env.RA_USERNAME}&y=${process.env.RA_API_KEY}`;
+            
+            const response = await fetch(url);
+            if (!response.ok) {
+                throw new Error(`API request failed with status ${response.status}`);
+            }
+            
+            const data = await response.json();
+            
+            // Log the raw data for debugging
+            console.log(`Raw leaderboard data for ${leaderboardId}:`, 
+                JSON.stringify(data && data.length > 0 ? data[0] : data).substring(0, 300) + '...');
+            
+            // Cache the result
+            this.setCachedItem(cacheKey, data);
+            
+            return data;
+        } catch (error) {
+            console.error(`Error fetching direct leaderboard entries for ${leaderboardId}:`, error);
+            return [];
+        }
+    }
+
+    /**
      * Get leaderboard entries for a specific leaderboard
      * @param {number} leaderboardId - RetroAchievements leaderboard ID
      * @param {number} offset - Starting position (0-based)
@@ -455,10 +493,8 @@ class RetroAchievementsService {
                 return cachedData;
             }
             
-            // Use the rate limiter to make the API call
-            const entries = await this.rateLimiter.add(() => 
-                this.apiRequest(`API_GetLeaderboardEntries.php?i=${leaderboardId}&o=${offset}&c=${count}`)
-            );
+            // Use direct API method instead
+            const entries = await this.getLeaderboardEntriesDirect(leaderboardId);
 
             // Process and standardize the entries
             const processedEntries = this.processLeaderboardEntries(entries);
@@ -469,7 +505,7 @@ class RetroAchievementsService {
             return processedEntries;
         } catch (error) {
             console.error(`Error fetching leaderboard entries for leaderboard ${leaderboardId}:`, error);
-            throw error;
+            return [];
         }
     }
 
@@ -479,43 +515,55 @@ class RetroAchievementsService {
      * @returns {Array} Standardized leaderboard entries
      */
     processLeaderboardEntries(data) {
-        // Handle different API response formats
-        let entries = [];
-        
-        if (data.Results && Array.isArray(data.Results)) {
-            entries = data.Results.map(result => result.UserEntry || result);
-        } else if (Array.isArray(data)) {
-            entries = data;
-        } else if (data.Entries && Array.isArray(data.Entries)) {
-            entries = data.Entries;
-        } else if (typeof data === 'object') {
-            entries = Object.values(data);
+        if (!data || !Array.isArray(data)) {
+            return [];
         }
-
+        
+        // Log a sample of the data to understand its structure
+        if (data.length > 0) {
+            console.log(`Sample leaderboard entry:`, JSON.stringify(data[0]).substring(0, 300));
+        }
+        
         // Convert entries to a standard format
-        return entries
-            .filter(entry => {
-                // Filter out invalid entries
-                const hasUser = Boolean(entry && (entry.User || entry.user));
-                const hasScore = Boolean(entry && (entry.Score || entry.score || entry.FormattedScore || entry.formattedScore));
-                return hasUser && hasScore;
-            })
-            .map(entry => {
-                // Standardize entry format
-                const rawUser = entry.User || entry.user || '';
-                const apiRank = entry.Rank || entry.rank || '0';
-                const formattedScore = entry.FormattedScore || entry.formattedScore;
-                const fallbackScore = entry.Score || entry.score || '0';
-                const trackTime = formattedScore ? formattedScore.trim() : fallbackScore.toString();
-                
-                return {
-                    ApiRank: parseInt(apiRank, 10),
-                    User: rawUser.trim(),
-                    TrackTime: trackTime,
-                    DateSubmitted: entry.DateSubmitted || entry.dateSubmitted || null,
-                };
-            })
-            .filter(entry => !isNaN(entry.ApiRank) && entry.User.length > 0);
+        return data.map(entry => {
+            // Handle different API response formats
+            const user = entry.User || entry.user || '';
+            const apiRank = entry.Rank || entry.rank || '0';
+            
+            // For scores, check all possible properties
+            let score = null;
+            
+            // Check for numeric scores first (points-based leaderboards)
+            if (entry.Score !== undefined) score = entry.Score;
+            else if (entry.score !== undefined) score = entry.score;
+            else if (entry.Value !== undefined) score = entry.Value;
+            else if (entry.value !== undefined) score = entry.value;
+            
+            // Get the formatted version if available
+            let formattedScore = null;
+            if (entry.FormattedScore) formattedScore = entry.FormattedScore;
+            else if (entry.formattedScore) formattedScore = entry.formattedScore;
+            else if (entry.ScoreFormatted) formattedScore = entry.ScoreFormatted;
+            else if (entry.scoreFormatted) formattedScore = entry.scoreFormatted;
+            
+            // Use the appropriate score representation
+            let trackTime;
+            if (formattedScore !== null) {
+                trackTime = formattedScore;
+            } else if (score !== null) {
+                trackTime = score.toString();
+            } else {
+                // Last resort fallback
+                trackTime = "No Score";
+            }
+            
+            return {
+                ApiRank: parseInt(apiRank, 10),
+                User: user.trim(),
+                TrackTime: trackTime.toString().trim(),
+                DateSubmitted: entry.DateSubmitted || entry.dateSubmitted || null,
+            };
+        }).filter(entry => entry.User.length > 0);
     }
 
     /**
