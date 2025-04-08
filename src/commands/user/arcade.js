@@ -183,99 +183,106 @@ export default {
         }
     },
 
-    async showRacingBoard(interaction) {
-        try {
-            // Get the current month's racing board
-            const now = new Date();
-            const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-            const nextMonthStart = new Date(now.getFullYear(), now.getMonth() + 1, 1);
-            
-            const racingBoard = await ArcadeBoard.findOne({
-                boardType: 'racing',
-                startDate: { $lte: now },
-                endDate: { $gte: now }
-            });
-            
-            if (!racingBoard) {
-                return interaction.editReply('No racing challenge is currently active.');
-            }
-            
-            // Create loading message
-            await interaction.editReply('Fetching racing leaderboard data...');
-            
-            // Get the month name
-            const monthName = now.toLocaleString('default', { month: 'long' });
-            
-            // Fetch the leaderboard entries
-            const leaderboardEntries = await this.fetchLeaderboardEntries(racingBoard.leaderboardId);
-            
-            if (!leaderboardEntries || leaderboardEntries.length === 0) {
-                return interaction.editReply('No leaderboard entries found for this racing board.');
-            }
-            
-            // Get all registered users
-            const users = await User.find({});
-            
-            // Create mapping of RA usernames (lowercase) to canonical usernames
-            const registeredUsers = new Map();
-            for (const user of users) {
-                registeredUsers.set(user.raUsername.toLowerCase(), user.raUsername);
-            }
-            
-            // Filter entries to only show registered users
-            const filteredEntries = leaderboardEntries.filter(entry => {
-                if (!entry.User) return false;
-                const username = entry.User.toLowerCase().trim();
-                return username && registeredUsers.has(username);
-            });
-            
-            // Create clickable link to RetroAchievements leaderboard
-            const leaderboardUrl = `https://retroachievements.org/leaderboardinfo.php?i=${racingBoard.leaderboardId}`;
-            
-            // Build the leaderboard embed
-            const embed = new EmbedBuilder()
-                .setColor('#FF9900')
-                .setTitle(`🏎️ ${monthName} Racing Challenge`)
-                .setURL(leaderboardUrl)
-                .setDescription(`**${racingBoard.gameTitle}**\n*${racingBoard.description}*\n\n` +
-                               `End Date: <t:${Math.floor(racingBoard.endDate.getTime() / 1000)}:f>\n\n` +
-                               `Top 3 players at the end of the month will receive award points (3/2/1)!`)
-                .setFooter({ text: 'Data provided by RetroAchievements.org' });
-            
-            // Get game info for thumbnail
-            try {
-                const gameInfo = await retroAPI.getGameInfo(racingBoard.gameId);
-                if (gameInfo?.imageIcon) {
-                    embed.setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`);
-                }
-            } catch (error) {
-                console.error('Error fetching game info:', error);
-                // Continue without the thumbnail
-            }
-            
-            // Add leaderboard field
-            let leaderboardText = '';
-            
-            if (filteredEntries.length > 0) {
-                // Display top 10 entries
-                const displayEntries = filteredEntries.slice(0, 10);
-                displayEntries.forEach((entry, index) => {
-                    const displayRank = index + 1;
-                    const medalEmoji = displayRank === 1 ? '🥇' : (displayRank === 2 ? '🥈' : (displayRank === 3 ? '🥉' : `${displayRank}.`));
-                    leaderboardText += `${medalEmoji} **${entry.User}**: ${entry.TrackTime}\n`;
-                });
-            } else {
-                leaderboardText = 'No leaderboard entries found for registered users.';
-            }
-            
-            embed.addFields({ name: 'Current Standings', value: leaderboardText });
-            
-            await interaction.editReply({ embeds: [embed] });
-        } catch (error) {
-            console.error('Error showing racing board:', error);
-            await interaction.editReply('An error occurred while retrieving the racing leaderboard.');
+async showRacingBoard(interaction) {
+    try {
+        // Get the current month's racing board
+        const now = new Date();
+        const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+        const nextMonthStart = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+        
+        const racingBoard = await ArcadeBoard.findOne({
+            boardType: 'racing',
+            startDate: { $lte: now },
+            endDate: { $gte: now }
+        });
+        
+        if (!racingBoard) {
+            return interaction.editReply('No racing challenge is currently active.');
         }
-    },
+        
+        // Create loading message
+        await interaction.editReply('Fetching racing leaderboard data...');
+        
+        // Get the month name
+        const monthName = now.toLocaleString('default', { month: 'long' });
+        
+        // Fetch the leaderboard entries
+        const leaderboardEntries = await this.fetchLeaderboardEntries(racingBoard.leaderboardId);
+        
+        if (!leaderboardEntries || leaderboardEntries.length === 0) {
+            return interaction.editReply('No leaderboard entries found for this racing board.');
+        }
+        
+        // Get all registered users
+        const users = await User.find({});
+        
+        // Create mapping of RA usernames (lowercase) to canonical usernames
+        const registeredUsers = new Map();
+        for (const user of users) {
+            registeredUsers.set(user.raUsername.toLowerCase(), user.raUsername);
+        }
+        
+        // Filter entries to only show registered users
+        const filteredEntries = leaderboardEntries.filter(entry => {
+            if (!entry.User) return false;
+            const username = entry.User.toLowerCase().trim();
+            return username && registeredUsers.has(username);
+        });
+        
+        // Sort entries by score (for racing, usually lower is better)
+        filteredEntries.sort((a, b) => {
+            // For racing games, lower times are better
+            // This is a simplified comparison that should work for most time formats
+            return a.TrackTime.localeCompare(b.TrackTime);
+        });
+        
+        // Create clickable link to RetroAchievements leaderboard
+        const leaderboardUrl = `https://retroachievements.org/leaderboardinfo.php?i=${racingBoard.leaderboardId}`;
+        
+        // Build the leaderboard embed
+        const embed = new EmbedBuilder()
+            .setColor('#FF9900')
+            .setTitle(`🏎️ ${monthName} Racing Challenge`)
+            .setURL(leaderboardUrl)
+            .setDescription(`**${racingBoard.gameTitle}**\n*${racingBoard.description}*\n\n` +
+                           `End Date: <t:${Math.floor(racingBoard.endDate.getTime() / 1000)}:f>\n\n` +
+                           `Top 3 players at the end of the month will receive award points (3/2/1)!`)
+            .setFooter({ text: 'Data provided by RetroAchievements.org' });
+        
+        // Get game info for thumbnail
+        try {
+            const gameInfo = await retroAPI.getGameInfo(racingBoard.gameId);
+            if (gameInfo?.imageIcon) {
+                embed.setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`);
+            }
+        } catch (error) {
+            console.error('Error fetching game info:', error);
+            // Continue without the thumbnail
+        }
+        
+        // Add leaderboard field
+        let leaderboardText = '';
+        
+        if (filteredEntries.length > 0) {
+            // Display top 10 entries
+            const displayEntries = filteredEntries.slice(0, 10);
+            displayEntries.forEach((entry, index) => {
+                const displayRank = index + 1;
+                const medalEmoji = displayRank === 1 ? '🥇' : (displayRank === 2 ? '🥈' : (displayRank === 3 ? '🥉' : `${displayRank}.`));
+                leaderboardText += `${medalEmoji} **${entry.User}**: ${entry.TrackTime}\n`;
+            });
+        } else {
+            leaderboardText = 'No leaderboard entries found for registered users.';
+        }
+        
+        embed.addFields({ name: 'Current Standings', value: leaderboardText });
+        
+        await interaction.editReply({ embeds: [embed] });
+    } catch (error) {
+        console.error('Error showing racing board:', error);
+        await interaction.editReply('An error occurred while retrieving the racing leaderboard.');
+    }
+},
 
     async showTiebreakerBoard(interaction) {
         try {
@@ -370,38 +377,94 @@ export default {
         }
     },
 
-    async fetchLeaderboardEntries(leaderboardId) {
-        try {
-            // First batch of entries (top 500)
-            const firstBatch = await retroAPI.getLeaderboardEntries(leaderboardId, 0, 500);
+    
+async fetchLeaderboardEntries(leaderboardId) {
+    try {
+        // First batch of entries (top 500)
+        const firstBatch = await retroAPI.getLeaderboardEntries(leaderboardId, 0, 500);
+        
+        // Second batch of entries (next 500)
+        const secondBatch = await retroAPI.getLeaderboardEntries(leaderboardId, 500, 500);
+        
+        // Combine entries
+        let allEntries = [...firstBatch, ...secondBatch];
+        
+        // Log the first entry to debug the structure (in development only)
+        if (allEntries.length > 0) {
+            console.log(`Sample leaderboard entry structure:`, JSON.stringify(allEntries[0], null, 2));
+        }
+        
+        // Format entries consistently
+        const processedEntries = allEntries.map(entry => {
+            // Handle different API response formats by checking all possible property names
+            const user = entry.User || entry.user || '';
+            const apiRank = entry.Rank || entry.rank || '0';
             
-            // Second batch of entries (next 500)
-            const secondBatch = await retroAPI.getLeaderboardEntries(leaderboardId, 500, 500);
+            // Try all possible score property names
+            let trackTime = null;
             
-            // Combine and process entries
-            let allEntries = [...firstBatch, ...secondBatch];
+            // First, try formatted score which is typically better for display
+            if (entry.FormattedScore) trackTime = entry.FormattedScore;
+            else if (entry.formattedScore) trackTime = entry.formattedScore;
             
-            // Format entries consistently
-            const processedEntries = allEntries.map(entry => {
-                // Handle different API response formats
-                const user = entry.User || entry.user || '';
-                const apiRank = entry.Rank || entry.rank || '0';
-                const formattedScore = entry.FormattedScore || entry.formattedScore;
-                const fallbackScore = entry.Score || entry.score || '0';
-                const trackTime = formattedScore ? formattedScore.trim() : fallbackScore.toString();
+            // Look for other score variations in order of priority
+            if (!trackTime) {
+                // Try all these possible properties for score
+                const scoreProps = [
+                    entry.Score, 
+                    entry.score, 
+                    entry.Value, 
+                    entry.value,
+                    entry.Time,
+                    entry.time,
+                    entry.BestTime,
+                    entry.bestTime
+                ];
                 
-                return {
-                    ApiRank: parseInt(apiRank, 10),
-                    User: user.trim(),
-                    TrackTime: trackTime,
-                    DateSubmitted: entry.DateSubmitted || entry.dateSubmitted || null,
-                };
-            });
+                // Find the first non-null/undefined value
+                for (const prop of scoreProps) {
+                    if (prop !== undefined && prop !== null) {
+                        trackTime = prop;
+                        break;
+                    }
+                }
+            }
             
-            return processedEntries.filter(entry => !isNaN(entry.ApiRank) && entry.User.length > 0);
-        } catch (error) {
-            console.error('Error fetching leaderboard entries:', error);
-            throw error;
+            // If we still don't have a score, check if there's a scoreFormatted property
+            if (!trackTime && entry.scoreFormatted) {
+                trackTime = entry.scoreFormatted;
+            }
+            
+            // Last resort fallback - raw score or 'No Score'
+            if (!trackTime) {
+                const fallbackScore = entry.Score || entry.score || entry.Value || entry.value || 'No Score';
+                trackTime = String(fallbackScore);
+            }
+            
+            // Ensure trackTime is a string and trimmed
+            trackTime = String(trackTime).trim();
+            
+            return {
+                ApiRank: parseInt(apiRank, 10),
+                User: user.trim(),
+                TrackTime: trackTime,
+                DateSubmitted: entry.DateSubmitted || entry.dateSubmitted || null,
+                // Add raw fields for debugging
+                _rawScore: entry.Score || entry.score,
+                _rawFormatted: entry.FormattedScore || entry.formattedScore
+            };
+        });
+        
+        // Log some results for debugging (in development only)
+        if (processedEntries.length > 0) {
+            console.log(`Processed ${processedEntries.length} leaderboard entries`);
+            console.log(`First entry sample:`, processedEntries[0]);
+        }
+        
+        return processedEntries.filter(entry => !isNaN(entry.ApiRank) && entry.User.length > 0);
+    } catch (error) {
+        console.error('Error fetching leaderboard entries:', error);
+        throw error;
         }
     }
 };
