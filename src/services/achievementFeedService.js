@@ -14,6 +14,10 @@ const AWARD_EMOJIS = {
 class AchievementFeedService {
     constructor() {
         this.client = null;
+        // Cache to store user profile image URLs to reduce API calls
+        this.profileImageCache = new Map();
+        // Cache TTL in milliseconds (30 minutes)
+        this.cacheTTL = 30 * 60 * 1000;
     }
 
     setClient(client) {
@@ -204,6 +208,34 @@ class AchievementFeedService {
         }
     }
 
+    // Get user's profile image URL with caching
+    async getUserProfileImageUrl(username) {
+        // Check if we have a cached entry
+        const now = Date.now();
+        if (this.profileImageCache.has(username)) {
+            const { url, timestamp } = this.profileImageCache.get(username);
+            // If cache is still valid, return the cached URL
+            if (now - timestamp < this.cacheTTL) {
+                return url;
+            }
+        }
+        
+        try {
+            // Get user info from RetroAPI
+            const userInfo = await retroAPI.getUserInfo(username);
+            // Store in cache
+            this.profileImageCache.set(username, {
+                url: userInfo.profileImageUrl,
+                timestamp: now
+            });
+            return userInfo.profileImageUrl;
+        } catch (error) {
+            console.error(`Error fetching profile image for ${username}:`, error);
+            // Fallback to legacy URL format if API call fails
+            return `https://retroachievements.org/UserPic/${username}.png`;
+        }
+    }
+
     async announceIndividualAchievement(channel, user, gameInfo, achievement, isShadow, gameId) {
         try {
             // Create embed
@@ -212,10 +244,13 @@ class AchievementFeedService {
                 .setColor('#0099ff')
                 .setTimestamp();
 
+            // Get user's profile image URL
+            const profileImageUrl = await this.getUserProfileImageUrl(user.raUsername);
+
             // Use RetroAchievements username as the author
             embed.setAuthor({
                 name: user.raUsername,
-                iconURL: `https://retroachievements.org/UserPic/${user.raUsername}.png` // RetroAchievements avatar
+                iconURL: profileImageUrl
             });
 
             // Set thumbnail to achievement image if available, otherwise use game image
@@ -240,7 +275,7 @@ class AchievementFeedService {
                 { name: 'Challenge Type', value: isShadow ? 'Shadow Challenge' : 'Monthly Challenge', inline: true }
             );
 
-            // Add links - FIXED: Use the passed gameId instead of trying to access gameInfo.id
+            // Add links
             embed.addFields({
                 name: 'Links',
                 value: `[Game Page](https://retroachievements.org/game/${gameId}) | [User Profile](https://retroachievements.org/user/${user.raUsername})`
@@ -262,10 +297,13 @@ class AchievementFeedService {
                 .setColor(this.getColorForAward(awardLevel))
                 .setTimestamp();
 
+            // Get user's profile image URL
+            const profileImageUrl = await this.getUserProfileImageUrl(user.raUsername);
+
             // Use RetroAchievements username as the author
             embed.setAuthor({
                 name: user.raUsername,
-                iconURL: `https://retroachievements.org/UserPic/${user.raUsername}.png` // RetroAchievements avatar
+                iconURL: profileImageUrl
             });
 
             // Set thumbnail to game image if available
@@ -299,7 +337,7 @@ class AchievementFeedService {
                 { name: 'Challenge Type', value: isShadow ? 'Shadow Challenge' : 'Monthly Challenge', inline: true }
             );
 
-            // Add links - FIXED: Use the passed gameId instead of trying to access gameInfo.id
+            // Add links
             embed.addFields({
                 name: 'Links',
                 value: `[Game Page](https://retroachievements.org/game/${gameId}) | [User Profile](https://retroachievements.org/user/${user.raUsername})`
