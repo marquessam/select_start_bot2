@@ -437,44 +437,53 @@ class RetroAchievementsService {
         }
     }
 
-    /**
-     * Get leaderboard entries using direct API request
-     * @param {number} leaderboardId - RetroAchievements leaderboard ID
-     * @returns {Promise<Array>} List of leaderboard entries
-     */
-    async getLeaderboardEntriesDirect(leaderboardId) {
-        try {
-            const cacheKey = `direct_leaderboard_${leaderboardId}`;
-            const cachedData = this.getCachedItem(cacheKey);
-            
-            if (cachedData) {
-                return cachedData;
-            }
-            
-            // Make direct API request to the RetroAchievements leaderboard endpoint
-            const url = `https://retroachievements.org/API/API_GetLeaderboardEntries.php?i=${leaderboardId}&o=0&c=100&z=${process.env.RA_USERNAME}&y=${process.env.RA_API_KEY}`;
-            
-            const response = await fetch(url);
-            if (!response.ok) {
-                throw new Error(`API request failed with status ${response.status}`);
-            }
-            
-            const data = await response.json();
-            
-            // Log the raw data for debugging
-            console.log(`Raw leaderboard data for ${leaderboardId}:`, 
-                JSON.stringify(data && data.length > 0 ? data[0] : data).substring(0, 300) + '...');
-            
-            // Cache the result
-            this.setCachedItem(cacheKey, data);
-            
-            return data;
-        } catch (error) {
-            console.error(`Error fetching direct leaderboard entries for ${leaderboardId}:`, error);
-            return [];
+/**
+ * Get leaderboard entries using direct API request
+ * @param {number} leaderboardId - RetroAchievements leaderboard ID
+ * @returns {Promise<Array>} List of leaderboard entries
+ */
+async getLeaderboardEntriesDirect(leaderboardId) {
+    try {
+        const cacheKey = `direct_leaderboard_${leaderboardId}`;
+        const cachedData = this.getCachedItem(cacheKey);
+        
+        if (cachedData) {
+            return cachedData;
         }
+        
+        // Make direct API request to the RetroAchievements leaderboard endpoint
+        const url = `https://retroachievements.org/API/API_GetLeaderboardEntries.php?i=${leaderboardId}&o=0&c=100&z=${process.env.RA_USERNAME}&y=${process.env.RA_API_KEY}`;
+        
+        const response = await fetch(url);
+        if (!response.ok) {
+            throw new Error(`API request failed with status ${response.status}`);
+        }
+        
+        const data = await response.json();
+        
+        // Safely log the raw data for debugging
+        try {
+            if (data) {
+                const sample = data.length > 0 ? data[0] : data;
+                const sampleJson = JSON.stringify(sample);
+                if (sampleJson) {
+                    console.log(`Raw leaderboard data for ${leaderboardId} (sample):`, 
+                        sampleJson.substring(0, 300) + '...');
+                }
+            }
+        } catch (logError) {
+            console.log(`Could not log leaderboard data for ${leaderboardId}:`, logError.message);
+        }
+        
+        // Cache the result
+        this.setCachedItem(cacheKey, data);
+        
+        return data;
+    } catch (error) {
+        console.error(`Error fetching direct leaderboard entries for ${leaderboardId}:`, error);
+        return [];
     }
-
+}
     /**
      * Get leaderboard entries for a specific leaderboard
      * @param {number} leaderboardId - RetroAchievements leaderboard ID
