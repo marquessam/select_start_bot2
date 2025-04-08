@@ -66,8 +66,8 @@ export default {
 
     async listArcadeBoards(interaction) {
         try {
-            // Get all arcade boards
-            const boards = await ArcadeBoard.find({ boardType: 'arcade' }).sort({ gameTitle: 1 });
+            // Get all arcade boards and sort by boardId (numerical order)
+            const boards = await ArcadeBoard.find({ boardType: 'arcade' }).sort({ boardId: 1 });
             
             if (boards.length === 0) {
                 return interaction.editReply('No arcade boards are currently configured.');
@@ -79,25 +79,14 @@ export default {
                 .setDescription('Use `/arcade board id:<board_id>` to view a specific leaderboard.')
                 .setFooter({ text: 'Data provided by RetroAchievements.org' });
             
-            // Group boards by console
-            const boardsByConsole = {};
+            // Create a simple list ordered by board ID
+            let fieldValue = '';
             boards.forEach(board => {
-                if (!boardsByConsole[board.consoleName]) {
-                    boardsByConsole[board.consoleName] = [];
-                }
-                boardsByConsole[board.consoleName].push(board);
+                fieldValue += `**${board.boardId}**: ${board.gameTitle}\n`;
+                fieldValue += `*${board.description}*\n\n`;
             });
             
-            // Add fields for each console
-            for (const [consoleName, consoleBoards] of Object.entries(boardsByConsole)) {
-                let fieldValue = '';
-                consoleBoards.forEach(board => {
-                    fieldValue += `**${board.boardId}**: ${board.gameTitle}\n`;
-                    fieldValue += `*${board.description}*\n\n`;
-                });
-                
-                embed.addFields({ name: consoleName, value: fieldValue });
-            }
+            embed.addFields({ name: 'Arcade Boards', value: fieldValue });
             
             await interaction.editReply({ embeds: [embed] });
         } catch (error) {
