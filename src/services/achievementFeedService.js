@@ -40,84 +40,111 @@ class AchievementFeedService {
         }
     }
 
-    async checkForNewAchievements() {
-        // Get current challenge for special handling
-        const now = new Date();
-        const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-        const nextMonthStart = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+async checkForNewAchievements() {
+    // Get current challenge for special handling
+    const now = new Date();
+    const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const nextMonthStart = new Date(now.getFullYear(), now.getMonth() + 1, 1);
 
-        const currentChallenge = await Challenge.findOne({
-            date: {
-                $gte: currentMonthStart,
-                $lt: nextMonthStart
-            }
-        });
-
-        // Get all users
-        const users = await User.find({});
-        if (users.length === 0) return;
-
-        // Get the announcement channel
-        const announcementChannel = await this.getAnnouncementChannel();
-        if (!announcementChannel) {
-            console.error('Announcement channel not found');
-            return;
+    const currentChallenge = await Challenge.findOne({
+        date: {
+            $gte: currentMonthStart,
+            $lt: nextMonthStart
         }
+    });
 
-        // Prune inactive users from discord
-        await this.pruneInactiveUsers();
+    // Get all users
+    const users = await User.find({});
+    if (users.length === 0) return;
 
-        // For each user, fetch recent achievements (all games)
-        for (const user of users) {
-            if (!await this.isGuildMember(user.discordId)) continue;
+    // Get the announcement channel
+    const announcementChannel = await this.getAnnouncementChannel();
+    if (!announcementChannel) {
+        console.error('Announcement channel not found');
+        return;
+    }
+
+    // Instead of pruning users here, we'll just do achievement processing
+    // This reduces potential API load
+    console.log(`Processing achievements for ${users.length} users`);
+
+    // For each user, fetch recent achievements (all games)
+    for (const user of users) {
+        // Skip users who aren't in the Discord server
+        if (!await this.isGuildMember(user.discordId)) {
+            console.log(`Skipping user ${user.raUsername} - not a guild member`);
+            continue;
+        }
+        
+        try {
+            // Get the last timestamp we checked for this user
+            const lastCheckedTime = this.lastCheckedTimestamps.get(user.raUsername) || 0;
             
-            try {
-                // Get the last timestamp we checked for this user
-                const lastCheckedTime = this.lastCheckedTimestamps.get(user.raUsername) || 0;
+            // Log the request we're about to make for debugging
+            console.log(`Fetching recent achievements for ${user.raUsername}`);
+            
+            // Fetch recent achievements (limit to 50)
+            const recentAchievements = await retroAPI.getUserRecentAchievements(user.raUsername, 50);
+            
+            // If the API returned no achievements or an empty array, just continue to the next user
+            if (!recentAchievements || !Array.isArray(recentAchievements) || recentAchievements.length === 0) {
+                console.log(`No achievements found for ${user.raUsername}`);
+                continue;
+            }
+            
+            console.log(`Fetched ${recentAchievements.length} recent achievements for ${user.raUsername}`);
+            
+            // Filter to new achievements only based on timestamp
+            const newAchievements = recentAchievements.filter(achievement => {
+                if (!achievement || !achievement.Date) return false;
                 
-                // Fetch recent achievements (limit to 50)
-                const recentAchievements = await retroAPI.getUserRecentAchievements(user.raUsername, 50);
-                
-                if (!recentAchievements || recentAchievements.length === 0) continue;
-                
-                console.log(`Fetched ${recentAchievements.length} recent achievements for ${user.raUsername}`);
-                
-                // Filter to new achievements only based on timestamp
-                const newAchievements = recentAchievements.filter(achievement => {
-                    const achievementDate = new Date(achievement.Date || achievement.date);
-                    return achievementDate.getTime() > lastCheckedTime;
-                });
-                
-                if (newAchievements.length === 0) continue;
-                
-                console.log(`Found ${newAchievements.length} new achievements for ${user.raUsername}`);
-                
-                // Update the last checked timestamp
-                const mostRecentDate = newAchievements.reduce((latest, achievement) => {
-                    const achievementDate = new Date(achievement.Date || achievement.date);
-                    return Math.max(latest, achievementDate.getTime());
-                }, lastCheckedTime);
-                
-                this.lastCheckedTimestamps.set(user.raUsername, mostRecentDate);
-                
-                // Process each achievement
-                for (const achievement of newAchievements) {
+                const achievementDate = new Date(achievement.Date);
+                return achievementDate.getTime() > lastCheckedTime;
+            });
+            
+            if (newAchievements.length === 0) {
+                console.log(`No new achievements for ${user.raUsername}`);
+                continue;
+            }
+            
+            console.log(`Found ${newAchievements.length} new achievements for ${user.raUsername}`);
+            
+            // Update the last checked timestamp
+            const mostRecentDate = newAchievements.reduce((latest, achievement) => {
+                if (!achievement || !achievement.Date) return latest;
+                const achievementDate = new Date(achievement.Date);
+                return Math.max(latest, achievementDate.getTime());
+            }, lastCheckedTime);
+            
+            this.lastCheckedTimestamps.set(user.raUsername, mostRecentDate);
+            
+            // Add a delay between processing achievements to reduce API load
+            await new Promise(resolve => setTimeout(resolve, 300));
+            
+            // Process each achievement
+            for (const achievement of newAchievements) {
+                try {
+                    // Skip invalid achievements
+                    if (!achievement || !achievement.GameID || !achievement.ID) {
+                        continue;
+                    }
+                    
                     // Determine if this is a monthly or shadow challenge game
-                    const gameId = String(achievement.GameID || achievement.gameId);
+                    const gameId = String(achievement.GameID);
                     const isMonthlyGame = currentChallenge && String(currentChallenge.monthly_challange_gameid) === gameId;
                     const isShadowGame = currentChallenge && currentChallenge.shadow_challange_revealed && 
                                         String(currentChallenge.shadow_challange_gameid) === gameId;
                     
                     // Generate a unique identifier for this achievement
-                    const achievementId = achievement.ID || achievement.id;
+                    const achievementId = achievement.ID;
                     const achievementIdentifier = `${user.raUsername}:${gameId}:${achievementId}`;
                     
                     // Check if already announced
-                    if (user.announcedAchievements.includes(achievementIdentifier)) {
+                    if (user.announcedAchievements && user.announcedAchievements.includes(achievementIdentifier)) {
                         continue;
                     }
                     
-                    // Get game info
+                    // Get game info (with error handling in the API service)
                     const gameInfo = await retroAPI.getGameInfo(gameId);
                     
                     // Announce achievement
@@ -142,26 +169,43 @@ class AchievementFeedService {
                         );
                     }
                     
+                    // Initialize announcedAchievements array if it doesn't exist
+                    if (!user.announcedAchievements) {
+                        user.announcedAchievements = [];
+                    }
+                    
                     // Add to the list of announced achievements
                     user.announcedAchievements.push(achievementIdentifier);
+                    
+                    // Save the user after each achievement to avoid losing tracking if something fails
                     await user.save();
+                    
+                    // Add a small delay between announcements to prevent flooding the channel
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                } catch (achievementError) {
+                    console.error(`Error processing individual achievement for ${user.raUsername}:`, achievementError);
+                    // Continue with next achievement
                 }
-                
-                // If there were achievements from challenge games, also check for awards
-                if (currentChallenge && newAchievements.some(a => 
-                    String(a.GameID || a.gameId) === String(currentChallenge.monthly_challange_gameid) ||
-                    (currentChallenge.shadow_challange_revealed && 
-                     String(a.GameID || a.gameId) === String(currentChallenge.shadow_challange_gameid))
-                )) {
-                    await this.checkUserAwards(user, currentChallenge, announcementChannel);
-                }
-                
-            } catch (error) {
-                console.error(`Error processing achievements for user ${user.raUsername}:`, error);
             }
+            
+            // If there were achievements from challenge games, also check for awards
+            if (currentChallenge && newAchievements.some(a => 
+                String(a.GameID) === String(currentChallenge.monthly_challange_gameid) ||
+                (currentChallenge.shadow_challange_revealed && 
+                 String(a.GameID) === String(currentChallenge.shadow_challange_gameid))
+            )) {
+                await this.checkUserAwards(user, currentChallenge, announcementChannel);
+            }
+            
+        } catch (error) {
+            console.error(`Error processing achievements for user ${user.raUsername}:`, error);
+            // Continue with next user
         }
+        
+        // Add a delay between users to reduce API load
+        await new Promise(resolve => setTimeout(resolve, 2000));
     }
-
+}
     async checkUserAwards(user, challenge, channel) {
         try {
             // Process main challenge
