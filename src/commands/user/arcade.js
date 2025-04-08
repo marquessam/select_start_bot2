@@ -66,12 +66,15 @@ export default {
 
     async listArcadeBoards(interaction) {
         try {
-            // Get all arcade boards and sort by boardId (numerical order)
-            const boards = await ArcadeBoard.find({ boardType: 'arcade' }).sort({ boardId: 1 });
+            // Get all arcade boards
+            const boards = await ArcadeBoard.find({ boardType: 'arcade' });
             
             if (boards.length === 0) {
                 return interaction.editReply('No arcade boards are currently configured.');
             }
+            
+            // Sort boards by boardId as numbers, not as strings
+            boards.sort((a, b) => parseInt(a.boardId) - parseInt(b.boardId));
             
             const embed = new EmbedBuilder()
                 .setTitle('🎮 Available Arcade Leaderboards')
@@ -79,10 +82,13 @@ export default {
                 .setDescription('Use `/arcade board id:<board_id>` to view a specific leaderboard.')
                 .setFooter({ text: 'Data provided by RetroAchievements.org' });
             
-            // Create a simple list ordered by board ID
+            // Create a simple list ordered by board ID with clickable links
             let fieldValue = '';
             boards.forEach(board => {
-                fieldValue += `**${board.boardId}**: ${board.gameTitle}\n`;
+                // Create a link to the RetroAchievements leaderboard
+                const leaderboardUrl = `https://retroachievements.org/leaderboardinfo.php?i=${board.leaderboardId}`;
+                
+                fieldValue += `**${board.boardId}**: [${board.gameTitle}](${leaderboardUrl})\n`;
                 fieldValue += `*${board.description}*\n\n`;
             });
             
@@ -130,10 +136,14 @@ export default {
                 return username && registeredUsers.has(username);
             });
             
+            // Create clickable link to RetroAchievements leaderboard
+            const leaderboardUrl = `https://retroachievements.org/leaderboardinfo.php?i=${board.leaderboardId}`;
+            
             // Build the leaderboard embed
             const embed = new EmbedBuilder()
                 .setColor('#0099ff')
                 .setTitle(`Arcade: ${board.gameTitle}`)
+                .setURL(leaderboardUrl)
                 .setFooter({ text: 'Data provided by RetroAchievements.org' });
             
             // Get game info for thumbnail
@@ -219,10 +229,14 @@ export default {
                 return username && registeredUsers.has(username);
             });
             
+            // Create clickable link to RetroAchievements leaderboard
+            const leaderboardUrl = `https://retroachievements.org/leaderboardinfo.php?i=${racingBoard.leaderboardId}`;
+            
             // Build the leaderboard embed
             const embed = new EmbedBuilder()
                 .setColor('#FF9900')
                 .setTitle(`🏎️ ${monthName} Racing Challenge`)
+                .setURL(leaderboardUrl)
                 .setDescription(`**${racingBoard.gameTitle}**\n*${racingBoard.description}*\n\n` +
                                `End Date: <t:${Math.floor(racingBoard.endDate.getTime() / 1000)}:f>\n\n` +
                                `Top 3 players at the end of the month will receive award points (3/2/1)!`)
@@ -296,10 +310,14 @@ export default {
                 entry.User && tiedUsernames.some(username => username.toLowerCase() === entry.User.toLowerCase())
             );
             
+            // Create clickable link to RetroAchievements leaderboard
+            const leaderboardUrl = `https://retroachievements.org/leaderboardinfo.php?i=${tiebreaker.leaderboardId}`;
+            
             // Build the tiebreaker embed
             const embed = new EmbedBuilder()
                 .setColor('#FF0000')
                 .setTitle('⚔️ Monthly Challenge Tiebreaker')
+                .setURL(leaderboardUrl)
                 .setDescription(`**${tiebreaker.gameTitle}**\n*${tiebreaker.description}*\n\n` +
                                `End Date: <t:${Math.floor(tiebreaker.endDate.getTime() / 1000)}:f>\n\n` +
                                `This tiebreaker is to resolve ties in the monthly challenge standings.`)
