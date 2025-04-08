@@ -440,7 +440,7 @@ class RetroAchievementsService {
 /**
  * Get leaderboard entries using direct API request
  * @param {number} leaderboardId - RetroAchievements leaderboard ID
- * @returns {Promise<Array>} List of leaderboard entries
+ * @returns {Promise<Object>} Leaderboard data object with Results array
  */
 async getLeaderboardEntriesDirect(leaderboardId) {
     try {
@@ -464,11 +464,22 @@ async getLeaderboardEntriesDirect(leaderboardId) {
         // Safely log the raw data for debugging
         try {
             if (data) {
-                const sample = data.length > 0 ? data[0] : data;
-                const sampleJson = JSON.stringify(sample);
-                if (sampleJson) {
-                    console.log(`Raw leaderboard data for ${leaderboardId} (sample):`, 
+                // Check if data is an object with Results or an array
+                const structureType = Array.isArray(data) ? "array" : 
+                    (data.Results && Array.isArray(data.Results) ? "object with Results array" : "other structure");
+                
+                // Log sample data
+                if (Array.isArray(data) && data.length > 0) {
+                    const sampleJson = JSON.stringify(data[0]);
+                    console.log(`Raw leaderboard data for ${leaderboardId} (${structureType}, sample):`, 
                         sampleJson.substring(0, 300) + '...');
+                } else if (data.Results && data.Results.length > 0) {
+                    const sampleJson = JSON.stringify(data.Results[0]);
+                    console.log(`Raw leaderboard data for ${leaderboardId} (${structureType}, sample):`, 
+                        sampleJson.substring(0, 300) + '...');
+                } else {
+                    console.log(`Raw leaderboard data for ${leaderboardId} (${structureType}):`, 
+                        JSON.stringify(data).substring(0, 300) + '...');
                 }
             }
         } catch (logError) {
@@ -481,7 +492,7 @@ async getLeaderboardEntriesDirect(leaderboardId) {
         return data;
     } catch (error) {
         console.error(`Error fetching direct leaderboard entries for ${leaderboardId}:`, error);
-        return [];
+        return { Results: [] }; // Return empty Results array for consistent structure
     }
 }
     /**
