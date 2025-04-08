@@ -11,6 +11,9 @@ const AWARD_EMOJIS = {
     PARTICIPATION: '🏁'
 };
 
+// Number of recent achievements to fetch per user
+const RECENT_ACHIEVEMENTS_COUNT = 30;
+
 class AchievementFeedService {
     constructor() {
         this.client = null;
@@ -50,15 +53,6 @@ class AchievementFeedService {
             }
         });
 
-        if (!currentChallenge) {
-            console.log('No active challenge found for achievement feed');
-            return;
-        }
-
-        // Get all users
-        const users = await User.find({});
-        if (users.length === 0) return;
-
         // Get the announcement channel
         const announcementChannel = await this.getAnnouncementChannel();
         if (!announcementChannel) {
@@ -66,13 +60,20 @@ class AchievementFeedService {
             return;
         }
 
-        // Prune inactive users from discord
-        await this.pruneInactiveUsers();
+        // Get all users
+        const users = await User.find({});
+        if (users.length === 0) return;
 
-        // Check each user's progress
+        // Check each user's progress and recent achievements
         for (const user of users) {
             if (await this.isGuildMember(user.discordId)) {
-                await this.checkUserProgress(user, currentChallenge, announcementChannel);
+                // Check challenge-specific achievements if a challenge exists
+                if (currentChallenge) {
+                    await this.checkUserProgress(user, currentChallenge, announcementChannel);
+                }
+                
+                // Check any recent achievements regardless of game
+                await this.checkRecentAchievements(user, announcementChannel);
             }
         }
     }
@@ -144,7 +145,7 @@ class AchievementFeedService {
                         user,
                         gameInfo,
                         achievement,
-                        isShadow,
+                        isShadow ? 'Shadow Challenge' : 'Monthly Challenge',
                         gameId // Pass the game ID
                     );
                     
@@ -208,6 +209,70 @@ class AchievementFeedService {
         }
     }
 
+    /**
+     * Check for any recent achievements by a user, regardless of game
+     */
+    async checkRecentAchievements(user, channel) {
+        try {
+            // Get user's recent achievements
+            const recentAchievements = await retroAPI.getUserRecentAchievements(
+                user.raUsername,
+                RECENT_ACHIEVEMENTS_COUNT
+            );
+            
+            if (!recentAchievements || recentAchievements.length === 0) {
+                return;
+            }
+            
+            // Process each achievement
+            for (const achievement of recentAchievements) {
+                // Create a unique identifier for this achievement
+                const achievementIdentifier = `general:${achievement.GameID}:${achievement.AchievementID}`;
+                
+                // Check if we've already announced this achievement
+                if (!user.announcedAchievements.includes(achievementIdentifier)) {
+                    // Check if achievement was earned in the last 30 minutes (to avoid announcing old achievements)
+                    const earnedDate = new Date(achievement.Date);
+                    const now = new Date();
+                    const timeDiff = now - earnedDate; // time difference in milliseconds
+                    
+                    // Only announce achievements from the last 2 hours
+                    // This prevents announcing too many old achievements when the service starts
+                    if (timeDiff <= 7200000) { // 2 hours = 7,200,000 milliseconds
+                        // Get game info for the achievement
+                        const gameInfo = await retroAPI.getGameInfo(achievement.GameID);
+                        
+                        // Transform achievement data to match the format expected by announceIndividualAchievement
+                        const formattedAchievement = {
+                            title: achievement.Title,
+                            description: achievement.Description,
+                            badgeUrl: achievement.BadgeURL,
+                            points: achievement.Points
+                        };
+                        
+                        // Announce the achievement
+                        await this.announceIndividualAchievement(
+                            channel,
+                            user,
+                            gameInfo,
+                            formattedAchievement,
+                            'General Gaming', // Type
+                            achievement.GameID
+                        );
+                        
+                        // Add to the list of announced achievements
+                        user.announcedAchievements.push(achievementIdentifier);
+                        
+                        // Save to database after each announcement to prevent duplicates
+                        await user.save();
+                    }
+                }
+            }
+        } catch (error) {
+            console.error(`Error checking recent achievements for user ${user.raUsername}:`, error);
+        }
+    }
+
     // Get user's profile image URL with caching
     async getUserProfileImageUrl(username) {
         // Check if we have a cached entry
@@ -236,12 +301,28 @@ class AchievementFeedService {
         }
     }
 
-    async announceIndividualAchievement(channel, user, gameInfo, achievement, isShadow, gameId) {
+    async announceIndividualAchievement(channel, user, gameInfo, achievement, challengeType, gameId) {
         try {
+            // Determine color based on achievement type
+            let color;
+            switch (challengeType) {
+                case 'Monthly Challenge':
+                    color = '#0099ff'; // Blue
+                    break;
+                case 'Shadow Challenge':
+                    color = '#9B59B6'; // Purple
+                    break;
+                case 'General Gaming':
+                    color = '#2ECC71'; // Green
+                    break;
+                default:
+                    color = '#0099ff';
+            }
+            
             // Create embed
             const embed = new EmbedBuilder()
                 .setTitle(`🏆 Achievement Unlocked!`)
-                .setColor('#0099ff')
+                .setColor(color)
                 .setTimestamp();
 
             // Get user's profile image URL
@@ -260,11 +341,22 @@ class AchievementFeedService {
                 embed.setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`);
             }
 
-            // Build description
-            let description = `**${user.raUsername}** has earned a new achievement in ${isShadow ? 'the shadow challenge' : 'this month\'s challenge'}!\n\n`;
+            // Build description based on challenge type
+            let description;
+            if (challengeType === 'General Gaming') {
+                description = `**${user.raUsername}** has earned a new achievement!\n\n`;
+            } else {
+                description = `**${user.raUsername}** has earned a new achievement in ${challengeType === 'Shadow Challenge' ? 'the shadow challenge' : 'this month\'s challenge'}!\n\n`;
+            }
+            
             description += `**${achievement.title}**\n`;
             if (achievement.description) {
                 description += `*${achievement.description}*\n`;
+            }
+            
+            // Add points information if available and it's not a challenge achievement
+            if (challengeType === 'General Gaming' && achievement.points) {
+                description += `**Points:** ${achievement.points}\n`;
             }
             
             embed.setDescription(description);
@@ -272,8 +364,13 @@ class AchievementFeedService {
             // Add game info
             embed.addFields(
                 { name: 'Game', value: gameInfo.title, inline: true },
-                { name: 'Challenge Type', value: isShadow ? 'Shadow Challenge' : 'Monthly Challenge', inline: true }
+                { name: 'Type', value: challengeType, inline: true }
             );
+
+            // Add console info if available
+            if (gameInfo.consoleName) {
+                embed.addFields({ name: 'System', value: gameInfo.consoleName, inline: true });
+            }
 
             // Add links
             embed.addFields({
@@ -410,7 +507,7 @@ class AchievementFeedService {
             // If the guild doesn't exist or the bot isn't in it
             if (!guild) {
                 console.error('Guild not found');
-                return null;
+                return false;
             }
           
             // Try to get the member from the guild
@@ -420,6 +517,10 @@ class AchievementFeedService {
             return !!member;
           
         } catch (error) {
+            // Handle case where user is not in guild or other error
+            if (error.code === 10007) { // "Unknown Member" Discord API error code
+                return false;
+            }
             console.error('Error checking guild membership:', error);
             return false;
         }
