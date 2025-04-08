@@ -1,5 +1,4 @@
 // src/services/achievementFeedService.js
-
 import { User } from '../models/User.js';
 import { Challenge } from '../models/Challenge.js';
 import retroAPI from './retroAPI.js';
@@ -19,12 +18,11 @@ class AchievementFeedService {
         this.profileImageCache = new Map();
         // Cache TTL in milliseconds (30 minutes)
         this.cacheTTL = 30 * 60 * 1000;
-        // Store timestamps of last checked achievements to avoid duplicates
-        this.lastCheckedTimestamps = new Map();
     }
 
     setClient(client) {
         this.client = client;
+        console.log('Discord client set for achievement feed service');
     }
 
     async start() {
@@ -34,229 +32,187 @@ class AchievementFeedService {
         }
 
         try {
-            await this.checkForNewAchievements();
+            console.log('Starting achievement feed service check...');
+            await this.checkForChallengeAchievements();
         } catch (error) {
             console.error('Error in achievement feed service:', error);
         }
     }
 
-async checkForNewAchievements() {
-    // Get current challenge for special handling
-    const now = new Date();
-    const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    const nextMonthStart = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+    async checkForChallengeAchievements() {
+        console.log('Checking for challenge achievements...');
+        
+        // Get current challenge
+        const now = new Date();
+        const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+        const nextMonthStart = new Date(now.getFullYear(), now.getMonth() + 1, 1);
 
-    const currentChallenge = await Challenge.findOne({
-        date: {
-            $gte: currentMonthStart,
-            $lt: nextMonthStart
-        }
-    });
+        const currentChallenge = await Challenge.findOne({
+            date: {
+                $gte: currentMonthStart,
+                $lt: nextMonthStart
+            }
+        });
 
-    // Get all users
-    const users = await User.find({});
-    if (users.length === 0) return;
-
-    // Get the announcement channel
-    const announcementChannel = await this.getAnnouncementChannel();
-    if (!announcementChannel) {
-        console.error('Announcement channel not found');
-        return;
-    }
-
-    // Instead of pruning users here, we'll just do achievement processing
-    // This reduces potential API load
-    console.log(`Processing achievements for ${users.length} users`);
-
-    // For each user, fetch recent achievements (all games)
-    for (const user of users) {
-        // Skip users who aren't in the Discord server
-        if (!await this.isGuildMember(user.discordId)) {
-            console.log(`Skipping user ${user.raUsername} - not a guild member`);
-            continue;
+        if (!currentChallenge) {
+            console.log('No active challenge found for the current month.');
+            return;
         }
         
-        try {
-            // Get the last timestamp we checked for this user
-            const lastCheckedTime = this.lastCheckedTimestamps.get(user.raUsername) || 0;
-            
-            // Log the request we're about to make for debugging
-            console.log(`Fetching recent achievements for ${user.raUsername}`);
-            
-            // Fetch recent achievements (limit to 50)
-            const recentAchievements = await retroAPI.getUserRecentAchievements(user.raUsername, 50);
-            
-            // If the API returned no achievements or an empty array, just continue to the next user
-            if (!recentAchievements || !Array.isArray(recentAchievements) || recentAchievements.length === 0) {
-                console.log(`No achievements found for ${user.raUsername}`);
-                continue;
-            }
-            
-            console.log(`Fetched ${recentAchievements.length} recent achievements for ${user.raUsername}`);
-            
-            // Filter to new achievements only based on timestamp
-            const newAchievements = recentAchievements.filter(achievement => {
-                if (!achievement || !achievement.Date) return false;
-                
-                const achievementDate = new Date(achievement.Date);
-                return achievementDate.getTime() > lastCheckedTime;
-            });
-            
-            if (newAchievements.length === 0) {
-                console.log(`No new achievements for ${user.raUsername}`);
-                continue;
-            }
-            
-            console.log(`Found ${newAchievements.length} new achievements for ${user.raUsername}`);
-            
-            // Update the last checked timestamp
-            const mostRecentDate = newAchievements.reduce((latest, achievement) => {
-                if (!achievement || !achievement.Date) return latest;
-                const achievementDate = new Date(achievement.Date);
-                return Math.max(latest, achievementDate.getTime());
-            }, lastCheckedTime);
-            
-            this.lastCheckedTimestamps.set(user.raUsername, mostRecentDate);
-            
-            // Add a delay between processing achievements to reduce API load
-            await new Promise(resolve => setTimeout(resolve, 300));
-            
-            // Process each achievement
-            for (const achievement of newAchievements) {
-                try {
-                    // Skip invalid achievements
-                    if (!achievement || !achievement.GameID || !achievement.ID) {
-                        continue;
-                    }
-                    
-                    // Determine if this is a monthly or shadow challenge game
-                    const gameId = String(achievement.GameID);
-                    const isMonthlyGame = currentChallenge && String(currentChallenge.monthly_challange_gameid) === gameId;
-                    const isShadowGame = currentChallenge && currentChallenge.shadow_challange_revealed && 
-                                        String(currentChallenge.shadow_challange_gameid) === gameId;
-                    
-                    // Generate a unique identifier for this achievement
-                    const achievementId = achievement.ID;
-                    const achievementIdentifier = `${user.raUsername}:${gameId}:${achievementId}`;
-                    
-                    // Check if already announced
-                    if (user.announcedAchievements && user.announcedAchievements.includes(achievementIdentifier)) {
-                        continue;
-                    }
-                    
-                    // Get game info (with error handling in the API service)
-                    const gameInfo = await retroAPI.getGameInfo(gameId);
-                    
-                    // Announce achievement
-                    if (isMonthlyGame || isShadowGame) {
-                        // Use special formatting for challenge games
-                        await this.announceIndividualAchievement(
-                            announcementChannel,
-                            user,
-                            gameInfo,
-                            achievement,
-                            isShadowGame,
-                            gameId
-                        );
-                    } else {
-                        // Use general announcement for other games
-                        await this.announceGeneralAchievement(
-                            announcementChannel,
-                            user,
-                            gameInfo,
-                            achievement,
-                            gameId
-                        );
-                    }
-                    
-                    // Initialize announcedAchievements array if it doesn't exist
-                    if (!user.announcedAchievements) {
-                        user.announcedAchievements = [];
-                    }
-                    
-                    // Add to the list of announced achievements
-                    user.announcedAchievements.push(achievementIdentifier);
-                    
-                    // Save the user after each achievement to avoid losing tracking if something fails
-                    await user.save();
-                    
-                    // Add a small delay between announcements to prevent flooding the channel
-                    await new Promise(resolve => setTimeout(resolve, 1000));
-                } catch (achievementError) {
-                    console.error(`Error processing individual achievement for ${user.raUsername}:`, achievementError);
-                    // Continue with next achievement
+        console.log(`Found current challenge with game ID: ${currentChallenge.monthly_challange_gameid}`);
+        
+        // Get announcement channel
+        const announcementChannel = await this.getAnnouncementChannel();
+        if (!announcementChannel) {
+            console.error('Announcement channel not found or inaccessible');
+            return;
+        }
+        
+        console.log(`Successfully found announcement channel: ${announcementChannel.name}`);
+
+        // Get all users
+        const users = await User.find({});
+        console.log(`Processing ${users.length} users for achievements`);
+
+        for (const user of users) {
+            try {
+                // Verify user is a guild member
+                const isMember = await this.isGuildMember(user.discordId);
+                if (!isMember) {
+                    // console.log(`Skipping user ${user.raUsername} - not a guild member`);
+                    continue;
                 }
+                
+                console.log(`Checking achievements for user: ${user.raUsername}`);
+                
+                // Check monthly challenge
+                await this.checkUserChallengeGame(
+                    user,
+                    announcementChannel,
+                    currentChallenge,
+                    currentChallenge.monthly_challange_gameid,
+                    false // Not a shadow game
+                );
+                
+                // Check shadow challenge if it's revealed
+                if (currentChallenge.shadow_challange_revealed && currentChallenge.shadow_challange_gameid) {
+                    await this.checkUserChallengeGame(
+                        user,
+                        announcementChannel,
+                        currentChallenge,
+                        currentChallenge.shadow_challange_gameid,
+                        true // Is a shadow game
+                    );
+                }
+                
+                // Add a delay between users to prevent rate limits
+                await new Promise(resolve => setTimeout(resolve, 1000));
+                
+            } catch (error) {
+                console.error(`Error processing user ${user.raUsername}:`, error);
             }
-            
-            // If there were achievements from challenge games, also check for awards
-            if (currentChallenge && newAchievements.some(a => 
-                String(a.GameID) === String(currentChallenge.monthly_challange_gameid) ||
-                (currentChallenge.shadow_challange_revealed && 
-                 String(a.GameID) === String(currentChallenge.shadow_challange_gameid))
-            )) {
-                await this.checkUserAwards(user, currentChallenge, announcementChannel);
-            }
-            
-        } catch (error) {
-            console.error(`Error processing achievements for user ${user.raUsername}:`, error);
-            // Continue with next user
         }
         
-        // Add a delay between users to reduce API load
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        console.log('Finished checking for challenge achievements');
     }
-}
-    async checkUserAwards(user, challenge, channel) {
-        try {
-            // Process main challenge
-            await this.processGameChallenge(
-                user,
-                channel,
-                challenge,
-                challenge.monthly_challange_gameid,
-                challenge.monthly_challange_progression_achievements,
-                challenge.monthly_challange_win_achievements,
-                challenge.monthly_challange_game_total,
-                false // Not a shadow challenge
-            );
 
-            // Check shadow challenge if it's revealed
-            if (challenge.shadow_challange_revealed && challenge.shadow_challange_gameid) {
-                await this.processGameChallenge(
-                    user,
-                    channel,
-                    challenge,
-                    challenge.shadow_challange_gameid,
-                    challenge.shadow_challange_progression_achievements,
-                    challenge.shadow_challange_win_achievements,
-                    challenge.shadow_challange_game_total,
-                    true // Is a shadow challenge
-                );
-            }
-        } catch (error) {
-            console.error(`Error checking awards for user ${user.raUsername}:`, error);
+    async checkUserChallengeGame(user, channel, challenge, gameId, isShadow) {
+        console.log(`Checking ${isShadow ? 'shadow' : 'monthly'} challenge progress for ${user.raUsername}, game ${gameId}`);
+        
+        // Get user's recent achievements (last 50)
+        const recentAchievements = await retroAPI.getUserRecentAchievements(user.raUsername, 50);
+        
+        if (!recentAchievements || !Array.isArray(recentAchievements) || recentAchievements.length === 0) {
+            console.log(`No recent achievements found for ${user.raUsername}`);
+            return;
         }
+        
+        console.log(`Found ${recentAchievements.length} recent achievements for ${user.raUsername}`);
+        
+        // Filter to only achievements for this game
+        const gameAchievements = recentAchievements.filter(achievement => {
+            return String(achievement.GameID) === String(gameId);
+        });
+        
+        if (gameAchievements.length === 0) {
+            console.log(`No achievements found for ${user.raUsername} in game ${gameId}`);
+            return;
+        }
+        
+        console.log(`Found ${gameAchievements.length} achievements for ${user.raUsername} in game ${gameId}`);
+        
+        // Get game info for the announcement
+        const gameInfo = await retroAPI.getGameInfo(gameId);
+        
+        // Initialize user's announcedAchievements array if it doesn't exist
+        if (!user.announcedAchievements) {
+            user.announcedAchievements = [];
+        }
+        
+        // Announce each achievement that hasn't been announced yet
+        for (const achievement of gameAchievements) {
+            // Create unique achievement identifier
+            const achievementId = achievement.ID;
+            const achievementIdentifier = `${isShadow ? 'shadow' : 'monthly'}:${gameId}:${achievementId}`;
+            
+            // Check if already announced
+            if (user.announcedAchievements.includes(achievementIdentifier)) {
+                continue;
+            }
+            
+            console.log(`Announcing new achievement for ${user.raUsername}: ${achievement.Title}`);
+            
+            // Announce the achievement
+            await this.announceAchievement(
+                channel,
+                user,
+                gameInfo,
+                achievement,
+                isShadow,
+                gameId
+            );
+            
+            // Add to announced achievements
+            user.announcedAchievements.push(achievementIdentifier);
+            await user.save();
+            
+            // Add a small delay between announcements
+            await new Promise(resolve => setTimeout(resolve, 500));
+        }
+        
+        // Also check for awards (mastery, beaten, etc.)
+        await this.checkForGameAwards(user, channel, challenge, gameId, isShadow);
     }
 
-    async processGameChallenge(user, channel, challenge, gameId, progressionAchievements, winAchievements, totalAchievements, isShadow) {
+    async checkForGameAwards(user, channel, challenge, gameId, isShadow) {
         // Get user's game progress
-        const progress = await retroAPI.getUserGameProgress(
-            user.raUsername,
-            gameId
-        );
-
+        const progress = await retroAPI.getUserGameProgress(user.raUsername, gameId);
+        
         // Get game info
         const gameInfo = await retroAPI.getGameInfo(gameId);
-
+        
+        // Get relevant achievement lists
+        const progressionAchievements = isShadow 
+            ? challenge.shadow_challange_progression_achievements 
+            : challenge.monthly_challange_progression_achievements;
+            
+        const winAchievements = isShadow
+            ? challenge.shadow_challange_win_achievements
+            : challenge.monthly_challange_win_achievements;
+            
+        const totalAchievements = isShadow
+            ? challenge.shadow_challange_game_total
+            : challenge.monthly_challange_game_total;
+        
         // Get the user's earned achievements
         const userEarnedAchievements = Object.entries(progress.achievements)
             .filter(([id, data]) => data.hasOwnProperty('dateEarned'))
-            .map(([id, data]) => id);
-
+            .map(([id]) => id);
+        
         // Determine current award level
         let currentAward = null;
         
-        // Check if user has all achievements (Mastery)
+        // Check if user has all achievements (Mastery) - only for monthly, not shadow
         const hasAllAchievements = progress.numAwardedToUser === totalAchievements;
         
         // Check if user has completed all progression achievements
@@ -269,7 +225,8 @@ async checkForNewAchievements() {
             winAchievements.some(id => userEarnedAchievements.includes(id));
         
         // Determine the award
-        if (hasAllAchievements) {
+        if (hasAllAchievements && !isShadow) {
+            // Mastery is only for monthly challenges, not shadow
             currentAward = 'MASTERY';
         } else if (hasAllProgressionAchievements && hasWinCondition) {
             currentAward = 'BEATEN';
@@ -277,91 +234,40 @@ async checkForNewAchievements() {
             currentAward = 'PARTICIPATION';
         }
 
+        // Skip if no award achieved
+        if (!currentAward) {
+            return;
+        }
+        
         // Generate award identifier with prefix for shadow games
         const awardIdentifier = isShadow
             ? `shadow:award:${gameId}:${currentAward}`
             : `award:${gameId}:${currentAward}`;
         
         // Check if award has been announced
-        if (currentAward && !user.announcedAchievements.includes(awardIdentifier)) {
-            // User has reached a new award level, announce it
-            await this.announceAchievement(
-                channel,
-                user,
-                gameInfo,
-                currentAward,
-                progress.numAwardedToUser,
-                totalAchievements,
-                isShadow,
-                hasAllProgressionAchievements,
-                hasWinCondition,
-                gameId // Pass the game ID
-            );
-            
-            // Add to announced achievements
-            user.announcedAchievements.push(awardIdentifier);
-            await user.save();
+        if (user.announcedAchievements.includes(awardIdentifier)) {
+            return;
         }
-    }
-
-    // New method for announcing general achievements (non-challenge games)
-    async announceGeneralAchievement(channel, user, gameInfo, achievement, gameId) {
-        try {
-            // Create embed
-            const embed = new EmbedBuilder()
-                .setTitle(`🎮 Achievement Unlocked!`)
-                .setColor('#9370DB') // Medium Purple color for non-challenge achievements
-                .setTimestamp();
-
-            // Get user's profile image URL
-            const profileImageUrl = await this.getUserProfileImageUrl(user.raUsername);
-
-            // Use RetroAchievements username as the author
-            embed.setAuthor({
-                name: user.raUsername,
-                iconURL: profileImageUrl
-            });
-
-            // Set thumbnail to achievement image if available, otherwise use game image
-            if (achievement.BadgeName) {
-                embed.setThumbnail(`https://media.retroachievements.org/Badge/${achievement.BadgeName}.png`);
-            } else if (gameInfo.imageIcon) {
-                embed.setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`);
-            }
-
-            // Build description
-            let description = `**${user.raUsername}** has earned a new achievement!\n\n`;
-            description += `**${achievement.Title || achievement.title}**\n`;
-            if (achievement.Description || achievement.description) {
-                description += `*${achievement.Description || achievement.description}*\n`;
-            }
-            
-            // Add points info if available
-            const points = achievement.Points || achievement.points || 0;
-            if (points) {
-                description += `Points: ${points}\n`;
-            }
-            
-            embed.setDescription(description);
-
-            // Add game info
-            embed.addFields(
-                { name: 'Game', value: gameInfo.title, inline: true },
-                { name: 'Console', value: gameInfo.consoleName || 'Unknown', inline: true }
-            );
-
-            // Add links
-            embed.addFields({
-                name: 'Links',
-                value: `[Game Page](https://retroachievements.org/game/${gameId}) | [User Profile](https://retroachievements.org/user/${user.raUsername})`
-            });
-
-            // Send the announcement
-            await channel.send({ embeds: [embed] });
-
-        } catch (error) {
-            console.error('Error announcing general achievement:', error);
-        }
+        
+        console.log(`Announcing ${currentAward} award for ${user.raUsername} in ${isShadow ? 'shadow' : 'monthly'} challenge`);
+        
+        // User has reached a new award level, announce it
+        await this.announceGameAward(
+            channel,
+            user,
+            gameInfo,
+            currentAward,
+            progress.numAwardedToUser,
+            totalAchievements,
+            isShadow,
+            hasAllProgressionAchievements,
+            hasWinCondition,
+            gameId
+        );
+        
+        // Add to announced achievements
+        user.announcedAchievements.push(awardIdentifier);
+        await user.save();
     }
 
     // Get user's profile image URL with caching
@@ -392,8 +298,10 @@ async checkForNewAchievements() {
         }
     }
 
-    async announceIndividualAchievement(channel, user, gameInfo, achievement, isShadow, gameId) {
+    async announceAchievement(channel, user, gameInfo, achievement, isShadow, gameId) {
         try {
+            console.log(`Creating embed for achievement announcement: ${achievement.Title}`);
+            
             // Create embed
             const embed = new EmbedBuilder()
                 .setTitle(`🏆 Achievement Unlocked!`)
@@ -406,23 +314,22 @@ async checkForNewAchievements() {
             // Use RetroAchievements username as the author
             embed.setAuthor({
                 name: user.raUsername,
-                iconURL: profileImageUrl
+                iconURL: profileImageUrl,
+                url: `https://retroachievements.org/user/${user.raUsername}`
             });
 
             // Set thumbnail to achievement image if available, otherwise use game image
             if (achievement.BadgeName) {
                 embed.setThumbnail(`https://media.retroachievements.org/Badge/${achievement.BadgeName}.png`);
-            } else if (achievement.badgeUrl) {
-                embed.setThumbnail(achievement.badgeUrl);
             } else if (gameInfo.imageIcon) {
                 embed.setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`);
             }
 
             // Build description
             let description = `**${user.raUsername}** has earned a new achievement in ${isShadow ? 'the shadow challenge' : 'this month\'s challenge'}!\n\n`;
-            description += `**${achievement.Title || achievement.title}**\n`;
-            if (achievement.Description || achievement.description) {
-                description += `*${achievement.Description || achievement.description}*\n`;
+            description += `**${achievement.Title}**\n`;
+            if (achievement.Description) {
+                description += `*${achievement.Description}*\n`;
             }
             
             embed.setDescription(description);
@@ -439,16 +346,21 @@ async checkForNewAchievements() {
                 value: `[Game Page](https://retroachievements.org/game/${gameId}) | [User Profile](https://retroachievements.org/user/${user.raUsername})`
             });
 
+            console.log(`Sending achievement announcement to channel`);
+            
             // Send the announcement
             await channel.send({ embeds: [embed] });
+            console.log(`Successfully sent achievement announcement`);
 
         } catch (error) {
             console.error('Error announcing individual achievement:', error);
         }
     }
 
-    async announceAchievement(channel, user, gameInfo, awardLevel, achieved, total, isShadow, hasAllProgression, hasWinCondition, gameId) {
+    async announceGameAward(channel, user, gameInfo, awardLevel, achieved, total, isShadow, hasAllProgression, hasWinCondition, gameId) {
         try {
+            console.log(`Creating embed for ${awardLevel} award announcement for ${user.raUsername}`);
+            
             // Create embed
             const embed = new EmbedBuilder()
                 .setTitle(`${AWARD_EMOJIS[awardLevel]} Challenge Complete!`)
@@ -461,7 +373,8 @@ async checkForNewAchievements() {
             // Use RetroAchievements username as the author
             embed.setAuthor({
                 name: user.raUsername,
-                iconURL: profileImageUrl
+                iconURL: profileImageUrl,
+                url: `https://retroachievements.org/user/${user.raUsername}`
             });
 
             // Set thumbnail to game image if available
@@ -501,11 +414,14 @@ async checkForNewAchievements() {
                 value: `[Game Page](https://retroachievements.org/game/${gameId}) | [User Profile](https://retroachievements.org/user/${user.raUsername})`
             });
 
+            console.log(`Sending award announcement to channel`);
+            
             // Send the announcement
             await channel.send({ embeds: [embed] });
+            console.log(`Successfully sent award announcement`);
 
         } catch (error) {
-            console.error('Error announcing achievement:', error);
+            console.error('Error announcing achievement award:', error);
         }
     }
 
@@ -523,18 +439,35 @@ async checkForNewAchievements() {
     }
 
     async getAnnouncementChannel() {
-        if (!this.client) return null;
+        if (!this.client) {
+            console.error('Discord client not set');
+            return null;
+        }
 
         try {
             // Get the guild
             const guild = await this.client.guilds.fetch(config.discord.guildId);
             if (!guild) {
-                console.error('Guild not found');
+                console.error(`Guild not found: ${config.discord.guildId}`);
                 return null;
             }
 
+            console.log(`Fetching achievement channel: ${config.discord.achievementChannelId}`);
+            
             // Get the channel
             const channel = await guild.channels.fetch(config.discord.achievementChannelId);
+            if (!channel) {
+                console.error(`Channel not found: ${config.discord.achievementChannelId}`);
+                return null;
+            }
+            
+            // Verify permissions
+            const permissions = channel.permissionsFor(this.client.user);
+            if (!permissions || !permissions.has('SendMessages')) {
+                console.error(`Missing permission to send messages in channel: ${channel.name}`);
+                return null;
+            }
+            
             return channel;
         } catch (error) {
             console.error('Error getting announcement channel:', error);
@@ -542,41 +475,20 @@ async checkForNewAchievements() {
         }
     }
 
-    async pruneInactiveUsers() {
-        if (!this.client) return null;
-
-        try {
-            // Get the guild
-            const guild = await this.client.guilds.fetch(config.discord.guildId);
-            if (!guild) {
-                console.error('Guild not found');
-                return null;
-            }
-
-            // Prune the inactive users
-            await guild.members.prune({ dry: false, days: 14 });
-        } catch (error) {
-            console.error('Error pruning inactive users:', error);
-            return null;
-        }
-    }
-
     async isGuildMember(discordId) {
+        if (!discordId) return false;
+        
         try {
             const guild = await this.client.guilds.fetch(config.discord.guildId);
-          
-            // If the guild doesn't exist or the bot isn't in it
-            if (!guild) {
-                console.error('Guild not found');
-                return null;
+            if (!guild) return false;
+            
+            try {
+                const member = await guild.members.fetch(discordId);
+                return !!member;
+            } catch (memberError) {
+                // Member not found
+                return false;
             }
-          
-            // Try to get the member from the guild
-            const member = await guild.members.fetch(discordId);
-          
-            // If member exists in the cache, they're a member
-            return !!member;
-          
         } catch (error) {
             console.error('Error checking guild membership:', error);
             return false;
