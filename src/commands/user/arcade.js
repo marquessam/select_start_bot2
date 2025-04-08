@@ -64,42 +64,42 @@ export default {
         }
     },
 
-    async listArcadeBoards(interaction) {
-        try {
-            // Get all arcade boards
-            const boards = await ArcadeBoard.find({ boardType: 'arcade' });
-            
-            if (boards.length === 0) {
-                return interaction.editReply('No arcade boards are currently configured.');
-            }
-            
-            // Sort boards by boardId as numbers, not as strings
-            boards.sort((a, b) => parseInt(a.boardId) - parseInt(b.boardId));
-            
-            const embed = new EmbedBuilder()
-                .setTitle('🎮 Available Arcade Leaderboards')
-                .setColor('#0099ff')
-                .setDescription('Use `/arcade board id:<board_id>` to view a specific leaderboard.')
-                .setFooter({ text: 'Data provided by RetroAchievements.org' });
-            
-            // Create a simple list ordered by board ID with clickable links
-            let fieldValue = '';
-            boards.forEach(board => {
-                // Create a link to the RetroAchievements leaderboard
-                const leaderboardUrl = `https://retroachievements.org/leaderboardinfo.php?i=${board.leaderboardId}`;
-                
-                fieldValue += `**${board.boardId}**: [${board.gameTitle}](${leaderboardUrl})\n`;
-                fieldValue += `*${board.description}*\n\n`;
-            });
-            
-            embed.addFields({ name: 'Arcade Boards', value: fieldValue });
-            
-            await interaction.editReply({ embeds: [embed] });
-        } catch (error) {
-            console.error('Error listing arcade boards:', error);
-            await interaction.editReply('An error occurred while retrieving arcade boards.');
+  async listArcadeBoards(interaction) {
+    try {
+        // Get all arcade boards
+        const boards = await ArcadeBoard.find({ boardType: 'arcade' });
+        
+        if (boards.length === 0) {
+            return interaction.editReply('No arcade boards are currently configured.');
         }
-    },
+        
+        // Sort boards by boardId as numbers, not as strings
+        boards.sort((a, b) => parseInt(a.boardId) - parseInt(b.boardId));
+        
+        const embed = new EmbedBuilder()
+            .setTitle('🎮 Available Arcade Leaderboards')
+            .setColor('#0099ff')
+            .setDescription('Use `/arcade board id:<board_id>` to view a specific leaderboard.')
+            .setFooter({ text: 'Data provided by RetroAchievements.org' });
+        
+        // Create a simplified list with just board IDs and titles (no descriptions)
+        let fieldValue = '';
+        boards.forEach(board => {
+            // Create a link to the RetroAchievements leaderboard
+            const leaderboardUrl = `https://retroachievements.org/leaderboardinfo.php?i=${board.leaderboardId}`;
+            
+            // Add just the board ID and title as a link, no description
+            fieldValue += `**${board.boardId}**: [${board.gameTitle}](${leaderboardUrl})\n`;
+        });
+        
+        embed.addFields({ name: 'Arcade Boards', value: fieldValue });
+        
+        await interaction.editReply({ embeds: [embed] });
+    } catch (error) {
+        console.error('Error listing arcade boards:', error);
+        await interaction.editReply('An error occurred while retrieving arcade boards.');
+    }
+},
 
     async showArcadeBoard(interaction, boardId) {
         try {
