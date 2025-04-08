@@ -1,4 +1,4 @@
-// services/retroAPI.js
+// src/services/retroAPI.js
 import { buildAuthorization, getGame, getGameExtended, getUserProfile, getUserRecentAchievements, 
     getUserSummary, getGameInfoAndUserProgress, getGameRankAndScore, getUserCompletedGames,
     getUserAwards, getGameList, getConsoleIds, getAchievementCount } from '@retroachievements/api';
@@ -87,7 +87,13 @@ class RetroAchievementsService {
             return progress;
         } catch (error) {
             console.error(`Error fetching game progress for ${username} in game ${gameId}:`, error);
-            throw error;
+            
+            // Return a minimal valid response structure to prevent further errors
+            return {
+                numAwardedToUser: 0,
+                achievements: {},
+                title: `Game ${gameId}`
+            };
         }
     }
 
@@ -175,7 +181,7 @@ class RetroAchievementsService {
             // Use the rate limiter to make the API call
             const achievements = await this.rateLimiter.add(() => 
                 getUserRecentAchievements(this.authorization, {
-                    username,
+                    userName: username, // Make sure to use the correct parameter name (userName, not username)
                     count
                 })
             );
@@ -186,7 +192,8 @@ class RetroAchievementsService {
             return achievements;
         } catch (error) {
             console.error(`Error fetching recent achievements for ${username}:`, error);
-            throw error;
+            // Return empty array instead of throwing to prevent cascading failures
+            return [];
         }
     }
 
@@ -217,7 +224,14 @@ class RetroAchievementsService {
             return game;
         } catch (error) {
             console.error(`Error fetching game info for ${gameId}:`, error);
-            throw error;
+            
+            // Return a minimal valid response structure to prevent further errors
+            return {
+                id: gameId,
+                title: `Game ${gameId}`,
+                consoleName: "Unknown",
+                imageIcon: ""
+            };
         }
     }
 
@@ -261,7 +275,11 @@ class RetroAchievementsService {
             return result;
         } catch (error) {
             console.error(`Error fetching user info for ${username}:`, error);
-            throw error;
+            
+            // Return a minimal valid response structure to prevent further errors
+            return {
+                profileImageUrl: `https://retroachievements.org/UserPic/${username}.png`
+            };
         }
     }
 
@@ -373,7 +391,7 @@ class RetroAchievementsService {
             // Use the rate limiter to make the API call
             const completed = await this.rateLimiter.add(() => 
                 getUserCompletedGames(this.authorization, {
-                    username
+                    userName: username  // Make sure to use the correct parameter name (userName, not username)
                 })
             );
             
