@@ -101,106 +101,115 @@ export default {
         }
     },
 
-    async showArcadeBoard(interaction, boardId) {
-        try {
-            // Get the arcade board configuration
-            const board = await ArcadeBoard.findOne({ boardId: boardId });
-            
-            if (!board) {
-                return interaction.editReply(`Board with ID "${boardId}" not found. Use \`/arcade list\` to see available boards.`);
-            }
-            
-            // Create loading message
-            await interaction.editReply('Fetching leaderboard data...');
-            
-            // Get all registered users
-            const users = await User.find({});
-
-            // Create mapping of RA usernames (lowercase) to canonical usernames
-            const registeredUsers = new Map();
-            for (const user of users) {
-                registeredUsers.set(user.raUsername.toLowerCase(), user.raUsername);
-            }
-            
-            // Use the direct API method to get leaderboard entries
-            const rawEntries = await retroAPI.getLeaderboardEntriesDirect(board.leaderboardId);
-            
-            if (!rawEntries || rawEntries.length === 0) {
-                return interaction.editReply('No leaderboard entries found for this board.');
-            }
-            
-            // Process the entries - sample first entry to understand structure
-            console.log('First raw entry:', JSON.stringify(rawEntries[0]).substring(0, 300));
-            
-            // Process the entries with appropriate handling based on leaderboard type
-            const leaderboardEntries = rawEntries.map(entry => {
-                // Standard properties that most entries have
-                const user = entry.User || entry.user || '';
-                const score = entry.Score || entry.score || entry.Value || entry.value || 0;
-                const formattedScore = entry.FormattedScore || entry.formattedScore || entry.ScoreFormatted || score.toString();
-                const rank = entry.Rank || entry.rank || 0;
-                
-                return {
-                    ApiRank: parseInt(rank, 10),
-                    User: user.trim(),
-                    RawScore: score,
-                    TrackTime: formattedScore.toString().trim() || score.toString()
-                };
-            });
-            
-            // Filter entries to only show registered users
-            const filteredEntries = leaderboardEntries.filter(entry => {
-                if (!entry.User) return false;
-                const username = entry.User.toLowerCase().trim();
-                return username && registeredUsers.has(username);
-            });
-            
-            // Create clickable link to RetroAchievements leaderboard
-            const leaderboardUrl = `https://retroachievements.org/leaderboardinfo.php?i=${board.leaderboardId}`;
-            
-            // Build the leaderboard embed
-            const embed = new EmbedBuilder()
-                .setColor('#0099ff')
-                .setTitle(`Arcade: ${board.gameTitle}`)
-                .setURL(leaderboardUrl)
-                .setFooter({ text: 'Data provided by RetroAchievements.org' });
-            
-            // Get game info for thumbnail
-            try {
-                const gameInfo = await retroAPI.getGameInfo(board.gameId);
-                if (gameInfo?.imageIcon) {
-                    embed.setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`);
-                }
-            } catch (error) {
-                console.error('Error fetching game info:', error);
-                // Continue without the thumbnail
-            }
-            
-            // Create description
-            let description = `**${board.description}**\n\n`;
-            
-            if (filteredEntries.length > 0) {
-                description += '**User Highscores:**\n\n';
-                
-                // Display top 15 entries
-                const displayEntries = filteredEntries.slice(0, 15);
-                displayEntries.forEach((entry, index) => {
-                    const displayRank = index + 1;
-                    const ordinalRank = ordinal(displayRank);
-                    description += `${ordinalRank} (#${entry.ApiRank}) - ${entry.User}: ${entry.TrackTime}\n`;
-                });
-            } else {
-                description += 'No leaderboard entries found for registered users.';
-            }
-            
-            embed.setDescription(description);
-            
-            await interaction.editReply({ embeds: [embed] });
-        } catch (error) {
-            console.error('Error showing arcade board:', error);
-            await interaction.editReply('An error occurred while retrieving the leaderboard.');
+async showArcadeBoard(interaction, boardId) {
+    try {
+        // Get the arcade board configuration
+        const board = await ArcadeBoard.findOne({ boardId: boardId });
+        
+        if (!board) {
+            return interaction.editReply(`Board with ID "${boardId}" not found. Use \`/arcade list\` to see available boards.`);
         }
-    },
+        
+        // Create loading message
+        await interaction.editReply('Fetching leaderboard data...');
+        
+        // Get all registered users
+        const users = await User.find({});
+
+        // Create mapping of RA usernames (lowercase) to canonical usernames
+        const registeredUsers = new Map();
+        for (const user of users) {
+            registeredUsers.set(user.raUsername.toLowerCase(), user.raUsername);
+        }
+        
+        // Use the direct API method to get leaderboard entries
+        const rawEntries = await retroAPI.getLeaderboardEntriesDirect(board.leaderboardId);
+        
+        if (!rawEntries || rawEntries.length === 0) {
+            return interaction.editReply('No leaderboard entries found for this board.');
+        }
+        
+        // Safely log a sample of the first entry for debugging
+        if (rawEntries.length > 0) {
+            try {
+                const sampleJson = JSON.stringify(rawEntries[0]);
+                if (sampleJson) {
+                    console.log('First raw entry sample:', sampleJson.substring(0, 300));
+                }
+            } catch (logError) {
+                console.log('Could not log sample entry:', logError.message);
+            }
+        }
+        
+        // Process the entries with appropriate handling based on leaderboard type
+        const leaderboardEntries = rawEntries.map(entry => {
+            // Standard properties that most entries have
+            const user = entry.User || entry.user || '';
+            const score = entry.Score || entry.score || entry.Value || entry.value || 0;
+            const formattedScore = entry.FormattedScore || entry.formattedScore || entry.ScoreFormatted || score.toString();
+            const rank = entry.Rank || entry.rank || 0;
+            
+            return {
+                ApiRank: parseInt(rank, 10),
+                User: user.trim(),
+                RawScore: score,
+                TrackTime: formattedScore.toString().trim() || score.toString()
+            };
+        });
+        
+        // Filter entries to only show registered users
+        const filteredEntries = leaderboardEntries.filter(entry => {
+            if (!entry.User) return false;
+            const username = entry.User.toLowerCase().trim();
+            return username && registeredUsers.has(username);
+        });
+        
+        // Create clickable link to RetroAchievements leaderboard
+        const leaderboardUrl = `https://retroachievements.org/leaderboardinfo.php?i=${board.leaderboardId}`;
+        
+        // Build the leaderboard embed
+        const embed = new EmbedBuilder()
+            .setColor('#0099ff')
+            .setTitle(`Arcade: ${board.gameTitle}`)
+            .setURL(leaderboardUrl)
+            .setFooter({ text: 'Data provided by RetroAchievements.org' });
+        
+        // Get game info for thumbnail
+        try {
+            const gameInfo = await retroAPI.getGameInfo(board.gameId);
+            if (gameInfo?.imageIcon) {
+                embed.setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`);
+            }
+        } catch (error) {
+            console.error('Error fetching game info:', error);
+            // Continue without the thumbnail
+        }
+        
+        // Create description
+        let description = `**${board.description}**\n\n`;
+        
+        if (filteredEntries.length > 0) {
+            description += '**User Highscores:**\n\n';
+            
+            // Display top 15 entries
+            const displayEntries = filteredEntries.slice(0, 15);
+            displayEntries.forEach((entry, index) => {
+                const displayRank = index + 1;
+                const ordinalRank = ordinal(displayRank);
+                description += `${ordinalRank} (#${entry.ApiRank}) - ${entry.User}: ${entry.TrackTime}\n`;
+            });
+        } else {
+            description += 'No leaderboard entries found for registered users.';
+        }
+        
+        embed.setDescription(description);
+        
+        await interaction.editReply({ embeds: [embed] });
+    } catch (error) {
+        console.error('Error showing arcade board:', error);
+        await interaction.editReply('An error occurred while retrieving the leaderboard.');
+    }
+},
 
     async showRacingBoard(interaction) {
         try {
