@@ -57,6 +57,21 @@ export default {
                 return;
             }
             
+            // Get specific username if provided
+            const targetUsername = interaction.options.getString('username');
+            let targetUser = null;
+            
+            if (targetUsername && shouldSync) {
+                targetUser = await User.findOne({
+                    raUsername: { $regex: new RegExp(`^${targetUsername}$`, 'i') }
+                });
+                
+                if (!targetUser) {
+                    await interaction.editReply(`User "${targetUsername}" not found.`);
+                    return;
+                }
+            }
+            
             // Get start and end dates for the selected year
             const yearStart = new Date(selectedYear, 0, 1);
             const yearEnd = new Date(selectedYear + 1, 0, 1);
@@ -101,7 +116,7 @@ export default {
                 } catch (error) {
                     console.error(`Error syncing data for user ${targetUser.raUsername}:`, error);
                     // Fallback to database approach
-                    const points = this.calculatePointsFromDatabase(targetUser, selectedYear);
+                    const points = await this.calculatePointsFromDatabase(targetUser, challengeMap, selectedYear);
                     if (points.totalPoints > 0) {
                         userPoints.push(points);
                     }
@@ -110,7 +125,7 @@ export default {
                 // Add all other users using database method
                 for (const user of users) {
                     if (user.raUsername !== targetUser.raUsername) {
-                        const points = this.calculatePointsFromDatabase(user, selectedYear);
+                        const points = await this.calculatePointsFromDatabase(user, challengeMap, selectedYear);
                         if (points.totalPoints > 0) {
                             userPoints.push(points);
                         }
@@ -122,7 +137,7 @@ export default {
                 for (const user of users) {
                     // Regular database approach for most users
                     if (!shouldSync) {
-                        const points = this.calculatePointsFromDatabase(user, selectedYear);
+                        const points = await this.calculatePointsFromDatabase(user, challengeMap, selectedYear);
                         if (points.totalPoints > 0) {
                             userPoints.push(points);
                         }
@@ -138,7 +153,7 @@ export default {
                     } catch (error) {
                         console.error(`Error syncing data for user ${user.raUsername}:`, error);
                         // Fallback to database approach if API sync fails
-                        const points = this.calculatePointsFromDatabase(user, selectedYear);
+                        const points = await this.calculatePointsFromDatabase(user, challengeMap, selectedYear);
                         if (points.totalPoints > 0) {
                             userPoints.push(points);
                         }
@@ -194,49 +209,167 @@ export default {
         }
     },
 
-    // Calculate points using only the database values (fast but might be outdated)
-    calculatePointsFromDatabase(user, selectedYear) {
+    // Calculate points using database values but also check actual achievements
+    async calculatePointsFromDatabase(user, challengeMap, selectedYear) {
         let challengePoints = 0;
         let masteryCount = 0;
         let beatenCount = 0;
         let participationCount = 0;
         let shadowBeatenCount = 0;
         let shadowParticipationCount = 0;
+        
+        // Track if we need to update the database
+        let needDatabaseUpdate = false;
 
         // Process monthly challenges
         for (const [dateStr, data] of user.monthlyChallenges.entries()) {
             const challengeDate = new Date(dateStr);
-            if (challengeDate.getFullYear() === selectedYear) {
-                if (data.progress === 3) {
-                    // Mastery (7 points)
-                    masteryCount++;
-                    challengePoints += POINTS.MASTERY;
-                } else if (data.progress === 2) {
-                    // Beaten (4 points)
-                    beatenCount++;
-                    challengePoints += POINTS.BEATEN;
-                } else if (data.progress === 1) {
-                    // Participation (1 point)
-                    participationCount++;
-                    challengePoints += POINTS.PARTICIPATION;
+            if (challengeDate.getFullYear() !== selectedYear) {
+                continue;
+            }
+            
+            const challenge = challengeMap.get(dateStr);
+            if (!challenge) {
+                continue; // Skip if no matching challenge
+            }
+            
+            // Check if we should recalculate this challenge's status
+            // First handle the mastery case which is simple
+            if (data.progress === 3) {
+                // Mastery (7 points)
+                masteryCount++;
+                challengePoints += POINTS.MASTERY;
+            } else {
+                // We need to fetch progress data to verify if it should be beaten or participation
+                try {
+                    const progress = await retroAPI.getUserGameProgress(
+                        user.raUsername,
+                        challenge.monthly_challange_gameid
+                    );
+                    
+                    if (progress.numAwardedToUser > 0) {
+                        // Get all earned achievements
+                        const earnedAchievements = Object.entries(progress.achievements)
+                            .filter(([id, data]) => data.hasOwnProperty('dateEarned'))
+                            .map(([id]) => id);
+                            
+                        // Check progression and win requirements
+                        const progressionAchievements = challenge.monthly_challange_progression_achievements || [];
+                        const winAchievements = challenge.monthly_challange_win_achievements || [];
+                        
+                        const allProgressionCompleted = progressionAchievements.length > 0 && 
+                            progressionAchievements.every(id => earnedAchievements.includes(id));
+                        
+                        const hasWinCondition = winAchievements.length === 0 || 
+                            winAchievements.some(id => earnedAchievements.includes(id));
+                        
+                        // Check if it's actually beaten even if database says otherwise
+                        if (allProgressionCompleted && hasWinCondition) {
+                            // Should be beaten
+                            beatenCount++;
+                            challengePoints += POINTS.BEATEN;
+                            
+                            // Update database if needed
+                            if (data.progress < 2) {
+                                user.monthlyChallenges.set(dateStr, { progress: 2 });
+                                needDatabaseUpdate = true;
+                            }
+                        } else if (data.progress === 2) {
+                            // Database says beaten, but actually isn't - keep for backward compatibility
+                            beatenCount++;
+                            challengePoints += POINTS.BEATEN;
+                        } else {
+                            // Participation
+                            participationCount++;
+                            challengePoints += POINTS.PARTICIPATION;
+                        }
+                    }
+                } catch (error) {
+                    console.error(`Error verifying game status for ${user.raUsername} on ${dateStr}:`, error);
+                    // Fall back to stored values
+                    if (data.progress === 2) {
+                        beatenCount++;
+                        challengePoints += POINTS.BEATEN;
+                    } else if (data.progress === 1) {
+                        participationCount++;
+                        challengePoints += POINTS.PARTICIPATION;
+                    }
                 }
             }
         }
 
-        // Process shadow challenges (capped at Beaten status)
+        // Process shadow challenges (similar approach)
         for (const [dateStr, data] of user.shadowChallenges.entries()) {
             const challengeDate = new Date(dateStr);
-            if (challengeDate.getFullYear() === selectedYear) {
+            if (challengeDate.getFullYear() !== selectedYear) {
+                continue;
+            }
+            
+            const challenge = challengeMap.get(dateStr);
+            if (!challenge || !challenge.shadow_challange_gameid) {
+                continue; // Skip if no matching challenge or no shadow game
+            }
+            
+            // Check shadow game progress
+            try {
+                const shadowProgress = await retroAPI.getUserGameProgress(
+                    user.raUsername,
+                    challenge.shadow_challange_gameid
+                );
+                
+                if (shadowProgress.numAwardedToUser > 0) {
+                    // Get all earned achievements
+                    const earnedAchievements = Object.entries(shadowProgress.achievements)
+                        .filter(([id, data]) => data.hasOwnProperty('dateEarned'))
+                        .map(([id]) => id);
+                        
+                    // Check progression and win requirements
+                    const progressionAchievements = challenge.shadow_challange_progression_achievements || [];
+                    const winAchievements = challenge.shadow_challange_win_achievements || [];
+                    
+                    const allProgressionCompleted = progressionAchievements.length > 0 && 
+                        progressionAchievements.every(id => earnedAchievements.includes(id));
+                    
+                    const hasWinCondition = winAchievements.length === 0 || 
+                        winAchievements.some(id => earnedAchievements.includes(id));
+                    
+                    // For shadow games, cap at "Beaten" status (4 points)
+                    if (allProgressionCompleted && hasWinCondition) {
+                        // Beaten
+                        shadowBeatenCount++;
+                        challengePoints += SHADOW_MAX_POINTS;
+                        
+                        // Update database if needed
+                        if (data.progress < 2) {
+                            user.shadowChallenges.set(dateStr, { progress: 2 });
+                            needDatabaseUpdate = true;
+                        }
+                    } else if (data.progress === 2) {
+                        // Database says beaten, but actually isn't - keep for backward compatibility
+                        shadowBeatenCount++;
+                        challengePoints += SHADOW_MAX_POINTS;
+                    } else {
+                        // Participation
+                        shadowParticipationCount++;
+                        challengePoints += POINTS.PARTICIPATION;
+                    }
+                }
+            } catch (error) {
+                console.error(`Error verifying shadow game status for ${user.raUsername} on ${dateStr}:`, error);
+                // Fall back to stored values
                 if (data.progress === 2) {
-                    // Beaten for shadow (4 points)
                     shadowBeatenCount++;
                     challengePoints += SHADOW_MAX_POINTS;
                 } else if (data.progress === 1) {
-                    // Participation for shadow (1 point)
                     shadowParticipationCount++;
                     challengePoints += POINTS.PARTICIPATION;
                 }
             }
+        }
+        
+        // Save user if we updated any data
+        if (needDatabaseUpdate) {
+            await user.save();
         }
 
         // Get community awards points
