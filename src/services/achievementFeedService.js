@@ -18,6 +18,8 @@ class AchievementFeedService {
         this.profileImageCache = new Map();
         // Cache TTL in milliseconds (30 minutes)
         this.cacheTTL = 30 * 60 * 1000;
+        // Number of recent achievements to fetch per user
+        this.recentAchievementsCount = 20;
     }
 
     setClient(client) {
@@ -31,13 +33,96 @@ class AchievementFeedService {
         }
 
         try {
-            await this.checkForNewAchievements();
+            // Check for all recent achievements (not just challenge-related)
+            await this.checkForAllNewAchievements();
+            
+            // Check for challenge-specific achievements and award levels
+            await this.checkForChallengeAchievements();
         } catch (error) {
             console.error('Error in achievement feed service:', error);
         }
     }
 
-    async checkForNewAchievements() {
+    async checkForAllNewAchievements() {
+        // Get all users
+        const users = await User.find({});
+        if (users.length === 0) return;
+
+        // Get the announcement channel
+        const announcementChannel = await this.getAnnouncementChannel();
+        if (!announcementChannel) {
+            console.error('Announcement channel not found');
+            return;
+        }
+
+        // Process each active user
+        for (const user of users) {
+            if (await this.isGuildMember(user.discordId)) {
+                await this.processUserRecentAchievements(user, announcementChannel);
+            }
+        }
+    }
+
+    async processUserRecentAchievements(user, channel) {
+        try {
+            // Fetch recent achievements for this user
+            const recentAchievements = await retroAPI.getUserRecentAchievements(
+                user.raUsername, 
+                this.recentAchievementsCount
+            );
+
+            if (!recentAchievements || recentAchievements.length === 0) {
+                return;
+            }
+
+            // Create a set of achievement IDs that have already been announced
+            const announcedAchievements = new Set(user.announcedAchievements);
+
+            // Process each achievement
+            for (const achievement of recentAchievements) {
+                // Generate a unique identifier for this achievement
+                const achievementIdentifier = `general:${achievement.GameID}:${achievement.AchievementID}`;
+                
+                // Check if this achievement has already been announced
+                if (!announcedAchievements.has(achievementIdentifier)) {
+                    // Get game info for the achievement
+                    const gameInfo = await retroAPI.getGameInfo(achievement.GameID);
+                    
+                    // Format the achievement object to match the expected structure
+                    const formattedAchievement = {
+                        title: achievement.Title,
+                        description: achievement.Description,
+                        badgeUrl: achievement.BadgeURL,
+                        points: achievement.Points,
+                        dateEarned: achievement.Date // Use the date from the recent achievements API
+                    };
+                    
+                    // Announce this achievement
+                    await this.announceIndividualAchievement(
+                        channel,
+                        user,
+                        gameInfo,
+                        formattedAchievement,
+                        'General Achievement', // Use a different type label for non-challenge achievements
+                        achievement.GameID
+                    );
+                    
+                    // Add to the list of announced achievements
+                    user.announcedAchievements.push(achievementIdentifier);
+                    
+                    // Save to database after each announcement to prevent duplicates
+                    await user.save();
+                    
+                    // Add a small delay to avoid rate limits on the Discord API
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                }
+            }
+        } catch (error) {
+            console.error(`Error processing recent achievements for ${user.raUsername}:`, error);
+        }
+    }
+
+    async checkForChallengeAchievements() {
         // Get current challenge
         const now = new Date();
         const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -49,6 +134,9 @@ class AchievementFeedService {
                 $lt: nextMonthStart
             }
         });
+
+        // If no current challenge, skip this step
+        if (!currentChallenge) return;
 
         // Get all users
         const users = await User.find({});
@@ -239,6 +327,9 @@ class AchievementFeedService {
                 case 'Shadow Challenge':
                     color = '#9B59B6'; // Purple
                     break;
+                case 'General Achievement':
+                    color = '#2ECC71'; // Green
+                    break;
                 default:
                     color = '#0099ff';
             }
@@ -266,10 +357,21 @@ class AchievementFeedService {
             }
 
             // Build description
-            let description = `**${user.raUsername}** has earned a new achievement in ${challengeType === 'Shadow Challenge' ? 'the shadow challenge' : 'this month\'s challenge'}!\n\n`;
+            let description;
+            if (challengeType === 'General Achievement') {
+                description = `**${user.raUsername}** has earned a new achievement!\n\n`;
+            } else {
+                description = `**${user.raUsername}** has earned a new achievement in ${challengeType === 'Shadow Challenge' ? 'the shadow challenge' : 'this month\'s challenge'}!\n\n`;
+            }
+            
             description += `**${achievement.title}**\n`;
             if (achievement.description) {
                 description += `*${achievement.description}*\n`;
+            }
+            
+            // Add points if available
+            if (achievement.points) {
+                description += `**Points:** ${achievement.points}\n`;
             }
             
             embed.setDescription(description);
@@ -277,7 +379,7 @@ class AchievementFeedService {
             // Add game info
             embed.addFields(
                 { name: 'Game', value: gameInfo.title, inline: true },
-                { name: 'Challenge Type', value: challengeType, inline: true }
+                { name: 'Type', value: challengeType, inline: true }
             );
 
             // Add links
