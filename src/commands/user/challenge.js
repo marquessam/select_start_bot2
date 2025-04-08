@@ -96,9 +96,9 @@ export default {
                         `**POINTS AVAILABLE:**\n` +
                         `- Participation: 1 point\n` +
                         `- Completion: 3 points (requires all ${progressionCount} progression achievements` +
-                        (winCount > 0 ? ` and at least one win achievement` : '') + `)\n` +
-                        `- Mastery: 3 points (${currentChallenge.shadow_challange_game_total} achievements)\n\n` +
-                        `This challenge runs parallel to the monthly challenge.`;
+                        (winCount > 0 ? ` and at least one win achievement` : '') + `)\n\n` +
+                        `This challenge runs parallel to the monthly challenge.\n` +
+                        `*Note: Shadow games are ineligible for mastery awards.*`;
                     
                     embed.addFields({ name: 'SHADOW CHALLENGE UNLOCKED', value: shadowText });
                 } else {
