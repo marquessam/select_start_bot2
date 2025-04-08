@@ -18,8 +18,6 @@ class AchievementFeedService {
         this.profileImageCache = new Map();
         // Cache TTL in milliseconds (30 minutes)
         this.cacheTTL = 30 * 60 * 1000;
-        // Number of recent achievements to fetch per user
-        this.recentAchievementsCount = 20;
     }
 
     setClient(client) {
@@ -33,113 +31,13 @@ class AchievementFeedService {
         }
 
         try {
-            // Check for all recent achievements (not just challenge-related)
-            await this.checkForAllNewAchievements();
-            
-            // Check for challenge-specific achievements and award levels
-            await this.checkForChallengeAchievements();
+            await this.checkForNewAchievements();
         } catch (error) {
             console.error('Error in achievement feed service:', error);
         }
     }
 
-    async checkForAllNewAchievements() {
-        // Get all users
-        const users = await User.find({});
-        if (users.length === 0) return;
-
-        // Get the announcement channel
-        const announcementChannel = await this.getAnnouncementChannel();
-        if (!announcementChannel) {
-            console.error('Announcement channel not found');
-            return;
-        }
-
-        // Process each active user
-        for (const user of users) {
-            if (await this.isGuildMember(user.discordId)) {
-                await this.processUserRecentAchievements(user, announcementChannel);
-            }
-        }
-    }
-
-    async processUserRecentAchievements(user, channel) {
-        try {
-            // Fetch recent achievements for this user
-            const recentAchievements = await retroAPI.getUserRecentAchievements(
-                user.raUsername, 
-                this.recentAchievementsCount
-            );
-
-            if (!recentAchievements || recentAchievements.length === 0) {
-                return;
-            }
-
-            // Create a set of achievement IDs that have already been announced
-            const announcedAchievements = new Set(user.announcedAchievements);
-
-            // Process each achievement
-            for (const achievement of recentAchievements) {
-                // Skip achievements without necessary data
-                if (!achievement.GameID || !achievement.AchievementID) {
-                    continue;
-                }
-                
-                // Generate a unique identifier for this achievement
-                const achievementIdentifier = `general:${achievement.GameID}:${achievement.AchievementID}`;
-                
-                // Check if this achievement has already been announced
-                if (!announcedAchievements.has(achievementIdentifier)) {
-                    try {
-                        // Get game info for the achievement
-                        const gameInfo = await retroAPI.getGameInfo(achievement.GameID);
-                        
-                        // Skip if unable to get game info
-                        if (!gameInfo) {
-                            console.log(`Skipping achievement for game ${achievement.GameID} - unable to fetch game info`);
-                            continue;
-                        }
-                        
-                        // Format the achievement object to match the expected structure
-                        const formattedAchievement = {
-                            title: achievement.Title || 'Achievement Unlocked',
-                            description: achievement.Description || '',
-                            badgeUrl: achievement.BadgeURL || '',
-                            points: achievement.Points || 0,
-                            dateEarned: achievement.Date // Use the date from the recent achievements API
-                        };
-                        
-                        // Announce this achievement
-                        await this.announceIndividualAchievement(
-                            channel,
-                            user,
-                            gameInfo,
-                            formattedAchievement,
-                            'General Achievement', // Use a different type label for non-challenge achievements
-                            achievement.GameID
-                        );
-                        
-                        // Add to the list of announced achievements
-                        user.announcedAchievements.push(achievementIdentifier);
-                        
-                        // Save to database after each announcement to prevent duplicates
-                        await user.save();
-                        
-                        // Add a small delay to avoid rate limits on the Discord API
-                        await new Promise(resolve => setTimeout(resolve, 1000));
-                    } catch (gameInfoError) {
-                        console.error(`Error processing achievement for game ${achievement.GameID}:`, gameInfoError);
-                        // Continue with next achievement
-                        continue;
-                    }
-                }
-            }
-        } catch (error) {
-            console.error(`Error processing recent achievements for ${user.raUsername}:`, error);
-        }
-    }
-
-    async checkForChallengeAchievements() {
+    async checkForNewAchievements() {
         // Get current challenge
         const now = new Date();
         const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -152,8 +50,10 @@ class AchievementFeedService {
             }
         });
 
-        // If no current challenge, skip this step
-        if (!currentChallenge) return;
+        if (!currentChallenge) {
+            console.log('No active challenge found for achievement feed');
+            return;
+        }
 
         // Get all users
         const users = await User.find({});
@@ -165,6 +65,9 @@ class AchievementFeedService {
             console.error('Announcement channel not found');
             return;
         }
+
+        // Prune inactive users from discord
+        await this.pruneInactiveUsers();
 
         // Check each user's progress
         for (const user of users) {
@@ -241,7 +144,7 @@ class AchievementFeedService {
                         user,
                         gameInfo,
                         achievement,
-                        isShadow ? 'Shadow Challenge' : 'Monthly Challenge',
+                        isShadow,
                         gameId // Pass the game ID
                     );
                     
@@ -333,28 +236,12 @@ class AchievementFeedService {
         }
     }
 
-    async announceIndividualAchievement(channel, user, gameInfo, achievement, challengeType, gameId) {
+    async announceIndividualAchievement(channel, user, gameInfo, achievement, isShadow, gameId) {
         try {
-            // Determine color based on achievement type
-            let color;
-            switch (challengeType) {
-                case 'Monthly Challenge':
-                    color = '#0099ff'; // Blue
-                    break;
-                case 'Shadow Challenge':
-                    color = '#9B59B6'; // Purple
-                    break;
-                case 'General Achievement':
-                    color = '#2ECC71'; // Green
-                    break;
-                default:
-                    color = '#0099ff';
-            }
-            
             // Create embed
             const embed = new EmbedBuilder()
                 .setTitle(`🏆 Achievement Unlocked!`)
-                .setColor(color)
+                .setColor('#0099ff')
                 .setTimestamp();
 
             // Get user's profile image URL
@@ -374,21 +261,10 @@ class AchievementFeedService {
             }
 
             // Build description
-            let description;
-            if (challengeType === 'General Achievement') {
-                description = `**${user.raUsername}** has earned a new achievement!\n\n`;
-            } else {
-                description = `**${user.raUsername}** has earned a new achievement in ${challengeType === 'Shadow Challenge' ? 'the shadow challenge' : 'this month\'s challenge'}!\n\n`;
-            }
-            
+            let description = `**${user.raUsername}** has earned a new achievement in ${isShadow ? 'the shadow challenge' : 'this month\'s challenge'}!\n\n`;
             description += `**${achievement.title}**\n`;
             if (achievement.description) {
                 description += `*${achievement.description}*\n`;
-            }
-            
-            // Add points if available
-            if (achievement.points) {
-                description += `**Points:** ${achievement.points}\n`;
             }
             
             embed.setDescription(description);
@@ -396,7 +272,7 @@ class AchievementFeedService {
             // Add game info
             embed.addFields(
                 { name: 'Game', value: gameInfo.title, inline: true },
-                { name: 'Type', value: challengeType, inline: true }
+                { name: 'Challenge Type', value: isShadow ? 'Shadow Challenge' : 'Monthly Challenge', inline: true }
             );
 
             // Add links
@@ -534,23 +410,14 @@ class AchievementFeedService {
             // If the guild doesn't exist or the bot isn't in it
             if (!guild) {
                 console.error('Guild not found');
-                return false;
+                return null;
             }
           
             // Try to get the member from the guild
-            try {
-                const member = await guild.members.fetch(discordId);
-                // If member exists in the cache, they're a member
-                return !!member;
-            } catch (memberError) {
-                // If the error is "Unknown Member", the user isn't in the guild
-                if (memberError.code === 10007) {
-                    return false;
-                }
-                // For other errors, log and return false
-                console.error(`Error fetching guild member ${discordId}:`, memberError);
-                return false;
-            }
+            const member = await guild.members.fetch(discordId);
+          
+            // If member exists in the cache, they're a member
+            return !!member;
           
         } catch (error) {
             console.error('Error checking guild membership:', error);
