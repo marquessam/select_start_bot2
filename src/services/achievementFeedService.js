@@ -21,6 +21,10 @@ class AchievementFeedService {
         // Queue for announcement rate limiting
         this.announcementQueue = [];
         this.processingQueue = false;
+        // Maximum announcements per user per check
+        this.maxAnnouncementsPerUser = 5;
+        // Maximum size of announcedAchievements array
+        this.maxAnnouncedAchievements = 200;
     }
 
     setClient(client) {
@@ -164,8 +168,21 @@ class AchievementFeedService {
                     user.announcedAchievements = [];
                 }
                 
-                // Process each achievement - NO MORE SKIPPING "INVALID" ACHIEVEMENTS
+                // Limit the size of the announcedAchievements array
+                if (user.announcedAchievements.length > this.maxAnnouncedAchievements) {
+                    // Keep only the most recent announcements
+                    user.announcedAchievements = user.announcedAchievements.slice(-this.maxAnnouncedAchievements);
+                }
+                
+                // Process each achievement
+                let announcementsQueuedForUser = 0;
                 for (const achievement of recentAchievements) {
+                    // Limit announcements per user per check
+                    if (announcementsQueuedForUser >= this.maxAnnouncementsPerUser) {
+                        console.log(`Reached max announcements for ${user.raUsername}, skipping remaining achievements`);
+                        break;
+                    }
+                    
                     // Basic null check only - not rejecting any valid achievements
                     if (!achievement) {
                         console.log('Skipping null achievement entry');
@@ -176,6 +193,12 @@ class AchievementFeedService {
                     const gameId = achievement.GameID ? String(achievement.GameID) : "unknown";
                     const achievementId = achievement.ID || "unknown";
                     const achievementTitle = achievement.Title || "Unknown Achievement";
+                    const achievementDescription = achievement.Description || "";
+                    const achievementPoints = achievement.Points || 0;
+                    const achievementBadgeName = achievement.BadgeName || "";
+                    
+                    // Enhanced logging for achievement details
+                    console.log(`Processing achievement: ${achievementTitle} (ID: ${achievementId}) in game ${gameId}`);
                     
                     // Determine achievement type (monthly, shadow, or regular)
                     let achievementType = 'regular';
@@ -191,13 +214,27 @@ class AchievementFeedService {
                     // Check if already announced
                     if (user.announcedAchievements.includes(achievementIdentifier)) {
                         // Already announced, skip
+                        console.log(`Achievement ${achievementTitle} already announced for ${user.raUsername}, skipping`);
                         continue;
                     }
                     
                     console.log(`New achievement for ${user.raUsername}: ${achievementTitle} (${achievementType})`);
                     
                     // Get game info
-                    const gameInfo = await retroAPI.getGameInfo(gameId);
+                    let gameInfo;
+                    try {
+                        gameInfo = await retroAPI.getGameInfo(gameId);
+                        console.log(`Retrieved game info for ${gameId}: ${gameInfo.title}`);
+                    } catch (gameInfoError) {
+                        console.error(`Failed to get game info for ${gameId}: ${gameInfoError.message}`);
+                        // Create fallback game info
+                        gameInfo = {
+                            id: gameId,
+                            title: achievement.GameTitle || `Game ${gameId}`,
+                            consoleName: achievement.ConsoleName || "Unknown",
+                            imageIcon: ""
+                        };
+                    }
                     
                     // Queue the achievement for announcement
                     this.queueAnnouncement(
@@ -211,10 +248,11 @@ class AchievementFeedService {
                     
                     // Add to user's announced achievements
                     user.announcedAchievements.push(achievementIdentifier);
-                    await user.save();
-                    
-                    console.log(`Saved announcement for ${user.raUsername}: ${achievementIdentifier}`);
+                    announcementsQueuedForUser++;
                 }
+                
+                // Save the updated announced achievements array
+                await user.save();
                 
                 // Also check for awards for monthly and shadow challenges
                 if (currentChallenge) {
@@ -450,9 +488,14 @@ class AchievementFeedService {
 
             // Set thumbnail to achievement image if available, otherwise use game image
             if (achievement.BadgeName) {
-                embed.setThumbnail(`https://media.retroachievements.org/Badge/${achievement.BadgeName}.png`);
+                // Ensure badge URL is correctly formatted
+                const badgeUrl = `https://media.retroachievements.org/Badge/${achievement.BadgeName}.png`;
+                embed.setThumbnail(badgeUrl);
+                console.log(`Using badge thumbnail: ${badgeUrl}`);
             } else if (gameInfo?.imageIcon) {
-                embed.setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`);
+                const gameIconUrl = `https://retroachievements.org${gameInfo.imageIcon}`;
+                embed.setThumbnail(gameIconUrl);
+                console.log(`Using game icon thumbnail: ${gameIconUrl}`);
             }
 
             // Build description
@@ -480,6 +523,15 @@ class AchievementFeedService {
             const fields = [
                 { name: 'Game', value: gameInfo?.title || 'Unknown Game', inline: true }
             ];
+            
+            // Add console name if available (especially useful for regular games)
+            if (gameInfo?.consoleName) {
+                fields.push({
+                    name: 'Console',
+                    value: gameInfo.consoleName,
+                    inline: true
+                });
+            }
             
             // Only add challenge type field for challenge games
             if (achievementType === 'monthly' || achievementType === 'shadow') {
