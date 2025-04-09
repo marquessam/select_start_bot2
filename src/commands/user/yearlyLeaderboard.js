@@ -239,62 +239,14 @@ export default {
                 // Mastery (7 points)
                 masteryCount++;
                 challengePoints += POINTS.MASTERY;
-            } else {
-                // We need to fetch progress data to verify if it should be beaten or participation
-                try {
-                    const progress = await retroAPI.getUserGameProgress(
-                        user.raUsername,
-                        challenge.monthly_challange_gameid
-                    );
-                    
-                    if (progress.numAwardedToUser > 0) {
-                        // Get all earned achievements
-                        const earnedAchievements = Object.entries(progress.achievements)
-                            .filter(([id, data]) => data.hasOwnProperty('dateEarned'))
-                            .map(([id]) => id);
-                            
-                        // Check progression and win requirements
-                        const progressionAchievements = challenge.monthly_challange_progression_achievements || [];
-                        const winAchievements = challenge.monthly_challange_win_achievements || [];
-                        
-                        const allProgressionCompleted = progressionAchievements.length > 0 && 
-                            progressionAchievements.every(id => earnedAchievements.includes(id));
-                        
-                        const hasWinCondition = winAchievements.length === 0 || 
-                            winAchievements.some(id => earnedAchievements.includes(id));
-                        
-                        // Check if it's actually beaten even if database says otherwise
-                        if (allProgressionCompleted && hasWinCondition) {
-                            // Should be beaten
-                            beatenCount++;
-                            challengePoints += POINTS.BEATEN;
-                            
-                            // Update database if needed
-                            if (data.progress < 2) {
-                                user.monthlyChallenges.set(dateStr, { progress: 2 });
-                                needDatabaseUpdate = true;
-                            }
-                        } else if (data.progress === 2) {
-                            // Database says beaten, but actually isn't - keep for backward compatibility
-                            beatenCount++;
-                            challengePoints += POINTS.BEATEN;
-                        } else {
-                            // Participation
-                            participationCount++;
-                            challengePoints += POINTS.PARTICIPATION;
-                        }
-                    }
-                } catch (error) {
-                    console.error(`Error verifying game status for ${user.raUsername} on ${dateStr}:`, error);
-                    // Fall back to stored values
-                    if (data.progress === 2) {
-                        beatenCount++;
-                        challengePoints += POINTS.BEATEN;
-                    } else if (data.progress === 1) {
-                        participationCount++;
-                        challengePoints += POINTS.PARTICIPATION;
-                    }
-                }
+            } else if (data.progress === 2) {
+                // Beaten (4 points)
+                beatenCount++;
+                challengePoints += POINTS.BEATEN;
+            } else if (data.progress === 1) {
+                // Participation (1 point)
+                participationCount++;
+                challengePoints += POINTS.PARTICIPATION;
             }
         }
 
@@ -310,60 +262,12 @@ export default {
                 continue; // Skip if no matching challenge or no shadow game
             }
             
-            // Check shadow game progress
-            try {
-                const shadowProgress = await retroAPI.getUserGameProgress(
-                    user.raUsername,
-                    challenge.shadow_challange_gameid
-                );
-                
-                if (shadowProgress.numAwardedToUser > 0) {
-                    // Get all earned achievements
-                    const earnedAchievements = Object.entries(shadowProgress.achievements)
-                        .filter(([id, data]) => data.hasOwnProperty('dateEarned'))
-                        .map(([id]) => id);
-                        
-                    // Check progression and win requirements
-                    const progressionAchievements = challenge.shadow_challange_progression_achievements || [];
-                    const winAchievements = challenge.shadow_challange_win_achievements || [];
-                    
-                    const allProgressionCompleted = progressionAchievements.length > 0 && 
-                        progressionAchievements.every(id => earnedAchievements.includes(id));
-                    
-                    const hasWinCondition = winAchievements.length === 0 || 
-                        winAchievements.some(id => earnedAchievements.includes(id));
-                    
-                    // For shadow games, cap at "Beaten" status (4 points)
-                    if (allProgressionCompleted && hasWinCondition) {
-                        // Beaten
-                        shadowBeatenCount++;
-                        challengePoints += SHADOW_MAX_POINTS;
-                        
-                        // Update database if needed
-                        if (data.progress < 2) {
-                            user.shadowChallenges.set(dateStr, { progress: 2 });
-                            needDatabaseUpdate = true;
-                        }
-                    } else if (data.progress === 2) {
-                        // Database says beaten, but actually isn't - keep for backward compatibility
-                        shadowBeatenCount++;
-                        challengePoints += SHADOW_MAX_POINTS;
-                    } else {
-                        // Participation
-                        shadowParticipationCount++;
-                        challengePoints += POINTS.PARTICIPATION;
-                    }
-                }
-            } catch (error) {
-                console.error(`Error verifying shadow game status for ${user.raUsername} on ${dateStr}:`, error);
-                // Fall back to stored values
-                if (data.progress === 2) {
-                    shadowBeatenCount++;
-                    challengePoints += SHADOW_MAX_POINTS;
-                } else if (data.progress === 1) {
-                    shadowParticipationCount++;
-                    challengePoints += POINTS.PARTICIPATION;
-                }
+            if (data.progress === 2) {
+                shadowBeatenCount++;
+                challengePoints += SHADOW_MAX_POINTS;
+            } else if (data.progress === 1) {
+                shadowParticipationCount++;
+                challengePoints += POINTS.PARTICIPATION;
             }
         }
         
