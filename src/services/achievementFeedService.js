@@ -18,6 +18,9 @@ class AchievementFeedService {
         this.profileImageCache = new Map();
         // Cache TTL in milliseconds (30 minutes)
         this.cacheTTL = 30 * 60 * 1000;
+        // Queue for announcement rate limiting
+        this.announcementQueue = [];
+        this.processingQueue = false;
     }
 
     setClient(client) {
@@ -193,8 +196,8 @@ class AchievementFeedService {
                     // Get game info
                     const gameInfo = await retroAPI.getGameInfo(gameId);
                     
-                    // Announce the achievement with proper type - ALL types now
-                    const announced = await this.announceAchievement(
+                    // Queue the achievement for announcement
+                    this.queueAnnouncement(
                         announcementChannel,
                         user,
                         gameInfo,
@@ -203,15 +206,11 @@ class AchievementFeedService {
                         gameId
                     );
                     
-                    if (announced) {
-                        // Add to user's announced achievements
-                        user.announcedAchievements.push(achievementIdentifier);
-                        await user.save();
-                        console.log(`Saved announcement for ${user.raUsername}: ${achievementIdentifier}`);
-                    }
+                    // Add to user's announced achievements
+                    user.announcedAchievements.push(achievementIdentifier);
+                    await user.save();
                     
-                    // Add a small delay between announcements
-                    await new Promise(resolve => setTimeout(resolve, 500));
+                    console.log(`Saved announcement for ${user.raUsername}: ${achievementIdentifier}`);
                 }
                 
                 // Also check for awards for monthly and shadow challenges
@@ -233,7 +232,54 @@ class AchievementFeedService {
             }
         }
         
+        // Process any pending announcements in the queue
+        await this.processAnnouncementQueue();
+        
         console.log('Finished checking for achievements');
+    }
+
+    // Queue system for rate-limiting announcements
+    queueAnnouncement(channel, user, gameInfo, achievement, achievementType, gameId) {
+        this.announcementQueue.push({
+            channel, user, gameInfo, achievement, achievementType, gameId
+        });
+        
+        // Start processing the queue if not already processing
+        if (!this.processingQueue) {
+            this.processAnnouncementQueue();
+        }
+    }
+    
+    async processAnnouncementQueue() {
+        if (this.processingQueue || this.announcementQueue.length === 0) {
+            return;
+        }
+
+        this.processingQueue = true;
+        
+        try {
+            console.log(`Processing announcement queue with ${this.announcementQueue.length} items`);
+            
+            while (this.announcementQueue.length > 0) {
+                const item = this.announcementQueue.shift();
+                const { channel, user, gameInfo, achievement, achievementType, gameId } = item;
+                
+                try {
+                    await this.announceAchievement(
+                        channel, user, gameInfo, achievement, achievementType, gameId
+                    );
+                    
+                    // Add a small delay between announcements to prevent rate limiting
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                } catch (error) {
+                    console.error('Error announcing achievement:', error);
+                }
+            }
+        } catch (error) {
+            console.error('Error processing announcement queue:', error);
+        } finally {
+            this.processingQueue = false;
+        }
     }
 
     async checkForGameAwards(user, channel, challenge, gameId, isShadow) {
