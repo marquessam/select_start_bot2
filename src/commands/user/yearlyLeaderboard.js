@@ -253,6 +253,63 @@ export default {
                 usersProcessed++;
             }
 
+            // NEW: Save the processed results to the database
+            try {
+                console.log(`Saving yearly processed data for ${userPoints.length} users to database...`);
+                const yearKey = `annual_${selectedYear}`;
+                
+                // Create and save annual records for each user
+                await Promise.all(userPoints.map(async (points) => {
+                    try {
+                        // Find the user in the database
+                        const user = await User.findOne({ raUsername: points.username });
+                        if (!user) {
+                            console.error(`Could not find user ${points.username} in database`);
+                            return;
+                        }
+                        
+                        // If the user has an annualRecords field, use it; otherwise, create it
+                        if (!user.annualRecords) {
+                            user.annualRecords = new Map();
+                        }
+                        
+                        // Save the processed annual data
+                        user.annualRecords.set(yearKey, {
+                            year: selectedYear,
+                            totalPoints: points.totalPoints,
+                            challengePoints: points.challengePoints,
+                            communityPoints: points.communityPoints,
+                            rank: points.rank,
+                            stats: points.stats
+                        });
+                        
+                        await user.save();
+                    } catch (userError) {
+                        console.error(`Error saving yearly data for user ${points.username}:`, userError);
+                    }
+                }));
+                
+                // Notify the API to refresh its cache
+                try {
+                    console.log('Notifying API to refresh yearly data...');
+                    const response = await fetch('https://select-start-api-production.up.railway.app/api/admin/force-update', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'x-api-key': '0000'
+                        },
+                        body: JSON.stringify({ target: 'leaderboards' })
+                    });
+                    
+                    console.log('API response:', response.ok ? 'Success' : 'Failed');
+                } catch (apiError) {
+                    console.error('Error notifying API:', apiError);
+                }
+            } catch (saveError) {
+                console.error('Error saving yearly processed data:', saveError);
+                // Continue execution to at least show the leaderboard
+            }
+
             // Create pages of embeds with proper tie handling
             const embeds = this.createPaginatedEmbeds(userPoints, selectedYear, challenges.length, shouldSync, showDebug, skippedUsers);
 
