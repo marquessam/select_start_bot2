@@ -2,7 +2,6 @@ import { SlashCommandBuilder, EmbedBuilder } from 'discord.js';
 import { User } from '../../models/User.js';
 import { Challenge } from '../../models/Challenge.js';
 import retroAPI from '../../services/retroAPI.js';
-import statsUpdateService from '../../services/statsUpdateService.js';
 
 const AWARD_EMOJIS = {
     MASTERY: '✨',
@@ -40,7 +39,7 @@ function isDateInCurrentMonth(dateString) {
                                 inputDate.getFullYear() === lastDayOfPrevMonth.getFullYear();
     
     return isCurrentMonth || isLastDayOfPrevMonth;
-  }
+}
 
 export default {
     data: new SlashCommandBuilder()
@@ -51,72 +50,6 @@ export default {
         await interaction.deferReply();
 
         try {
-            // NEW CODE START - Update database before showing leaderboard
-            try {
-                console.log('Updating stats before displaying leaderboard...');
-                
-                // Skip update if one is already in progress
-                if (!statsUpdateService.isUpdating) {
-                    // Only update stats for the requesting user to keep response time reasonable
-                    const requestingUser = await User.findOne({ discordId: interaction.user.id });
-                    
-                    if (requestingUser) {
-                        // Get current date for finding current challenge
-                        const now = new Date();
-                        const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-                        const nextMonthStart = new Date(now.getFullYear(), now.getMonth() + 1, 1);
-
-                        // Get current challenge
-                        const currentChallenge = await Challenge.findOne({
-                            date: {
-                                $gte: currentMonthStart,
-                                $lt: nextMonthStart
-                            }
-                        });
-                        
-                        if (currentChallenge) {
-                            console.log(`Updating stats for requesting user: ${requestingUser.raUsername}`);
-                            await statsUpdateService.updateUserStats(
-                                requestingUser, 
-                                currentChallenge, 
-                                currentMonthStart
-                            );
-                            
-                            // For better response time, update all user stats in background
-                            setTimeout(() => {
-                                statsUpdateService.start().catch(err => {
-                                    console.error('Error in background stats update:', err);
-                                });
-                            }, 100);
-                            
-                            // Try to notify the API to refresh its cache
-                            try {
-                                const response = await fetch('https://select-start-api-production.up.railway.app/api/admin/force-update', {
-                                    method: 'POST',
-                                    headers: {
-                                        'Content-Type': 'application/json',
-                                        'x-api-key': '0000'
-                                    },
-                                    body: JSON.stringify({ target: 'leaderboards' })
-                                });
-                                
-                                if (response.ok) {
-                                    console.log('Successfully notified API to refresh cache');
-                                } else {
-                                    console.error('Failed to notify API:', await response.text());
-                                }
-                            } catch (apiError) {
-                                console.error('Error notifying API:', apiError);
-                            }
-                        }
-                    }
-                }
-            } catch (syncError) {
-                console.error('Error updating stats before leaderboard:', syncError);
-                // Continue with command execution even if stats update fails
-            }
-            // NEW CODE END
-
             // Get current date for finding current challenge
             const now = new Date();
             const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -175,6 +108,8 @@ export default {
                         });
 
                     // Get the user's earned achievements from the progress data
+                    // IMPORTANT: This is where the time gating happens - we use isDateInCurrentMonth
+                    // which also includes the grace period
                     const allEarnedAchievements = Object.entries(progress.achievements)
                         .filter(([id, data]) => data.hasOwnProperty('dateEarned') && isDateInCurrentMonth(data.dateEarned))
                         .map(([id, data]) => id);
@@ -227,6 +162,7 @@ export default {
                     }
 
                     return {
+                        user,
                         username: user.raUsername,
                         achieved: allEarnedAchievements.length,
                         percentage: (allEarnedAchievements.length / currentChallenge.monthly_challange_game_total * 100).toFixed(2),
@@ -247,6 +183,53 @@ export default {
                     }
                     return b.achieved - a.achieved;
                 });
+
+            // NEW: Save the processed results to the database
+            const monthKey = User.formatDateKey(currentChallenge.date);
+            try {
+                console.log(`Saving processed leaderboard data for ${sortedProgress.length} users to database...`);
+                
+                // Process each user's data in parallel
+                await Promise.all(sortedProgress.map(async (progress) => {
+                    try {
+                        const { user, achieved, percentage, points } = progress;
+                        
+                        // Save the PROCESSED data to the database
+                        user.monthlyChallenges.set(monthKey, { 
+                            progress: points,
+                            achievements: achieved, // This is the time-gated count
+                            totalAchievements: currentChallenge.monthly_challange_game_total,
+                            percentage: parseFloat(percentage),
+                            gameTitle: gameInfo.title,
+                            gameIconUrl: gameInfo.imageIcon
+                        });
+                        
+                        await user.save();
+                    } catch (userError) {
+                        console.error(`Error saving data for user ${progress.username}:`, userError);
+                    }
+                }));
+                
+                // Notify the API to refresh its cache
+                try {
+                    console.log('Notifying API to refresh data...');
+                    const response = await fetch('https://select-start-api-production.up.railway.app/api/admin/force-update', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'x-api-key': '0000'
+                        },
+                        body: JSON.stringify({ target: 'leaderboards' })
+                    });
+                    
+                    console.log('API response:', response.ok ? 'Success' : 'Failed');
+                } catch (apiError) {
+                    console.error('Error notifying API:', apiError);
+                }
+            } catch (saveError) {
+                console.error('Error saving processed data:', saveError);
+                // Continue execution to at least show the leaderboard
+            }
 
             // Get month name for the title
             const monthName = now.toLocaleString('default', { month: 'long' });
