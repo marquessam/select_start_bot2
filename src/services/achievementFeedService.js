@@ -193,7 +193,7 @@ class AchievementFeedService {
                     // Get game info
                     const gameInfo = await retroAPI.getGameInfo(gameId);
                     
-                    // Announce the achievement with proper type
+                    // Announce the achievement with proper type - ALL types now
                     const announced = await this.announceAchievement(
                         announcementChannel,
                         user,
@@ -368,17 +368,17 @@ class AchievementFeedService {
         try {
             console.log(`Creating embed for achievement announcement: ${achievement.Title} (${achievementType})`);
             
-            // Set color and title based on achievement type
-            let color = '#9370DB';  // Default purple for regular achievements
+            // Set color and title based on achievement type - UPDATED COLORS
+            let color = '#4CAF50';  // Green for regular achievements
             let challengeTypeText = "Achievement";
             let emoji = "🎮";
             
             if (achievementType === 'monthly') {
-                color = '#0099ff';  // Blue for monthly
+                color = '#FFD700';  // Yellow for monthly
                 challengeTypeText = "Monthly Challenge";
                 emoji = "🏆";
             } else if (achievementType === 'shadow') {
-                color = '#800080';  // Dark purple for shadow
+                color = '#9B59B6';  // Purple for shadow
                 challengeTypeText = "Shadow Challenge";
                 emoji = "👥";
             }
@@ -484,7 +484,7 @@ class AchievementFeedService {
             // Create embed
             const embed = new EmbedBuilder()
                 .setTitle(`${AWARD_EMOJIS[awardLevel]} Challenge Complete!`)
-                .setColor(this.getColorForAward(awardLevel))
+                .setColor(this.getColorForAward(awardLevel, isShadow))
                 .setTimestamp();
 
             // Get user's profile image URL
@@ -563,16 +563,32 @@ class AchievementFeedService {
         }
     }
 
-    getColorForAward(awardLevel) {
-        switch (awardLevel) {
-            case 'MASTERY':
-                return '#FFD700'; // Gold
-            case 'BEATEN':
-                return '#C0C0C0'; // Silver
-            case 'PARTICIPATION':
-                return '#CD7F32'; // Bronze
-            default:
-                return '#0099ff';
+    getColorForAward(awardLevel, isShadow) {
+        // Use different colors based on if it's a shadow or monthly challenge
+        if (isShadow) {
+            // Shadow challenge colors
+            switch (awardLevel) {
+                case 'MASTERY': // Not possible for shadow games, but included for completeness
+                    return '#9B59B6'; // Purple
+                case 'BEATEN':
+                    return '#9B59B6'; // Purple
+                case 'PARTICIPATION':
+                    return '#9B59B6'; // Purple
+                default:
+                    return '#9B59B6'; // Purple
+            }
+        } else {
+            // Monthly challenge colors
+            switch (awardLevel) {
+                case 'MASTERY':
+                    return '#FFD700'; // Yellow/Gold
+                case 'BEATEN':
+                    return '#FFD700'; // Yellow/Gold
+                case 'PARTICIPATION':
+                    return '#FFD700'; // Yellow/Gold
+                default:
+                    return '#FFD700'; // Yellow/Gold
+            }
         }
     }
 
