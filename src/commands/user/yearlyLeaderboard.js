@@ -38,6 +38,10 @@ export default {
         .addStringOption(option =>
             option.setName('username')
                 .setDescription('Only sync this specific user (admin only, requires sync:true)')
+                .setRequired(false))
+        .addBooleanOption(option =>
+            option.setName('debug')
+                .setDescription('Show debug info (admin only)')
                 .setRequired(false)),
 
     async execute(interaction) {
@@ -47,13 +51,17 @@ export default {
             // Get the year from the option, default to current year
             const selectedYear = interaction.options.getInteger('year') || new Date().getFullYear();
             
+            // Check if debug option is enabled - admin only
+            const debugOption = interaction.options.getBoolean('debug') || false;
+            const isAdmin = interaction.member.roles.cache.has(process.env.ADMIN_ROLE_ID);
+            const showDebug = debugOption && isAdmin;
+            
             // Check if sync option is enabled - admin only
             const syncOption = interaction.options.getBoolean('sync') || false;
-            const isAdmin = interaction.member.roles.cache.has(process.env.ADMIN_ROLE_ID);
             const shouldSync = syncOption && isAdmin;
             
-            if (syncOption && !isAdmin) {
-                await interaction.editReply('Only admins can use the sync option.');
+            if ((syncOption || debugOption) && !isAdmin) {
+                await interaction.editReply('Only admins can use the sync and debug options.');
                 return;
             }
             
@@ -90,6 +98,7 @@ export default {
 
             // Get all users
             const users = await User.find({});
+            console.log(`Found ${users.length} users in database`);
 
             // Create a map for faster challenge lookups
             const challengeMap = new Map();
@@ -105,6 +114,7 @@ export default {
 
             // Calculate points and update database if needed
             const userPoints = [];
+            const skippedUsers = []; // For debugging
             
             // If we're only syncing a specific user
             if (shouldSync && targetUser) {
@@ -112,6 +122,11 @@ export default {
                     const points = await this.syncAndCalculatePoints(targetUser, challengeMap, selectedYear);
                     if (points.totalPoints > 0) {
                         userPoints.push(points);
+                    } else if (showDebug) {
+                        skippedUsers.push({ 
+                            username: targetUser.raUsername, 
+                            reason: `No points: ${JSON.stringify(points)}` 
+                        });
                     }
                 } catch (error) {
                     console.error(`Error syncing data for user ${targetUser.raUsername}:`, error);
@@ -119,6 +134,11 @@ export default {
                     const points = await this.calculatePointsFromDatabase(targetUser, challengeMap, selectedYear);
                     if (points.totalPoints > 0) {
                         userPoints.push(points);
+                    } else if (showDebug) {
+                        skippedUsers.push({ 
+                            username: targetUser.raUsername, 
+                            reason: `Error syncing, no points in DB: ${error.message}` 
+                        });
                     }
                 }
                 
@@ -128,18 +148,35 @@ export default {
                         const points = await this.calculatePointsFromDatabase(user, challengeMap, selectedYear);
                         if (points.totalPoints > 0) {
                             userPoints.push(points);
+                        } else if (showDebug) {
+                            skippedUsers.push({ 
+                                username: user.raUsername, 
+                                reason: `No points: ${JSON.stringify(points)}` 
+                            });
                         }
                     }
                 }
             }
             // Regular approach for all users
             else {
+                let usersWithPoints = 0;
                 for (const user of users) {
                     // Regular database approach for most users
                     if (!shouldSync) {
                         const points = await this.calculatePointsFromDatabase(user, challengeMap, selectedYear);
-                        if (points.totalPoints > 0) {  // IMPORTANT: Only include users with points
+                        if (points.totalPoints > 0) {
                             userPoints.push(points);
+                            usersWithPoints++;
+                        } else if (showDebug) {
+                            // Check specific data to help debugging
+                            const monthlyPoints = this.getYearlyPointsFromMap(user.monthlyChallenges, selectedYear);
+                            const shadowPoints = this.getYearlyPointsFromMap(user.shadowChallenges, selectedYear);
+                            const communityPoints = user.getCommunityPointsForYear(selectedYear);
+                            
+                            skippedUsers.push({ 
+                                username: user.raUsername, 
+                                reason: `No points (monthly: ${monthlyPoints}, shadow: ${shadowPoints}, community: ${communityPoints})` 
+                            });
                         }
                         continue;
                     }
@@ -147,8 +184,14 @@ export default {
                     // For admins using sync option: recalculate directly from RetroAPI similar to profile.js
                     try {
                         const points = await this.syncAndCalculatePoints(user, challengeMap, selectedYear);
-                        if (points.totalPoints > 0) {  // IMPORTANT: Only include users with points
+                        if (points.totalPoints > 0) {
                             userPoints.push(points);
+                            usersWithPoints++;
+                        } else if (showDebug) {
+                            skippedUsers.push({ 
+                                username: user.raUsername, 
+                                reason: `No points after sync` 
+                            });
                         }
                     } catch (error) {
                         console.error(`Error syncing data for user ${user.raUsername}:`, error);
@@ -156,22 +199,40 @@ export default {
                         const points = await this.calculatePointsFromDatabase(user, challengeMap, selectedYear);
                         if (points.totalPoints > 0) {
                             userPoints.push(points);
+                            usersWithPoints++;
+                        } else if (showDebug) {
+                            skippedUsers.push({ 
+                                username: user.raUsername, 
+                                reason: `Error syncing and no points in DB: ${error.message}` 
+                            });
                         }
                     }
                 }
+                console.log(`Found ${usersWithPoints} users with points out of ${users.length} total`);
             }
 
             // Sort users by total points (descending)
             userPoints.sort((a, b) => b.totalPoints - a.totalPoints);
 
             if (userPoints.length === 0) {
+                let noDataMessage = `No users have earned points for ${selectedYear}.`;
+                
+                if (showDebug && skippedUsers.length > 0) {
+                    noDataMessage += `\n\nDebug info (${skippedUsers.length} users skipped):\n` + 
+                        skippedUsers.slice(0, 10).map(u => `${u.username}: ${u.reason}`).join('\n');
+                    
+                    if (skippedUsers.length > 10) {
+                        noDataMessage += `\n...and ${skippedUsers.length - 10} more`;
+                    }
+                }
+                
                 const embed = new EmbedBuilder()
                     .setTitle(`🏆 ${selectedYear} Yearly Leaderboard`)
                     .setDescription(`Total Challenges: ${challenges.length}`)
                     .setColor('#FFD700')
                     .addFields({
                         name: 'No Participants',
-                        value: 'No users have earned points this year.'
+                        value: noDataMessage
                     })
                     .setTimestamp();
                 
@@ -193,7 +254,7 @@ export default {
             }
 
             // Create pages of embeds with proper tie handling
-            const embeds = this.createPaginatedEmbeds(userPoints, selectedYear, challenges.length, shouldSync);
+            const embeds = this.createPaginatedEmbeds(userPoints, selectedYear, challenges.length, shouldSync, showDebug, skippedUsers);
 
             // Send the first embed as a reply to the command
             await interaction.editReply({ embeds: [embeds[0]] });
@@ -205,8 +266,19 @@ export default {
 
         } catch (error) {
             console.error('Error displaying yearly leaderboard:', error);
-            return interaction.editReply('An error occurred while fetching the yearly leaderboard. Please try again.');
+            return interaction.editReply(`An error occurred while fetching the yearly leaderboard: ${error.message}\n\nPlease try again.`);
         }
+    },
+
+    // Helper method to sum points from a Map for a specific year
+    getYearlyPointsFromMap(pointsMap, year) {
+        let total = 0;
+        for (const [dateKey, data] of pointsMap.entries()) {
+            if (dateKey.startsWith(year.toString())) {
+                total += data.progress || 0;
+            }
+        }
+        return total;
     },
 
     // Calculate points using database values but also check actual achievements
@@ -374,9 +446,6 @@ export default {
                 }
             }
             
-            // Add another rate limiting delay before shadow challenge
-            await new Promise(resolve => setTimeout(resolve, 1000)); // 1 second delay
-            
             // Process shadow challenge
             if (challenge.shadow_challange_gameid) {
                 try {
@@ -463,7 +532,7 @@ export default {
         };
     },
 
-    createPaginatedEmbeds(userPoints, selectedYear, challengeCount, isSynced) {
+    createPaginatedEmbeds(userPoints, selectedYear, challengeCount, isSynced, showDebug, skippedUsers) {
         const embeds = [];
 
         // Calculate how many pages we need - REDUCED PER PAGE COUNT
@@ -477,7 +546,7 @@ export default {
             
             // Create embed for this page
             const embed = new EmbedBuilder()
-                .setTitle(`🏆 ${selectedYear} Yearly Leaderboard${totalPages > 1 ? ` (Page ${page + 1}/${totalPages})` : ''}`)
+                .setTitle(`🏆 ${selectedYear} Yearly Leaderboard (Page ${page + 1}/${totalPages})`)
                 .setColor('#FFD700')
                 .setTimestamp();
             
@@ -490,9 +559,8 @@ export default {
                 embed.setDescription(description);
             }
             
-            // UPDATED: Split users into multiple fields to avoid 1024 char limit
-            // Each field will contain 2-3 users
-            const usersPerField = 3;
+            // UPDATED: Split users into multiple fields, with a minimalist field name
+            const usersPerField = 4;
             for (let i = 0; i < usersOnPage.length; i += usersPerField) {
                 const fieldUsers = usersOnPage.slice(i, i + usersPerField);
                 
@@ -517,14 +585,8 @@ export default {
                         `M:${m}✨${b}⭐${p}🏁 S:${sb}⭐${sp}🏁\n\n`;
                 });
                 
-                // Add field with a dynamically generated name based on ranks
-                const firstRank = fieldUsers[0].rank;
-                const lastRank = fieldUsers[fieldUsers.length-1].rank;
-                const fieldName = firstRank === lastRank ? 
-                    `Rank ${firstRank}` : 
-                    `Ranks ${firstRank}-${lastRank}`;
-                    
-                embed.addFields({ name: fieldName, value: leaderboardText });
+                // Use a simple field name to avoid redundancy
+                embed.addFields({ name: '\u200B', value: leaderboardText });
             }
             
             // Add point system explanation to the last page
@@ -533,6 +595,18 @@ export default {
                     name: 'Point System',
                     value: '✨ Mastery: 7pts | ⭐ Beaten: 4pts | 🏁 Participation: 1pt | Shadow max: Beaten (4pts)'
                 });
+                
+                // Add debug info if requested (admin only)
+                if (showDebug && skippedUsers.length > 0) {
+                    // Truncate to avoid embed limits
+                    const debugUsers = skippedUsers.slice(0, 5);
+                    const debugInfo = debugUsers.map(u => `${u.username}: ${u.reason.substring(0, 50)}`).join('\n');
+                    
+                    embed.addFields({
+                        name: 'Debug Info',
+                        value: `${debugInfo}\n...and ${skippedUsers.length - 5} more users skipped`
+                    });
+                }
             }
             
             embeds.push(embed);
