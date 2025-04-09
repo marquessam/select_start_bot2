@@ -9,6 +9,9 @@ import statsUpdateService from './services/statsUpdateService.js';
 import achievementFeedService from './services/achievementFeedService.js';
 import monthlyTasksService from './services/monthlyTasksService.js';
 import arcadeService from './services/arcadeService.js';
+import leaderboardCacheService from './services/leaderboardCacheService.js';
+import nominationsCacheService from './services/nominationsCacheService.js';
+import apiServer from './api/apiServer.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -98,6 +101,13 @@ client.once(Events.ClientReady, async () => {
         monthlyTasksService.setClient(client);
         arcadeService.setClient(client);
 
+        // Initialize caching services
+        await leaderboardCacheService.initialize();
+        await nominationsCacheService.initialize();
+        
+        // Start API server
+        apiServer.start();
+
         // Schedule stats updates every 30 minutes
         cron.schedule('*/30 * * * *', () => {
             console.log('Running scheduled stats update...');
@@ -161,6 +171,19 @@ client.on(Events.Error, error => {
 
 process.on('unhandledRejection', error => {
     console.error('Unhandled promise rejection:', error);
+});
+
+// Graceful shutdown
+process.on('SIGINT', async () => {
+    console.log('Received SIGINT, shutting down gracefully...');
+    apiServer.stop();
+    process.exit(0);
+});
+
+process.on('SIGTERM', async () => {
+    console.log('Received SIGTERM, shutting down gracefully...');
+    apiServer.stop();
+    process.exit(0);
 });
 
 // Login to Discord
