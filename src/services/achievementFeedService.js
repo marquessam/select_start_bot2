@@ -164,15 +164,18 @@ class AchievementFeedService {
                     user.announcedAchievements = [];
                 }
                 
-                // Process each achievement
+                // Process each achievement - NO MORE SKIPPING "INVALID" ACHIEVEMENTS
                 for (const achievement of recentAchievements) {
-                    if (!achievement || !achievement.GameID || !achievement.ID) {
-                        console.log('Skipping invalid achievement');
+                    // Basic null check only - not rejecting any valid achievements
+                    if (!achievement) {
+                        console.log('Skipping null achievement entry');
                         continue;
                     }
                     
-                    const gameId = String(achievement.GameID);
-                    const achievementId = achievement.ID;
+                    // Extract achievement info with safe fallbacks
+                    const gameId = achievement.GameID ? String(achievement.GameID) : "unknown";
+                    const achievementId = achievement.ID || "unknown";
+                    const achievementTitle = achievement.Title || "Unknown Achievement";
                     
                     // Determine achievement type (monthly, shadow, or regular)
                     let achievementType = 'regular';
@@ -191,7 +194,7 @@ class AchievementFeedService {
                         continue;
                     }
                     
-                    console.log(`New achievement for ${user.raUsername}: ${achievement.Title} (${achievementType})`);
+                    console.log(`New achievement for ${user.raUsername}: ${achievementTitle} (${achievementType})`);
                     
                     // Get game info
                     const gameInfo = await retroAPI.getGameInfo(gameId);
@@ -317,7 +320,7 @@ class AchievementFeedService {
             : challenge.monthly_challange_game_total;
         
         // Get the user's earned achievements
-        const userEarnedAchievements = Object.entries(progress.achievements)
+        const userEarnedAchievements = Object.entries(progress.achievements || {})
             .filter(([id, data]) => data.hasOwnProperty('dateEarned'))
             .map(([id]) => id);
         
@@ -412,7 +415,7 @@ class AchievementFeedService {
 
     async announceAchievement(channel, user, gameInfo, achievement, achievementType, gameId) {
         try {
-            console.log(`Creating embed for achievement announcement: ${achievement.Title} (${achievementType})`);
+            console.log(`Creating embed for achievement announcement: ${achievement.Title || 'Unknown Achievement'} (${achievementType})`);
             
             // Set color and title based on achievement type - UPDATED COLORS
             let color = '#4CAF50';  // Green for regular achievements
@@ -448,7 +451,7 @@ class AchievementFeedService {
             // Set thumbnail to achievement image if available, otherwise use game image
             if (achievement.BadgeName) {
                 embed.setThumbnail(`https://media.retroachievements.org/Badge/${achievement.BadgeName}.png`);
-            } else if (gameInfo.imageIcon) {
+            } else if (gameInfo?.imageIcon) {
                 embed.setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`);
             }
 
@@ -460,7 +463,7 @@ class AchievementFeedService {
                 description = `**${user.raUsername}** has earned a new achievement!\n\n`;
             }
             
-            description += `**${achievement.Title}**\n`;
+            description += `**${achievement.Title || 'Unknown Achievement'}**\n`;
             
             if (achievement.Description) {
                 description += `*${achievement.Description}*\n`;
@@ -475,7 +478,7 @@ class AchievementFeedService {
 
             // Add game info
             const fields = [
-                { name: 'Game', value: gameInfo.title, inline: true }
+                { name: 'Game', value: gameInfo?.title || 'Unknown Game', inline: true }
             ];
             
             // Only add challenge type field for challenge games
@@ -507,7 +510,7 @@ class AchievementFeedService {
                 
                 // Try a plain text fallback
                 try {
-                    const fallbackText = `${emoji} **${user.raUsername}** earned "${achievement.Title}" in ${gameInfo.title}`;
+                    const fallbackText = `${emoji} **${user.raUsername}** earned "${achievement.Title || 'an achievement'}" in ${gameInfo?.title || 'a game'}`;
                     await channel.send(fallbackText);
                     console.log('Sent plain text fallback message');
                     return true;
@@ -544,7 +547,7 @@ class AchievementFeedService {
             });
 
             // Set thumbnail to game image if available
-            if (gameInfo.imageIcon) {
+            if (gameInfo?.imageIcon) {
                 embed.setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`);
             }
 
@@ -569,7 +572,7 @@ class AchievementFeedService {
 
             // Add game info
             embed.addFields(
-                { name: 'Game', value: gameInfo.title, inline: true },
+                { name: 'Game', value: gameInfo?.title || 'Unknown Game', inline: true },
                 { name: 'Progress', value: `${achieved}/${total} (${Math.round(achieved/total*100)}%)`, inline: true },
                 { name: 'Challenge Type', value: isShadow ? 'Shadow Challenge' : 'Monthly Challenge', inline: true }
             );
@@ -593,7 +596,7 @@ class AchievementFeedService {
                 // Try a plain text fallback
                 try {
                     const emoji = AWARD_EMOJIS[awardLevel];
-                    const fallbackText = `${emoji} **${user.raUsername}** has earned ${awardLevel} status in ${gameInfo.title}!`;
+                    const fallbackText = `${emoji} **${user.raUsername}** has earned ${awardLevel} status in ${gameInfo?.title || 'a game'}!`;
                     await channel.send(fallbackText);
                     console.log('Sent plain text fallback message for award');
                     return true;
