@@ -161,41 +161,70 @@ class RetroAchievementsService {
         }
     }
 
-    /**
-     * Get user's recently earned achievements
-     * @param {string} username - RetroAchievements username
-     * @param {number} count - Number of achievements to fetch (default: 50)
-     * @returns {Promise<Array>} Array of recent achievements
-     */
-    async getUserRecentAchievements(username, count = 50) {
-        // For recent achievements, we use a shorter cache period
-        const cacheKey = `recent_achievements_${username}_${count}`;
-        const cachedData = this.getCachedItem(cacheKey);
-        
-        // Recent achievements should have a shorter TTL (1 minute)
-        if (cachedData && (Date.now() - this.cache.get(cacheKey).timestamp) < 60000) {
-            return cachedData;
-        }
-        
-        try {
-            // Use the rate limiter to make the API call
-            const achievements = await this.rateLimiter.add(() => 
-                getUserRecentAchievements(this.authorization, {
-                    userName: username, // Make sure to use the correct parameter name (userName, not username)
-                    count
-                })
-            );
-            
-            // Cache the result
-            this.setCachedItem(cacheKey, achievements);
-            
-            return achievements;
-        } catch (error) {
-            console.error(`Error fetching recent achievements for ${username}:`, error);
-            // Return empty array instead of throwing to prevent cascading failures
-            return [];
-        }
+/**
+ * Get user's recently earned achievements with improved handling
+ * @param {string} username - RetroAchievements username
+ * @param {number} count - Number of achievements to fetch (default: 50)
+ * @returns {Promise<Array>} Array of recent achievements with normalized data
+ */
+async getUserRecentAchievements(username, count = 50) {
+    // For recent achievements, we use a shorter cache period
+    const cacheKey = `recent_achievements_${username}_${count}`;
+    const cachedData = this.getCachedItem(cacheKey);
+    
+    // Recent achievements should have a shorter TTL (1 minute)
+    if (cachedData && (Date.now() - this.cache.get(cacheKey).timestamp) < 60000) {
+        return cachedData;
     }
+    
+    try {
+        // Use the rate limiter to make the API call
+        const achievements = await this.rateLimiter.add(() => 
+            getUserRecentAchievements(this.authorization, {
+                userName: username, // Make sure to use the correct parameter name (userName, not username)
+                count
+            })
+        );
+        
+        // Validate and normalize the achievement data
+        const normalizedAchievements = [];
+        
+        if (Array.isArray(achievements)) {
+            // Process each achievement
+            for (const achievement of achievements) {
+                if (!achievement) continue;
+                
+                // Create a normalized achievement object with all required fields
+                const normalizedAchievement = {
+                    ID: achievement.ID || achievement.id || String(achievement.AchievementID) || String(achievement.achievementId) || "unknown",
+                    Title: achievement.Title || achievement.title || "Unknown Achievement",
+                    Description: achievement.Description || achievement.description || "",
+                    Points: parseInt(achievement.Points || achievement.points || 0, 10),
+                    BadgeName: achievement.BadgeName || achievement.badgeName || "",
+                    GameID: achievement.GameID || achievement.gameId || String(achievement.GameID) || "unknown",
+                    GameTitle: achievement.GameTitle || achievement.gameTitle || "Unknown Game",
+                    ConsoleName: achievement.ConsoleName || achievement.consoleName || "Unknown Console",
+                    DateEarned: achievement.DateEarned || achievement.dateEarned || new Date().toISOString()
+                };
+                
+                // Add the normalized achievement to the array
+                normalizedAchievements.push(normalizedAchievement);
+                
+                // Log details about this achievement for debugging
+                console.log(`Normalized achievement for ${username}: ${normalizedAchievement.Title} (Game: ${normalizedAchievement.GameTitle}, ID: ${normalizedAchievement.ID})`);
+            }
+        }
+        
+        // Cache the normalized result
+        this.setCachedItem(cacheKey, normalizedAchievements);
+        
+        return normalizedAchievements;
+    } catch (error) {
+        console.error(`Error fetching recent achievements for ${username}:`, error);
+        // Return empty array instead of throwing to prevent cascading failures
+        return [];
+    }
+}
 
     /**
      * Get game information
