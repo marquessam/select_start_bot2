@@ -19,8 +19,8 @@ const POINTS = {
 // Shadow games are limited to beaten status maximum (4 points)
 const SHADOW_MAX_POINTS = POINTS.BEATEN;
 
-// Number of users to show per embed
-const USERS_PER_PAGE = 15;
+// Number of users to show per embed - REDUCED to avoid Discord embed limits
+const USERS_PER_PAGE = 8;
 
 export default {
     data: new SlashCommandBuilder()
@@ -138,7 +138,7 @@ export default {
                     // Regular database approach for most users
                     if (!shouldSync) {
                         const points = await this.calculatePointsFromDatabase(user, challengeMap, selectedYear);
-                        if (points.totalPoints > 0) {
+                        if (points.totalPoints > 0) {  // IMPORTANT: Only include users with points
                             userPoints.push(points);
                         }
                         continue;
@@ -147,7 +147,7 @@ export default {
                     // For admins using sync option: recalculate directly from RetroAPI similar to profile.js
                     try {
                         const points = await this.syncAndCalculatePoints(user, challengeMap, selectedYear);
-                        if (points.totalPoints > 0) {
+                        if (points.totalPoints > 0) {  // IMPORTANT: Only include users with points
                             userPoints.push(points);
                         }
                     } catch (error) {
@@ -218,9 +218,6 @@ export default {
         let shadowBeatenCount = 0;
         let shadowParticipationCount = 0;
         
-        // Track if we need to update the database
-        let needDatabaseUpdate = false;
-
         // Process monthly challenges
         for (const [dateStr, data] of user.monthlyChallenges.entries()) {
             const challengeDate = new Date(dateStr);
@@ -233,7 +230,6 @@ export default {
                 continue; // Skip if no matching challenge
             }
             
-            // Check if we should recalculate this challenge's status
             // First handle the mastery case which is simple
             if (data.progress === 3) {
                 // Mastery (7 points)
@@ -269,11 +265,6 @@ export default {
                 shadowParticipationCount++;
                 challengePoints += POINTS.PARTICIPATION;
             }
-        }
-        
-        // Save user if we updated any data
-        if (needDatabaseUpdate) {
-            await user.save();
         }
 
         // Get community awards points
@@ -475,7 +466,7 @@ export default {
     createPaginatedEmbeds(userPoints, selectedYear, challengeCount, isSynced) {
         const embeds = [];
 
-        // Calculate how many pages we need
+        // Calculate how many pages we need - REDUCED PER PAGE COUNT
         const totalPages = Math.ceil(userPoints.length / USERS_PER_PAGE);
         
         for (let page = 0; page < totalPages; page++) {
@@ -499,34 +490,48 @@ export default {
                 embed.setDescription(description);
             }
             
-            // Generate leaderboard text for this page - super compact format
-            let leaderboardText = '';
-            
-            usersOnPage.forEach((user) => {
-                // Use the assigned rank that accounts for ties
-                const rankEmoji = user.rank <= 3 ? RANK_EMOJIS[user.rank] : `${user.rank}.`;
+            // UPDATED: Split users into multiple fields to avoid 1024 char limit
+            // Each field will contain 2-3 users
+            const usersPerField = 3;
+            for (let i = 0; i < usersOnPage.length; i += usersPerField) {
+                const fieldUsers = usersOnPage.slice(i, i + usersPerField);
                 
-                // Create an ultra-compact display using one line per user
-                const monthlyStats = `✨${user.stats.mastery} ⭐${user.stats.beaten} 🏁${user.stats.participation}`;
+                // Generate more compact text for this subset of users
+                let leaderboardText = '';
                 
-                // Generate shadow stats only if they have any
-                let shadowStats = "None";
-                if (user.stats.shadowBeaten > 0 || user.stats.shadowParticipation > 0) {
-                    shadowStats = `⭐${user.stats.shadowBeaten} 🏁${user.stats.shadowParticipation}`;
-                }
+                fieldUsers.forEach((user) => {
+                    // Use the assigned rank that accounts for ties
+                    const rankEmoji = user.rank <= 3 ? RANK_EMOJIS[user.rank] : `${user.rank}.`;
+                    
+                    // MORE COMPACT: Use shorter format and abbreviations
+                    const m = user.stats.mastery;
+                    const b = user.stats.beaten;
+                    const p = user.stats.participation;
+                    const sb = user.stats.shadowBeaten;
+                    const sp = user.stats.shadowParticipation;
+                    
+                    // Super compact display format
+                    leaderboardText += 
+                        `${rankEmoji} **${user.username}** - ${user.totalPoints}pts ` +
+                        `(${user.challengePoints}+${user.communityPoints})\n` +
+                        `M:${m}✨${b}⭐${p}🏁 S:${sb}⭐${sp}🏁\n\n`;
+                });
                 
-                leaderboardText += 
-                    `${rankEmoji} **${user.username}** - ${user.totalPoints} pts\n` +
-                    `└ Monthly: ${user.challengePoints} | Community: ${user.communityPoints} | M: ${monthlyStats} | S: ${shadowStats}\n\n`;
-            });
-            
-            embed.addFields({ name: 'Rankings', value: leaderboardText });
+                // Add field with a dynamically generated name based on ranks
+                const firstRank = fieldUsers[0].rank;
+                const lastRank = fieldUsers[fieldUsers.length-1].rank;
+                const fieldName = firstRank === lastRank ? 
+                    `Rank ${firstRank}` : 
+                    `Ranks ${firstRank}-${lastRank}`;
+                    
+                embed.addFields({ name: fieldName, value: leaderboardText });
+            }
             
             // Add point system explanation to the last page
             if (page === totalPages - 1) {
                 embed.addFields({
                     name: 'Point System',
-                    value: '✨ Mastery: 7pts | ⭐ Beaten: 4pts | 🏁 Participation: 1pt | Shadow games ineligible for mastery'
+                    value: '✨ Mastery: 7pts | ⭐ Beaten: 4pts | 🏁 Participation: 1pt | Shadow max: Beaten (4pts)'
                 });
             }
             
