@@ -2,6 +2,7 @@ import { SlashCommandBuilder, EmbedBuilder } from 'discord.js';
 import { User } from '../../models/User.js';
 import { Challenge } from '../../models/Challenge.js';
 import retroAPI from '../../services/retroAPI.js';
+import statsUpdateService from '../../services/statsUpdateService.js';
 
 const AWARD_EMOJIS = {
     MASTERY: '✨',
@@ -50,6 +51,72 @@ export default {
         await interaction.deferReply();
 
         try {
+            // NEW CODE START - Update database before showing leaderboard
+            try {
+                console.log('Updating stats before displaying leaderboard...');
+                
+                // Skip update if one is already in progress
+                if (!statsUpdateService.isUpdating) {
+                    // Only update stats for the requesting user to keep response time reasonable
+                    const requestingUser = await User.findOne({ discordId: interaction.user.id });
+                    
+                    if (requestingUser) {
+                        // Get current date for finding current challenge
+                        const now = new Date();
+                        const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+                        const nextMonthStart = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+
+                        // Get current challenge
+                        const currentChallenge = await Challenge.findOne({
+                            date: {
+                                $gte: currentMonthStart,
+                                $lt: nextMonthStart
+                            }
+                        });
+                        
+                        if (currentChallenge) {
+                            console.log(`Updating stats for requesting user: ${requestingUser.raUsername}`);
+                            await statsUpdateService.updateUserStats(
+                                requestingUser, 
+                                currentChallenge, 
+                                currentMonthStart
+                            );
+                            
+                            // For better response time, update all user stats in background
+                            setTimeout(() => {
+                                statsUpdateService.start().catch(err => {
+                                    console.error('Error in background stats update:', err);
+                                });
+                            }, 100);
+                            
+                            // Try to notify the API to refresh its cache
+                            try {
+                                const response = await fetch('https://select-start-api-production.up.railway.app/api/admin/force-update', {
+                                    method: 'POST',
+                                    headers: {
+                                        'Content-Type': 'application/json',
+                                        'x-api-key': '0000'
+                                    },
+                                    body: JSON.stringify({ target: 'leaderboards' })
+                                });
+                                
+                                if (response.ok) {
+                                    console.log('Successfully notified API to refresh cache');
+                                } else {
+                                    console.error('Failed to notify API:', await response.text());
+                                }
+                            } catch (apiError) {
+                                console.error('Error notifying API:', apiError);
+                            }
+                        }
+                    }
+                }
+            } catch (syncError) {
+                console.error('Error updating stats before leaderboard:', syncError);
+                // Continue with command execution even if stats update fails
+            }
+            // NEW CODE END
+
             // Get current date for finding current challenge
             const now = new Date();
             const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
