@@ -1,3 +1,4 @@
+// src/services/statsUpdateService.js
 import { User } from '../models/User.js';
 import { Challenge } from '../models/Challenge.js';
 import retroAPI from './retroAPI.js';
@@ -43,27 +44,51 @@ class StatsUpdateService {
 
         if (!currentChallenge) return;
 
-        // Calculate delay between each user update to spread them over the interval
-        // Leave 10% buffer at the end of the interval
-        const effectiveInterval = this.updateInterval * 0.9;
-        const delayBetweenUsers = Math.floor(effectiveInterval / users.length);
+        console.log(`Updating stats for ${users.length} users...`);
 
-        // Update each user's stats with delay
-        for (let i = 0; i < users.length; i++) {
-            const user = users[i];
-            
-            // Use setTimeout to spread out the API calls
-            await new Promise(resolve => {
-                setTimeout(async () => {
-                    try {
-                        await this.updateUserStats(user, currentChallenge, currentMonthStart);
-                        resolve();
-                    } catch (error) {
+        // Update each user's stats in parallel with reasonable concurrency
+        const concurrencyLimit = 3; // Process 3 users at a time
+        const userBatches = [];
+        
+        // Split users into batches
+        for (let i = 0; i < users.length; i += concurrencyLimit) {
+            userBatches.push(users.slice(i, i + concurrencyLimit));
+        }
+        
+        // Process each batch of users
+        for (const batch of userBatches) {
+            await Promise.all(batch.map(user => 
+                this.updateUserStats(user, currentChallenge, currentMonthStart)
+                    .catch(error => {
                         console.error(`Error updating stats for user ${user.raUsername}:`, error);
-                        resolve(); // Continue with next user even if there's an error
-                    }
-                }, i * delayBetweenUsers);
+                        // Continue with next user even if there's an error
+                    })
+            ));
+            
+            // Small delay between batches to avoid overwhelming RetroAchievements API
+            await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+        
+        console.log(`Finished updating stats for ${users.length} users`);
+        
+        // Try to notify the API to refresh its cache
+        try {
+            const response = await fetch('https://select-start-api-production.up.railway.app/api/admin/force-update', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-api-key': '0000'
+                },
+                body: JSON.stringify({ target: 'leaderboards' })
             });
+            
+            if (response.ok) {
+                console.log('Successfully notified API to refresh cache');
+            } else {
+                console.error('Failed to notify API:', await response.text());
+            }
+        } catch (error) {
+            console.error('Error notifying API:', error);
         }
     }
 
@@ -128,27 +153,19 @@ class StatsUpdateService {
             // Calculate points for monthly challenge based on progression and win achievements
             let monthlyPoints = 0;
             
-            // For mastery points, ALL achievements must have been earned this month
-            // Check if user has earned all required achievements this month
-            const allAchievementsEarnedThisMonth = Object.entries(userAchievements)
-                .filter(([id, data]) => data.dateEarned)
-                .every(([id, data]) => {
-                    const earnedDate = new Date(data.dateEarned);
-                    return earnedDate >= currentMonthStart;
-                });
+            // For mastery points, all achievements must have been earned
+            const hasAllAchievements = monthlyProgress.numAwardedToUser === challenge.monthly_challange_game_total;
             
-            // For mastery, ALL achievements must be earned THIS MONTH
-            if (monthlyProgress.numAwardedToUser === challenge.monthly_challange_game_total && allAchievementsEarnedThisMonth) {
+            // For mastery, ALL achievements must be earned
+            if (hasAllAchievements) {
                 monthlyPoints = 3; // Mastery
             } 
             // For beaten status, the user must have all progression achievements AND at least one win achievement (if any required)
-            // AND at least one of those achievements must have been earned this month
             else if (totalValidProgressionAchievements.length === progressionAchievements.length && 
-                     (winAchievements.length === 0 || totalValidWinAchievements.length > 0) &&
-                     (earnedProgressionInMonth.length > 0 || earnedWinInMonth.length > 0)) {
+                     (winAchievements.length === 0 || totalValidWinAchievements.length > 0)) {
                 monthlyPoints = 2; // Beaten
             } 
-            // For participation, at least one achievement must be earned this month
+            // For participation, at least one achievement must be earned
             else if (achievementsEarnedThisMonth.length > 0) {
                 monthlyPoints = 1; // Participation
             }
@@ -221,29 +238,24 @@ class StatsUpdateService {
                     allEarnedShadowAchievements.includes(id)
                 );
                 
-                // For shadow mastery, ALL achievements must have been earned this month
-                const allShadowAchievementsEarnedThisMonth = Object.entries(userShadowAchievements)
-                    .filter(([id, data]) => data.dateEarned)
-                    .every(([id, data]) => {
-                        const earnedDate = new Date(data.dateEarned);
-                        return earnedDate >= currentMonthStart;
-                    });
-                
                 // Calculate points for shadow challenge based on progression and win achievements
                 let shadowPoints = 0;
                 
-                // For mastery, ALL achievements must be earned THIS MONTH
-                if (shadowProgress.numAwardedToUser === challenge.shadow_challange_game_total && allShadowAchievementsEarnedThisMonth) {
-                    shadowPoints = 3; // Mastery
-                } 
-                // For beaten status, the user must have all progression achievements AND at least one win achievement (if any required)
-                // AND at least one of those achievements must have been earned this month
-                else if (totalValidShadowProgressionAchievements.length === progressionShadowAchievements.length && 
-                         (winShadowAchievements.length === 0 || totalValidShadowWinAchievements.length > 0) &&
-                         (earnedShadowProgressionInMonth.length > 0 || earnedShadowWinInMonth.length > 0)) {
+                // Check if user has all progression achievements in the shadow game
+                const hasAllProgressionShadowAchievements = 
+                    progressionShadowAchievements.length > 0 && 
+                    progressionShadowAchievements.every(id => allEarnedShadowAchievements.includes(id));
+
+                // Check if user has at least one win achievement in the shadow game (if required)
+                const hasWinShadowAchievement = 
+                    winShadowAchievements.length === 0 || 
+                    winShadowAchievements.some(id => allEarnedShadowAchievements.includes(id));
+                
+                // For shadow games, "Beaten" is the highest status (2 points)
+                if (hasAllProgressionShadowAchievements && hasWinShadowAchievement) {
                     shadowPoints = 2; // Beaten
                 } 
-                // For participation, at least one achievement must be earned this month
+                // For participation, at least one achievement must be earned
                 else if (shadowAchievementsEarnedThisMonth.length > 0) {
                     shadowPoints = 1; // Participation
                 }
