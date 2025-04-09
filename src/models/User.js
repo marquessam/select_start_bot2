@@ -51,14 +51,20 @@ const userSchema = new mongoose.Schema({
     monthlyChallenges: {
         type: Map,
         of: {
-            progress: Number
+            progress: Number,
+            achievements: Number,  // Number of achievements earned this month
+            totalAchievements: Number, // Total achievements in the game
+            percentage: Number     // Completion percentage
         },
         default: () => new Map()
     },
     shadowChallenges: {
         type: Map,
         of: {
-            progress: Number
+            progress: Number,
+            achievements: Number,  // Number of achievements earned this month
+            totalAchievements: Number, // Total achievements in the game
+            percentage: Number     // Completion percentage
         },
         default: () => new Map()
     },
