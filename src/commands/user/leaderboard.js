@@ -206,6 +206,7 @@ export default {
                                 `**Total Achievements:** ${currentChallenge.monthly_challange_game_total}\n` +
                                 `**Challenge Ends:** ${endDateFormatted}\n` +
                                 `**Time Remaining:** ${timeRemaining}\n\n` +
+                                `${AWARD_EMOJIS.MASTERY} Mastery (3pts) | ${AWARD_EMOJIS.BEATEN} Beaten (3pts) | ${AWARD_EMOJIS.PARTICIPATION} Part. (1pt)\n\n` +
                                 `*Note: Only achievements earned during ${monthName} count toward challenge status.*`;
 
             embed.setDescription(description);
@@ -258,15 +259,6 @@ export default {
                     value: leaderboardText || 'No rankings available.'
                 });
             }
-
-            // Add legend
-            embed.addFields({
-                name: 'Legend',
-                value: `${AWARD_EMOJIS.MASTERY} Mastery (3 points) - All achievements must be earned this month\n` +
-                       `${AWARD_EMOJIS.BEATEN} Beaten (3 points) - Must complete all progression requirements this month\n` +
-                       `${AWARD_EMOJIS.PARTICIPATION} Participation (1 point) - At least one achievement earned this month`,
-                inline: true
-            });
 
             return interaction.editReply({ embeds: [embed] });
 
