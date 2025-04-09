@@ -1,707 +1,712 @@
-// services/retroAPI.js
-import { buildAuthorization, getGame, getGameExtended, getUserProfile, getUserRecentAchievements, 
-    getUserSummary, getGameInfoAndUserProgress, getGameRankAndScore, getUserCompletedGames,
-    getUserAwards, getGameList, getConsoleIds, getAchievementCount } from '@retroachievements/api';
+// src/services/achievementFeedService.js
+import { User } from '../models/User.js';
+import { Challenge } from '../models/Challenge.js';
+import retroAPI from './retroAPI.js';
+import { EmbedBuilder } from 'discord.js';
 import { config } from '../config/config.js';
-import EnhancedRateLimiter from './EnhancedRateLimiter.js';
 
-class RetroAchievementsService {
+const AWARD_EMOJIS = {
+    MASTERY: '✨',
+    BEATEN: '⭐',
+    PARTICIPATION: '🏁'
+};
+
+class AchievementFeedService {
     constructor() {
-        this.authorization = buildAuthorization({
-            userName: process.env.RA_USERNAME,
-            webApiKey: config.retroAchievements.apiKey
-        });
-        
-        // Create an enhanced rate limiter
-        this.rateLimiter = new EnhancedRateLimiter({
-            requestsPerInterval: 1,     // 1 request per interval
-            interval: 1200,             // 1.2 seconds (slightly more than 1 second for safety margin)
-            maxRetries: 3,              // Retry up to 3 times for rate limit errors
-            retryDelay: 3000            // Start with a 3-second delay between retries
-        });
-        
-        // Cache for responses to reduce API calls
-        this.cache = new Map();
-        // TTL for cache in milliseconds (5 minutes)
-        this.cacheTTL = 5 * 60 * 1000;
+        this.client = null;
+        // Cache to store user profile image URLs to reduce API calls
+        this.profileImageCache = new Map();
+        // Cache TTL in milliseconds (30 minutes)
+        this.cacheTTL = 30 * 60 * 1000;
+        // Queue for announcement rate limiting
+        this.announcementQueue = [];
+        this.processingQueue = false;
     }
 
-    /**
-     * Get item from cache if valid
-     * @param {string} key - Cache key
-     * @returns {any} Cached item or undefined if not found/expired
-     */
-    getCachedItem(key) {
-        if (!this.cache.has(key)) return undefined;
-        
-        const { data, timestamp } = this.cache.get(key);
-        const now = Date.now();
-        
-        // Check if cached item is still valid
-        if (now - timestamp > this.cacheTTL) {
-            this.cache.delete(key);
-            return undefined;
+    setClient(client) {
+        this.client = client;
+        console.log('Discord client set for achievement feed service');
+    }
+
+    async start() {
+        if (!this.client) {
+            console.error('Discord client not set for achievement feed service');
+            return;
         }
-        
-        return data;
-    }
 
-    /**
-     * Store item in cache
-     * @param {string} key - Cache key
-     * @param {any} data - Data to cache
-     */
-    setCachedItem(key, data) {
-        this.cache.set(key, {
-            data,
-            timestamp: Date.now()
-        });
-    }
-
-    /**
-     * Get user's progress for a specific game
-     * @param {string} username - RetroAchievements username
-     * @param {string} gameId - RetroAchievements game ID
-     * @returns {Promise<Object>} User's progress data
-     */
-    async getUserGameProgress(username, gameId) {
-        const cacheKey = `progress_${username}_${gameId}`;
-        const cachedData = this.getCachedItem(cacheKey);
-        
-        if (cachedData) {
-            return cachedData;
-        }
-        
         try {
-            // Use the rate limiter to make the API call
-            const progress = await this.rateLimiter.add(() => 
-                getGameInfoAndUserProgress(this.authorization, {
-                    gameId: gameId,
-                    userName: username
-                })
-            );
-
-            // Cache the result
-            this.setCachedItem(cacheKey, progress);
-
-            return progress;
+            console.log('Starting achievement feed service check...');
+            await this.checkForNewAchievements();
         } catch (error) {
-            console.error(`Error fetching game progress for ${username} in game ${gameId}:`, error);
-            
-            // Return a minimal valid response structure to prevent further errors
-            return {
-                numAwardedToUser: 0,
-                achievements: {},
-                title: `Game ${gameId}`
-            };
+            console.error('Error in achievement feed service:', error);
         }
     }
 
-    /**
-     * Get a bunch of info about a game
-     * @param {string} gameId - RetroAchievements game ID
-     * @returns {Promise<Object>} Game data including achievements and more
-     */
-    async getGameInfoExtended(gameId) {
-        const cacheKey = `game_extended_${gameId}`;
-        const cachedData = this.getCachedItem(cacheKey);
-        
-        if (cachedData) {
-            return cachedData;
+    async testAchievementChannel() {
+        if (!this.client) {
+            console.error('Discord client not set');
+            return false;
         }
-        
-        try {
-            // Use the rate limiter to make the API call
-            const game = await this.rateLimiter.add(() => 
-                getGameExtended(this.authorization, {
-                    gameId: parseInt(gameId)
-                })
-            );
-            
-            // Cache the result
-            this.setCachedItem(cacheKey, game);
-            
-            return game;
-        } catch (error) {
-            console.error(`Error fetching achievements for game ${gameId}:`, error);
-            throw error;
-        }
-    }
 
-    /**
-     * Get the number of achievements for a game
-     * @param {string} gameId - RetroAchievements game ID
-     * @returns {Promise<Object>} Game data including achievement count
-     */
-    async getGameAchievementCount(gameId) {
-        const cacheKey = `achievement_count_${gameId}`;
-        const cachedData = this.getCachedItem(cacheKey);
-        
-        if (cachedData !== undefined) {
-            return cachedData;
-        }
-        
         try {
-            // Use the rate limiter to make the API call
-            const game = await this.rateLimiter.add(() => 
-                getAchievementCount(this.authorization, {
-                    gameId: parseInt(gameId)
-                })
-            );
-            
-            const count = game.achievementIds.length;
-            
-            // Cache the result
-            this.setCachedItem(cacheKey, count);
-            
-            return count;
-        } catch (error) {
-            console.error(`Error fetching achievements for game ${gameId}:`, error);
-            throw error;
-        }
-    }
-
-    /**
-     * Get user's recently earned achievements
-     * @param {string} username - RetroAchievements username
-     * @param {number} count - Number of achievements to fetch (default: 50)
-     * @returns {Promise<Array>} Array of recent achievements
-     */
-    async getUserRecentAchievements(username, count = 50) {
-        // For recent achievements, we use a shorter cache period
-        const cacheKey = `recent_achievements_${username}_${count}`;
-        const cachedData = this.getCachedItem(cacheKey);
-        
-        // Recent achievements should have a shorter TTL (1 minute)
-        if (cachedData && (Date.now() - this.cache.get(cacheKey).timestamp) < 60000) {
-            return cachedData;
-        }
-        
-        try {
-            // Use the rate limiter to make the API call
-            const achievements = await this.rateLimiter.add(() => 
-                getUserRecentAchievements(this.authorization, {
-                    userName: username,
-                    count
-                })
-            );
-            
-            // Log a sample of achievements received
-            if (achievements && achievements.length > 0) {
-                console.log(`Sample achievement for ${username}:`, JSON.stringify(achievements[0]).substring(0, 300));
+            // Get the channel
+            const channel = await this.getAnnouncementChannel();
+            if (!channel) {
+                console.error('Could not get announcement channel');
+                return false;
             }
-            
-            // Cache the result
-            this.setCachedItem(cacheKey, achievements);
-            
-            return achievements;
-        } catch (error) {
-            console.error(`Error fetching recent achievements for ${username}:`, error);
-            // Return empty array instead of throwing to prevent cascading failures
-            return [];
-        }
-    }
 
-    /**
-     * Get game information
-     * @param {string} gameId - RetroAchievements game ID
-     * @returns {Promise<Object>} Game information
-     */
-    async getGameInfo(gameId) {
-        // Don't process null or undefined gameIds
-        if (!gameId) {
-            console.error("Attempted to get game info with null/undefined gameId");
-            return {
-                id: "unknown",
-                title: "Unknown Game",
-                consoleName: "Unknown",
-                imageIcon: ""
-            };
-        }
-
-        const cacheKey = `game_info_${gameId}`;
-        const cachedData = this.getCachedItem(cacheKey);
-        
-        if (cachedData) {
-            return cachedData;
-        }
-        
-        try {
-            // Use the rate limiter to make the API call
-            const game = await this.rateLimiter.add(() => 
-                getGame(this.authorization, {
-                    gameId: parseInt(gameId)
-                })
-            );
+            console.log(`Found announcement channel: ${channel.name} (ID: ${channel.id})`);
             
-            // Log a sample of the game info received
-            console.log(`Game info for ${gameId}:`, JSON.stringify(game).substring(0, 300));
-            
-            // Cache the result
-            this.setCachedItem(cacheKey, game);
-            
-            return game;
-        } catch (error) {
-            console.error(`Error fetching game info for ${gameId}:`, error);
-            
-            // Return a minimal valid response structure to prevent further errors
-            return {
-                id: gameId,
-                title: `Game ${gameId}`,
-                consoleName: "Unknown",
-                imageIcon: ""
-            };
-        }
-    }
-
-    /**
-     * Get user information including profile image and stats
-     * @param {string} username - RetroAchievements username
-     * @returns {Promise<Object>} User information
-     */
-    async getUserInfo(username) {
-        const cacheKey = `user_info_${username}`;
-        const cachedData = this.getCachedItem(cacheKey);
-        
-        if (cachedData) {
-            return cachedData;
-        }
-        
-        try {
-            // Use the rate limiter for each API call
-            const summary = await this.rateLimiter.add(() => 
-                getUserSummary(this.authorization, { userName: username })
-            );
-            
-            const profile = await this.rateLimiter.add(() => 
-                getUserProfile(this.authorization, { userName: username })
-            );
-            
-            const awards = await this.rateLimiter.add(() => 
-                getUserAwards(this.authorization, { userName: username })
-            );
-
-            const result = {
-                ...summary,
-                ...profile,
-                awards,
-                profileImageUrl: `https://retroachievements.org${profile.userPic}`
-            };
-            
-            // Cache the result
-            this.setCachedItem(cacheKey, result);
-            
-            return result;
-        } catch (error) {
-            console.error(`Error fetching user info for ${username}:`, error);
-            
-            // Return a minimal valid response structure to prevent further errors
-            return {
-                profileImageUrl: `https://retroachievements.org/UserPic/${username}.png`
-            };
-        }
-    }
-
-    /**
-     * Get a single achievement details directly
-     * @param {string} gameId - RetroAchievements game ID
-     * @param {string} achievementId - Achievement ID
-     * @returns {Promise<Object>} Achievement details
-     */
-    async getAchievementInfo(gameId, achievementId) {
-        const cacheKey = `achievement_info_${gameId}_${achievementId}`;
-        const cachedData = this.getCachedItem(cacheKey);
-        
-        if (cachedData) {
-            return cachedData;
-        }
-        
-        try {
-            // Since there's no direct API for single achievement, get all game achievements
-            const gameInfo = await this.getGameInfoExtended(gameId);
-            
-            if (!gameInfo || !gameInfo.achievements) {
-                console.error(`No achievements found for game ${gameId}`);
-                return {
-                    ID: achievementId,
-                    Title: "Unknown Achievement",
-                    Description: "",
-                    Points: 0,
-                    BadgeName: ""
-                };
+            // Test sending a message
+            try {
+                const testMessage = await channel.send('🔍 Achievement feed test message - please delete');
+                console.log(`Successfully sent test message to channel ${channel.name}, message ID: ${testMessage.id}`);
+                
+                // Delete the test message after a moment
+                setTimeout(async () => {
+                    try {
+                        await testMessage.delete();
+                        console.log('Test message deleted');
+                    } catch (deleteError) {
+                        console.log('Could not delete test message:', deleteError.message);
+                    }
+                }, 5000);
+                
+                return true;
+            } catch (sendError) {
+                console.error(`Failed to send test message to channel: ${sendError.message}`);
+                console.error('This indicates a permissions issue!');
+                
+                // Check permissions explicitly
+                const botUser = this.client.user;
+                if (botUser) {
+                    const permissions = channel.permissionsFor(botUser);
+                    console.log('Bot permissions in channel:');
+                    console.log('- Send Messages:', permissions?.has('SendMessages') ? 'YES' : 'NO');
+                    console.log('- Embed Links:', permissions?.has('EmbedLinks') ? 'YES' : 'NO');
+                    console.log('- View Channel:', permissions?.has('ViewChannel') ? 'YES' : 'NO');
+                }
+                
+                return false;
             }
-            
-            // Find the specific achievement
-            const achievement = gameInfo.achievements[achievementId];
-            
-            if (!achievement) {
-                console.error(`Achievement ${achievementId} not found in game ${gameId}`);
-                return {
-                    ID: achievementId,
-                    Title: "Unknown Achievement",
-                    Description: "",
-                    Points: 0,
-                    BadgeName: ""
-                };
-            }
-            
-            // Cache the result
-            this.setCachedItem(cacheKey, achievement);
-            
-            return achievement;
         } catch (error) {
-            console.error(`Error fetching achievement info for ${achievementId} in game ${gameId}:`, error);
-            
-            // Return a minimal valid response
-            return {
-                ID: achievementId,
-                Title: "Unknown Achievement",
-                Description: "",
-                Points: 0,
-                BadgeName: ""
-            };
-        }
-    }
-
-    /**
-     * Get game leaderboard rankings
-     * @param {string} gameId - RetroAchievements game ID
-     * @returns {Promise<Array>} Leaderboard entries
-     */
-    async getGameRankAndScore(gameId) {
-        const cacheKey = `rankings_${gameId}`;
-        const cachedData = this.getCachedItem(cacheKey);
-        
-        if (cachedData) {
-            return cachedData;
-        }
-        
-        try {
-            // Use the rate limiter to make the API call
-            const rankings = await this.rateLimiter.add(() => 
-                getGameRankAndScore(this.authorization, {
-                    gameId: parseInt(gameId),
-                    type: 'high-scores'
-                })
-            );
-            
-            // Cache the result
-            this.setCachedItem(cacheKey, rankings);
-            
-            return rankings;
-        } catch (error) {
-            console.error(`Error fetching rankings for game ${gameId}:`, error);
-            throw error;
-        }
-    }
-
-    /**
-     * Get list of games for a console
-     * @param {number} consoleId - RetroAchievements console ID
-     * @returns {Promise<Array>} List of games
-     */
-    async getConsoleGames(consoleId) {
-        const cacheKey = `console_games_${consoleId}`;
-        const cachedData = this.getCachedItem(cacheKey);
-        
-        if (cachedData) {
-            return cachedData;
-        }
-        
-        try {
-            // Use the rate limiter to make the API call
-            const games = await this.rateLimiter.add(() => 
-                getGameList(this.authorization, {
-                    consoleId: parseInt(consoleId)
-                })
-            );
-            
-            // Cache the result
-            this.setCachedItem(cacheKey, games);
-            
-            return games;
-        } catch (error) {
-            console.error(`Error fetching games for console ${consoleId}:`, error);
-            throw error;
-        }
-    }
-
-    /**
-     * Get list of all consoles
-     * @returns {Promise<Array>} List of consoles
-     */
-    async getConsoles() {
-        const cacheKey = 'consoles';
-        const cachedData = this.getCachedItem(cacheKey);
-        
-        if (cachedData) {
-            return cachedData;
-        }
-        
-        try {
-            // Use the rate limiter to make the API call
-            const consoles = await this.rateLimiter.add(() => 
-                getConsoleIds(this.authorization)
-            );
-            
-            // Cache the result
-            this.setCachedItem(cacheKey, consoles);
-            
-            return consoles;
-        } catch (error) {
-            console.error('Error fetching console list:', error);
-            throw error;
-        }
-    }
-
-    /**
-     * Get user's completed games
-     * @param {string} username - RetroAchievements username
-     * @returns {Promise<Array>} List of completed games
-     */
-    async getUserCompletedGames(username) {
-        const cacheKey = `completed_games_${username}`;
-        const cachedData = this.getCachedItem(cacheKey);
-        
-        if (cachedData) {
-            return cachedData;
-        }
-        
-        try {
-            // Use the rate limiter to make the API call
-            const completed = await this.rateLimiter.add(() => 
-                getUserCompletedGames(this.authorization, {
-                    userName: username  // Make sure to use the correct parameter name (userName, not username)
-                })
-            );
-            
-            // Cache the result
-            this.setCachedItem(cacheKey, completed);
-            
-            return completed;
-        } catch (error) {
-            console.error(`Error fetching completed games for ${username}:`, error);
-            throw error;
-        }
-    }
-
-    /**
-     * Validate that a user exists
-     * @param {string} username - RetroAchievements username
-     * @returns {Promise<boolean>} Whether the user exists
-     */
-    async validateUser(username) {
-        try {
-            // User validation results can be cached for longer periods
-            const cacheKey = `user_exists_${username.toLowerCase()}`;
-            const cachedResult = this.getCachedItem(cacheKey);
-            
-            if (cachedResult !== undefined) {
-                return cachedResult;
-            }
-            
-            // Use the rate limiter to make the API call
-            await this.rateLimiter.add(() => 
-                getUserProfile(this.authorization, { userName: username })
-            );
-            
-            // Cache the positive result
-            this.setCachedItem(cacheKey, true);
-            
-            return true;
-        } catch (error) {
-            console.log(error);
-            // Cache the negative result too
-            this.setCachedItem(`user_exists_${username.toLowerCase()}`, false);
+            console.error('Error testing achievement channel:', error);
             return false;
         }
     }
 
-/**
- * Get leaderboard entries using direct API request
- * @param {number} leaderboardId - RetroAchievements leaderboard ID
- * @returns {Promise<Object>} Leaderboard data object with Results array
- */
-async getLeaderboardEntriesDirect(leaderboardId) {
-    try {
-        const cacheKey = `direct_leaderboard_${leaderboardId}`;
-        const cachedData = this.getCachedItem(cacheKey);
+    async checkForNewAchievements() {
+        console.log('Checking for new achievements...');
         
-        if (cachedData) {
-            return cachedData;
+        // Get current challenge
+        const now = new Date();
+        const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+        const nextMonthStart = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+
+        const currentChallenge = await Challenge.findOne({
+            date: {
+                $gte: currentMonthStart,
+                $lt: nextMonthStart
+            }
+        });
+
+        // Store monthly and shadow game IDs for quick lookup
+        let monthlyGameId = null;
+        let shadowGameId = null;
+        
+        if (currentChallenge) {
+            monthlyGameId = currentChallenge.monthly_challange_gameid;
+            if (currentChallenge.shadow_challange_revealed) {
+                shadowGameId = currentChallenge.shadow_challange_gameid;
+            }
+            console.log(`Current monthly game: ${monthlyGameId}, shadow game: ${shadowGameId || 'Not revealed'}`);
+        } else {
+            console.log('No active challenge found for the current month.');
         }
         
-        // Make direct API request to the RetroAchievements leaderboard endpoint
-        const url = `https://retroachievements.org/API/API_GetLeaderboardEntries.php?i=${leaderboardId}&o=0&c=100&z=${process.env.RA_USERNAME}&y=${process.env.RA_API_KEY}`;
-        
-        const response = await fetch(url);
-        if (!response.ok) {
-            throw new Error(`API request failed with status ${response.status}`);
+        // Get announcement channel
+        const announcementChannel = await this.getAnnouncementChannel();
+        if (!announcementChannel) {
+            console.error('Announcement channel not found or inaccessible');
+            return;
         }
         
-        const data = await response.json();
-        
-        // Safely log the raw data for debugging
-        try {
-            if (data) {
-                // Check if data is an object with Results or an array
-                const structureType = Array.isArray(data) ? "array" : 
-                    (data.Results && Array.isArray(data.Results) ? "object with Results array" : "other structure");
+        console.log(`Successfully found announcement channel: ${announcementChannel.name}`);
+
+        // Get all users
+        const users = await User.find({});
+        console.log(`Processing ${users.length} users for achievements`);
+
+        for (const user of users) {
+            try {
+                // Verify user is a guild member
+                const isMember = await this.isGuildMember(user.discordId);
+                if (!isMember) {
+                    // Skip non-members silently
+                    continue;
+                }
                 
-                // Log sample data
-                if (Array.isArray(data) && data.length > 0) {
-                    const sampleJson = JSON.stringify(data[0]);
-                    console.log(`Raw leaderboard data for ${leaderboardId} (${structureType}, sample):`, 
-                        sampleJson.substring(0, 300) + '...');
-                } else if (data.Results && data.Results.length > 0) {
-                    const sampleJson = JSON.stringify(data.Results[0]);
-                    console.log(`Raw leaderboard data for ${leaderboardId} (${structureType}, sample):`, 
-                        sampleJson.substring(0, 300) + '...');
-                } else {
-                    console.log(`Raw leaderboard data for ${leaderboardId} (${structureType}):`, 
-                        JSON.stringify(data).substring(0, 300) + '...');
+                console.log(`Checking achievements for user: ${user.raUsername}`);
+                
+                // Get user's recent achievements (last 50)
+                const recentAchievements = await retroAPI.getUserRecentAchievements(user.raUsername, 50);
+                
+                if (!recentAchievements || !Array.isArray(recentAchievements) || recentAchievements.length === 0) {
+                    console.log(`No recent achievements found for ${user.raUsername}`);
+                    continue;
                 }
-            }
-        } catch (logError) {
-            console.log(`Could not log leaderboard data for ${leaderboardId}:`, logError.message);
-        }
-        
-        // Cache the result
-        this.setCachedItem(cacheKey, data);
-        
-        return data;
-    } catch (error) {
-        console.error(`Error fetching direct leaderboard entries for ${leaderboardId}:`, error);
-        return { Results: [] }; // Return empty Results array for consistent structure
-    }
-}
-    /**
-     * Get leaderboard entries for a specific leaderboard
-     * @param {number} leaderboardId - RetroAchievements leaderboard ID
-     * @param {number} offset - Starting position (0-based)
-     * @param {number} count - Number of entries to retrieve
-     * @returns {Promise<Array>} List of leaderboard entries
-     */
-    async getLeaderboardEntries(leaderboardId, offset = 0, count = 100) {
-        try {
-            // For leaderboards, use a shorter cache TTL
-            const cacheKey = `leaderboard_entries_${leaderboardId}_${offset}_${count}`;
-            const cachedData = this.getCachedItem(cacheKey);
-            
-            // Use a shorter TTL for leaderboard data (2 minutes)
-            if (cachedData && (Date.now() - this.cache.get(cacheKey).timestamp) < 120000) {
-                return cachedData;
-            }
-            
-            // Use direct API method instead
-            const entries = await this.getLeaderboardEntriesDirect(leaderboardId);
-
-            // Process and standardize the entries
-            const processedEntries = this.processLeaderboardEntries(entries);
-            
-            // Cache the processed entries
-            this.setCachedItem(cacheKey, processedEntries);
-            
-            return processedEntries;
-        } catch (error) {
-            console.error(`Error fetching leaderboard entries for leaderboard ${leaderboardId}:`, error);
-            return [];
-        }
-    }
-
-    /**
-     * Process leaderboard entries to standardize the format
-     * @param {Object|Array} data - Raw API response
-     * @returns {Array} Standardized leaderboard entries
-     */
-    processLeaderboardEntries(data) {
-        if (!data || !Array.isArray(data)) {
-            return [];
-        }
-        
-        // Log a sample of the data to understand its structure
-        if (data.length > 0) {
-            console.log(`Sample leaderboard entry:`, JSON.stringify(data[0]).substring(0, 300));
-        }
-        
-        // Convert entries to a standard format
-        return data.map(entry => {
-            // Handle different API response formats
-            const user = entry.User || entry.user || '';
-            const apiRank = entry.Rank || entry.rank || '0';
-            
-            // For scores, check all possible properties
-            let score = null;
-            
-            // Check for numeric scores first (points-based leaderboards)
-            if (entry.Score !== undefined) score = entry.Score;
-            else if (entry.score !== undefined) score = entry.score;
-            else if (entry.Value !== undefined) score = entry.Value;
-            else if (entry.value !== undefined) score = entry.value;
-            
-            // Get the formatted version if available
-            let formattedScore = null;
-            if (entry.FormattedScore) formattedScore = entry.FormattedScore;
-            else if (entry.formattedScore) formattedScore = entry.formattedScore;
-            else if (entry.ScoreFormatted) formattedScore = entry.ScoreFormatted;
-            else if (entry.scoreFormatted) formattedScore = entry.scoreFormatted;
-            
-            // Use the appropriate score representation
-            let trackTime;
-            if (formattedScore !== null) {
-                trackTime = formattedScore;
-            } else if (score !== null) {
-                trackTime = score.toString();
-            } else {
-                // Last resort fallback
-                trackTime = "No Score";
-            }
-            
-            return {
-                ApiRank: parseInt(apiRank, 10),
-                User: user.trim(),
-                TrackTime: trackTime.toString().trim(),
-                DateSubmitted: entry.DateSubmitted || entry.dateSubmitted || null,
-            };
-        }).filter(entry => entry.User.length > 0);
-    }
-
-    /**
-     * Make a direct API request to the RetroAchievements API
-     * @param {string} endpoint - API endpoint
-     * @returns {Promise<Object>} API response
-     */
-    async apiRequest(endpoint) {
-        const baseUrl = 'https://retroachievements.org/API/';
-        const url = `${baseUrl}${endpoint}&z=${this.authorization.userName}&y=${this.authorization.webApiKey}`;
-        
-        try {
-            const response = await fetch(url, {
-                headers: {
-                    'User-Agent': 'Select-Start-Bot/1.0',
+                
+                console.log(`Found ${recentAchievements.length} recent achievements for ${user.raUsername}`);
+                
+                // Initialize user's announcedAchievements array if it doesn't exist
+                if (!user.announcedAchievements) {
+                    user.announcedAchievements = [];
                 }
-            });
-            
-            if (!response.ok) {
-                throw new Error(`API request failed with status ${response.status}`);
+                
+                // Process each achievement - NO MORE SKIPPING "INVALID" ACHIEVEMENTS
+                for (const achievement of recentAchievements) {
+                    // Basic null check only - not rejecting any valid achievements
+                    if (!achievement) {
+                        console.log('Skipping null achievement entry');
+                        continue;
+                    }
+                    
+                    // Extract achievement info with safe fallbacks
+                    const gameId = achievement.GameID ? String(achievement.GameID) : "unknown";
+                    const achievementId = achievement.ID || "unknown";
+                    const achievementTitle = achievement.Title || "Unknown Achievement";
+                    
+                    // Determine achievement type (monthly, shadow, or regular)
+                    let achievementType = 'regular';
+                    if (gameId === String(monthlyGameId)) {
+                        achievementType = 'monthly';
+                    } else if (gameId === String(shadowGameId)) {
+                        achievementType = 'shadow';
+                    }
+                    
+                    // Create a unique identifier for this achievement
+                    const achievementIdentifier = `${achievementType}:${gameId}:${achievementId}`;
+                    
+                    // Check if already announced
+                    if (user.announcedAchievements.includes(achievementIdentifier)) {
+                        // Already announced, skip
+                        continue;
+                    }
+                    
+                    console.log(`New achievement for ${user.raUsername}: ${achievementTitle} (${achievementType})`);
+                    
+                    // Get game info
+                    const gameInfo = await retroAPI.getGameInfo(gameId);
+                    
+                    // Queue the achievement for announcement
+                    this.queueAnnouncement(
+                        announcementChannel,
+                        user,
+                        gameInfo,
+                        achievement,
+                        achievementType,
+                        gameId
+                    );
+                    
+                    // Add to user's announced achievements
+                    user.announcedAchievements.push(achievementIdentifier);
+                    await user.save();
+                    
+                    console.log(`Saved announcement for ${user.raUsername}: ${achievementIdentifier}`);
+                }
+                
+                // Also check for awards for monthly and shadow challenges
+                if (currentChallenge) {
+                    if (monthlyGameId) {
+                        await this.checkForGameAwards(user, announcementChannel, currentChallenge, monthlyGameId, false);
+                    }
+                    
+                    if (shadowGameId) {
+                        await this.checkForGameAwards(user, announcementChannel, currentChallenge, shadowGameId, true);
+                    }
+                }
+                
+                // Add a delay between users to prevent rate limits
+                await new Promise(resolve => setTimeout(resolve, 1000));
+                
+            } catch (error) {
+                console.error(`Error processing user ${user.raUsername}:`, error);
             }
-            
-            return await response.json();
-        } catch (error) {
-            console.error(`API request failed: ${error.message}`);
-            throw error;
+        }
+        
+        // Process any pending announcements in the queue
+        await this.processAnnouncementQueue();
+        
+        console.log('Finished checking for achievements');
+    }
+
+    // Queue system for rate-limiting announcements
+    queueAnnouncement(channel, user, gameInfo, achievement, achievementType, gameId) {
+        this.announcementQueue.push({
+            channel, user, gameInfo, achievement, achievementType, gameId
+        });
+        
+        // Start processing the queue if not already processing
+        if (!this.processingQueue) {
+            this.processAnnouncementQueue();
         }
     }
     
-    /**
-     * Clear the cache
-     */
-    clearCache() {
-        this.cache.clear();
-        console.log('Cache cleared');
+    async processAnnouncementQueue() {
+        if (this.processingQueue || this.announcementQueue.length === 0) {
+            return;
+        }
+
+        this.processingQueue = true;
+        
+        try {
+            console.log(`Processing announcement queue with ${this.announcementQueue.length} items`);
+            
+            while (this.announcementQueue.length > 0) {
+                const item = this.announcementQueue.shift();
+                const { channel, user, gameInfo, achievement, achievementType, gameId } = item;
+                
+                try {
+                    await this.announceAchievement(
+                        channel, user, gameInfo, achievement, achievementType, gameId
+                    );
+                    
+                    // Add a small delay between announcements to prevent rate limiting
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                } catch (error) {
+                    console.error('Error announcing achievement:', error);
+                }
+            }
+        } catch (error) {
+            console.error('Error processing announcement queue:', error);
+        } finally {
+            this.processingQueue = false;
+        }
+    }
+
+    async checkForGameAwards(user, channel, challenge, gameId, isShadow) {
+        const gameIdString = String(gameId);
+        console.log(`Checking for awards for ${user.raUsername} in ${isShadow ? 'shadow' : 'monthly'} game ${gameIdString}`);
+        
+        // Skip if already processed
+        const awardIdentifierPrefix = isShadow ? 'shadow:award' : 'monthly:award';
+        const existingAwards = user.announcedAchievements.filter(id => 
+            id.startsWith(`${awardIdentifierPrefix}:${gameIdString}:`)
+        );
+        
+        if (existingAwards.length >= 3) {  // All 3 award types already processed
+            console.log(`All awards already processed for ${user.raUsername} in game ${gameIdString}`);
+            return;
+        }
+        
+        // Get user's game progress
+        const progress = await retroAPI.getUserGameProgress(user.raUsername, gameId);
+        
+        // Get game info
+        const gameInfo = await retroAPI.getGameInfo(gameId);
+        
+        // Get relevant achievement lists
+        const progressionAchievements = isShadow 
+            ? challenge.shadow_challange_progression_achievements 
+            : challenge.monthly_challange_progression_achievements;
+            
+        const winAchievements = isShadow
+            ? challenge.shadow_challange_win_achievements
+            : challenge.monthly_challange_win_achievements;
+            
+        const totalAchievements = isShadow
+            ? challenge.shadow_challange_game_total
+            : challenge.monthly_challange_game_total;
+        
+        // Get the user's earned achievements
+        const userEarnedAchievements = Object.entries(progress.achievements || {})
+            .filter(([id, data]) => data.hasOwnProperty('dateEarned'))
+            .map(([id]) => id);
+        
+        // Determine current award level
+        let currentAward = null;
+        
+        // Check if user has all achievements (Mastery) - only for monthly, not shadow
+        const hasAllAchievements = progress.numAwardedToUser === totalAchievements;
+        
+        // Check if user has completed all progression achievements
+        const hasAllProgressionAchievements = progressionAchievements.every(id => 
+            userEarnedAchievements.includes(id)
+        );
+        
+        // Check if user has at least one win condition (if any exist)
+        const hasWinCondition = winAchievements.length === 0 || 
+            winAchievements.some(id => userEarnedAchievements.includes(id));
+        
+        // Determine the award
+        if (hasAllAchievements && !isShadow) {
+            // Mastery is only for monthly challenges, not shadow
+            currentAward = 'MASTERY';
+        } else if (hasAllProgressionAchievements && hasWinCondition) {
+            currentAward = 'BEATEN';
+        } else if (progress.numAwardedToUser > 0) {
+            currentAward = 'PARTICIPATION';
+        }
+
+        // Skip if no award achieved
+        if (!currentAward) {
+            return;
+        }
+        
+        // Generate award identifier with prefix for shadow games
+        const awardIdentifier = `${awardIdentifierPrefix}:${gameIdString}:${currentAward}`;
+        
+        // Check if award has been announced
+        if (user.announcedAchievements.includes(awardIdentifier)) {
+            return;
+        }
+        
+        console.log(`Announcing ${currentAward} award for ${user.raUsername} in ${isShadow ? 'shadow' : 'monthly'} challenge`);
+        
+        // User has reached a new award level, announce it
+        const announced = await this.announceGameAward(
+            channel,
+            user,
+            gameInfo,
+            currentAward,
+            progress.numAwardedToUser,
+            totalAchievements,
+            isShadow,
+            hasAllProgressionAchievements,
+            hasWinCondition,
+            gameId
+        );
+        
+        if (announced) {
+            // Add to announced achievements
+            user.announcedAchievements.push(awardIdentifier);
+            await user.save();
+        }
+    }
+
+    // Get user's profile image URL with caching
+    async getUserProfileImageUrl(username) {
+        // Check if we have a cached entry
+        const now = Date.now();
+        if (this.profileImageCache.has(username)) {
+            const { url, timestamp } = this.profileImageCache.get(username);
+            // If cache is still valid, return the cached URL
+            if (now - timestamp < this.cacheTTL) {
+                return url;
+            }
+        }
+        
+        try {
+            // Get user info from RetroAPI
+            const userInfo = await retroAPI.getUserInfo(username);
+            // Store in cache
+            this.profileImageCache.set(username, {
+                url: userInfo.profileImageUrl,
+                timestamp: now
+            });
+            return userInfo.profileImageUrl;
+        } catch (error) {
+            console.error(`Error fetching profile image for ${username}:`, error);
+            // Fallback to legacy URL format if API call fails
+            return `https://retroachievements.org/UserPic/${username}.png`;
+        }
+    }
+
+    async announceAchievement(channel, user, gameInfo, achievement, achievementType, gameId) {
+        try {
+            console.log(`Creating embed for achievement announcement: ${achievement.Title || 'Unknown Achievement'} (${achievementType})`);
+            
+            // Set color and title based on achievement type - UPDATED COLORS
+            let color = '#4CAF50';  // Green for regular achievements
+            let challengeTypeText = "Achievement";
+            let emoji = "🎮";
+            
+            if (achievementType === 'monthly') {
+                color = '#FFD700';  // Yellow for monthly
+                challengeTypeText = "Monthly Challenge";
+                emoji = "🏆";
+            } else if (achievementType === 'shadow') {
+                color = '#9B59B6';  // Purple for shadow
+                challengeTypeText = "Shadow Challenge";
+                emoji = "👥";
+            }
+            
+            // Create embed
+            const embed = new EmbedBuilder()
+                .setTitle(`${emoji} Achievement Unlocked!`)
+                .setColor(color)
+                .setTimestamp();
+
+            // Get user's profile image URL
+            const profileImageUrl = await this.getUserProfileImageUrl(user.raUsername);
+
+            // Use RetroAchievements username as the author
+            embed.setAuthor({
+                name: user.raUsername,
+                iconURL: profileImageUrl,
+                url: `https://retroachievements.org/user/${user.raUsername}`
+            });
+
+            // Set thumbnail to achievement image if available, otherwise use game image
+            if (achievement.BadgeName) {
+                embed.setThumbnail(`https://media.retroachievements.org/Badge/${achievement.BadgeName}.png`);
+            } else if (gameInfo?.imageIcon) {
+                embed.setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`);
+            }
+
+            // Build description
+            let description = '';
+            if (achievementType === 'monthly' || achievementType === 'shadow') {
+                description = `**${user.raUsername}** has earned a new achievement in ${achievementType === 'shadow' ? 'the shadow challenge' : 'this month\'s challenge'}!\n\n`;
+            } else {
+                description = `**${user.raUsername}** has earned a new achievement!\n\n`;
+            }
+            
+            description += `**${achievement.Title || 'Unknown Achievement'}**\n`;
+            
+            if (achievement.Description) {
+                description += `*${achievement.Description}*\n`;
+            }
+            
+            // Add points if available
+            if (achievement.Points) {
+                description += `\nPoints: **${achievement.Points}**`;
+            }
+            
+            embed.setDescription(description);
+
+            // Add game info
+            const fields = [
+                { name: 'Game', value: gameInfo?.title || 'Unknown Game', inline: true }
+            ];
+            
+            // Only add challenge type field for challenge games
+            if (achievementType === 'monthly' || achievementType === 'shadow') {
+                fields.push({ 
+                    name: 'Challenge Type', 
+                    value: challengeTypeText, 
+                    inline: true 
+                });
+            }
+            
+            embed.addFields(fields);
+
+            // Add links
+            embed.addFields({
+                name: 'Links',
+                value: `[Game Page](https://retroachievements.org/game/${gameId}) | [User Profile](https://retroachievements.org/user/${user.raUsername})`
+            });
+
+            console.log(`Sending achievement announcement to channel`);
+            
+            // Send the announcement
+            try {
+                const sentMessage = await channel.send({ embeds: [embed] });
+                console.log(`Successfully sent achievement announcement, message ID: ${sentMessage.id}`);
+                return true;
+            } catch (sendError) {
+                console.error(`Failed to send announcement: ${sendError.message}`);
+                
+                // Try a plain text fallback
+                try {
+                    const fallbackText = `${emoji} **${user.raUsername}** earned "${achievement.Title || 'an achievement'}" in ${gameInfo?.title || 'a game'}`;
+                    await channel.send(fallbackText);
+                    console.log('Sent plain text fallback message');
+                    return true;
+                } catch (fallbackError) {
+                    console.error(`Even fallback message failed: ${fallbackError.message}`);
+                    return false;
+                }
+            }
+
+        } catch (error) {
+            console.error('Error announcing achievement:', error);
+            return false;
+        }
+    }
+
+    async announceGameAward(channel, user, gameInfo, awardLevel, achieved, total, isShadow, hasAllProgression, hasWinCondition, gameId) {
+        try {
+            console.log(`Creating embed for ${awardLevel} award announcement for ${user.raUsername}`);
+            
+            // Create embed
+            const embed = new EmbedBuilder()
+                .setTitle(`${AWARD_EMOJIS[awardLevel]} Challenge Complete!`)
+                .setColor(this.getColorForAward(awardLevel, isShadow))
+                .setTimestamp();
+
+            // Get user's profile image URL
+            const profileImageUrl = await this.getUserProfileImageUrl(user.raUsername);
+
+            // Use RetroAchievements username as the author
+            embed.setAuthor({
+                name: user.raUsername,
+                iconURL: profileImageUrl,
+                url: `https://retroachievements.org/user/${user.raUsername}`
+            });
+
+            // Set thumbnail to game image if available
+            if (gameInfo?.imageIcon) {
+                embed.setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`);
+            }
+
+            // Build description
+            let description = `**${user.raUsername}** has earned `;
+            
+            switch (awardLevel) {
+                case 'MASTERY':
+                    description += `**MASTERY** status in ${isShadow ? 'the shadow challenge' : 'this month\'s challenge'}!\n`;
+                    description += `They completed all achievements in the game!`;
+                    break;
+                case 'BEATEN':
+                    description += `**BEATEN** status in ${isShadow ? 'the shadow challenge' : 'this month\'s challenge'}!\n`;
+                    description += `They completed all progression achievements and ${hasWinCondition ? 'at least one win condition' : 'no win conditions were required'}!`;
+                    break;
+                case 'PARTICIPATION':
+                    description += `**PARTICIPATION** in ${isShadow ? 'the shadow challenge' : 'this month\'s challenge'}!`;
+                    break;
+            }
+
+            embed.setDescription(description);
+
+            // Add game info
+            embed.addFields(
+                { name: 'Game', value: gameInfo?.title || 'Unknown Game', inline: true },
+                { name: 'Progress', value: `${achieved}/${total} (${Math.round(achieved/total*100)}%)`, inline: true },
+                { name: 'Challenge Type', value: isShadow ? 'Shadow Challenge' : 'Monthly Challenge', inline: true }
+            );
+
+            // Add links
+            embed.addFields({
+                name: 'Links',
+                value: `[Game Page](https://retroachievements.org/game/${gameId}) | [User Profile](https://retroachievements.org/user/${user.raUsername})`
+            });
+
+            console.log(`Sending award announcement to channel`);
+            
+            // Send the announcement
+            try {
+                const sentMessage = await channel.send({ embeds: [embed] });
+                console.log(`Successfully sent award announcement, message ID: ${sentMessage.id}`);
+                return true;
+            } catch (sendError) {
+                console.error(`Failed to send award announcement: ${sendError.message}`);
+                
+                // Try a plain text fallback
+                try {
+                    const emoji = AWARD_EMOJIS[awardLevel];
+                    const fallbackText = `${emoji} **${user.raUsername}** has earned ${awardLevel} status in ${gameInfo?.title || 'a game'}!`;
+                    await channel.send(fallbackText);
+                    console.log('Sent plain text fallback message for award');
+                    return true;
+                } catch (fallbackError) {
+                    console.error(`Even fallback message failed: ${fallbackError.message}`);
+                    return false;
+                }
+            }
+
+        } catch (error) {
+            console.error('Error announcing award:', error);
+            return false;
+        }
+    }
+
+    getColorForAward(awardLevel, isShadow) {
+        // Use different colors based on if it's a shadow or monthly challenge
+        if (isShadow) {
+            // Shadow challenge colors
+            switch (awardLevel) {
+                case 'MASTERY': // Not possible for shadow games, but included for completeness
+                    return '#9B59B6'; // Purple
+                case 'BEATEN':
+                    return '#9B59B6'; // Purple
+                case 'PARTICIPATION':
+                    return '#9B59B6'; // Purple
+                default:
+                    return '#9B59B6'; // Purple
+            }
+        } else {
+            // Monthly challenge colors
+            switch (awardLevel) {
+                case 'MASTERY':
+                    return '#FFD700'; // Yellow/Gold
+                case 'BEATEN':
+                    return '#FFD700'; // Yellow/Gold
+                case 'PARTICIPATION':
+                    return '#FFD700'; // Yellow/Gold
+                default:
+                    return '#FFD700'; // Yellow/Gold
+            }
+        }
+    }
+
+    async getAnnouncementChannel() {
+        if (!this.client) {
+            console.error('Discord client not set');
+            return null;
+        }
+
+        try {
+            // Get the configuration
+            const channelId = config.discord.achievementChannelId;
+            const guildId = config.discord.guildId;
+            
+            console.log(`Looking for channel ID ${channelId} in guild ${guildId}`);
+            
+            // Get the guild
+            const guild = await this.client.guilds.fetch(guildId);
+            if (!guild) {
+                console.error(`Guild not found: ${guildId}`);
+                return null;
+            }
+
+            // Get the channel
+            const channel = await guild.channels.fetch(channelId);
+            if (!channel) {
+                console.error(`Channel not found: ${channelId}`);
+                return null;
+            }
+            
+            // Log channel details
+            console.log(`Found channel: ${channel.name} (${channel.type})`);
+            
+            return channel;
+        } catch (error) {
+            console.error('Error getting announcement channel:', error);
+            
+            // More specific error handling
+            if (error.code === 10003) {
+                console.error('Channel not found - check ACHIEVEMENT_CHANNEL environment variable');
+            } else if (error.code === 50001) {
+                console.error('Missing access to channel - check bot permissions');
+            }
+            
+            return null;
+        }
+    }
+
+    async isGuildMember(discordId) {
+        if (!discordId) return false;
+        
+        try {
+            const guild = await this.client.guilds.fetch(config.discord.guildId);
+            if (!guild) return false;
+            
+            try {
+                const member = await guild.members.fetch(discordId);
+                return !!member;
+            } catch (memberError) {
+                // Member not found
+                return false;
+            }
+        } catch (error) {
+            console.error('Error checking guild membership:', error);
+            return false;
+        }
     }
 }
 
-// Create and export a singleton instance
-const retroAPI = new RetroAchievementsService();
-export default retroAPI;
+// Create singleton instance
+const achievementFeedService = new AchievementFeedService();
+export default achievementFeedService;
