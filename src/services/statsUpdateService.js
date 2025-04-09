@@ -69,6 +69,15 @@ class StatsUpdateService {
 
     async updateUserStats(user, challenge, currentMonthStart) {
         try {
+            // Fetch game info first to save with the challenge
+            let gameInfo;
+            try {
+                gameInfo = await retroAPI.getGameInfo(challenge.monthly_challange_gameid);
+            } catch (error) {
+                console.error(`Error fetching game info for ${challenge.monthly_challange_gameid}:`, error);
+                gameInfo = null;
+            }
+
             // Get progress for monthly challenge
             const monthlyProgress = await retroAPI.getUserGameProgress(
                 user.raUsername,
@@ -144,12 +153,28 @@ class StatsUpdateService {
                 monthlyPoints = 1; // Participation
             }
 
-            // Update monthly challenge progress
+            // Update monthly challenge progress WITH DETAILED INFO
             const monthKey = User.formatDateKey(challenge.date);
-            user.monthlyChallenges.set(monthKey, { progress: monthlyPoints });
+            user.monthlyChallenges.set(monthKey, { 
+                progress: monthlyPoints,
+                achievements: achievementsEarnedThisMonth.length,
+                totalAchievements: challenge.monthly_challange_game_total,
+                percentage: parseFloat((achievementsEarnedThisMonth.length / challenge.monthly_challange_game_total * 100).toFixed(2)),
+                gameTitle: monthlyProgress.title || (gameInfo ? gameInfo.title : null),
+                gameIconUrl: gameInfo ? gameInfo.imageIcon : null
+            });
 
             // If there's a shadow challenge and it's revealed, update that too
             if (challenge.shadow_challange_gameid && challenge.shadow_challange_revealed) {
+                // Get shadow game info
+                let shadowGameInfo;
+                try {
+                    shadowGameInfo = await retroAPI.getGameInfo(challenge.shadow_challange_gameid);
+                } catch (error) {
+                    console.error(`Error fetching shadow game info for ${challenge.shadow_challange_gameid}:`, error);
+                    shadowGameInfo = null;
+                }
+
                 const shadowProgress = await retroAPI.getUserGameProgress(
                     user.raUsername,
                     challenge.shadow_challange_gameid
@@ -223,8 +248,15 @@ class StatsUpdateService {
                     shadowPoints = 1; // Participation
                 }
 
-                // Update shadow challenge progress
-                user.shadowChallenges.set(monthKey, { progress: shadowPoints });
+                // Update shadow challenge progress WITH DETAILED INFO
+                user.shadowChallenges.set(monthKey, { 
+                    progress: shadowPoints,
+                    achievements: shadowAchievementsEarnedThisMonth.length,
+                    totalAchievements: challenge.shadow_challange_game_total,
+                    percentage: parseFloat((shadowAchievementsEarnedThisMonth.length / challenge.shadow_challange_game_total * 100).toFixed(2)),
+                    gameTitle: shadowProgress.title || (shadowGameInfo ? shadowGameInfo.title : null),
+                    gameIconUrl: shadowGameInfo ? shadowGameInfo.imageIcon : null
+                });
             }
 
             await user.save();
