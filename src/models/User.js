@@ -69,8 +69,15 @@ const userSchema = new mongoose.Schema({
         default: () => new Map()
     },
     announcedAchievements: {
-        type: [{ type: Object }],
+        type: [{ type: String }],
         default: []
+    },
+    // Add this new field to track the last time achievements were checked
+    lastAchievementCheck: {
+        type: Date,
+        default: function() {
+            return new Date(0); // Default to start of epoch
+        }
     },
     communityAwards: [communityAwardSchema],
     nominations: [nominationSchema],
@@ -78,6 +85,19 @@ const userSchema = new mongoose.Schema({
     historicalDataProcessed: {
         type: Boolean,
         default: false
+    },
+    // New field to store annual records for yearly leaderboard caching
+    annualRecords: {
+        type: Map,
+        of: {
+            year: Number,
+            totalPoints: Number,
+            challengePoints: Number,
+            communityPoints: Number,
+            rank: Number,
+            stats: Object
+        },
+        default: () => new Map()
     }
 }, {
     timestamps: true,
