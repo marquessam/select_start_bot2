@@ -22,6 +22,34 @@ const SHADOW_MAX_POINTS = POINTS.BEATEN;
 // Number of users to show per embed - REDUCED to avoid Discord embed limits
 const USERS_PER_PAGE = 8;
 
+// Helper function to check if an achievement was earned during its challenge month
+function wasEarnedDuringChallengeMonth(dateEarned, challengeDate) {
+    if (!dateEarned) return false;
+    
+    const earnedDate = new Date(dateEarned.replace(' ', 'T'));
+    
+    // Get first day of challenge month
+    const challengeMonthStart = new Date(challengeDate.getFullYear(), challengeDate.getMonth(), 1);
+    
+    // Get first day of next month
+    const nextMonthStart = new Date(challengeDate.getFullYear(), challengeDate.getMonth() + 1, 1);
+    
+    // Get last day of previous month (for grace period)
+    const prevMonthLastDay = new Date(challengeMonthStart);
+    prevMonthLastDay.setDate(prevMonthLastDay.getDate() - 1);
+    
+    // Check if achievement was earned during challenge month
+    const inChallengeMonth = earnedDate >= challengeMonthStart && earnedDate < nextMonthStart;
+    
+    // Check if achievement was earned on the last day of previous month (grace period)
+    const isLastDayOfPrevMonth = 
+        earnedDate.getDate() === prevMonthLastDay.getDate() &&
+        earnedDate.getMonth() === prevMonthLastDay.getMonth() &&
+        earnedDate.getFullYear() === prevMonthLastDay.getFullYear();
+    
+    return inChallengeMonth || isLastDayOfPrevMonth;
+}
+
 export default {
     data: new SlashCommandBuilder()
         .setName('yearlyboard')
@@ -445,34 +473,45 @@ export default {
                     );
                     
                     if (progress.numAwardedToUser > 0) {
-                        // Get earned achievements (all-time)
-                        const earnedAchievements = Object.entries(progress.achievements)
-                            .filter(([id, data]) => data.hasOwnProperty('dateEarned'))
+                        // Get only achievements earned during the challenge month
+                        const earnedDuringChallenge = Object.entries(progress.achievements)
+                            .filter(([id, data]) => wasEarnedDuringChallengeMonth(data.dateEarned, challengeDate))
                             .map(([id]) => id);
-                            
+                        
+                        // If no achievements were earned during the challenge month, skip this challenge
+                        if (earnedDuringChallenge.length === 0) {
+                            continue;
+                        }
+                        
                         // Check progression and win requirements
                         const progressionAchievements = challenge.monthly_challange_progression_achievements || [];
                         const winAchievements = challenge.monthly_challange_win_achievements || [];
                         
-                        const allProgressionCompleted = progressionAchievements.length > 0 && 
-                            progressionAchievements.every(id => earnedAchievements.includes(id));
+                        const progressionCompletedInChallenge = progressionAchievements.length > 0 && 
+                            progressionAchievements.every(id => earnedDuringChallenge.includes(id));
                         
-                        const hasWinCondition = winAchievements.length === 0 || 
-                            winAchievements.some(id => earnedAchievements.includes(id));
+                        const hasWinConditionInChallenge = winAchievements.length === 0 || 
+                            winAchievements.some(id => earnedDuringChallenge.includes(id));
                         
                         // Assign points based on completion
                         let monthlyData = updatedMonthlyMap.get(dateStr) || { progress: 0 };
                         let adjustedProgress = monthlyData.progress;
                         
-                        if (progress.numAwardedToUser === challenge.monthly_challange_game_total) {
+                        // For mastery, ALL achievements must be earned during the challenge
+                        if (progress.numAwardedToUser === challenge.monthly_challange_game_total && 
+                            earnedDuringChallenge.length === challenge.monthly_challange_game_total) {
                             adjustedProgress = 3; // Mastery
                             masteryCount++;
                             challengePoints += POINTS.MASTERY;
-                        } else if (allProgressionCompleted && hasWinCondition) {
+                        } 
+                        // For beaten, all progression + at least one win must be earned during challenge
+                        else if (progressionCompletedInChallenge && hasWinConditionInChallenge) {
                             adjustedProgress = 2; // Beaten
                             beatenCount++;
                             challengePoints += POINTS.BEATEN;
-                        } else {
+                        } 
+                        // For participation, at least one achievement must be earned during challenge
+                        else if (earnedDuringChallenge.length > 0) {
                             adjustedProgress = 1; // Participation
                             participationCount++;
                             challengePoints += POINTS.PARTICIPATION;
@@ -512,30 +551,35 @@ export default {
                     );
                     
                     if (shadowProgress.numAwardedToUser > 0) {
-                        // Get earned achievements (all-time)
-                        const earnedAchievements = Object.entries(shadowProgress.achievements)
-                            .filter(([id, data]) => data.hasOwnProperty('dateEarned'))
+                        // Get only shadow achievements earned during the challenge month
+                        const earnedShadowDuringChallenge = Object.entries(shadowProgress.achievements)
+                            .filter(([id, data]) => wasEarnedDuringChallengeMonth(data.dateEarned, challengeDate))
                             .map(([id]) => id);
-                            
+                        
+                        // If no shadow achievements were earned during the challenge month, skip
+                        if (earnedShadowDuringChallenge.length === 0) {
+                            continue;
+                        }
+                        
                         // Check progression and win requirements
                         const progressionAchievements = challenge.shadow_challange_progression_achievements || [];
                         const winAchievements = challenge.shadow_challange_win_achievements || [];
                         
-                        const allProgressionCompleted = progressionAchievements.length > 0 && 
-                            progressionAchievements.every(id => earnedAchievements.includes(id));
+                        const progressionCompletedInChallenge = progressionAchievements.length > 0 && 
+                            progressionAchievements.every(id => earnedShadowDuringChallenge.includes(id));
                         
-                        const hasWinCondition = winAchievements.length === 0 || 
-                            winAchievements.some(id => earnedAchievements.includes(id));
+                        const hasWinConditionInChallenge = winAchievements.length === 0 || 
+                            winAchievements.some(id => earnedShadowDuringChallenge.includes(id));
                         
                         // Assign points based on completion
                         let shadowData = updatedShadowMap.get(dateStr) || { progress: 0 };
                         let adjustedProgress = shadowData.progress;
                         
-                        if (allProgressionCompleted && hasWinCondition) {
+                        if (progressionCompletedInChallenge && hasWinConditionInChallenge) {
                             adjustedProgress = 2; // Beaten (max for shadow)
                             shadowBeatenCount++;
                             challengePoints += SHADOW_MAX_POINTS;
-                        } else if (shadowProgress.numAwardedToUser > 0) {
+                        } else if (earnedShadowDuringChallenge.length > 0) {
                             adjustedProgress = 1; // Participation
                             shadowParticipationCount++;
                             challengePoints += POINTS.PARTICIPATION;
