@@ -3,6 +3,34 @@ import { User } from '../models/User.js';
 import { Challenge } from '../models/Challenge.js';
 import retroAPI from './retroAPI.js';
 
+// Helper function to check if an achievement was earned during its challenge month
+function wasEarnedDuringChallengeMonth(dateEarned, challengeDate) {
+    if (!dateEarned) return false;
+    
+    const earnedDate = new Date(dateEarned.replace(' ', 'T'));
+    
+    // Get first day of challenge month
+    const challengeMonthStart = new Date(challengeDate.getFullYear(), challengeDate.getMonth(), 1);
+    
+    // Get first day of next month
+    const nextMonthStart = new Date(challengeDate.getFullYear(), challengeDate.getMonth() + 1, 1);
+    
+    // Get last day of previous month (for grace period)
+    const prevMonthLastDay = new Date(challengeMonthStart);
+    prevMonthLastDay.setDate(prevMonthLastDay.getDate() - 1);
+    
+    // Check if achievement was earned during challenge month
+    const inChallengeMonth = earnedDate >= challengeMonthStart && earnedDate < nextMonthStart;
+    
+    // Check if achievement was earned on the last day of previous month (grace period)
+    const isLastDayOfPrevMonth = 
+        earnedDate.getDate() === prevMonthLastDay.getDate() &&
+        earnedDate.getMonth() === prevMonthLastDay.getMonth() &&
+        earnedDate.getFullYear() === prevMonthLastDay.getFullYear();
+    
+    return inChallengeMonth || isLastDayOfPrevMonth;
+}
+
 class StatsUpdateService {
     constructor() {
         this.isUpdating = false;
@@ -112,16 +140,12 @@ class StatsUpdateService {
             // Check for achievements earned during the challenge month
             const userAchievements = monthlyProgress.achievements || {};
             
-            // Filter achievements earned during the current month
+            // Filter achievements earned during the challenge month
             let achievementsEarnedThisMonth = Object.entries(userAchievements)
-                .filter(([id, data]) => {
-                    if (!data.dateEarned) return false;
-                    const earnedDate = new Date(data.dateEarned);
-                    return earnedDate >= currentMonthStart;
-                })
+                .filter(([id, data]) => wasEarnedDuringChallengeMonth(data.dateEarned, challenge.date))
                 .map(([id]) => id);
                 
-            console.log(`User ${user.raUsername} has earned ${achievementsEarnedThisMonth.length} achievements this month for ${monthlyProgress.title}`);
+            console.log(`User ${user.raUsername} has earned ${achievementsEarnedThisMonth.length} achievements during challenge month for ${monthlyProgress.title}`);
 
             // Check for progression achievements earned this month
             const progressionAchievements = challenge.monthly_challange_progression_achievements || [];
@@ -135,37 +159,32 @@ class StatsUpdateService {
                 achievementsEarnedThisMonth.includes(id)
             );
             
-            // Get all achievements earned (regardless of when)
-            const allEarnedAchievements = Object.entries(userAchievements)
-                .filter(([id, data]) => data.dateEarned)
-                .map(([id]) => id);
-                
-            // Count total valid progression achievements (either earned this month or previously)
+            // Count total valid progression achievements (earned during challenge month)
             const totalValidProgressionAchievements = progressionAchievements.filter(id => 
-                allEarnedAchievements.includes(id)
+                achievementsEarnedThisMonth.includes(id)
             );
             
-            // Count total valid win achievements (either earned this month or previously)
+            // Count total valid win achievements (earned during challenge month)
             const totalValidWinAchievements = winAchievements.filter(id => 
-                allEarnedAchievements.includes(id)
+                achievementsEarnedThisMonth.includes(id)
             );
             
             // Calculate points for monthly challenge based on progression and win achievements
             let monthlyPoints = 0;
             
-            // For mastery points, all achievements must have been earned
-            const hasAllAchievements = monthlyProgress.numAwardedToUser === challenge.monthly_challange_game_total;
+            // For mastery points, all achievements must have been earned during challenge month
+            const hasAllAchievements = achievementsEarnedThisMonth.length === challenge.monthly_challange_game_total;
             
-            // For mastery, ALL achievements must be earned
+            // For mastery, ALL achievements must be earned during challenge month
             if (hasAllAchievements) {
                 monthlyPoints = 3; // Mastery
             } 
-            // For beaten status, the user must have all progression achievements AND at least one win achievement (if any required)
+            // For beaten status, must have all progression achievements AND at least one win achievement earned during challenge month
             else if (totalValidProgressionAchievements.length === progressionAchievements.length && 
                      (winAchievements.length === 0 || totalValidWinAchievements.length > 0)) {
                 monthlyPoints = 2; // Beaten
             } 
-            // For participation, at least one achievement must be earned
+            // For participation, at least one achievement must be earned during challenge month
             else if (achievementsEarnedThisMonth.length > 0) {
                 monthlyPoints = 1; // Participation
             }
@@ -200,16 +219,12 @@ class StatsUpdateService {
                 // Check for shadow achievements earned during the challenge month
                 const userShadowAchievements = shadowProgress.achievements || {};
                 
-                // Filter shadow achievements earned during the current month
+                // Filter shadow achievements earned during the challenge month
                 let shadowAchievementsEarnedThisMonth = Object.entries(userShadowAchievements)
-                    .filter(([id, data]) => {
-                        if (!data.dateEarned) return false;
-                        const earnedDate = new Date(data.dateEarned);
-                        return earnedDate >= currentMonthStart;
-                    })
+                    .filter(([id, data]) => wasEarnedDuringChallengeMonth(data.dateEarned, challenge.date))
                     .map(([id]) => id);
                     
-                console.log(`User ${user.raUsername} has earned ${shadowAchievementsEarnedThisMonth.length} shadow achievements this month for ${shadowProgress.title}`);
+                console.log(`User ${user.raUsername} has earned ${shadowAchievementsEarnedThisMonth.length} shadow achievements during challenge month for ${shadowProgress.title}`);
 
                 // Check for progression shadow achievements earned this month
                 const progressionShadowAchievements = challenge.shadow_challange_progression_achievements || [];
@@ -223,19 +238,14 @@ class StatsUpdateService {
                     shadowAchievementsEarnedThisMonth.includes(id)
                 );
                 
-                // Get all shadow achievements earned (regardless of when)
-                const allEarnedShadowAchievements = Object.entries(userShadowAchievements)
-                    .filter(([id, data]) => data.dateEarned)
-                    .map(([id]) => id);
-                    
-                // Count total valid progression shadow achievements (either earned this month or previously)
+                // Count total valid progression shadow achievements (earned during challenge month)
                 const totalValidShadowProgressionAchievements = progressionShadowAchievements.filter(id => 
-                    allEarnedShadowAchievements.includes(id)
+                    shadowAchievementsEarnedThisMonth.includes(id)
                 );
                 
-                // Count total valid win shadow achievements (either earned this month or previously)
+                // Count total valid win shadow achievements (earned during challenge month)
                 const totalValidShadowWinAchievements = winShadowAchievements.filter(id => 
-                    allEarnedShadowAchievements.includes(id)
+                    shadowAchievementsEarnedThisMonth.includes(id)
                 );
                 
                 // Calculate points for shadow challenge based on progression and win achievements
@@ -244,18 +254,18 @@ class StatsUpdateService {
                 // Check if user has all progression achievements in the shadow game
                 const hasAllProgressionShadowAchievements = 
                     progressionShadowAchievements.length > 0 && 
-                    progressionShadowAchievements.every(id => allEarnedShadowAchievements.includes(id));
+                    progressionShadowAchievements.every(id => shadowAchievementsEarnedThisMonth.includes(id));
 
                 // Check if user has at least one win achievement in the shadow game (if required)
                 const hasWinShadowAchievement = 
                     winShadowAchievements.length === 0 || 
-                    winShadowAchievements.some(id => allEarnedShadowAchievements.includes(id));
+                    winShadowAchievements.some(id => shadowAchievementsEarnedThisMonth.includes(id));
                 
                 // For shadow games, "Beaten" is the highest status (2 points)
                 if (hasAllProgressionShadowAchievements && hasWinShadowAchievement) {
                     shadowPoints = 2; // Beaten
                 } 
-                // For participation, at least one achievement must be earned
+                // For participation, at least one achievement must be earned during challenge month
                 else if (shadowAchievementsEarnedThisMonth.length > 0) {
                     shadowPoints = 1; // Participation
                 }
