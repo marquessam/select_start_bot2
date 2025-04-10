@@ -174,15 +174,12 @@ class AchievementFeedService {
                     user.announcedAchievements = user.announcedAchievements.slice(-this.maxAnnouncedAchievements);
                 }
                 
-                // Process each achievement
+                // Track achievements that will be announced in this batch
+                let achievementsToAnnounce = [];
                 let announcementsQueuedForUser = 0;
+                
+                // Process each achievement
                 for (const achievement of recentAchievements) {
-                    // Limit announcements per user per check
-                    if (announcementsQueuedForUser >= this.maxAnnouncementsPerUser) {
-                        console.log(`Reached max announcements for ${user.raUsername}, skipping remaining achievements`);
-                        break;
-                    }
-                    
                     // Basic null check only - not rejecting any valid achievements
                     if (!achievement) {
                         console.log('Skipping null achievement entry');
@@ -193,9 +190,6 @@ class AchievementFeedService {
                     const gameId = achievement.GameID ? String(achievement.GameID) : "unknown";
                     const achievementId = achievement.ID || "unknown";
                     const achievementTitle = achievement.Title || "Unknown Achievement";
-                    const achievementDescription = achievement.Description || "";
-                    const achievementPoints = achievement.Points || 0;
-                    const achievementBadgeName = achievement.BadgeName || "";
                     
                     // Enhanced logging for achievement details
                     console.log(`Processing achievement: ${achievementTitle} (ID: ${achievementId}) in game ${gameId}`);
@@ -220,35 +214,63 @@ class AchievementFeedService {
                     
                     console.log(`New achievement for ${user.raUsername}: ${achievementTitle} (${achievementType})`);
                     
-                    // Get game info
-                    let gameInfo;
+                    // Add to the list if within the maximum announcements limit
+                    if (announcementsQueuedForUser < this.maxAnnouncementsPerUser) {
+                        achievementsToAnnounce.push({
+                            identifier: achievementIdentifier,
+                            achievement: achievement,
+                            type: achievementType,
+                            gameId: gameId
+                        });
+                        announcementsQueuedForUser++;
+                    } else {
+                        console.log(`Reached max announcements for ${user.raUsername}, skipping remaining achievements`);
+                        break;
+                    }
+                }
+                
+                // Get game info for all achievements to announce
+                for (const item of achievementsToAnnounce) {
                     try {
-                        gameInfo = await retroAPI.getGameInfo(gameId);
-                        console.log(`Retrieved game info for ${gameId}: ${gameInfo.title}`);
+                        const gameInfo = await retroAPI.getGameInfo(item.gameId);
+                        console.log(`Retrieved game info for ${item.gameId}: ${gameInfo.title}`);
+                        
+                        // Queue the achievement for announcement
+                        this.queueAnnouncement(
+                            announcementChannel,
+                            user,
+                            gameInfo,
+                            item.achievement,
+                            item.type,
+                            item.gameId
+                        );
+                        
+                        // Add to user's announced achievements ONLY after it's been queued
+                        user.announcedAchievements.push(item.identifier);
                     } catch (gameInfoError) {
-                        console.error(`Failed to get game info for ${gameId}: ${gameInfoError.message}`);
+                        console.error(`Failed to get game info for ${item.gameId}: ${gameInfoError.message}`);
+                        
                         // Create fallback game info
-                        gameInfo = {
-                            id: gameId,
-                            title: achievement.GameTitle || `Game ${gameId}`,
-                            consoleName: achievement.ConsoleName || "Unknown",
+                        const fallbackGameInfo = {
+                            id: item.gameId,
+                            title: item.achievement.GameTitle || `Game ${item.gameId}`,
+                            consoleName: item.achievement.ConsoleName || "Unknown",
                             imageIcon: ""
                         };
+                        
+                        // Queue the achievement with fallback info
+                        this.queueAnnouncement(
+                            announcementChannel,
+                            user,
+                            fallbackGameInfo,
+                            item.achievement,
+                            item.type,
+                            item.gameId
+                        );
+                        
+                        // Add to user's announced achievements ONLY after it's been queued
+                        user.announcedAchievements.push(item.identifier);
                     }
-                    
-                    // Queue the achievement for announcement
-                    this.queueAnnouncement(
-                        announcementChannel,
-                        user,
-                        gameInfo,
-                        achievement,
-                        achievementType,
-                        gameId
-                    );
-                    
-                    // Add to user's announced achievements
-                    user.announcedAchievements.push(achievementIdentifier);
-                    announcementsQueuedForUser++;
                 }
                 
                 // Save the updated announced achievements array
