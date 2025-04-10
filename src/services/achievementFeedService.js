@@ -174,12 +174,24 @@ class AchievementFeedService {
                     user.announcedAchievements = user.announcedAchievements.slice(-this.maxAnnouncedAchievements);
                 }
                 
-                // Track achievements that will be announced in this batch
-                let achievementsToAnnounce = [];
+                // DEBUG: Log the first few achievement IDs for this user to help troubleshoot
+                if (user.announcedAchievements.length > 0) {
+                    console.log(`${user.raUsername} has ${user.announcedAchievements.length} announced achievements`);
+                    console.log(`First few announced achievements: ${user.announcedAchievements.slice(0, 3).join(', ')}`);
+                }
+                
+                // Track new announcements for this user
+                const newAnnouncements = [];
                 let announcementsQueuedForUser = 0;
                 
                 // Process each achievement
                 for (const achievement of recentAchievements) {
+                    // Limit announcements per user per check
+                    if (announcementsQueuedForUser >= this.maxAnnouncementsPerUser) {
+                        console.log(`Reached max announcements for ${user.raUsername}, skipping remaining achievements`);
+                        break;
+                    }
+                    
                     // Basic null check only - not rejecting any valid achievements
                     if (!achievement) {
                         console.log('Skipping null achievement entry');
@@ -205,6 +217,9 @@ class AchievementFeedService {
                     // Create a unique identifier for this achievement
                     const achievementIdentifier = `${achievementType}:${gameId}:${achievementId}`;
                     
+                    // More detailed logging to help debug
+                    console.log(`Achievement identifier: ${achievementIdentifier}`);
+                    
                     // Check if already announced
                     if (user.announcedAchievements.includes(achievementIdentifier)) {
                         // Already announced, skip
@@ -214,67 +229,43 @@ class AchievementFeedService {
                     
                     console.log(`New achievement for ${user.raUsername}: ${achievementTitle} (${achievementType})`);
                     
-                    // Add to the list if within the maximum announcements limit
-                    if (announcementsQueuedForUser < this.maxAnnouncementsPerUser) {
-                        achievementsToAnnounce.push({
-                            identifier: achievementIdentifier,
-                            achievement: achievement,
-                            type: achievementType,
-                            gameId: gameId
-                        });
-                        announcementsQueuedForUser++;
-                    } else {
-                        console.log(`Reached max announcements for ${user.raUsername}, skipping remaining achievements`);
-                        break;
-                    }
-                }
-                
-                // Get game info for all achievements to announce
-                for (const item of achievementsToAnnounce) {
+                    // Get game info
+                    let gameInfo;
                     try {
-                        const gameInfo = await retroAPI.getGameInfo(item.gameId);
-                        console.log(`Retrieved game info for ${item.gameId}: ${gameInfo.title}`);
-                        
-                        // Queue the achievement for announcement
-                        this.queueAnnouncement(
-                            announcementChannel,
-                            user,
-                            gameInfo,
-                            item.achievement,
-                            item.type,
-                            item.gameId
-                        );
-                        
-                        // Add to user's announced achievements ONLY after it's been queued
-                        user.announcedAchievements.push(item.identifier);
+                        gameInfo = await retroAPI.getGameInfo(gameId);
+                        console.log(`Retrieved game info for ${gameId}: ${gameInfo.title}`);
                     } catch (gameInfoError) {
-                        console.error(`Failed to get game info for ${item.gameId}: ${gameInfoError.message}`);
-                        
+                        console.error(`Failed to get game info for ${gameId}: ${gameInfoError.message}`);
                         // Create fallback game info
-                        const fallbackGameInfo = {
-                            id: item.gameId,
-                            title: item.achievement.GameTitle || `Game ${item.gameId}`,
-                            consoleName: item.achievement.ConsoleName || "Unknown",
+                        gameInfo = {
+                            id: gameId,
+                            title: achievement.GameTitle || `Game ${gameId}`,
+                            consoleName: achievement.ConsoleName || "Unknown",
                             imageIcon: ""
                         };
-                        
-                        // Queue the achievement with fallback info
-                        this.queueAnnouncement(
-                            announcementChannel,
-                            user,
-                            fallbackGameInfo,
-                            item.achievement,
-                            item.type,
-                            item.gameId
-                        );
-                        
-                        // Add to user's announced achievements ONLY after it's been queued
-                        user.announcedAchievements.push(item.identifier);
                     }
+                    
+                    // Queue the achievement for announcement
+                    this.queueAnnouncement(
+                        announcementChannel,
+                        user,
+                        gameInfo,
+                        achievement,
+                        achievementType,
+                        gameId
+                    );
+                    
+                    // Add to temporary list of new announcements
+                    newAnnouncements.push(achievementIdentifier);
+                    announcementsQueuedForUser++;
                 }
                 
-                // Save the updated announced achievements array
-                await user.save();
+                // Only update the database AFTER the announcements have been successfully queued
+                if (newAnnouncements.length > 0) {
+                    console.log(`Adding ${newAnnouncements.length} new announcements to ${user.raUsername}'s record`);
+                    user.announcedAchievements = [...user.announcedAchievements, ...newAnnouncements];
+                    await user.save();
+                }
                 
                 // Also check for awards for monthly and shadow challenges
                 if (currentChallenge) {
@@ -776,6 +767,26 @@ class AchievementFeedService {
             }
         } catch (error) {
             console.error('Error checking guild membership:', error);
+            return false;
+        }
+    }
+
+    // Add this debug command to clear achievement history for a user
+    async clearUserAchievements(username) {
+        try {
+            const user = await User.findOne({ raUsername: username });
+            if (!user) {
+                console.log(`User ${username} not found`);
+                return false;
+            }
+            
+            console.log(`Clearing achievement history for ${username}`);
+            user.announcedAchievements = [];
+            await user.save();
+            console.log(`Achievement history cleared for ${username}`);
+            return true;
+        } catch (error) {
+            console.error(`Error clearing achievements for ${username}:`, error);
             return false;
         }
     }
