@@ -251,10 +251,17 @@ class AchievementFeedService {
                         continue;
                     }
                     
-                    // Check if this achievement ID (without timestamp) is in the saved history
-                    // This protects against duplicate announcements across restarts
-                    const baseIdentifier = `${achievementType}:${gameId}:${achievementId}`;
-                    if (user.announcedAchievements.some(id => id.startsWith(baseIdentifier))) {
+                    // Check if this achievement ID is in the saved history
+                    // Don't use startsWith for the check which can cause false positives
+                    // Instead, look for exact identifier matches
+                    if (achievementId !== "unknown" && user.announcedAchievements.some(id => {
+                        // Split the stored ID to get just the type:gameId:achievementId part
+                        const parts = id.split(':');
+                        if (parts.length >= 3) {
+                            return `${parts[0]}:${parts[1]}:${parts[2]}` === `${achievementType}:${gameId}:${achievementId}`;
+                        }
+                        return false;
+                    })) {
                         console.log(`Achievement ${achievementTitle} already announced (by ID) for ${user.raUsername}, skipping`);
                         continue;
                     }
@@ -452,12 +459,21 @@ class AchievementFeedService {
         const awardIdentifier = `${awardIdentifierPrefix}:${gameIdString}:${currentAward}:${now}`;
         
         // Check if award has been announced (just the type, not the specific timestamp)
-        if (existingAwards.some(id => id.includes(`${awardIdentifierPrefix}:${gameIdString}:${currentAward}:`))) {
+        const awardTypeIdentifier = `${awardIdentifierPrefix}:${gameIdString}:${currentAward}`;
+        
+        // Improved check - only look for matching award types
+        if (user.announcedAchievements.some(id => {
+            const parts = id.split(':');
+            if (parts.length >= 3) {
+                return `${parts[0]}:${parts[1]}:${parts[2]}` === awardTypeIdentifier;
+            }
+            return false;
+        })) {
             return;
         }
         
         // Also check session history
-        if (this.sessionAnnouncementHistory.has(`${awardIdentifierPrefix}:${gameIdString}:${currentAward}`)) {
+        if (this.sessionAnnouncementHistory.has(awardTypeIdentifier)) {
             return;
         }
         
@@ -480,7 +496,7 @@ class AchievementFeedService {
         if (announced) {
             // Add to announced achievements and session history
             user.announcedAchievements.push(awardIdentifier);
-            this.sessionAnnouncementHistory.add(`${awardIdentifierPrefix}:${gameIdString}:${currentAward}`);
+            this.sessionAnnouncementHistory.add(awardTypeIdentifier);
             await user.save();
         }
     }
