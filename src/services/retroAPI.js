@@ -194,14 +194,26 @@ async getUserRecentAchievements(username, count = 50) {
             for (const achievement of achievements) {
                 if (!achievement) continue;
                 
+                // Extra logging for debugging ID extraction
+                console.log(`Raw achievement data for ${username}:`, JSON.stringify({
+                    ID: achievement.ID,
+                    id: achievement.id,
+                    AchievementID: achievement.AchievementID,
+                    achievementId: achievement.achievementId
+                }).substring(0, 200));
+                
                 // Create a normalized achievement object with all required fields
                 const normalizedAchievement = {
-                    ID: achievement.ID || achievement.id || String(achievement.AchievementID) || String(achievement.achievementId) || "unknown",
+                    ID: achievement.ID || achievement.id || 
+                        (achievement.AchievementID ? String(achievement.AchievementID) : null) || 
+                        (achievement.achievementId ? String(achievement.achievementId) : null) || 
+                        "unknown",
                     Title: achievement.Title || achievement.title || "Unknown Achievement",
                     Description: achievement.Description || achievement.description || "",
                     Points: parseInt(achievement.Points || achievement.points || 0, 10),
                     BadgeName: achievement.BadgeName || achievement.badgeName || "",
-                    GameID: achievement.GameID || achievement.gameId || String(achievement.GameID) || "unknown",
+                    GameID: achievement.GameID || achievement.gameId || 
+                        (achievement.GameID ? String(achievement.GameID) : null) || "unknown",
                     GameTitle: achievement.GameTitle || achievement.gameTitle || "Unknown Game",
                     ConsoleName: achievement.ConsoleName || achievement.consoleName || "Unknown Console",
                     DateEarned: achievement.DateEarned || achievement.dateEarned || new Date().toISOString()
