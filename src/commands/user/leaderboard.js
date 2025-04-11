@@ -174,14 +174,16 @@ export default {
                 return null;
             }));
 
-            // Filter out null entries and sort by achievements and points
+            // Filter out null entries and sort by achievements first, then points as tiebreaker
             const sortedProgress = userProgress
                 .filter(progress => progress !== null)
                 .sort((a, b) => {
-                    if (b.points !== a.points) {
-                        return b.points - a.points;
+                    // Primary sort: Number of achievements (descending)
+                    if (b.achieved !== a.achieved) {
+                        return b.achieved - a.achieved;
                     }
-                    return b.achieved - a.achieved;
+                    // Secondary sort: Points from awards (descending)
+                    return b.points - a.points;
                 });
 
             // NEW: Save the processed results to the database
@@ -269,13 +271,12 @@ export default {
             } else {
                 let leaderboardText = '';
                 let currentRank = 1;
-                let currentPoints = -1;
                 let currentAchieved = -1;
                 let tiedUsers = [];
 
                 sortedProgress.forEach((progress, index) => {
                     // Check if this user is tied with the previous one
-                    if (progress.points === currentPoints && progress.achieved === currentAchieved) {
+                    if (progress.achieved === currentAchieved) {
                         tiedUsers.push(progress);
                     } else {
                         // If we had tied users, display them
@@ -289,7 +290,6 @@ export default {
 
                         // Start new group
                         currentRank = index + 1;
-                        currentPoints = progress.points;
                         currentAchieved = progress.achieved;
                         tiedUsers = [progress];
                     }
