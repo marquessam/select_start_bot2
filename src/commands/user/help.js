@@ -18,7 +18,7 @@ export default {
                 )),
 
     async execute(interaction) {
-        await interaction.deferReply();
+       await interaction.deferReply({ ephemeral: true });
 
         try {
             const topic = interaction.options.getString('topic') || 'main';
