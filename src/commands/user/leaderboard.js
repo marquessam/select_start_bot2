@@ -47,7 +47,7 @@ export default {
         .setDescription('Display the current challenge leaderboard'),
 
     async execute(interaction) {
-        await interaction.deferReply();
+       await interaction.deferReply({ ephemeral: true });
 
         try {
             // Get current date for finding current challenge
