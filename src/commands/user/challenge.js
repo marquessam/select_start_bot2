@@ -17,7 +17,7 @@ export default {
         .setDescription('Shows current monthly challenge and shadow game status'),
 
     async execute(interaction) {
-        await interaction.deferReply();
+        await interaction.deferReply({ ephemeral: true });
 
         try {
             // Get current date for finding current challenge
