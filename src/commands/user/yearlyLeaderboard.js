@@ -73,7 +73,7 @@ export default {
                 .setRequired(false)),
 
     async execute(interaction) {
-        await interaction.deferReply();
+      await interaction.deferReply({ ephemeral: true });
 
         try {
             // Get the year from the option, default to current year
