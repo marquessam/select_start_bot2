@@ -36,7 +36,7 @@ export default {
                 .setDescription('Show the current tiebreaker board (if active)')),
 
     async execute(interaction) {
-        await interaction.deferReply();
+        await interaction.deferReply({ ephemeral: true });
 
         try {
             const subcommand = interaction.options.getSubcommand();
