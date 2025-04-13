@@ -8,7 +8,7 @@ export default {
         .setDescription('Show all current nominations for the next monthly challenge'),
 
     async execute(interaction) {
-        await interaction.deferReply();
+       await interaction.deferReply({ ephemeral: true });
 
         try {
             // Get all users
