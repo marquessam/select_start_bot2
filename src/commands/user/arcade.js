@@ -13,11 +13,11 @@ function ordinal(n) {
 export default {
     data: new SlashCommandBuilder()
         .setName('arcade')
-        .setDescription('Display arcade leaderboards')
+        .setDescription('Display arcade and racing leaderboards')
         .addSubcommand(subcommand =>
             subcommand
-                .setName('list')
-                .setDescription('List all available arcade boards'))
+                .setName('menu')
+                .setDescription('Show arcade system menu'))
         .addSubcommand(subcommand =>
             subcommand
                 .setName('board')
@@ -36,6 +36,14 @@ export default {
                         .setRequired(false)))
         .addSubcommand(subcommand =>
             subcommand
+                .setName('boards')
+                .setDescription('List all arcade boards'))
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('races')
+                .setDescription('List all racing challenges'))
+        .addSubcommand(subcommand =>
+            subcommand
                 .setName('tiebreaker')
                 .setDescription('Show the current tiebreaker board (if active)')),
 
@@ -46,18 +54,17 @@ export default {
             const subcommand = interaction.options.getSubcommand();
             
             switch(subcommand) {
-                case 'list':
+                case 'menu':
+                    await this.showArcadeMenu(interaction);
+                    break;
+                case 'boards':
                     await this.listArcadeBoards(interaction);
+                    break;
+                case 'races':
+                    await this.listRacingBoards(interaction);
                     break;
                 case 'board':
                     const boardId = interaction.options.getString('id');
-                    
-                    // Special handling for "list-racing" to show all racing boards
-                    if (boardId === 'list-racing') {
-                        await this.listRacingBoards(interaction);
-                        break;
-                    }
-                    
                     await this.showArcadeBoard(interaction, boardId);
                     break;
                 case 'racing':
@@ -72,6 +79,63 @@ export default {
         } catch (error) {
             console.error('Error executing arcade command:', error);
             await interaction.editReply('An error occurred while processing your request.');
+        }
+    },
+
+    async showArcadeMenu(interaction) {
+        try {
+            // Get counts of different board types
+            const arcadeBoardCount = await ArcadeBoard.countDocuments({ boardType: 'arcade' });
+            const racingBoardCount = await ArcadeBoard.countDocuments({ boardType: 'racing' });
+            
+            // Check if a tiebreaker is active
+            const now = new Date();
+            const activeTiebreaker = await ArcadeBoard.findOne({
+                boardType: 'tiebreaker',
+                startDate: { $lte: now },
+                endDate: { $gte: now }
+            });
+            
+            // Check if a racing challenge is active
+            const activeRacing = await ArcadeBoard.findOne({
+                boardType: 'racing',
+                startDate: { $lte: now },
+                endDate: { $gte: now }
+            });
+
+            const embed = new EmbedBuilder()
+                .setTitle('🎮 Arcade System Menu')
+                .setColor('#0099ff')
+                .setDescription('Welcome to the RetroAchievements arcade system! Here you can view various leaderboards and racing challenges.')
+                .addFields(
+                    { 
+                        name: '🎯 Arcade Boards', 
+                        value: `${arcadeBoardCount} arcade boards available\nUse \`/arcade boards\` to see all boards\nUse \`/arcade board id:<board_id>\` to view a specific board`,
+                        inline: false 
+                    },
+                    { 
+                        name: '🏎️ Racing Challenges', 
+                        value: `${racingBoardCount} racing challenges available\n` + 
+                               `${activeRacing ? '**A racing challenge is currently active!**\n' : ''}` +
+                               `Use \`/arcade races\` to see all challenges\n` +
+                               `Use \`/arcade racing\` to view the current month's challenge\n` +
+                               `Use \`/arcade racing month:<name>\` to view a specific month`,
+                        inline: false 
+                    },
+                    { 
+                        name: '⚔️ Tiebreakers', 
+                        value: activeTiebreaker 
+                            ? 'A tiebreaker is currently active! Use `/arcade tiebreaker` to view details.'
+                            : 'No tiebreaker is currently active.',
+                        inline: false 
+                    }
+                )
+                .setFooter({ text: 'Data provided by RetroAchievements.org' });
+            
+            await interaction.editReply({ embeds: [embed] });
+        } catch (error) {
+            console.error('Error showing arcade menu:', error);
+            await interaction.editReply('An error occurred while loading the arcade menu.');
         }
     },
 
@@ -122,6 +186,8 @@ export default {
                 return interaction.editReply('No racing boards are currently configured.');
             }
             
+            const now = new Date();
+            
             const embed = new EmbedBuilder()
                 .setTitle('🏎️ Available Racing Challenges')
                 .setColor('#FF9900')
@@ -138,11 +204,34 @@ export default {
                 // Create a link to the RetroAchievements leaderboard
                 const leaderboardUrl = `https://retroachievements.org/leaderboardinfo.php?i=${board.leaderboardId}`;
                 
+                // Generate full title with track name
+                const trackDisplay = board.trackName 
+                    ? ` - ${board.trackName}`
+                    : '';
+                    
+                const gameDisplay = `${board.gameTitle}${trackDisplay}`;
+                
+                // Add status icon based on whether the board is active, completed, or pending results
+                let statusIcon = '';
+                if (now >= board.startDate && now <= board.endDate) {
+                    statusIcon = '⏱️ '; // Active
+                } else if (board.pointsAwarded) {
+                    statusIcon = '✅ '; // Completed with points awarded
+                } else if (now > board.endDate) {
+                    statusIcon = '⌛ '; // Ended, pending results
+                }
+                
                 // Add the board to the list with month/year and game title
-                fieldValue += `**${monthName} ${year}**: [${board.gameTitle}](${leaderboardUrl})${board.pointsAwarded ? ' ✅' : ''}\n`;
+                fieldValue += `**${monthName} ${year}**: ${statusIcon}[${gameDisplay}](${leaderboardUrl})\n`;
             });
             
             embed.addFields({ name: 'Racing Challenges', value: fieldValue });
+            
+            // Add legend
+            embed.addFields({ 
+                name: 'Legend', 
+                value: '⏱️ Active Challenge\n✅ Completed Challenge\n⌛ Challenge Ended, Pending Results' 
+            });
             
             await interaction.editReply({ embeds: [embed] });
         } catch (error) {
@@ -157,7 +246,7 @@ export default {
             const board = await ArcadeBoard.findOne({ boardId: boardId });
             
             if (!board) {
-                return interaction.editReply(`Board with ID "${boardId}" not found. Use \`/arcade list\` to see available boards.`);
+                return interaction.editReply(`Board with ID "${boardId}" not found. Use \`/arcade boards\` to see available boards.`);
             }
             
             // Create loading message
@@ -344,6 +433,14 @@ export default {
                 const message = monthParam 
                     ? `No racing challenge found for ${monthParam}.` 
                     : 'No racing challenge is currently active.';
+                    
+                if (!monthParam) {
+                    // Suggest using the command to see previous challenges
+                    return interaction.editReply(
+                        `${message}\n\nUse \`/arcade races\` to see all available racing challenges.`
+                    );
+                }
+                
                 return interaction.editReply(message);
             }
             
@@ -416,14 +513,26 @@ export default {
             const monthName = raceDate.toLocaleString('default', { month: 'long' });
             const year = raceDate.getFullYear();
             
+            // Generate full title with track name
+            const trackDisplay = racingBoard.trackName 
+                ? ` - ${racingBoard.trackName}`
+                : '';
+                
+            const gameDisplay = `${racingBoard.gameTitle}${trackDisplay}`;
+            
+            // Determine if race is active or completed for messaging
+            const isActive = now >= racingBoard.startDate && now <= racingBoard.endDate;
+            
             // Build the leaderboard embed
             const embed = new EmbedBuilder()
                 .setColor('#FF9900')
                 .setTitle(`🏎️ ${monthName} ${year} Racing Challenge`)
                 .setURL(leaderboardUrl)
-                .setDescription(`**${racingBoard.gameTitle}**\n*${racingBoard.description}*\n\n` +
-                            `${racingBoard.pointsAwarded ? '✅ Challenge completed' : '⏱️ End Date:'} <t:${Math.floor(racingBoard.endDate.getTime() / 1000)}:f>\n\n` +
-                            `${racingBoard.pointsAwarded ? 'Points have been awarded to top finishers.' : 'Top 3 players at the end of the month will receive award points (3/2/1)!'}`)
+                .setDescription(`**${gameDisplay}**\n*${racingBoard.description}*\n\n` +
+                            (isActive 
+                                ? `⏱️ **Currently Active Challenge**\nEnds <t:${Math.floor(racingBoard.endDate.getTime() / 1000)}:f> (UTC)\n\nTop 3 players at the end of the month will receive award points (3/2/1)!`
+                                : `${racingBoard.pointsAwarded ? '✅ **Challenge Completed**' : '⌛ **Challenge Ended**'}\nEnded on <t:${Math.floor(racingBoard.endDate.getTime() / 1000)}:f>\n\n${racingBoard.pointsAwarded ? 'Points have been awarded to top finishers.' : 'Points will be awarded soon.'}`)
+                )
                 .setFooter({ text: 'Data provided by RetroAchievements.org' });
             
             // Get game info for thumbnail
@@ -465,13 +574,21 @@ export default {
                 embed.addFields({ name: 'Final Results', value: resultsText });
             }
             
+            // Add navigation instructions
+            if (!monthParam) {
+                embed.addFields({
+                    name: 'Other Challenges',
+                    value: 'Use `/arcade races` to see all racing challenges\nUse `/arcade racing month:<name>` to view a specific month'
+                });
+            }
+            
             await interaction.editReply({ embeds: [embed] });
         } catch (error) {
             console.error('Error showing racing board:', error);
             await interaction.editReply('An error occurred while retrieving the racing leaderboard.');
         }
     },
-    
+
     async showTiebreakerBoard(interaction) {
         try {
             // Get the active tiebreaker
