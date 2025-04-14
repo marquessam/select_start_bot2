@@ -21,17 +21,76 @@ export default {
     data: new SlashCommandBuilder()
         .setName('arcade')
         .setDescription('Display arcade and racing leaderboards with interactive navigation')
+        // Add subcommands for backward compatibility
         .addSubcommand(subcommand =>
             subcommand
                 .setName('menu')
-                .setDescription('Show arcade system menu with interactive buttons')),
+                .setDescription('Show arcade system menu with interactive buttons'))
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('board')
+                .setDescription('Show a specific arcade leaderboard')
+                .addStringOption(option =>
+                    option.setName('id')
+                        .setDescription('The board ID to display')
+                        .setRequired(true)))
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('racing')
+                .setDescription('Show a racing challenge board')
+                .addStringOption(option =>
+                    option.setName('month')
+                        .setDescription('Month name or YYYY-MM format (defaults to current month)')
+                        .setRequired(false)))
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('boards')
+                .setDescription('List all arcade boards'))
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('races')
+                .setDescription('List all racing challenges'))
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('tiebreaker')
+                .setDescription('Show the current tiebreaker board (if active)')),
 
     async execute(interaction) {
         await interaction.deferReply({ ephemeral: true });
 
         try {
-            // Start with the main arcade menu
-            await this.displayArcadeMenu(interaction);
+            // Check if a subcommand was used
+            const subcommand = interaction.options.getSubcommand(false);
+            
+            if (!subcommand) {
+                // If no subcommand, show the main menu directly
+                await this.displayArcadeMenu(interaction);
+            } else {
+                // Handle existing subcommands for backward compatibility
+                switch(subcommand) {
+                    case 'menu':
+                        await this.displayArcadeMenu(interaction);
+                        break;
+                    case 'boards':
+                        await this.listArcadeBoards(interaction);
+                        break;
+                    case 'races':
+                        await this.listRacingBoards(interaction);
+                        break;
+                    case 'board':
+                        const boardId = interaction.options.getString('id');
+                        await this.showArcadeBoard(interaction, boardId);
+                        break;
+                    case 'racing':
+                        await this.showRacingBoard(interaction);
+                        break;
+                    case 'tiebreaker':
+                        await this.showTiebreakerBoard(interaction);
+                        break;
+                    default:
+                        await interaction.editReply('Invalid subcommand');
+                }
+            }
         } catch (error) {
             console.error('Error executing arcade command:', error);
             await interaction.editReply('An error occurred while processing your request.');
@@ -947,5 +1006,155 @@ export default {
                 components: [backRow]
             });
         }
+    },
+
+    // Legacy methods for backward compatibility with direct subcommand calls
+    async listArcadeBoards(interaction) {
+        // Create a back button for legacy method
+        const backRow = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId('back_to_menu')
+                    .setLabel('Back to Menu')
+                    .setStyle(ButtonStyle.Secondary)
+                    .setEmoji('↩️')
+            );
+        
+        await this.handleListArcadeBoards(interaction, backRow);
+    },
+
+    async listRacingBoards(interaction) {
+        // Create a back button for legacy method
+        const backRow = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId('back_to_menu')
+                    .setLabel('Back to Menu')
+                    .setStyle(ButtonStyle.Secondary)
+                    .setEmoji('↩️')
+            );
+        
+        await this.handleListRacingBoards(interaction, backRow);
+    },
+
+    async showArcadeBoard(interaction, boardId) {
+        // Create a back button for legacy method
+        const backRow = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId('back_to_menu')
+                    .setLabel('Back to Menu')
+                    .setStyle(ButtonStyle.Secondary)
+                    .setEmoji('↩️')
+            );
+        
+        await this.handleShowSpecificBoard(interaction, boardId, backRow);
+    },
+
+    async showRacingBoard(interaction) {
+        // Create a back button for legacy method
+        const backRow = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId('back_to_menu')
+                    .setLabel('Back to Menu')
+                    .setStyle(ButtonStyle.Secondary)
+                    .setEmoji('↩️')
+            );
+        
+        try {
+            const now = new Date();
+            const monthParam = interaction.options.getString('month');
+            let racingBoard;
+            
+            // If month parameter is provided
+            if (monthParam) {
+                // Check if the input is a month name or YYYY-MM format
+                if (/^\d{4}-\d{2}$/.test(monthParam)) {
+                    // YYYY-MM format
+                    racingBoard = await ArcadeBoard.findOne({
+                        boardType: 'racing',
+                        monthKey: monthParam
+                    });
+                } else {
+                    // Try to parse as a month name
+                    const monthNames = [
+                        'january', 'february', 'march', 'april', 'may', 'june',
+                        'july', 'august', 'september', 'october', 'november', 'december'
+                    ];
+                    
+                    const monthIndex = monthNames.findIndex(m => 
+                        m.toLowerCase() === monthParam.toLowerCase()
+                    );
+                    
+                    if (monthIndex === -1) {
+                        return interaction.editReply({
+                            content: `Invalid month format. Please use a month name (e.g., "january") or YYYY-MM format (e.g., "2025-01").`,
+                            components: [backRow]
+                        });
+                    }
+                    
+                    // Current year by default
+                    const year = now.getFullYear();
+                    
+                    // Look for any racing board with this month and current year
+                    const monthKey = `${year}-${(monthIndex + 1).toString().padStart(2, '0')}`;
+                    
+                    racingBoard = await ArcadeBoard.findOne({
+                        boardType: 'racing',
+                        monthKey: monthKey
+                    });
+                    
+                    // If not found, check previous year (for historical lookups)
+                    if (!racingBoard) {
+                        const prevYearMonthKey = `${year - 1}-${(monthIndex + 1).toString().padStart(2, '0')}`;
+                        racingBoard = await ArcadeBoard.findOne({
+                            boardType: 'racing',
+                            monthKey: prevYearMonthKey
+                        });
+                    }
+                }
+            } else {
+                // No month parameter, get current active racing board
+                racingBoard = await ArcadeBoard.findOne({
+                    boardType: 'racing',
+                    startDate: { $lte: now },
+                    endDate: { $gte: now }
+                });
+            }
+            
+            if (!racingBoard) {
+                const message = monthParam 
+                    ? `No racing challenge found for ${monthParam}.` 
+                    : 'No racing challenge is currently active.';
+                    
+                return interaction.editReply({
+                    content: message,
+                    components: [backRow]
+                });
+            }
+            
+            await this.handleShowRacingBoard(interaction, racingBoard, backRow);
+        } catch (error) {
+            console.error('Error in showRacingBoard:', error);
+            await interaction.editReply({
+                content: 'An error occurred while retrieving the racing leaderboard.',
+                components: [backRow]
+            });
+        }
+    },
+
+    async showTiebreakerBoard(interaction) {
+        // Create a back button for legacy method
+        const backRow = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId('back_to_menu')
+                    .setLabel('Back to Menu')
+                    .setStyle(ButtonStyle.Secondary)
+                    .setEmoji('↩️')
+            );
+        
+        await this.handleTiebreaker(interaction, backRow);
     }
 };
