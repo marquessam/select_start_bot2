@@ -1,11 +1,12 @@
 import { SlashCommandBuilder } from 'discord.js';
 import { ArcadeBoard } from '../../models/ArcadeBoard.js';
+import { User } from '../../models/User.js';
 import { config } from '../../config/config.js';
 
 export default {
     data: new SlashCommandBuilder()
         .setName('forcecompleteracing')
-        .setDescription('Force a racing board to be marked as completed with manual results')
+        .setDescription('Force a racing board to be completed and award points to winners')
         .addStringOption(option =>
             option.setName('month')
             .setDescription('Month name or YYYY-MM format of the racing board to complete')
@@ -113,49 +114,76 @@ export default {
                 return interaction.editReply(`Racing board not found for ${monthParam}. Please check the month name or format.`);
             }
             
-            // Create results array
+            // Create results array and track awarded users
             const results = [];
+            const awardedUsers = [];
             
-            // Add first place (required)
-            results.push({
-                username: username1,
-                rank: 1,
-                time: time1,
-                points: 3
-            });
+            // Get month abbreviation and year for award title
+            const startDate = new Date(racingBoard.startDate);
+            const monthAbbrev = startDate.toLocaleString('default', { month: 'short' });
+            const year = startDate.getFullYear();
             
-            // Add second place (if provided)
-            if (username2) {
-                results.push({
-                    username: username2,
-                    rank: 2,
-                    time: time2,
-                    points: 2
-                });
+            // Award points configuration
+            const pointsDistribution = [3, 2, 1]; // 1st, 2nd, 3rd place
+            const placements = ['1st place', '2nd place', '3rd place'];
+            
+            // Process the usernames
+            const usernames = [username1, username2, username3].filter(Boolean);
+            const times = [time1, time2, time3];
+            
+            // Award points to each user
+            for (let i = 0; i < usernames.length && i < 3; i++) {
+                try {
+                    // Find the user (case-insensitive)
+                    const user = await User.findOne({
+                        raUsername: { $regex: new RegExp(`^${usernames[i]}$`, 'i') }
+                    });
+                    
+                    if (!user) {
+                        console.warn(`User ${usernames[i]} not found, skipping awards`);
+                        continue;
+                    }
+                    
+                    // Points and placement
+                    const points = pointsDistribution[i];
+                    const placement = placements[i];
+                    
+                    // Create award title in concise format
+                    const awardTitle = `${monthAbbrev} ${year} Racing - ${placement}`;
+                    
+                    // Add award to the user
+                    user.communityAwards.push({
+                        title: awardTitle,
+                        points: points,
+                        awardedAt: new Date(),
+                        awardedBy: interaction.user.tag
+                    });
+                    
+                    await user.save();
+                    awardedUsers.push(user.raUsername);
+                    
+                    // Add to results array for the racing board
+                    results.push({
+                        username: user.raUsername,
+                        rank: i + 1,
+                        time: times[i],
+                        points: points
+                    });
+                } catch (userError) {
+                    console.error(`Error processing user ${usernames[i]}:`, userError);
+                }
             }
             
-            // Add third place (if provided)
-            if (username3) {
-                results.push({
-                    username: username3,
-                    rank: 3,
-                    time: time3,
-                    points: 1
-                });
-            }
-            
-            // Mark the board as completed with results
+            // Update the racing board
             racingBoard.pointsAwarded = true;
             racingBoard.results = results;
             await racingBoard.save();
             
             // Get the month and year for display
-            const startDate = new Date(racingBoard.startDate);
             const monthName = startDate.toLocaleString('default', { month: 'long' });
-            const year = startDate.getFullYear();
             
-            // Create response message with results
-            let responseMessage = `Successfully marked ${monthName} ${year} racing board as completed!\n\n`;
+            // Create response message
+            let responseMessage = `Successfully marked ${monthName} ${year} racing board as completed and awarded points!\n\n`;
             responseMessage += `**${racingBoard.gameTitle}${racingBoard.trackName ? ` - ${racingBoard.trackName}` : ''}**\n\n`;
             responseMessage += `**Final Results:**\n`;
             
@@ -164,7 +192,11 @@ export default {
                 responseMessage += `${medalEmoji} **${result.username}**: ${result.time} (${result.points} point${result.points !== 1 ? 's' : ''})\n`;
             });
             
-            responseMessage += `\n**Note:** This command only updates the board's status. It does not automatically give awards to users. Use \`/giveaward\` separately if needed.`;
+            if (awardedUsers.length > 0) {
+                responseMessage += `\n✅ Points awarded to: ${awardedUsers.join(', ')}`;
+            } else {
+                responseMessage += `\n⚠️ No points were awarded. Check for errors in the usernames.`;
+            }
             
             return interaction.editReply(responseMessage);
             
