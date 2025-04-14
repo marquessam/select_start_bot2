@@ -107,6 +107,55 @@ const arcadeBoardSchema = new mongoose.Schema({
 
 // Create indexes for frequently queried fields
 arcadeBoardSchema.index({ boardType: 1, startDate: 1, endDate: 1 });
+arcadeBoardSchema.index({ boardType: 1, monthKey: 1 });
+
+// Static method to find racing board by month name or month key
+arcadeBoardSchema.statics.findRacingBoardByMonth = async function(monthInput) {
+    // If input is in YYYY-MM format
+    if (/^\d{4}-\d{2}$/.test(monthInput)) {
+        return this.findOne({
+            boardType: 'racing',
+            monthKey: monthInput
+        });
+    }
+    
+    // Try to parse as a month name
+    const monthNames = [
+        'january', 'february', 'march', 'april', 'may', 'june',
+        'july', 'august', 'september', 'october', 'november', 'december'
+    ];
+    
+    const monthIndex = monthNames.findIndex(m => 
+        m.toLowerCase() === monthInput.toLowerCase()
+    );
+    
+    if (monthIndex === -1) {
+        return null; // Invalid month name
+    }
+    
+    // First try current year
+    const now = new Date();
+    const currentYear = now.getFullYear();
+    
+    const currentYearMonthKey = `${currentYear}-${(monthIndex + 1).toString().padStart(2, '0')}`;
+    
+    const currentYearBoard = await this.findOne({
+        boardType: 'racing',
+        monthKey: currentYearMonthKey
+    });
+    
+    if (currentYearBoard) {
+        return currentYearBoard;
+    }
+    
+    // Try previous year if not found
+    const prevYearMonthKey = `${currentYear - 1}-${(monthIndex + 1).toString().padStart(2, '0')}`;
+    
+    return this.findOne({
+        boardType: 'racing',
+        monthKey: prevYearMonthKey
+    });
+};
 
 // Statics method to find active racing board
 arcadeBoardSchema.statics.findActiveRacingBoard = function() {
@@ -131,6 +180,13 @@ arcadeBoardSchema.statics.findActiveTiebreaker = function() {
 // Statics method to find all arcade boards
 arcadeBoardSchema.statics.findAllArcadeBoards = function() {
     return this.find({ boardType: 'arcade' }).sort({ gameTitle: 1 });
+};
+
+// Statics method to find all racing boards
+arcadeBoardSchema.statics.findAllRacingBoards = function() {
+    return this.find({ 
+        boardType: 'racing' 
+    }).sort({ startDate: -1 }); // Sort by start date descending (newest first)
 };
 
 // Method to check if a racing board is completed but points not yet awarded
