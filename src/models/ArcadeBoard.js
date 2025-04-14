@@ -47,6 +47,12 @@ const arcadeBoardSchema = new mongoose.Schema({
         required: true
     },
     
+    // Track name (for racing challenges - e.g., "Mario Circuit")
+    trackName: {
+        type: String,
+        default: ""
+    },
+    
     // Description of the leaderboard challenge
     description: {
         type: String,
