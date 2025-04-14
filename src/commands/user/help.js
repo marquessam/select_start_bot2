@@ -1,60 +1,25 @@
-import { SlashCommandBuilder, EmbedBuilder } from 'discord.js';
+import { 
+    SlashCommandBuilder, 
+    EmbedBuilder, 
+    ActionRowBuilder, 
+    ButtonBuilder, 
+    ButtonStyle,
+    ComponentType
+} from 'discord.js';
 import { Challenge } from '../../models/Challenge.js';
 import retroAPI from '../../services/retroAPI.js';
 
 export default {
     data: new SlashCommandBuilder()
         .setName('help')
-        .setDescription('Get help with the Select Start Bot commands and community')
-        .addStringOption(option =>
-            option.setName('topic')
-                .setDescription('Help topic to display')
-                .setRequired(false)
-                .addChoices(
-                    { name: 'Overview', value: 'overview' },
-                    { name: 'Commands', value: 'commands' },
-                    { name: 'Challenges', value: 'challenges' },
-                    { name: 'Shadow Games', value: 'shadow' },
-                    { name: 'Arcade', value: 'arcade' },
-                    { name: 'Points', value: 'points' },
-                    { name: 'Nominations', value: 'nominations' },
-                    { name: 'Community Rules', value: 'community' }
-                )),
+        .setDescription('Get help with the Select Start Bot commands and community'),
 
     async execute(interaction) {
-       await interaction.deferReply({ ephemeral: true });
+        await interaction.deferReply({ ephemeral: true });
 
         try {
-            const topic = interaction.options.getString('topic') || 'main';
-
-            switch (topic) {
-                case 'overview':
-                    await this.displayOverview(interaction);
-                    break;
-                case 'commands':
-                    await this.displayCommands(interaction);
-                    break;
-                case 'challenges':
-                    await this.displayChallenges(interaction);
-                    break;
-                case 'shadow':
-                    await this.displayShadowChallenge(interaction);
-                    break;
-                case 'arcade':
-                    await this.displayArcade(interaction);
-                    break;
-                case 'points':
-                    await this.displayPoints(interaction);
-                    break;
-                case 'nominations':
-                    await this.displayNominations(interaction);
-                    break;
-                case 'community':
-                    await this.displayCommunityRules(interaction);
-                    break;
-                default:
-                    await this.displayMainHelp(interaction);
-            }
+            // Start with the main help menu
+            await this.displayMainHelp(interaction);
         } catch (error) {
             console.error('Help Command Error:', error);
             await interaction.editReply('Failed to display help. Please try again.');
@@ -64,27 +29,173 @@ export default {
     async displayMainHelp(interaction) {
         const embed = new EmbedBuilder()
             .setTitle('Select Start Community Help')
-            .setDescription('Welcome to the Select Start Gaming Community! Use this help command to learn about our community and available bot commands.')
+            .setDescription('Welcome to the Select Start Gaming Community! Choose a topic below to learn more about our community and available bot commands.')
             .setColor('#3498DB')
             .addFields({
                 name: 'Available Help Topics',
-                value: '• `/help topic:overview` - Community overview and how things work\n' +
-                      '• `/help topic:commands` - List of available bot commands\n' +
-                      '• `/help topic:challenges` - About monthly challenges and awards\n' +
-                      '• `/help topic:shadow` - About shadow game challenges\n' +
-                      '• `/help topic:arcade` - About arcade and racing leaderboards\n' +
-                      '• `/help topic:points` - How points are earned and awarded\n' +
-                      '• `/help topic:nominations` - How game nominations work\n' +
-                      '• `/help topic:community` - Community rules and guidelines'
+                value: '🔍 **Overview** - Community overview and how things work\n' +
+                      '🤖 **Commands** - List of available bot commands\n' +
+                      '🎮 **Challenges** - About monthly challenges and awards\n' +
+                      '👥 **Shadow Games** - About shadow game challenges\n' +
+                      '🏎️ **Arcade** - About arcade and racing leaderboards\n' +
+                      '🏆 **Points** - How points are earned and awarded\n' +
+                      '🗳️ **Nominations** - How game nominations work\n' +
+                      '📋 **Community Rules** - Community rules and guidelines'
             })
-            .setFooter({ text: 'Select Start Gaming Community' })
+            .setFooter({ text: 'Select Start Gaming Community • Press a button below to view a topic' })
             .setTimestamp();
 
-        await interaction.editReply({ embeds: [embed] });
+        // Create two rows of buttons (4 buttons per row)
+        const row1 = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId('overview')
+                    .setLabel('Overview')
+                    .setStyle(ButtonStyle.Primary)
+                    .setEmoji('🔍'),
+                new ButtonBuilder()
+                    .setCustomId('commands')
+                    .setLabel('Commands')
+                    .setStyle(ButtonStyle.Primary)
+                    .setEmoji('🤖'),
+                new ButtonBuilder()
+                    .setCustomId('challenges')
+                    .setLabel('Challenges')
+                    .setStyle(ButtonStyle.Primary)
+                    .setEmoji('🎮'),
+                new ButtonBuilder()
+                    .setCustomId('shadow')
+                    .setLabel('Shadow Games')
+                    .setStyle(ButtonStyle.Primary)
+                    .setEmoji('👥')
+            );
+
+        const row2 = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId('arcade')
+                    .setLabel('Arcade')
+                    .setStyle(ButtonStyle.Primary)
+                    .setEmoji('🏎️'),
+                new ButtonBuilder()
+                    .setCustomId('points')
+                    .setLabel('Points')
+                    .setStyle(ButtonStyle.Primary)
+                    .setEmoji('🏆'),
+                new ButtonBuilder()
+                    .setCustomId('nominations')
+                    .setLabel('Nominations')
+                    .setStyle(ButtonStyle.Primary)
+                    .setEmoji('🗳️'),
+                new ButtonBuilder()
+                    .setCustomId('community')
+                    .setLabel('Community Rules')
+                    .setStyle(ButtonStyle.Primary)
+                    .setEmoji('📋')
+            );
+
+        // Send the initial message with buttons
+        const message = await interaction.editReply({
+            embeds: [embed],
+            components: [row1, row2]
+        });
+
+        // Create collector for button interactions
+        const collector = message.createMessageComponentCollector({
+            componentType: ComponentType.Button,
+            time: 600000 // Time limit: 10 minutes
+        });
+
+        // Handle button clicks
+        collector.on('collect', async (i) => {
+            // We need to defer the update to avoid interaction timeouts
+            await i.deferUpdate();
+
+            // Generate back button
+            const backRow = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('back')
+                        .setLabel('Back to Menu')
+                        .setStyle(ButtonStyle.Secondary)
+                        .setEmoji('↩️')
+                );
+
+            // Handle different button clicks
+            switch (i.customId) {
+                case 'overview':
+                    const overviewEmbed = await this.createOverviewEmbed();
+                    await i.editReply({ embeds: [overviewEmbed], components: [backRow] });
+                    break;
+                case 'commands':
+                    const commandsEmbed = await this.createCommandsEmbed();
+                    await i.editReply({ embeds: [commandsEmbed], components: [backRow] });
+                    break;
+                case 'challenges':
+                    const challengesEmbed = await this.createChallengesEmbed();
+                    await i.editReply({ embeds: [challengesEmbed], components: [backRow] });
+                    break;
+                case 'shadow':
+                    const shadowEmbed = await this.createShadowEmbed();
+                    await i.editReply({ embeds: [shadowEmbed], components: [backRow] });
+                    break;
+                case 'arcade':
+                    const arcadeEmbed = await this.createArcadeEmbed();
+                    await i.editReply({ embeds: [arcadeEmbed], components: [backRow] });
+                    break;
+                case 'points':
+                    const pointsEmbed = await this.createPointsEmbed();
+                    await i.editReply({ embeds: [pointsEmbed], components: [backRow] });
+                    break;
+                case 'nominations':
+                    const nominationsEmbed = await this.createNominationsEmbed();
+                    await i.editReply({ embeds: [nominationsEmbed], components: [backRow] });
+                    break;
+                case 'community':
+                    const communityEmbed = await this.createCommunityEmbed();
+                    await i.editReply({ embeds: [communityEmbed], components: [backRow] });
+                    break;
+                case 'back':
+                    // Return to main menu
+                    await i.editReply({ embeds: [embed], components: [row1, row2] });
+                    break;
+            }
+        });
+
+        // When the collector expires
+        collector.on('end', async () => {
+            try {
+                // Disable all buttons when time expires
+                const disabledRow1 = new ActionRowBuilder()
+                    .addComponents(
+                        row1.components[0].setDisabled(true),
+                        row1.components[1].setDisabled(true),
+                        row1.components[2].setDisabled(true),
+                        row1.components[3].setDisabled(true)
+                    );
+
+                const disabledRow2 = new ActionRowBuilder()
+                    .addComponents(
+                        row2.components[0].setDisabled(true),
+                        row2.components[1].setDisabled(true),
+                        row2.components[2].setDisabled(true),
+                        row2.components[3].setDisabled(true)
+                    );
+
+                // Update with disabled buttons
+                await interaction.editReply({
+                    embeds: [embed.setFooter({ text: 'Select Start Gaming Community • Help session expired' })],
+                    components: [disabledRow1, disabledRow2]
+                });
+            } catch (error) {
+                console.error('Error disabling buttons:', error);
+            }
+        });
     },
 
-    async displayOverview(interaction) {
-        const embed = new EmbedBuilder()
+    // Create all the embed functions
+    async createOverviewEmbed() {
+        return new EmbedBuilder()
             .setTitle('Community Overview')
             .setColor('#2ECC71')
             .setDescription('Welcome to the Select Start Gaming Community! We focus on RetroAchievements challenges, competitions, and building a friendly retro gaming community.')
@@ -110,26 +221,23 @@ export default {
                     value: 'On December 1st, yearly points are totaled and prizes are awarded to top performers across all categories.'
                 }
             )
-            .setFooter({ text: 'Use "/help topic:commands" to see available commands' })
+            .setFooter({ text: 'Press "Back to Menu" to return to the main menu' })
             .setTimestamp();
-
-        await interaction.editReply({ embeds: [embed] });
     },
 
-    async displayCommands(interaction) {
-        const embed = new EmbedBuilder()
+    async createCommandsEmbed() {
+        return new EmbedBuilder()
             .setTitle('Available Commands')
             .setColor('#E74C3C')
             .setDescription('Here are the commands you can use in the Select Start community:')
             .addFields(
                 {
                     name: '📋 Community Information',
-                    value: '• `/help` - Display this help information\n' +
-                           '• `/help topic:[topic]` - Display specific information about a topic'
+                    value: '• `/help` - Display this help information with interactive buttons'
                 },
                 {
                     name: '🏆 Challenges & Leaderboards',
-                    value: '• `/challenge` - Show the current monthly and shadow challenges\n' +
+                    value: '• `/challenge` - Show the current monthly, shadow, and racing challenges\n' +
                            '• `/leaderboard` - Display the current monthly challenge leaderboard\n' +
                            '• `/yearlyboard` - Display the yearly points leaderboard\n' +
                            '• `/profile [username]` - Show your or someone else\'s profile\n' +
@@ -151,13 +259,11 @@ export default {
                            '• `/arcade tiebreaker` - Show the current tiebreaker board (if active)'
                 }
             )
-            .setFooter({ text: 'Select Start Gaming Community' })
+            .setFooter({ text: 'Press "Back to Menu" to return to the main menu' })
             .setTimestamp();
-
-        await interaction.editReply({ embeds: [embed] });
     },
 
-    async displayChallenges(interaction) {
+    async createChallengesEmbed() {
         // Try to get current challenge information for the most relevant data
         try {
             // Get current date for finding current challenge
@@ -189,7 +295,7 @@ export default {
                 winInfo = winCount > 0 ? ` and at least one of the ${winCount} win achievements` : '';
             }
 
-            const embed = new EmbedBuilder()
+            return new EmbedBuilder()
                 .setTitle('Monthly Challenges')
                 .setColor('#9B59B6')
                 .setDescription('Our community revolves around monthly challenge games chosen by community vote:')
@@ -213,15 +319,13 @@ export default {
                                '• All RetroAchievements rules must be followed (no cheating or exploits)'
                     }
                 )
-                .setFooter({ text: 'Use "/challenge" to see the current challenge' })
+                .setFooter({ text: 'Press "Back to Menu" to return to the main menu' })
                 .setTimestamp();
-
-            await interaction.editReply({ embeds: [embed] });
         } catch (error) {
             console.error('Error getting challenge info:', error);
             
             // Fallback embed without specific challenge details
-            const embed = new EmbedBuilder()
+            return new EmbedBuilder()
                 .setTitle('Monthly Challenges')
                 .setColor('#9B59B6')
                 .setDescription('Our community revolves around monthly challenge games chosen by community vote:')
@@ -245,14 +349,12 @@ export default {
                                '• All RetroAchievements rules must be followed (no cheating or exploits)'
                     }
                 )
-                .setFooter({ text: 'Use "/challenge" to see the current challenge' })
+                .setFooter({ text: 'Press "Back to Menu" to return to the main menu' })
                 .setTimestamp();
-
-            await interaction.editReply({ embeds: [embed] });
         }
     },
 
-    async displayShadowChallenge(interaction) {
+    async createShadowEmbed() {
         try {
             // Get current date for finding current challenge
             const now = new Date();
@@ -290,14 +392,10 @@ export default {
                            'Shadow games add an element of mystery to each month\'s challenges! Note that shadow games ' +
                            'are ineligible for mastery awards.'
                 })
+                .setFooter({ text: 'Press "Back to Menu" to return to the main menu' })
                 .setTimestamp();
 
-            if (!currentChallenge || !currentChallenge.shadow_challange_gameid) {
-                embed.addFields({
-                    name: 'Status',
-                    value: 'No active shadow game available for this month.'
-                });
-            } else if (currentChallenge.shadow_challange_revealed) {
+            if (currentChallenge && currentChallenge.shadow_challange_gameid && currentChallenge.shadow_challange_revealed) {
                 // Shadow game is revealed - get game info
                 const shadowGameInfo = await retroAPI.getGameInfo(currentChallenge.shadow_challange_gameid);
                 
@@ -320,20 +418,14 @@ export default {
                 if (shadowGameInfo.imageIcon) {
                     embed.setThumbnail(`https://retroachievements.org${shadowGameInfo.imageIcon}`);
                 }
-            } else {
-                embed.addFields({
-                    name: 'Status',
-                    value: '*A shadow game has been prepared for this month, but it remains hidden.*\n\n' +
-                           'Try to identify it by using the `/shadowguess` command followed by your guess for the shadow game.'
-                });
             }
 
-            await interaction.editReply({ embeds: [embed] });
+            return embed;
         } catch (error) {
             console.error('Shadow Rules Error:', error);
             
             // Fallback embed
-            const embed = new EmbedBuilder()
+            return new EmbedBuilder()
                 .setTitle('Shadow Game Challenge')
                 .setColor('#9B59B6')
                 .setDescription(
@@ -356,14 +448,13 @@ export default {
                            'Shadow games add an element of mystery to each month\'s challenges! Note that shadow games ' +
                            'are ineligible for mastery awards.'
                 })
+                .setFooter({ text: 'Press "Back to Menu" to return to the main menu' })
                 .setTimestamp();
-                
-            await interaction.editReply({ embeds: [embed] });
         }
     },
 
-    async displayArcade(interaction) {
-        const embed = new EmbedBuilder()
+    async createArcadeEmbed() {
+        return new EmbedBuilder()
             .setTitle('Arcade & Racing Challenges')
             .setColor('#F39C12')
             .setDescription('In addition to monthly challenges, we have special competitions with their own point systems:')
@@ -397,14 +488,12 @@ export default {
                     value: 'For a complete overview of the arcade system, use `/arcade menu` to see all available options and current active challenges.'
                 }
             )
-            .setFooter({ text: 'Use "/arcade menu" to see the arcade system menu' })
+            .setFooter({ text: 'Press "Back to Menu" to return to the main menu' })
             .setTimestamp();
-
-        await interaction.editReply({ embeds: [embed] });
     },
 
-    async displayPoints(interaction) {
-        const embed = new EmbedBuilder()
+    async createPointsEmbed() {
+        return new EmbedBuilder()
             .setTitle('Points System')
             .setColor('#1ABC9C')
             .setDescription('Points are awarded across different activities and tracked throughout the year:')
@@ -445,14 +534,12 @@ export default {
                     value: 'On December 1st, all points are totaled and prizes are awarded to the top performers across all categories.'
                 }
             )
-            .setFooter({ text: 'Use "/yearlyboard" to see the current standings' })
+            .setFooter({ text: 'Press "Back to Menu" to return to the main menu' })
             .setTimestamp();
-
-        await interaction.editReply({ embeds: [embed] });
     },
 
-    async displayNominations(interaction) {
-        const embed = new EmbedBuilder()
+    async createNominationsEmbed() {
+        return new EmbedBuilder()
             .setTitle('Game Nominations & Voting')
             .setColor('#3498DB')
             .setDescription('Our monthly challenges are determined through a community nomination and voting process:')
@@ -485,14 +572,12 @@ export default {
                     value: 'If you want to change your nomination, ask an admin to use the `/clearnominations` command to reset your nominations'
                 }
             )
-            .setFooter({ text: 'Nominations reset at the beginning of each month' })
+            .setFooter({ text: 'Press "Back to Menu" to return to the main menu' })
             .setTimestamp();
-
-        await interaction.editReply({ embeds: [embed] });
     },
     
-    async displayCommunityRules(interaction) {
-        const embed = new EmbedBuilder()
+    async createCommunityEmbed() {
+        return new EmbedBuilder()
             .setTitle('Community Guidelines')
             .setColor('#3498DB')
             .setDescription('Rules and information for the Select Start Gaming Community')
@@ -525,12 +610,10 @@ export default {
                            '**#the-arcade**\n' +
                            '• Discuss the arcade board challenges\n\n' +
                            '**#off-topic**\n' +
-                           '• For general discussion of non gaming or specific channel topics'
+                           '• For all non gaming/specific topic discussion'
                 }
             )
-            .setFooter({ text: 'Select Start Gaming Community' })
+            .setFooter({ text: 'Press "Back to Menu" to return to the main menu' })
             .setTimestamp();
-
-        await interaction.editReply({ embeds: [embed] });
     }
 };
