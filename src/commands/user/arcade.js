@@ -20,17 +20,13 @@ function ordinal(n) {
 export default {
     data: new SlashCommandBuilder()
         .setName('arcade')
-        .setDescription('Display arcade and racing leaderboards with interactive navigation')
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('menu')
-                .setDescription('Show arcade system menu with interactive buttons')),
+        .setDescription('Display arcade and racing leaderboards with interactive navigation'),
 
     async execute(interaction) {
         await interaction.deferReply({ ephemeral: true });
 
         try {
-            // Start with the main arcade menu
+            // Display the main arcade menu
             await this.displayArcadeMenu(interaction);
         } catch (error) {
             console.error('Error executing arcade command:', error);
@@ -60,7 +56,7 @@ export default {
             });
 
             const embed = new EmbedBuilder()
-                .setTitle('🎮 Arcade System Menu')
+                .setTitle('🎮 Arcade System')
                 .setColor('#9B59B6') // Purple color
                 .setDescription('Welcome to the RetroAchievements arcade system! Choose an option below to navigate different leaderboards and racing challenges.')
                 .addFields(
@@ -271,7 +267,10 @@ export default {
             
             // If there are too many boards, add a note
             if (boards.length > 15) {
-                embed.setDescription(`Select a board to view its leaderboard.\n\n**Note:** Only showing first 15 boards. Use \`/arcade board id:<board_id>\` to access other boards.`);
+                embed.addFields({
+                    name: 'Note',
+                    value: 'Only showing first 15 boards. To access other boards, use the Selection button and choose a specific board ID.'
+                });
             }
             
             await interaction.editReply({ 
@@ -305,26 +304,65 @@ export default {
             const embed = new EmbedBuilder()
                 .setTitle('🎮 Select an Arcade Board')
                 .setColor('#9B59B6') // Purple color
-                .setDescription('Please enter the ID of the board you want to view in chat.')
+                .setDescription('Select a board from the buttons below.')
                 .setFooter({ text: 'Use the back button to return to the menu' });
             
-            // Create a list of boards with their IDs
-            let boardList = '';
-            boards.forEach(board => {
-                boardList += `**${board.boardId}**: ${board.gameTitle}\n`;
-            });
+            // Create buttons for board selection
+            // For selection, use a more compact approach with multiple rows of boards grouped by ranges
+            const boardRows = [];
             
-            embed.addFields({ name: 'Available Boards', value: boardList });
+            // Get the max board ID to determine ranges
+            const maxBoardId = Math.max(...boards.map(b => parseInt(b.boardId)));
             
-            // Create a prompt to select board ID through a follow-up message
-            const promptMessage = await interaction.editReply({
+            // Group boards into ranges (e.g., Boards 1-5, 6-10, etc.)
+            const rangeSize = 5;
+            for (let rangeStart = 1; rangeStart <= maxBoardId; rangeStart += rangeSize) {
+                const rangeEnd = Math.min(rangeStart + rangeSize - 1, maxBoardId);
+                
+                // Check if there are boards in this range
+                const boardsInRange = boards.filter(b => {
+                    const id = parseInt(b.boardId);
+                    return id >= rangeStart && id <= rangeEnd;
+                });
+                
+                if (boardsInRange.length > 0) {
+                    // Create a new row for this range
+                    const row = new ActionRowBuilder();
+                    
+                    // For each board in this range, add a button
+                    boardsInRange.forEach(board => {
+                        row.addComponents(
+                            new ButtonBuilder()
+                                .setCustomId(`board_${board.boardId}`)
+                                .setLabel(`Board ${board.boardId}`)
+                                .setStyle(ButtonStyle.Secondary)
+                        );
+                    });
+                    
+                    // Add this row to the collection
+                    boardRows.push(row);
+                    
+                    // Only show up to 4 rows (in addition to the back button row)
+                    if (boardRows.length >= 4) {
+                        break;
+                    }
+                }
+            }
+            
+            // Add the back button as the last row
+            boardRows.push(backRow);
+            
+            if (maxBoardId > 20) {
+                embed.addFields({
+                    name: 'Note',
+                    value: 'Only showing a subset of available boards. Check the "View All Arcade Boards" option to see a complete list.'
+                });
+            }
+            
+            await interaction.editReply({
                 embeds: [embed],
-                components: [backRow]
+                components: boardRows
             });
-            
-            // We can't directly create a text input in a message component,
-            // so we'll use the board buttons method instead
-            await this.handleListArcadeBoards(interaction, backRow);
         } catch (error) {
             console.error('Error creating board selection:', error);
             await interaction.editReply({
@@ -613,7 +651,10 @@ export default {
             
             // If there are too many boards, add a note
             if (boards.length > 10) {
-                embed.setDescription(`Select a racing challenge to view details.\n\n**Note:** Only showing 10 most recent challenges. Use \`/arcade racing month:<YYYY-MM>\` to access older challenges.`);
+                embed.addFields({
+                    name: 'Note',
+                    value: 'Only showing 10 most recent challenges due to button limits.'
+                });
             }
             
             await interaction.editReply({ 
