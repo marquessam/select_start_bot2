@@ -57,6 +57,10 @@ export default {
                         .setDescription('RetroAchievements game ID')
                         .setRequired(true))
                 .addStringOption(option =>
+                    option.setName('track_name')
+                        .setDescription('Name of the track (e.g., "Mario Circuit")')
+                        .setRequired(true))
+                .addStringOption(option =>
                     option.setName('description')
                         .setDescription('Description of the racing challenge')
                         .setRequired(true))
@@ -117,7 +121,23 @@ export default {
                 .addIntegerOption(option =>
                     option.setName('year')
                         .setDescription('Year to award points for (defaults to current year)')
-                        .setRequired(false))),
+                        .setRequired(false)))
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('clear')
+                .setDescription('Remove an arcade or racing board')
+                .addStringOption(option =>
+                    option.setName('type')
+                        .setDescription('Type of board to clear')
+                        .setRequired(true)
+                        .addChoices(
+                            { name: 'Arcade Board', value: 'arcade' },
+                            { name: 'Racing Challenge', value: 'racing' }
+                        ))
+                .addStringOption(option =>
+                    option.setName('identifier')
+                        .setDescription('Board ID or month (YYYY-MM or month name) for racing')
+                        .setRequired(true))),
 
     async execute(interaction) {
         // Check if user has admin role
@@ -154,6 +174,9 @@ export default {
                     break;
                 case 'awardarcade':
                     await this.triggerArcadeAwards(interaction);
+                    break;
+                case 'clear':
+                    await this.clearBoard(interaction);
                     break;
                 default:
                     await interaction.editReply('Invalid subcommand');
@@ -217,104 +240,107 @@ export default {
         return interaction.editReply(`Successfully removed arcade board: ${board.gameTitle} (${boardId})`);
     },
 
-  async createRacingChallenge(interaction) {
-    const leaderboardId = interaction.options.getInteger('leaderboard_id');
-    const gameId = interaction.options.getInteger('game_id');
-    const description = interaction.options.getString('description');
-    
-    // Get year and month (defaults to current)
-    const now = new Date();
-    const year = interaction.options.getInteger('year') || now.getFullYear();
-    const month = interaction.options.getInteger('month') || (now.getMonth() + 1);
-
-    // Validate game exists
-    try {
-        const gameInfo = await retroAPI.getGameInfo(gameId);
-        if (!gameInfo) {
-            return interaction.editReply('Game not found. Please check the game ID.');
-        }
-
-        // Calculate start and end dates
-        // Start at beginning of specified month
-        const startDate = new Date(year, month - 1, 1);
+    async createRacingChallenge(interaction) {
+        const leaderboardId = interaction.options.getInteger('leaderboard_id');
+        const gameId = interaction.options.getInteger('game_id');
+        const trackName = interaction.options.getString('track_name');
+        const description = interaction.options.getString('description');
         
-        // End at the end of the specified month (23:59:59 on the last day)
-        const endDate = new Date(year, month, 0, 23, 59, 59);
-        
-        // Check if a racing challenge already exists for this month
-        const monthKey = `${year}-${month.toString().padStart(2, '0')}`;
-        const existingChallenge = await ArcadeBoard.findOne({
-            boardType: 'racing',
-            monthKey
-        });
+        // Get year and month (defaults to current)
+        const now = new Date();
+        const year = interaction.options.getInteger('year') || now.getFullYear();
+        const month = interaction.options.getInteger('month') || (now.getMonth() + 1);
 
-        if (existingChallenge) {
-            return interaction.editReply(`A racing challenge already exists for ${monthKey}.`);
+        // Validate game exists
+        try {
+            const gameInfo = await retroAPI.getGameInfo(gameId);
+            if (!gameInfo) {
+                return interaction.editReply('Game not found. Please check the game ID.');
+            }
+
+            // Calculate start and end dates
+            // Start at beginning of specified month
+            const startDate = new Date(year, month - 1, 1);
+            
+            // End at the end of the specified month (23:59:59 on the last day)
+            const endDate = new Date(year, month, 0, 23, 59, 59);
+            
+            // Check if a racing challenge already exists for this month
+            const monthKey = `${year}-${month.toString().padStart(2, '0')}`;
+            const existingChallenge = await ArcadeBoard.findOne({
+                boardType: 'racing',
+                monthKey
+            });
+
+            if (existingChallenge) {
+                return interaction.editReply(`A racing challenge already exists for ${monthKey}.`);
+            }
+
+            // Generate a unique board ID specifically for racing
+            // This format ensures no overlap with regular arcade boards
+            const boardId = `racing-${monthKey}`;
+
+            // Get the full game title and console name
+            const gameFull = `${gameInfo.title} (${gameInfo.consoleName})`;
+
+            // Create new racing board
+            const newBoard = new ArcadeBoard({
+                boardId,
+                boardType: 'racing',
+                leaderboardId,
+                gameId,
+                gameTitle: gameFull,
+                trackName,
+                consoleName: gameInfo.consoleName || 'Unknown',
+                description,
+                startDate,
+                endDate,
+                monthKey
+            });
+
+            await newBoard.save();
+
+            // Get month name for response
+            const monthName = startDate.toLocaleString('default', { month: 'long' });
+
+            // Create an embed for the response
+            const embed = new EmbedBuilder()
+                .setColor('#FF9900')
+                .setTitle(`Racing Challenge Created: ${monthName} ${year}`)
+                .setDescription(
+                    `**Game:** ${gameFull}\n` +
+                    `**Track:** ${trackName}\n` +
+                    `**Description:** ${description}\n\n` +
+                    `**Challenge Period:** ${startDate.toLocaleDateString()} to ${endDate.toLocaleDateString()}\n\n` +
+                    `The top 3 players at the end of the month will receive award points!`
+                );
+
+            if (gameInfo.imageIcon) {
+                embed.setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`);
+            }
+            
+            // Add buttons to the response message
+            const row = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId(`announce_racing_${boardId}`)
+                        .setLabel('Announce to Server')
+                        .setStyle(ButtonStyle.Primary),
+                    new ButtonBuilder()
+                        .setCustomId(`view_racing_${boardId}`)
+                        .setLabel('View Leaderboard')
+                        .setStyle(ButtonStyle.Secondary)
+                );
+
+            return interaction.editReply({
+                embeds: [embed],
+                components: [row]
+            });
+        } catch (error) {
+            console.error('Error creating racing challenge:', error);
+            return interaction.editReply('An error occurred while creating the racing challenge. Please try again.');
         }
-
-        // Generate a unique board ID specifically for racing
-        // This format ensures no overlap with regular arcade boards
-        const boardId = `racing-${monthKey}`;
-
-        // Get the full game title and console name
-        const gameFull = `${gameInfo.title} (${gameInfo.consoleName})`;
-
-        // Create new racing board
-        const newBoard = new ArcadeBoard({
-            boardId,
-            boardType: 'racing',
-            leaderboardId,
-            gameId,
-            gameTitle: gameFull,
-            consoleName: gameInfo.consoleName || 'Unknown',
-            description,
-            startDate,
-            endDate,
-            monthKey
-        });
-
-        await newBoard.save();
-
-        // Get month name for response
-        const monthName = startDate.toLocaleString('default', { month: 'long' });
-
-        // Create an embed for the response
-        const embed = new EmbedBuilder()
-            .setColor('#FF9900')
-            .setTitle(`Racing Challenge Created: ${monthName} ${year}`)
-            .setDescription(
-                `**Game:** ${gameFull}\n` +
-                `**Description:** ${description}\n\n` +
-                `**Challenge Period:** ${startDate.toLocaleDateString()} to ${endDate.toLocaleDateString()}\n\n` +
-                `The top 3 players at the end of the month will receive award points!`
-            );
-
-        if (gameInfo.imageIcon) {
-            embed.setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`);
-        }
-        
-        // Add buttons to the response message
-        const row = new ActionRowBuilder()
-            .addComponents(
-                new ButtonBuilder()
-                    .setCustomId(`announce_racing_${boardId}`)
-                    .setLabel('Announce to Server')
-                    .setStyle(ButtonStyle.Primary),
-                new ButtonBuilder()
-                    .setCustomId(`view_racing_${boardId}`)
-                    .setLabel('View Leaderboard')
-                    .setStyle(ButtonStyle.Secondary)
-            );
-
-        return interaction.editReply({
-            embeds: [embed],
-            components: [row]
-        });
-    } catch (error) {
-        console.error('Error creating racing challenge:', error);
-        return interaction.editReply('An error occurred while creating the racing challenge. Please try again.');
-    }
-},
+    },
 
     async createTiebreaker(interaction) {
         const leaderboardId = interaction.options.getInteger('leaderboard_id');
@@ -455,7 +481,14 @@ export default {
                     const year = racingBoard.startDate.getFullYear();
                     const placement = i === 0 ? '1st' : (i === 1 ? '2nd' : '3rd');
                     
-                    const awardTitle = `${placement} Place in ${monthName} ${year} Racing: ${racingBoard.gameTitle}`;
+                    // Include track name in award if available
+                    const trackDisplay = racingBoard.trackName 
+                        ? ` - ${racingBoard.trackName}`
+                        : '';
+                        
+                    const gameDisplay = `${racingBoard.gameTitle}${trackDisplay}`;
+                    
+                    const awardTitle = `${placement} Place in ${monthName} ${year} Racing: ${gameDisplay}`;
                     
                     userObj.communityAwards.push({
                         title: awardTitle,
@@ -482,7 +515,7 @@ export default {
             await racingBoard.save();
             
             // Create response message
-            let responseMessage = `Successfully awarded points for ${racingBoard.gameTitle} racing challenge!\n\n`;
+            let responseMessage = `Successfully awarded points for ${racingBoard.gameTitle}${racingBoard.trackName ? ` - ${racingBoard.trackName}` : ''} racing challenge!\n\n`;
             
             results.forEach(result => {
                 responseMessage += `${result.rank}. ${result.username} (${result.time}): ${result.points} point${result.points !== 1 ? 's' : ''}\n`;
@@ -516,7 +549,7 @@ export default {
             // Different announcement based on board type
             if (board.boardType === 'racing') {
                 await arcadeService.announceNewRacingChallenge(board);
-                return interaction.editReply(`Racing challenge "${board.gameTitle}" has been announced!`);
+                return interaction.editReply(`Racing challenge "${board.gameTitle}${board.trackName ? ` - ${board.trackName}` : ''}" has been announced!`);
             } else if (board.boardType === 'arcade') {
                 // Get the announcement channel
                 const channel = await this.getAnnouncementChannel(interaction.client);
@@ -576,6 +609,91 @@ export default {
         }
     },
     
+    async clearBoard(interaction) {
+        const boardType = interaction.options.getString('type');
+        const identifier = interaction.options.getString('identifier');
+
+        try {
+            let board = null;
+
+            if (boardType === 'arcade') {
+                // For arcade boards, the identifier is directly the board ID
+                board = await ArcadeBoard.findOne({ 
+                    boardId: identifier,
+                    boardType: 'arcade'
+                });
+
+                if (!board) {
+                    return interaction.editReply(`Arcade board with ID "${identifier}" not found.`);
+                }
+            } else if (boardType === 'racing') {
+                // For racing boards, the identifier could be a month name or YYYY-MM format
+                if (/^\d{4}-\d{2}$/.test(identifier)) {
+                    // YYYY-MM format
+                    board = await ArcadeBoard.findOne({
+                        boardType: 'racing',
+                        monthKey: identifier
+                    });
+                } else {
+                    // Try to parse as a month name
+                    const monthNames = [
+                        'january', 'february', 'march', 'april', 'may', 'june',
+                        'july', 'august', 'september', 'october', 'november', 'december'
+                    ];
+                    
+                    const monthIndex = monthNames.findIndex(m => 
+                        m.toLowerCase() === identifier.toLowerCase()
+                    );
+                    
+                    if (monthIndex === -1) {
+                        return interaction.editReply(`Invalid month format. Please use a month name (e.g., "january") or YYYY-MM format (e.g., "2025-01").`);
+                    }
+                    
+                    // Current year by default
+                    const now = new Date();
+                    const year = now.getFullYear();
+                    
+                    // Look for any racing board with this month and current year
+                    const monthKey = `${year}-${(monthIndex + 1).toString().padStart(2, '0')}`;
+                    
+                    board = await ArcadeBoard.findOne({
+                        boardType: 'racing',
+                        monthKey: monthKey
+                    });
+                    
+                    // If not found, check previous year
+                    if (!board) {
+                        const prevYearMonthKey = `${year - 1}-${(monthIndex + 1).toString().padStart(2, '0')}`;
+                        board = await ArcadeBoard.findOne({
+                            boardType: 'racing',
+                            monthKey: prevYearMonthKey
+                        });
+
+                        if (!board) {
+                            return interaction.editReply(`No racing challenge found for ${identifier}.`);
+                        }
+                    }
+                }
+
+                if (!board) {
+                    return interaction.editReply(`Racing challenge with identifier "${identifier}" not found.`);
+                }
+            }
+
+            // Confirm to delete the board
+            const boardTitle = board.trackName 
+                ? `${board.gameTitle} - ${board.trackName}`
+                : board.gameTitle;
+                
+            await ArcadeBoard.deleteOne({ _id: board._id });
+            
+            return interaction.editReply(`Successfully removed ${boardType} board: ${boardTitle}`);
+        } catch (error) {
+            console.error(`Error clearing ${boardType} board:`, error);
+            return interaction.editReply(`An error occurred while removing the ${boardType} board. Please try again.`);
+        }
+    },
+
     async getAnnouncementChannel(client) {
         try {
             // Get the guild
