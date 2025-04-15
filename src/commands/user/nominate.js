@@ -29,6 +29,12 @@ export default {
                 return interaction.editReply('Game not found. Please check the game ID.');
             }
 
+            // Check if the game is from a disallowed console
+            const disallowedConsoles = ['PlayStation 2', 'GameCube'];
+            if (disallowedConsoles.includes(gameInfo.consoleName)) {
+                return interaction.editReply(`Sorry, games for ${gameInfo.consoleName} are not eligible for nomination. Please choose a game from a different platform. Use \`/help\` and go to Nominations > Supported Platforms to see eligible platforms.`);
+            }
+
             console.log(`Game info retrieved: ${gameInfo.title} (${gameInfo.consoleName})`);
 
             // Get current nominations
