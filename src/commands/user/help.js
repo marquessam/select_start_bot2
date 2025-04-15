@@ -662,7 +662,7 @@ export default {
                 },
                 {
                     name: 'Sony',
-                    value: '• PlayStation\n• PlayStation 2 (not eligible for nomination)\n• PlayStation Portable'
+                    value: '• PlayStation\n• PlayStation Portable'
                 },
                 {
                     name: 'Atari',
