@@ -342,77 +342,117 @@ export default {
         }
     },
 
-    async createTiebreaker(interaction) {
-        const leaderboardId = interaction.options.getInteger('leaderboard_id');
-        const gameId = interaction.options.getInteger('game_id');
-        const description = interaction.options.getString('description');
-        const tiedUsersInput = interaction.options.getString('tied_users');
-        const endDateStr = interaction.options.getString('end_date');
+   async createTiebreaker(interaction) {
+    const leaderboardId = interaction.options.getInteger('leaderboard_id');
+    const gameId = interaction.options.getInteger('game_id');
+    const description = interaction.options.getString('description');
+    const tiedUsersInput = interaction.options.getString('tied_users');
+    const endDateStr = interaction.options.getString('end_date');
 
-        try {
-            // Parse tied users
-            const tiedUsers = tiedUsersInput.split(',').map(user => user.trim()).filter(Boolean);
-            if (tiedUsers.length === 0) {
-                return interaction.editReply('Please provide at least one tied user.');
-            }
-
-            // Parse end date
-            const endDate = new Date(endDateStr);
-            if (isNaN(endDate.getTime())) {
-                return interaction.editReply('Invalid end date format. Please use YYYY-MM-DD.');
-            }
-
-            // Set end time to 23:59:59
-            endDate.setHours(23, 59, 59);
-
-            // Validate game exists
-            const gameInfo = await retroAPI.getGameInfo(gameId);
-            if (!gameInfo) {
-                return interaction.editReply('Game not found. Please check the game ID.');
-            }
-
-            // Check if an active tiebreaker already exists
-            const now = new Date();
-            const activeTiebreaker = await ArcadeBoard.findOne({
-                boardType: 'tiebreaker',
-                startDate: { $lte: now },
-                endDate: { $gte: now }
-            });
-
-            if (activeTiebreaker) {
-                return interaction.editReply('An active tiebreaker already exists. Please end it before creating a new one.');
-            }
-
-            // Generate a unique board ID
-            const boardId = `tiebreaker-${now.getFullYear()}-${(now.getMonth() + 1).toString().padStart(2, '0')}-${now.getDate()}`;
-
-            // Create new tiebreaker board
-            const newBoard = new ArcadeBoard({
-                boardId,
-                boardType: 'tiebreaker',
-                leaderboardId,
-                gameId,
-                gameTitle: gameInfo.title,
-                consoleName: gameInfo.consoleName || 'Unknown',
-                description,
-                startDate: now,
-                endDate,
-                tiedUsers
-            });
-
-            await newBoard.save();
-
-            return interaction.editReply(
-                `Successfully created tiebreaker challenge!\n` +
-                `Game: ${gameInfo.title}\n` +
-                `Tiebreaker ends: ${endDate.toLocaleDateString()}\n` +
-                `Participants: ${tiedUsers.join(', ')}`
-            );
-        } catch (error) {
-            console.error('Error creating tiebreaker:', error);
-            return interaction.editReply('An error occurred while creating the tiebreaker. Please try again.');
+    try {
+        // Parse tied users
+        const tiedUsers = tiedUsersInput.split(',').map(user => user.trim()).filter(Boolean);
+        if (tiedUsers.length === 0) {
+            return interaction.editReply('Please provide at least one tied user.');
         }
-    },
+
+        // Parse end date
+        const endDate = new Date(endDateStr);
+        if (isNaN(endDate.getTime())) {
+            return interaction.editReply('Invalid end date format. Please use YYYY-MM-DD.');
+        }
+
+        // Set end time to 23:59:59
+        endDate.setHours(23, 59, 59);
+
+        // Validate game exists
+        const gameInfo = await retroAPI.getGameInfo(gameId);
+        if (!gameInfo) {
+            return interaction.editReply('Game not found. Please check the game ID.');
+        }
+
+        // Check if an active tiebreaker already exists
+        const now = new Date();
+        const activeTiebreaker = await ArcadeBoard.findOne({
+            boardType: 'tiebreaker',
+            startDate: { $lte: now },
+            endDate: { $gte: now }
+        });
+
+        if (activeTiebreaker) {
+            return interaction.editReply('An active tiebreaker already exists. Please end it before creating a new one.');
+        }
+
+        // Generate a unique board ID
+        const monthYear = `${now.getFullYear()}-${(now.getMonth() + 1).toString().padStart(2, '0')}`;
+        const boardId = `tiebreaker-${monthYear}`;
+
+        // Create new tiebreaker board
+        const newBoard = new ArcadeBoard({
+            boardId,
+            boardType: 'tiebreaker',
+            leaderboardId,
+            gameId,
+            gameTitle: gameInfo.title,
+            consoleName: gameInfo.consoleName || 'Unknown',
+            description,
+            startDate: now,
+            endDate,
+            tiedUsers,
+            // Add monthKey for consistency with racing challenges
+            monthKey: monthYear
+        });
+
+        await newBoard.save();
+
+        // Check if this is for the current month's challenge tiebreaker
+        const currentMonth = now.getMonth();
+        const currentYear = now.getFullYear();
+        const isCurrentMonthTiebreaker = 
+            endDate.getMonth() === currentMonth && 
+            endDate.getFullYear() === currentYear;
+
+        // Get the month name
+        const monthName = now.toLocaleString('default', { month: 'long' });
+
+        // Create response embed
+        const embed = new EmbedBuilder()
+            .setColor('#FF0000')
+            .setTitle(`⚔️ Tiebreaker Created: ${monthName} ${currentYear}`)
+            .setDescription(
+                `**Game:** ${gameInfo.title}\n` +
+                `**Description:** ${description}\n\n` +
+                `**Tiebreaker Period:** ${now.toLocaleDateString()} to ${endDate.toLocaleDateString()}\n\n` +
+                `**Tied Users:** ${tiedUsers.join(', ')}\n\n` +
+                `This tiebreaker ${isCurrentMonthTiebreaker ? 'will be used' : 'may not be used'} to break ties in the ${monthName} monthly challenge.`
+            );
+
+        if (gameInfo.imageIcon) {
+            embed.setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`);
+        }
+        
+        // Add buttons to the response message
+        const row = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`announce_tiebreaker_${boardId}`)
+                    .setLabel('Announce to Server')
+                    .setStyle(ButtonStyle.Primary),
+                new ButtonBuilder()
+                    .setCustomId(`view_tiebreaker_${boardId}`)
+                    .setLabel('View Leaderboard')
+                    .setStyle(ButtonStyle.Secondary)
+            );
+
+        return interaction.editReply({
+            embeds: [embed],
+            components: [row]
+        });
+    } catch (error) {
+        console.error('Error creating tiebreaker:', error);
+        return interaction.editReply('An error occurred while creating the tiebreaker. Please try again.');
+    }
+},
 
     async awardRacingPoints(interaction) {
         const boardId = interaction.options.getString('board_id');
