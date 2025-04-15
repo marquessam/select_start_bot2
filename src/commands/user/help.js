@@ -149,11 +149,38 @@ export default {
                     break;
                 case 'nominations':
                     const nominationsEmbed = await this.createNominationsEmbed();
-                    await i.editReply({ embeds: [nominationsEmbed], components: [backRow] });
+                    // Create a row with platforms and back buttons
+                    const nominationsRow = new ActionRowBuilder()
+                        .addComponents(
+                            new ButtonBuilder()
+                                .setCustomId('platforms')
+                                .setLabel('Supported Platforms')
+                                .setStyle(ButtonStyle.Primary)
+                                .setEmoji('📋'),
+                            new ButtonBuilder()
+                                .setCustomId('back')
+                                .setLabel('Back to Menu')
+                                .setStyle(ButtonStyle.Secondary)
+                                .setEmoji('↩️')
+                        );
+                    await i.editReply({ embeds: [nominationsEmbed], components: [nominationsRow] });
                     break;
                 case 'community':
                     const communityEmbed = await this.createCommunityEmbed();
                     await i.editReply({ embeds: [communityEmbed], components: [backRow] });
+                    break;
+                case 'platforms':
+                    const platformsEmbed = await this.createPlatformsEmbed();
+                    // Create a row with a back to nominations button
+                    const platformsBackRow = new ActionRowBuilder()
+                        .addComponents(
+                            new ButtonBuilder()
+                                .setCustomId('nominations')
+                                .setLabel('Back to Nominations')
+                                .setStyle(ButtonStyle.Secondary)
+                                .setEmoji('↩️')
+                        );
+                    await i.editReply({ embeds: [platformsEmbed], components: [platformsBackRow] });
                     break;
                 case 'back':
                     // Return to main menu
@@ -565,14 +592,15 @@ export default {
                            '• **Accessibility**: Choose games available on common platforms\n' +
                            '• **Achievement Balance**: Games with a good mix of easy to challenging achievements\n' +
                            '• **Completion Time**: Ideally games that can be completed within a month\n' +
-                           '• **Variety**: Different genres or consoles from recent challenges'
+                           '• **Variety**: Different genres or consoles from recent challenges\n' +
+                           '• **Platform Eligibility**: PlayStation 2 and GameCube games are **not eligible** for nomination'
                 },
                 {
                     name: 'Need to Change Your Nomination?',
                     value: 'If you want to change your nomination, ask an admin to use the `/clearnominations` command to reset your nominations'
                 }
             )
-            .setFooter({ text: 'Press "Back to Menu" to return to the main menu' })
+            .setFooter({ text: 'Press "Supported Platforms" to see eligible platforms or "Back to Menu" to return to the main menu' })
             .setTimestamp();
     },
     
@@ -614,6 +642,50 @@ export default {
                 }
             )
             .setFooter({ text: 'Press "Back to Menu" to return to the main menu' })
+            .setTimestamp();
+    },
+
+    // Add a new function to show the platforms
+    async createPlatformsEmbed() {
+        return new EmbedBuilder()
+            .setTitle('Supported RetroAchievements Platforms')
+            .setColor('#3498DB')
+            .setDescription('Here are all the platforms currently supported by RetroAchievements. Note that PlayStation 2 and GameCube games are not eligible for nomination in our monthly challenges.')
+            .addFields(
+                {
+                    name: 'Nintendo',
+                    value: '• Game Boy\n• Game Boy Color\n• Game Boy Advance\n• NES/Famicom\n• SNES/Super Famicom\n• Nintendo 64\n• Virtual Boy\n• Pokémon Mini'
+                },
+                {
+                    name: 'Sega',
+                    value: '• SG-1000\n• Master System\n• Game Gear\n• Genesis/Mega Drive\n• Sega CD\n• 32X\n• Saturn\n• Dreamcast'
+                },
+                {
+                    name: 'Sony',
+                    value: '• PlayStation\n• PlayStation 2 (not eligible for nomination)\n• PlayStation Portable'
+                },
+                {
+                    name: 'Atari',
+                    value: '• Atari 2600\n• Atari 7800\n• Atari Jaguar\n• Atari Jaguar CD\n• Atari Lynx'
+                },
+                {
+                    name: 'NEC',
+                    value: '• PC Engine/TurboGrafx-16\n• PC Engine CD/TurboGrafx-CD\n• PC-8000/8800\n• PC-FX'
+                },
+                {
+                    name: 'SNK',
+                    value: '• Neo Geo CD\n• Neo Geo Pocket'
+                },
+                {
+                    name: 'Others',
+                    value: '• 3DO Interactive Multiplayer\n• Amstrad CPC\n• Apple II\n• Arcade\n• Arcadia 2001\n• Arduboy\n• ColecoVision\n• Elektor TV Games Computer\n• Fairchild Channel F\n• Intellivision\n• Interton VC 4000\n• Magnavox Odyssey 2\n• Mega Duck\n• MSX\n• Standalone\n• Uzebox\n• Vectrex\n• WASM-4\n• Watara Supervision\n• WonderSwan'
+                },
+                {
+                    name: 'Not Eligible for Nomination',
+                    value: '• PlayStation 2\n• GameCube (These platforms are not currently eligible for our monthly challenges)'
+                }
+            )
+            .setFooter({ text: 'Press "Back to Nominations" to return to the nominations menu' })
             .setTimestamp();
     }
 };
