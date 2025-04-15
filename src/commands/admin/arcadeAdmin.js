@@ -77,7 +77,7 @@ export default {
         .addSubcommand(subcommand =>
             subcommand
                 .setName('tiebreaker')
-                .setDescription('Create a tiebreaker leaderboard')
+                .setDescription('Create a tiebreaker leaderboard for the monthly challenge')
                 .addIntegerOption(option =>
                     option.setName('leaderboard_id')
                         .setDescription('RetroAchievements leaderboard ID')
@@ -89,10 +89,6 @@ export default {
                 .addStringOption(option =>
                     option.setName('description')
                         .setDescription('Description of the tiebreaker')
-                        .setRequired(true))
-                .addStringOption(option =>
-                    option.setName('tied_users')
-                        .setDescription('Comma-separated list of usernames who are tied')
                         .setRequired(true))
                 .addStringOption(option =>
                     option.setName('end_date')
@@ -342,20 +338,13 @@ export default {
         }
     },
 
-   async createTiebreaker(interaction) {
+  async createTiebreaker(interaction) {
     const leaderboardId = interaction.options.getInteger('leaderboard_id');
     const gameId = interaction.options.getInteger('game_id');
     const description = interaction.options.getString('description');
-    const tiedUsersInput = interaction.options.getString('tied_users');
     const endDateStr = interaction.options.getString('end_date');
 
     try {
-        // Parse tied users
-        const tiedUsers = tiedUsersInput.split(',').map(user => user.trim()).filter(Boolean);
-        if (tiedUsers.length === 0) {
-            return interaction.editReply('Please provide at least one tied user.');
-        }
-
         // Parse end date
         const endDate = new Date(endDateStr);
         if (isNaN(endDate.getTime())) {
@@ -383,7 +372,7 @@ export default {
             return interaction.editReply('An active tiebreaker already exists. Please end it before creating a new one.');
         }
 
-        // Generate a unique board ID
+        // Generate a unique board ID based on month and year
         const monthYear = `${now.getFullYear()}-${(now.getMonth() + 1).toString().padStart(2, '0')}`;
         const boardId = `tiebreaker-${monthYear}`;
 
@@ -398,33 +387,26 @@ export default {
             description,
             startDate: now,
             endDate,
-            tiedUsers,
             // Add monthKey for consistency with racing challenges
             monthKey: monthYear
         });
 
         await newBoard.save();
 
-        // Check if this is for the current month's challenge tiebreaker
-        const currentMonth = now.getMonth();
-        const currentYear = now.getFullYear();
-        const isCurrentMonthTiebreaker = 
-            endDate.getMonth() === currentMonth && 
-            endDate.getFullYear() === currentYear;
-
         // Get the month name
         const monthName = now.toLocaleString('default', { month: 'long' });
+        const year = now.getFullYear();
 
         // Create response embed
         const embed = new EmbedBuilder()
             .setColor('#FF0000')
-            .setTitle(`⚔️ Tiebreaker Created: ${monthName} ${currentYear}`)
+            .setTitle(`⚔️ Tiebreaker Created: ${monthName} ${year}`)
             .setDescription(
                 `**Game:** ${gameInfo.title}\n` +
                 `**Description:** ${description}\n\n` +
                 `**Tiebreaker Period:** ${now.toLocaleDateString()} to ${endDate.toLocaleDateString()}\n\n` +
-                `**Tied Users:** ${tiedUsers.join(', ')}\n\n` +
-                `This tiebreaker ${isCurrentMonthTiebreaker ? 'will be used' : 'may not be used'} to break ties in the ${monthName} monthly challenge.`
+                `This tiebreaker will be used to resolve ties in the ${monthName} monthly challenge leaderboard. ` +
+                `Any users who are tied in achievement count in the top 3 positions will be ranked based on their performance in this tiebreaker.`
             );
 
         if (gameInfo.imageIcon) {
