@@ -161,82 +161,71 @@ class RetroAchievementsService {
         }
     }
 
-/**
- * Get user's recently earned achievements with improved handling
- * @param {string} username - RetroAchievements username
- * @param {number} count - Number of achievements to fetch (default: 50)
- * @returns {Promise<Array>} Array of recent achievements with normalized data
- */
-async getUserRecentAchievements(username, count = 50) {
-    // For recent achievements, we use a shorter cache period
-    const cacheKey = `recent_achievements_${username}_${count}`;
-    const cachedData = this.getCachedItem(cacheKey);
-    
-    // Recent achievements should have a shorter TTL (1 minute)
-    if (cachedData && (Date.now() - this.cache.get(cacheKey).timestamp) < 60000) {
-        return cachedData;
-    }
-    
-    try {
-        // Use the rate limiter to make the API call
-        const achievements = await this.rateLimiter.add(() => 
-            getUserRecentAchievements(this.authorization, {
-                userName: username, // Make sure to use the correct parameter name (userName, not username)
-                count
-            })
-        );
+    /**
+     * Get user's recently earned achievements with improved handling
+     * @param {string} username - RetroAchievements username
+     * @param {number} count - Number of achievements to fetch (default: 50)
+     * @returns {Promise<Array>} Array of recent achievements with normalized data
+     */
+    async getUserRecentAchievements(username, count = 50) {
+        // For recent achievements, we use a shorter cache period
+        const cacheKey = `recent_achievements_${username}_${count}`;
+        const cachedData = this.getCachedItem(cacheKey);
         
-        // Validate and normalize the achievement data
-        const normalizedAchievements = [];
-        
-        if (Array.isArray(achievements)) {
-            // Process each achievement
-            for (const achievement of achievements) {
-                if (!achievement) continue;
-                
-                // Extra logging for debugging ID extraction
-                console.log(`Raw achievement data for ${username}:`, JSON.stringify({
-                    ID: achievement.ID,
-                    id: achievement.id,
-                    AchievementID: achievement.AchievementID,
-                    achievementId: achievement.achievementId
-                }).substring(0, 200));
-                
-                // Create a normalized achievement object with all required fields
-                const normalizedAchievement = {
-                    ID: achievement.ID || achievement.id || 
-                        (achievement.AchievementID ? String(achievement.AchievementID) : null) || 
-                        (achievement.achievementId ? String(achievement.achievementId) : null) || 
-                        "unknown",
-                    Title: achievement.Title || achievement.title || "Unknown Achievement",
-                    Description: achievement.Description || achievement.description || "",
-                    Points: parseInt(achievement.Points || achievement.points || 0, 10),
-                    BadgeName: achievement.BadgeName || achievement.badgeName || "",
-                    GameID: achievement.GameID || achievement.gameId || 
-                        (achievement.GameID ? String(achievement.GameID) : null) || "unknown",
-                    GameTitle: achievement.GameTitle || achievement.gameTitle || "Unknown Game",
-                    ConsoleName: achievement.ConsoleName || achievement.consoleName || "Unknown Console",
-                    DateEarned: achievement.DateEarned || achievement.dateEarned || new Date().toISOString()
-                };
-                
-                // Add the normalized achievement to the array
-                normalizedAchievements.push(normalizedAchievement);
-                
-                // Log details about this achievement for debugging
-                console.log(`Normalized achievement for ${username}: ${normalizedAchievement.Title} (Game: ${normalizedAchievement.GameTitle}, ID: ${normalizedAchievement.ID})`);
-            }
+        // Recent achievements should have a shorter TTL (1 minute)
+        if (cachedData && (Date.now() - this.cache.get(cacheKey).timestamp) < 60000) {
+            return cachedData;
         }
         
-        // Cache the normalized result
-        this.setCachedItem(cacheKey, normalizedAchievements);
-        
-        return normalizedAchievements;
-    } catch (error) {
-        console.error(`Error fetching recent achievements for ${username}:`, error);
-        // Return empty array instead of throwing to prevent cascading failures
-        return [];
+        try {
+            // Use the rate limiter to make the API call
+            const achievements = await this.rateLimiter.add(() => 
+                getUserRecentAchievements(this.authorization, {
+                    userName: username, // Make sure to use the correct parameter name (userName, not username)
+                    count
+                })
+            );
+            
+            // Validate and normalize the achievement data
+            const normalizedAchievements = [];
+            
+            if (Array.isArray(achievements)) {
+                // Process each achievement
+                for (const achievement of achievements) {
+                    if (!achievement) continue;
+                    
+                    // Create a normalized achievement object with all required fields
+                    const normalizedAchievement = {
+                        ID: achievement.ID || achievement.id || 
+                            (achievement.AchievementID ? String(achievement.AchievementID) : null) || 
+                            (achievement.achievementId ? String(achievement.achievementId) : null) || 
+                            "unknown",
+                        Title: achievement.Title || achievement.title || "Unknown Achievement",
+                        Description: achievement.Description || achievement.description || "",
+                        Points: parseInt(achievement.Points || achievement.points || 0, 10),
+                        BadgeName: achievement.BadgeName || achievement.badgeName || "",
+                        GameID: achievement.GameID || achievement.gameId || 
+                            (achievement.GameID ? String(achievement.GameID) : null) || "unknown",
+                        GameTitle: achievement.GameTitle || achievement.gameTitle || "Unknown Game",
+                        ConsoleName: achievement.ConsoleName || achievement.consoleName || "Unknown Console",
+                        DateEarned: achievement.DateEarned || achievement.dateEarned || new Date().toISOString()
+                    };
+                    
+                    // Add the normalized achievement to the array
+                    normalizedAchievements.push(normalizedAchievement);
+                }
+            }
+            
+            // Cache the normalized result
+            this.setCachedItem(cacheKey, normalizedAchievements);
+            
+            return normalizedAchievements;
+        } catch (error) {
+            console.error(`Error fetching recent achievements for ${username}:`, error);
+            // Return empty array instead of throwing to prevent cascading failures
+            return [];
+        }
     }
-}
 
     /**
      * Get game information
@@ -303,15 +292,72 @@ async getUserRecentAchievements(username, count = 50) {
                 getUserAwards(this.authorization, { userName: username })
             );
 
+            // Log key structures for debugging
+            console.log(`User info API response for ${username}:`);
+            console.log(`- summary keys: ${Object.keys(summary).join(', ')}`);
+            console.log(`- profile keys: ${Object.keys(profile).join(', ')}`);
+            
+            // Normalize and merge data from different endpoints
             const result = {
-                ...summary,
-                ...profile,
-                awards,
-                profileImageUrl: `https://retroachievements.org${profile.userPic}`
+                // Basic user info
+                username: username,
+                
+                // Points and achievements - check multiple fields and prioritize non-zero values
+                totalPoints: summary.totalPoints || profile.points || summary.score || 0,
+                hardcorePoints: summary.totalTruePoints || profile.hardcorePoints || 0,
+                
+                // Achievements counts - check multiple fields
+                totalAchievements: profile.totalAchievements || summary.achievements || 0,
+                numAchievements: profile.numAchievements || summary.numAchievements || 0,
+                
+                // Mastery information
+                totalCompletedGames: profile.totalCompletedGames || summary.totalCompletedGames || 0,
+                masteredGamesCount: profile.masteredGamesCount || summary.masteredGamesCount || 0,
+                
+                // Ranking information
+                rank: summary.rank || profile.rank || 0,
+                totalRanked: summary.totalRanked || profile.totalRanked || 0,
+                
+                // RetroRatio and completion stats
+                retroRatio: profile.retroRatio || summary.retroRatio || 0,
+                completionPercentage: profile.completionPercentage || summary.completionPercentage || 0,
+                
+                // Dates and activity
+                memberSince: profile.memberSince || summary.created || summary.memberSince || "",
+                lastActivity: profile.lastActivity || summary.lastActivityDate || "",
+                lastLogin: profile.lastLogin || summary.lastLogin || "",
+                
+                // Other profile data
+                status: profile.status || summary.status || "",
+                motto: profile.motto || summary.motto || "",
+                
+                // Add awards and game information
+                awards: awards || [],
+                richPresenceMsg: profile.richPresenceMsg || "",
+                recentlyPlayedGames: summary.recentlyPlayedGames || [],
+                
+                // Profile image - ensure we prepend domain if needed
+                profileImageUrl: profile.userPic && 
+                    (profile.userPic.startsWith('http') ? profile.userPic : 
+                    `https://retroachievements.org${profile.userPic}`),
+                
+                // Store any userStats object directly
+                userStats: summary.userStats || profile.userStats || null,
+                
+                // Include raw objects for debugging
+                _rawSummary: summary,
+                _rawProfile: profile
             };
+            
+            // Fix profileImageUrl if it's still undefined
+            if (!result.profileImageUrl) {
+                result.profileImageUrl = `https://retroachievements.org/UserPic/${username}.png`;
+            }
             
             // Cache the result
             this.setCachedItem(cacheKey, result);
+            
+            console.log(`Normalized user info for ${username}: points=${result.totalPoints}, achievements=${result.totalAchievements}, ratio=${result.retroRatio}`);
             
             return result;
         } catch (error) {
@@ -319,6 +365,7 @@ async getUserRecentAchievements(username, count = 50) {
             
             // Return a minimal valid response structure to prevent further errors
             return {
+                username: username,
                 profileImageUrl: `https://retroachievements.org/UserPic/${username}.png`
             };
         }
@@ -478,66 +525,42 @@ async getUserRecentAchievements(username, count = 50) {
         }
     }
 
-/**
- * Get leaderboard entries using direct API request
- * @param {number} leaderboardId - RetroAchievements leaderboard ID
- * @param {number} offset - Starting position (0-based)
- * @param {number} count - Number of entries to retrieve
- * @returns {Promise<Object>} Leaderboard data object with Results array
- */
-async getLeaderboardEntriesDirect(leaderboardId, offset = 0, count = 100) {
-    try {
-        const cacheKey = `direct_leaderboard_${leaderboardId}_${offset}_${count}`;
-        const cachedData = this.getCachedItem(cacheKey);
-        
-        if (cachedData) {
-            return cachedData;
-        }
-        
-        // Make direct API request to the RetroAchievements leaderboard endpoint
-        const url = `https://retroachievements.org/API/API_GetLeaderboardEntries.php?i=${leaderboardId}&o=${offset}&c=${count}&z=${process.env.RA_USERNAME}&y=${process.env.RA_API_KEY}`;
-        
-        const response = await fetch(url);
-        if (!response.ok) {
-            throw new Error(`API request failed with status ${response.status}`);
-        }
-        
-        const data = await response.json();
-        
-        // Safely log the raw data for debugging
+    /**
+     * Get leaderboard entries using direct API request
+     * @param {number} leaderboardId - RetroAchievements leaderboard ID
+     * @param {number} offset - Starting position (0-based)
+     * @param {number} count - Number of entries to retrieve
+     * @returns {Promise<Object>} Leaderboard data object with Results array
+     */
+    async getLeaderboardEntriesDirect(leaderboardId, offset = 0, count = 100) {
         try {
-            if (data) {
-                // Check if data is an object with Results or an array
-                const structureType = Array.isArray(data) ? "array" : 
-                    (data.Results && Array.isArray(data.Results) ? "object with Results array" : "other structure");
-                
-                // Log sample data
-                if (Array.isArray(data) && data.length > 0) {
-                    const sampleJson = JSON.stringify(data[0]);
-                    console.log(`Raw leaderboard data for ${leaderboardId} (${structureType}, sample):`, 
-                        sampleJson.substring(0, 300) + '...');
-                } else if (data.Results && data.Results.length > 0) {
-                    const sampleJson = JSON.stringify(data.Results[0]);
-                    console.log(`Raw leaderboard data for ${leaderboardId} (${structureType}, sample):`, 
-                        sampleJson.substring(0, 300) + '...');
-                } else {
-                    console.log(`Raw leaderboard data for ${leaderboardId} (${structureType}):`, 
-                        JSON.stringify(data).substring(0, 300) + '...');
-                }
+            const cacheKey = `direct_leaderboard_${leaderboardId}_${offset}_${count}`;
+            const cachedData = this.getCachedItem(cacheKey);
+            
+            if (cachedData) {
+                return cachedData;
             }
-        } catch (logError) {
-            console.log(`Could not log leaderboard data for ${leaderboardId}:`, logError.message);
+            
+            // Make direct API request to the RetroAchievements leaderboard endpoint
+            const url = `https://retroachievements.org/API/API_GetLeaderboardEntries.php?i=${leaderboardId}&o=${offset}&c=${count}&z=${process.env.RA_USERNAME}&y=${process.env.RA_API_KEY}`;
+            
+            const response = await fetch(url);
+            if (!response.ok) {
+                throw new Error(`API request failed with status ${response.status}`);
+            }
+            
+            const data = await response.json();
+            
+            // Cache the result
+            this.setCachedItem(cacheKey, data);
+            
+            return data;
+        } catch (error) {
+            console.error(`Error fetching direct leaderboard entries for ${leaderboardId}:`, error);
+            return { Results: [] }; // Return empty Results array for consistent structure
         }
-        
-        // Cache the result
-        this.setCachedItem(cacheKey, data);
-        
-        return data;
-    } catch (error) {
-        console.error(`Error fetching direct leaderboard entries for ${leaderboardId}:`, error);
-        return { Results: [] }; // Return empty Results array for consistent structure
     }
-}
+
     /**
      * Get leaderboard entries for a specific leaderboard
      * @param {number} leaderboardId - RetroAchievements leaderboard ID
@@ -578,17 +601,15 @@ async getLeaderboardEntriesDirect(leaderboardId, offset = 0, count = 100) {
      * @returns {Array} Standardized leaderboard entries
      */
     processLeaderboardEntries(data) {
-        if (!data || !Array.isArray(data)) {
+        // Check if we have a Results array (API sometimes returns different formats)
+        const entries = data.Results || data;
+        
+        if (!entries || !Array.isArray(entries)) {
             return [];
         }
         
-        // Log a sample of the data to understand its structure
-        if (data.length > 0) {
-            console.log(`Sample leaderboard entry:`, JSON.stringify(data[0]).substring(0, 300));
-        }
-        
         // Convert entries to a standard format
-        return data.map(entry => {
+        return entries.map(entry => {
             // Handle different API response formats
             const user = entry.User || entry.user || '';
             const apiRank = entry.Rank || entry.rank || '0';
@@ -653,6 +674,58 @@ async getLeaderboardEntriesDirect(leaderboardId, offset = 0, count = 100) {
         } catch (error) {
             console.error(`API request failed: ${error.message}`);
             throw error;
+        }
+    }
+    
+    /**
+     * Debug utility function to analyze user data structure
+     * @param {string} username - RetroAchievements username
+     */
+    async debugUserData(username) {
+        try {
+            // Get raw data from both endpoints
+            const summary = await this.rateLimiter.add(() => 
+                getUserSummary(this.authorization, { userName: username })
+            );
+            
+            const profile = await this.rateLimiter.add(() => 
+                getUserProfile(this.authorization, { userName: username })
+            );
+            
+            // Log detailed structure info
+            console.log(`=== DEBUG USER DATA FOR ${username} ===`);
+            console.log("Summary fields:", Object.keys(summary));
+            console.log("Profile fields:", Object.keys(profile));
+            
+            // Log specific fields we're interested in
+            const fieldsToCheck = [
+                'totalPoints', 'points', 'score',
+                'totalAchievements', 'numAchievements', 'achievements',
+                'retroRatio', 'RAPoints', 
+                'completionPercentage', 'completionRate',
+                'lastActivity', 'lastActivityDate',
+                'rank', 'totalRanked'
+            ];
+            
+            console.log("Critical fields:");
+            for (const field of fieldsToCheck) {
+                console.log(`${field}:`, {
+                    inSummary: summary[field] !== undefined ? summary[field] : "undefined",
+                    inProfile: profile[field] !== undefined ? profile[field] : "undefined"
+                });
+            }
+            
+            // Check if userStats exists in either
+            if (summary.userStats) {
+                console.log("userStats in summary:", Object.keys(summary.userStats));
+            }
+            if (profile.userStats) {
+                console.log("userStats in profile:", Object.keys(profile.userStats));
+            }
+            
+            console.log("=== END DEBUG ===");
+        } catch (error) {
+            console.error("Error in debugUserData:", error);
         }
     }
     
