@@ -420,31 +420,30 @@ export default {
             } else {
                 // Create final leaderboard with properly handled ties
                 let leaderboardText = '';
-                let displayRank = 1;
+                let currentRank = 1;
                 let lastAchieved = -1;
                 let lastPoints = -1;
-                let rankCount = 0;
                 
                 for (let i = 0; i < workingSorted.length; i++) {
                     const progress = workingSorted[i];
                     
-                    // If this user has different stats than the previous one, update rank
-                    if (progress.achieved !== lastAchieved || progress.points !== lastPoints) {
-                        displayRank = i + 1;
-                        rankCount = 1;
+                    // Check if this user has the same stats as the previous user (ignoring tiebreaker)
+                    if (i > 0 && progress.achieved === lastAchieved && progress.points === lastPoints) {
+                        // This user is tied with the previous one - keep the same rank
+                        // Don't increment the rank counter
                     } else {
-                        // Same rank, just count how many are at this rank
-                        rankCount++;
+                        // New stats = new rank, which is based on position counting previous tied users
+                        currentRank = i + 1;
                     }
                     
-                    // Remember this user's stats
+                    // Remember this user's stats for the next comparison
                     lastAchieved = progress.achieved;
                     lastPoints = progress.points;
                     
-                    // Set the rank emoji based on display rank
-                    const rankEmoji = displayRank <= 3 ? RANK_EMOJIS[displayRank] : `#${displayRank}`;
+                    // Set the rank emoji based on current rank
+                    const rankEmoji = currentRank <= 3 ? RANK_EMOJIS[currentRank] : `#${currentRank}`;
                     
-                    // Add tiebreakerNote if available, otherwise empty string
+                    // Add tiebreakerNote if available
                     const tiebreakerNote = progress.tiebreakerNote || '';
                     
                     // Add user entry to leaderboard
