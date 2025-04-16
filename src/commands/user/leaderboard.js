@@ -196,12 +196,6 @@ export default {
                 endDate: { $gte: now }
             });
 
-            // Create a map to store the original rank of each tied user
-            const originalRanks = new Map();
-            sortedProgress.forEach((progress, index) => {
-                originalRanks.set(progress.username.toLowerCase(), index + 1);
-            });
-
             // Create a working copy of sortedProgress for tiebreaker processing
             const workingSorted = [...sortedProgress];
 
@@ -254,96 +248,8 @@ export default {
                 }
             }
 
-            // Find tied groups in the top 3 positions
-            const tiedGroups = [];
-            if (workingSorted.length > 1) {
-                for (let i = 0; i < Math.min(workingSorted.length - 1, 3); i++) {
-                    const current = workingSorted[i];
-                    let tiedIndices = [i];
-                    
-                    // Look for users tied with the current user
-                    for (let j = i + 1; j < workingSorted.length; j++) {
-                        const next = workingSorted[j];
-                        if (current.achieved === next.achieved && current.points === next.points) {
-                            tiedIndices.push(j);
-                        } else {
-                            break; // No more tied users
-                        }
-                    }
-                    
-                    // If we found tied users
-                    if (tiedIndices.length > 1) {
-                        tiedGroups.push({
-                            rank: i + 1,
-                            indices: tiedIndices,
-                            users: tiedIndices.map(idx => workingSorted[idx])
-                        });
-                        
-                        // Skip the tied users in the outer loop
-                        i += tiedIndices.length - 1;
-                    }
-                }
-            }
-
-            // Process tiebreaker data for tied groups
-            if (tiedGroups.length > 0 && tiebreakerEntries.length > 0) {
-                for (const group of tiedGroups) {
-                    const tiedUsers = group.users;
-
-                    // Check if any users in this tie group have tiebreaker entries
-                    const usersWithTiebreaker = tiedUsers.filter(user => 
-                        tiebreakerEntries.some(entry => 
-                            entry.username === user.username.toLowerCase()
-                        )
-                    );
-                    
-                    if (usersWithTiebreaker.length > 0) {
-                        // Sort users: first by whether they have a tiebreaker entry, then by rank
-                        tiedUsers.sort((a, b) => {
-                            const userAEntry = tiebreakerEntries.find(entry => 
-                                entry.username === a.username.toLowerCase()
-                            );
-                            
-                            const userBEntry = tiebreakerEntries.find(entry => 
-                                entry.username === b.username.toLowerCase()
-                            );
-                            
-                            // If both have entries, sort by rank
-                            if (userAEntry && userBEntry) {
-                                return userAEntry.apiRank - userBEntry.apiRank;
-                            }
-                            
-                            // If only one has an entry, they go first
-                            if (userAEntry) return -1;
-                            if (userBEntry) return 1;
-                            
-                            // If neither has an entry, keep original order
-                            return 0;
-                        });
-                        
-                        // Add tiebreaker score info ONLY to users with entries
-                        tiedUsers.forEach(user => {
-                            const entry = tiebreakerEntries.find(e => 
-                                e.username === user.username.toLowerCase()
-                            );
-                            
-                            if (entry) {
-                                user.tiebreakerNote = `\n   (${entry.score} in ${activeTiebreaker.gameTitle})`;
-                                user.tiebreakerRank = entry.apiRank;
-                                user.hasTiebreaker = true;
-                            } else {
-                                user.hasTiebreaker = false;
-                            }
-                        });
-                    }
-                    
-                    // Replace the users in the original array with the sorted version
-                    for (let i = 0; i < group.indices.length; i++) {
-                        const targetIndex = group.indices[i];
-                        workingSorted[targetIndex] = tiedUsers[i];
-                    }
-                }
-            }
+            // Process tiebreaker and assign ranks correctly
+            this.assignRanks(workingSorted, tiebreakerEntries, activeTiebreaker);
 
             // NEW: Save the processed results to the database
             const monthKeyForDB = User.formatDateKey(currentChallenge.date);
@@ -450,6 +356,115 @@ export default {
         }
     },
 
+    // New method to handle assigning ranks with tiebreaker scores
+    assignRanks(users, tiebreakerEntries, activeTiebreaker) {
+        if (!users || users.length === 0) return;
+
+        // First, add tiebreaker info to users
+        if (tiebreakerEntries && tiebreakerEntries.length > 0) {
+            for (const user of users) {
+                const entry = tiebreakerEntries.find(e => 
+                    e.username === user.username.toLowerCase()
+                );
+                
+                if (entry) {
+                    user.tiebreakerNote = `\n   (${entry.score} in ${activeTiebreaker.gameTitle})`;
+                    user.tiebreakerRank = entry.apiRank;
+                    user.hasTiebreaker = true;
+                } else {
+                    user.hasTiebreaker = false;
+                }
+            }
+        }
+
+        // Identify tied groups and assign ranks
+        let currentRank = 1;
+        let lastAchieved = -1;
+        let lastPoints = -1;
+        let currentTieGroup = [];
+        let tieGroupStartIdx = 0;
+
+        // First pass: identify tie groups
+        for (let i = 0; i < users.length; i++) {
+            const user = users[i];
+            
+            // Check if this user is tied with the previous user
+            if (i > 0 && user.achieved === lastAchieved && user.points === lastPoints) {
+                // Add to current tie group
+                currentTieGroup.push(i);
+            } else {
+                // Process previous tie group if it exists
+                if (currentTieGroup.length > 1) {
+                    // This is a tie group - handle it
+                    this.processTieGroup(users, currentTieGroup, tieGroupStartIdx);
+                } else if (currentTieGroup.length === 1) {
+                    // Single user, just assign the rank
+                    users[currentTieGroup[0]].displayRank = tieGroupStartIdx + 1;
+                }
+                
+                // Start a new potential tie group
+                currentTieGroup = [i];
+                tieGroupStartIdx = i;
+            }
+            
+            // Update for next comparison
+            lastAchieved = user.achieved;
+            lastPoints = user.points;
+        }
+        
+        // Process the last tie group if it exists
+        if (currentTieGroup.length > 1) {
+            this.processTieGroup(users, currentTieGroup, tieGroupStartIdx);
+        } else if (currentTieGroup.length === 1) {
+            users[currentTieGroup[0]].displayRank = tieGroupStartIdx + 1;
+        }
+
+        // Final pass: ensure all users have a displayRank
+        for (let i = 0; i < users.length; i++) {
+            if (users[i].displayRank === undefined) {
+                users[i].displayRank = i + 1;
+            }
+        }
+    },
+
+    // Helper method to process a tie group
+    processTieGroup(users, tieGroupIndices, startIdx) {
+        // Only apply special tiebreaker logic to top 3 positions
+        const isTopThree = startIdx < 3;
+        
+        if (isTopThree) {
+            // Check if any users in this tie group have tiebreaker scores
+            const withTiebreaker = tieGroupIndices.filter(idx => users[idx].hasTiebreaker);
+            const withoutTiebreaker = tieGroupIndices.filter(idx => !users[idx].hasTiebreaker);
+            
+            if (withTiebreaker.length > 0) {
+                // Sort users with tiebreakers by their tiebreaker rank
+                withTiebreaker.sort((a, b) => users[a].tiebreakerRank - users[b].tiebreakerRank);
+                
+                // Assign individual ranks to users with tiebreakers
+                for (let i = 0; i < withTiebreaker.length; i++) {
+                    users[withTiebreaker[i]].displayRank = startIdx + 1 + i;
+                }
+                
+                // All users without tiebreakers share the next rank
+                const nextRank = startIdx + 1 + withTiebreaker.length;
+                for (const idx of withoutTiebreaker) {
+                    users[idx].displayRank = nextRank;
+                }
+            } else {
+                // No tiebreakers - all share the same rank
+                for (const idx of tieGroupIndices) {
+                    users[idx].displayRank = startIdx + 1;
+                }
+            }
+        } else {
+            // Outside top 3: all users in tie group share the same rank
+            for (const idx of tieGroupIndices) {
+                users[idx].displayRank = startIdx + 1;
+            }
+        }
+    },
+
     createPaginatedEmbeds(workingSorted, monthName, gameInfo, currentChallenge, endDateFormatted, timeRemaining, activeTiebreaker) {
         const embeds = [];
         const totalPages = Math.ceil(workingSorted.length / USERS_PER_PAGE);
@@ -485,83 +500,19 @@ export default {
             
             embed.setDescription(description);
 
-            // Ranking logic with tiebreakers
+            // Format leaderboard text using pre-calculated displayRanks
             let leaderboardText = '';
-            let currentRank = 1;
-            let currentTieGroup = [];
-            let lastAchieved = -1;
-            let lastPoints = -1;
-            let tieGroupStartRank = startIndex + 1;
-
-            for (let i = 0; i < usersOnPage.length; i++) {
-                const progress = usersOnPage[i];
-                const actualIndex = startIndex + i;
-                
-                if (i === 0 && page > 0) {
-                    // Compare with last user from previous page for ties
-                    const lastPageUser = workingSorted[startIndex - 1];
-                    if (progress.achieved === lastPageUser.achieved && progress.points === lastPageUser.points) {
-                        // Continuing a tie from the previous page
-                        // Use the rank of the last user from the previous page
-                        currentRank = page * USERS_PER_PAGE; // This is the index of the last user on previous page + 1
-                    } else {
-                        // Not tied with previous page, use actual index + 1
-                        currentRank = actualIndex + 1;
-                    }
-                    tieGroupStartRank = currentRank;
-                    lastAchieved = progress.achieved;
-                    lastPoints = progress.points;
-                    currentTieGroup = [progress];
-                } else if (i === 0) {
-                    // First user on first page
-                    currentRank = 1;
-                    tieGroupStartRank = 1;
-                    lastAchieved = progress.achieved;
-                    lastPoints = progress.points;
-                    currentTieGroup = [progress];
-                } else {
-                    // Check if this user is tied with the previous based on achievements and points
-                    if (progress.achieved === lastAchieved && progress.points === lastPoints) {
-                        // Add to current tie group
-                        currentTieGroup.push(progress);
-                    } else {
-                        // Process the previous tie group if it exists
-                        if (currentTieGroup.length > 0) {
-                            // First, sort the tie group by tiebreaker presence
-                            const withTiebreaker = currentTieGroup.filter(p => p.hasTiebreaker);
-                            const withoutTiebreaker = currentTieGroup.filter(p => !p.hasTiebreaker);
-                            
-                            // Users with tiebreakers get individual ranks
-                            let tieRank = tieGroupStartRank;
-                            
-                            // All users without tiebreakers share the same rank
-                            if (withoutTiebreaker.length > 0) {
-                                // If there were users with tiebreakers, this group starts after them
-                                // Otherwise, they all get the original starting rank
-                                currentRank = tieGroupStartRank + withTiebreaker.length;
-                            }
-                        }
-                        
-                        // Start a new tie group
-                        currentTieGroup = [progress];
-                        tieGroupStartRank = actualIndex + 1;
-                        currentRank = actualIndex + 1;
-                    }
-                    
-                    // Update stats tracking
-                    lastAchieved = progress.achieved;
-                    lastPoints = progress.points;
-                }
-                
-                // Set the rank emoji based on current rank
-                const rankEmoji = currentRank <= 3 ? RANK_EMOJIS[currentRank] : `#${currentRank}`;
+            
+            for (const user of usersOnPage) {
+                // Use the pre-calculated displayRank
+                const rankEmoji = user.displayRank <= 3 ? RANK_EMOJIS[user.displayRank] : `#${user.displayRank}`;
                 
                 // Add tiebreakerNote if available
-                const tiebreakerNote = progress.tiebreakerNote || '';
+                const tiebreakerNote = user.tiebreakerNote || '';
                 
                 // Add user entry to leaderboard
-                leaderboardText += `${rankEmoji} **${progress.username}** ${progress.award}${tiebreakerNote}\n` +
-                                  `${progress.achieved}/${currentChallenge.monthly_challange_game_total} (${progress.percentage}%)\n\n`;
+                leaderboardText += `${rankEmoji} **${user.username}** ${user.award}${tiebreakerNote}\n` +
+                                  `${user.achieved}/${currentChallenge.monthly_challange_game_total} (${user.percentage}%)\n\n`;
             }
 
             embed.addFields({
