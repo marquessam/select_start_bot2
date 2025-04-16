@@ -15,12 +15,10 @@ const AWARD_EMOJIS = {
 class AchievementFeedService {
     constructor() {
         this.client = null;
-        
         // Cache to store user profile image URLs to reduce API calls
         this.profileImageCache = new Map();
         // Cache TTL in milliseconds (30 minutes)
         this.cacheTTL = 30 * 60 * 1000;
-        
         // Enhanced rate limiter for announcements (2 per second)
         this.announcementRateLimiter = new EnhancedRateLimiter({
             requestsPerInterval: 2,
@@ -28,18 +26,12 @@ class AchievementFeedService {
             maxRetries: 3,
             retryDelay: 1000
         });
-        
         // Maximum announcements per user per check
-        this.maxAnnouncementsPerUser = 10; // Increased from 5 to 10
-        
+        this.maxAnnouncementsPerUser = 5;
         // Maximum size of announcedAchievements array
-        this.maxAnnouncedAchievements = 500; // Increased from 200 to 500
-        
+        this.maxAnnouncedAchievements = 200;
         // In-memory set to prevent duplicate announcements during a session
         this.sessionAnnouncementHistory = new Set();
-        
-        // Achievements to fetch per user (increased from 50)
-        this.achievementsToFetch = 100;
     }
 
     setClient(client) {
@@ -182,8 +174,8 @@ class AchievementFeedService {
                 const lastCheckTime = user.lastAchievementCheck.getTime();
                 console.log(`Checking achievements for user: ${user.raUsername} (last check: ${user.lastAchievementCheck.toISOString()})`);
                 
-                // Get user's recent achievements (increased from 50 to 100)
-                const recentAchievements = await retroAPI.getUserRecentAchievements(user.raUsername, this.achievementsToFetch);
+                // Get user's recent achievements (last 50)
+                const recentAchievements = await retroAPI.getUserRecentAchievements(user.raUsername, 50);
                 
                 if (!recentAchievements || !Array.isArray(recentAchievements) || recentAchievements.length === 0) {
                     console.log(`No recent achievements found for ${user.raUsername}`);
@@ -192,18 +184,18 @@ class AchievementFeedService {
                 
                 console.log(`Found ${recentAchievements.length} recent achievements for ${user.raUsername}`);
                 
-                // Filter for new achievements since last check
-                const newAchievements = recentAchievements.filter(achievement => {
-                    const achievementDate = new Date(achievement.DateEarned || achievement.dateEarned || 0);
-                    // Add a 1-second buffer to avoid boundary issues
-                    return achievementDate.getTime() > (lastCheckTime - 1000);
-                });
-                
-                // Now sort the new achievements by date (oldest first)
-                newAchievements.sort((a, b) => {
+                // Sort achievements by date earned (oldest first)
+                recentAchievements.sort((a, b) => {
                     const dateA = new Date(a.DateEarned || a.dateEarned || 0);
                     const dateB = new Date(b.DateEarned || b.dateEarned || 0);
                     return dateA.getTime() - dateB.getTime();
+                });
+                
+                // Filter for new achievements since last check
+                const newAchievements = recentAchievements.filter(achievement => {
+                    const achievementDate = new Date(achievement.DateEarned || achievement.dateEarned || 0);
+                    // Consider it new if it was earned after our last check
+                    return achievementDate.getTime() > lastCheckTime;
                 });
                 
                 console.log(`Found ${newAchievements.length} new achievements since last check for ${user.raUsername}`);
@@ -267,15 +259,14 @@ class AchievementFeedService {
                         continue;
                     }
                     
-                    // Create a more precise identifier for checking persistent history
-                    const achievementPersistentIdentifier = `${achievementType}:${gameId}:${achievementId}`;
-                    
                     // Check if this achievement ID is in the saved history
+                    // Don't use startsWith for the check which can cause false positives
+                    // Instead, look for exact identifier matches
                     if (achievementId !== "unknown" && user.announcedAchievements.some(id => {
                         // Split the stored ID to get just the type:gameId:achievementId part
                         const parts = id.split(':');
                         if (parts.length >= 3) {
-                            return `${parts[0]}:${parts[1]}:${parts[2]}` === achievementPersistentIdentifier;
+                            return `${parts[0]}:${parts[1]}:${parts[2]}` === `${achievementType}:${gameId}:${achievementId}`;
                         }
                         return false;
                     })) {
@@ -301,15 +292,23 @@ class AchievementFeedService {
                         };
                     }
                     
-                    // Queue the achievement for announcement using our enhanced rate limiter
-                    this.queueRateLimitedAnnouncement(
-                        announcementChannel,
-                        user,
-                        gameInfo,
-                        achievement,
-                        achievementType,
-                        gameId
-                    );
+                    // Queue the achievement for announcement with rate limiter
+                    await this.announcementRateLimiter.add(async () => {
+                        try {
+                            await this.announceAchievement(
+                                announcementChannel, 
+                                user, 
+                                gameInfo, 
+                                achievement, 
+                                achievementType, 
+                                gameId
+                            );
+                            return true;
+                        } catch (error) {
+                            console.error('Error in rate-limited announcement:', error);
+                            return false;
+                        }
+                    });
                     
                     // Add to temporary list of new announcements
                     newAnnouncementsIdentifiers.push(achievementIdentifier);
@@ -320,17 +319,44 @@ class AchievementFeedService {
                 
                 // Update user's lastAchievementCheck timestamp
                 // Add a small buffer (2 seconds) to avoid boundary issues
-                user.lastAchievementCheck = new Date(latestAchievementDate.getTime() + 2000);
-                
+                const updatedLastCheckTime = new Date(latestAchievementDate.getTime() + 2000);
+
                 // Only update the database AFTER the announcements have been successfully queued
-                if (newAnnouncementsIdentifiers.length > 0) {
-                    console.log(`Adding ${newAnnouncementsIdentifiers.length} new announcements to ${user.raUsername}'s record`);
-                    user.announcedAchievements = [...user.announcedAchievements, ...newAnnouncementsIdentifiers];
-                    await user.save();
-                } else if (latestAchievementDate > user.lastAchievementCheck) {
-                    // If we updated the lastAchievementCheck but didn't add new announcements,
-                    // we still need to save the user
-                    await user.save();
+                if (newAnnouncementsIdentifiers.length > 0 || latestAchievementDate > user.lastAchievementCheck) {
+                    try {
+                        if (newAnnouncementsIdentifiers.length > 0) {
+                            console.log(`Adding ${newAnnouncementsIdentifiers.length} new announcements to ${user.raUsername}'s record`);
+                        }
+                        
+                        // Use findOneAndUpdate instead of directly modifying and saving the user object
+                        // This avoids version conflicts when multiple operations try to update the same document
+                        const updateResult = await User.findOneAndUpdate(
+                            { _id: user._id },
+                            { 
+                                $set: { lastAchievementCheck: updatedLastCheckTime },
+                                $push: { 
+                                    announcedAchievements: { 
+                                        $each: newAnnouncementsIdentifiers,
+                                        // Limit the array size by slicing if it gets too big 
+                                        $slice: -this.maxAnnouncedAchievements
+                                    } 
+                                }
+                            },
+                            { 
+                                new: true, // Return the updated document
+                                runValidators: true // Run validators on update
+                            }
+                        );
+                        
+                        if (updateResult) {
+                            console.log(`Successfully updated ${user.raUsername}'s record`);
+                        } else {
+                            console.error(`Failed to update ${user.raUsername}'s record - user may have been deleted`);
+                        }
+                    } catch (updateError) {
+                        console.error(`Error updating user ${user.raUsername}:`, updateError);
+                        // Continue processing other users
+                    }
                 }
                 
                 // Also check for awards for monthly and shadow challenges
@@ -388,25 +414,20 @@ class AchievementFeedService {
         }
     }
 
-    // Queue an announcement using the enhanced rate limiter
-    async queueRateLimitedAnnouncement(channel, user, gameInfo, achievement, achievementType, gameId) {
-        return this.announcementRateLimiter.add(async () => {
-            try {
-                await this.announceAchievement(channel, user, gameInfo, achievement, achievementType, gameId);
-                return true;
-            } catch (error) {
-                console.error('Error in rate-limited announcement:', error);
-                return false;
-            }
-        });
-    }
-
     async checkForGameAwards(user, channel, challenge, gameId, isShadow) {
         const gameIdString = String(gameId);
         console.log(`Checking for awards for ${user.raUsername} in ${isShadow ? 'shadow' : 'monthly'} game ${gameIdString}`);
         
         // Skip if already processed
         const awardIdentifierPrefix = isShadow ? 'shadow:award' : 'monthly:award';
+        const existingAwards = user.announcedAchievements.filter(id => 
+            id.startsWith(`${awardIdentifierPrefix}:${gameIdString}:`)
+        );
+        
+        if (existingAwards.length >= 3) {  // All 3 award types already processed
+            console.log(`All awards already processed for ${user.raUsername} in game ${gameIdString}`);
+            return;
+        }
         
         // Get user's game progress
         const progress = await retroAPI.getUserGameProgress(user.raUsername, gameId);
@@ -490,26 +511,49 @@ class AchievementFeedService {
         const awardIdentifier = `${awardTypeIdentifier}:${now}`;
         
         // User has reached a new award level, announce it using rate limiter
-        const announced = await this.queueRateLimitedAnnouncement(
-            channel,
-            user,
-            gameInfo,
-            { // Construct a fake achievement for the award
-                Title: `${currentAward} Award`,
-                Description: `${currentAward} award for ${isShadow ? 'shadow' : 'monthly'} challenge`,
-                Points: 0
-            },
-            'award',
-            gameId
-        );
+        const announced = await this.announcementRateLimiter.add(async () => {
+            try {
+                return await this.announceGameAward(
+                    channel,
+                    user,
+                    gameInfo,
+                    currentAward,
+                    progress.numAwardedToUser,
+                    totalAchievements,
+                    isShadow,
+                    hasAllProgressionAchievements,
+                    hasWinCondition,
+                    gameId
+                );
+            } catch (error) {
+                console.error('Error in rate-limited award announcement:', error);
+                return false;
+            }
+        });
         
         if (announced) {
-            // Add to session history first (using the base identifier without timestamp)
-            this.sessionAnnouncementHistory.add(awardTypeIdentifier);
-            
-            // Add to persistent history (with timestamp)
-            user.announcedAchievements.push(awardIdentifier);
-            await user.save();
+            try {
+                // Add to session history first (using the base identifier without timestamp)
+                this.sessionAnnouncementHistory.add(awardTypeIdentifier);
+                
+                // Add to persistent history with atomic update to avoid version conflicts
+                await User.findOneAndUpdate(
+                    { _id: user._id },
+                    { 
+                        $push: { 
+                            announcedAchievements: awardIdentifier
+                        }
+                    },
+                    { 
+                        new: true,
+                        runValidators: true
+                    }
+                );
+                
+                console.log(`Successfully added award ${currentAward} to ${user.raUsername}'s record`);
+            } catch (updateError) {
+                console.error(`Error updating user ${user.raUsername} with award:`, updateError);
+            }
         }
     }
 
@@ -674,6 +718,121 @@ class AchievementFeedService {
         }
     }
 
+    async announceGameAward(channel, user, gameInfo, awardLevel, achieved, total, isShadow, hasAllProgression, hasWinCondition, gameId) {
+        try {
+            console.log(`Creating embed for ${awardLevel} award announcement for ${user.raUsername}`);
+            
+            // Create embed
+            const embed = new EmbedBuilder()
+                .setTitle(`${AWARD_EMOJIS[awardLevel]} Challenge Complete!`)
+                .setColor(this.getColorForAward(awardLevel, isShadow))
+                .setTimestamp();
+
+            // Get user's profile image URL
+            const profileImageUrl = await this.getUserProfileImageUrl(user.raUsername);
+
+            // Use RetroAchievements username as the author
+            embed.setAuthor({
+                name: user.raUsername,
+                iconURL: profileImageUrl,
+                url: `https://retroachievements.org/user/${user.raUsername}`
+            });
+
+            // Set thumbnail to game image if available
+            if (gameInfo?.imageIcon) {
+                embed.setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`);
+            }
+
+            // Build description
+            let description = `**${user.raUsername}** has earned `;
+            
+            switch (awardLevel) {
+                case 'MASTERY':
+                    description += `**MASTERY** status in ${isShadow ? 'the shadow challenge' : 'this month\'s challenge'}!\n`;
+                    description += `They completed all achievements in the game!`;
+                    break;
+                case 'BEATEN':
+                    description += `**BEATEN** status in ${isShadow ? 'the shadow challenge' : 'this month\'s challenge'}!\n`;
+                    description += `They completed all progression achievements and ${hasWinCondition ? 'at least one win condition' : 'no win conditions were required'}!`;
+                    break;
+                case 'PARTICIPATION':
+                    description += `**PARTICIPATION** in ${isShadow ? 'the shadow challenge' : 'this month\'s challenge'}!`;
+                    break;
+            }
+
+            embed.setDescription(description);
+
+            // Add game info
+            embed.addFields(
+                { name: 'Game', value: gameInfo?.title || 'Unknown Game', inline: true },
+                { name: 'Progress', value: `${achieved}/${total} (${Math.round(achieved/total*100)}%)`, inline: true },
+                { name: 'Challenge Type', value: isShadow ? 'Shadow Challenge' : 'Monthly Challenge', inline: true }
+            );
+
+            // Add links
+            embed.addFields({
+                name: 'Links',
+                value: `[Game Page](https://retroachievements.org/game/${gameId}) | [User Profile](https://retroachievements.org/user/${user.raUsername})`
+            });
+
+            console.log(`Sending award announcement to channel`);
+            
+            // Send the announcement
+            try {
+                const sentMessage = await channel.send({ embeds: [embed] });
+                console.log(`Successfully sent award announcement, message ID: ${sentMessage.id}`);
+                return true;
+            } catch (sendError) {
+                console.error(`Failed to send award announcement: ${sendError.message}`);
+                
+                // Try a plain text fallback
+                try {
+                    const emoji = AWARD_EMOJIS[awardLevel];
+                    const fallbackText = `${emoji} **${user.raUsername}** has earned ${awardLevel} status in ${gameInfo?.title || 'a game'}!`;
+                    await channel.send(fallbackText);
+                    console.log('Sent plain text fallback message for award');
+                    return true;
+                } catch (fallbackError) {
+                    console.error(`Even fallback message failed: ${fallbackError.message}`);
+                    return false;
+                }
+            }
+
+        } catch (error) {
+            console.error('Error announcing award:', error);
+            return false;
+        }
+    }
+
+    getColorForAward(awardLevel, isShadow) {
+        // Use different colors based on if it's a shadow or monthly challenge
+        if (isShadow) {
+            // Shadow challenge colors
+            switch (awardLevel) {
+                case 'MASTERY': // Not possible for shadow games, but included for completeness
+                    return '#9B59B6'; // Purple
+                case 'BEATEN':
+                    return '#9B59B6'; // Purple
+                case 'PARTICIPATION':
+                    return '#9B59B6'; // Purple
+                default:
+                    return '#9B59B6'; // Purple
+            }
+        } else {
+            // Monthly challenge colors
+            switch (awardLevel) {
+                case 'MASTERY':
+                    return '#FFD700'; // Yellow/Gold
+                case 'BEATEN':
+                    return '#FFD700'; // Yellow/Gold
+                case 'PARTICIPATION':
+                    return '#FFD700'; // Yellow/Gold
+                default:
+                    return '#FFD700'; // Yellow/Gold
+            }
+        }
+    }
+
     async getAnnouncementChannel() {
         if (!this.client) {
             console.error('Discord client not set');
@@ -739,7 +898,7 @@ class AchievementFeedService {
         }
     }
 
-    // Debug method to clear achievement history for a user
+    // Add this debug command to clear achievement history for a user
     async clearUserAchievements(username) {
         try {
             const user = await User.findOne({ raUsername: username });
