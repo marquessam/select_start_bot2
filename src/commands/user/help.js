@@ -267,18 +267,20 @@ export default {
                     value: '• `/challenge` - Show the current monthly, shadow, and racing challenges\n' +
                            '• `/leaderboard` - Display the current monthly challenge leaderboard\n' +
                            '• `/yearlyboard` - Display the yearly points leaderboard\n' +
-                           '• `/profile [username]` - Show your or someone else\'s profile\n' +
+                           '• `/profile [username]` - Show your or someone else\'s profile and achievements\n' +
                            '• `/shadowguess` - Try to guess the hidden shadow game'
                 },
                 {
                     name: '🗳️ Nominations & Voting',
                     value: '• `/nominate` - Nominate a game for the next monthly challenge\n' +
-                           '• `/nominations` - Show all current nominations'
+                           '• `/nominations` - Show all current nominations for the next month'
                 },
                 {
                     name: '🏎️ Arcade & Racing',
-                    value: '• `/arcade` - Show arcade system menu\n' +
-                    
+                    value: '• `/arcade` - Interactive menu for arcade boards and racing challenges\n' +
+                           '  - View all arcade leaderboards\n' +
+                           '  - Check current and past racing challenges\n' +
+                           '  - See active tiebreaker competitions'
                 }
             )
             .setFooter({ text: 'Press "Back to Menu" to return to the main menu' })
@@ -327,18 +329,24 @@ export default {
                         value: 'Each month, we select a game based on community votes. Everyone competes to earn achievements in that game throughout the month.\n\n' +
                                '**Points Available:**\n' +
                                '• Participation: 1 point (earn any achievement)\n' +
-                               '• Beaten: 3 points (complete' + (progressionInfo ? ` ${progressionInfo}${winInfo}` : ' all progression achievements') + ')\n' +
-                               '• Mastery: 3 points (100% complete all achievements)\n\n' +
+                               '• Beaten: 4 points (complete' + (progressionInfo ? ` ${progressionInfo}${winInfo}` : ' all progression achievements') + ')\n' +
+                               '• Mastery: 7 points (100% complete all achievements)\n\n' +
                                '**Monthly Prizes:**\n' +
-                               '• Top 3 players receive special recognition and prizes each month\n\n' +
+                               '• Top 3 players receive special recognition and community points each month\n\n' +
                                'Use `/challenge` to see the current challenge and `/leaderboard` to see the standings.'
                     },
                     {
                         name: '📊 Challenge Rules',
                         value: '• Achievements must be earned during the challenge month to count toward standings\n' +
                                '• The challenge begins on the 1st of each month and ends on the last day\n' +
+                               '• A grace period exists for the last day of the previous month\n' +
                                '• Use `/profile` to see your current progress and achievement history\n' +
-                               '• All RetroAchievements rules must be followed (no cheating or exploits)'
+                               '• All RetroAchievements rules must be followed (no cheating or exploits)\n' +
+                               '• In case of ties at the top of the leaderboard, tiebreakers may be used'
+                    },
+                    {
+                        name: '⚔️ Tiebreakers',
+                        value: 'When users are tied in the monthly challenge standings, a tiebreaker game may be created to determine final rankings. Only tied users can participate in these special competitions. Tiebreakers are typically used for resolving ties in the top 3 positions.'
                     }
                 )
                 .setFooter({ text: 'Press "Back to Menu" to return to the main menu' })
@@ -357,18 +365,24 @@ export default {
                         value: 'Each month, we select a game based on community votes. Everyone competes to earn achievements in that game throughout the month.\n\n' +
                                '**Points Available:**\n' +
                                '• Participation: 1 point (earn any achievement)\n' +
-                               '• Beaten: 3 points (complete all progression achievements)\n' +
-                               '• Mastery: 3 points (100% complete all achievements)\n\n' +
+                               '• Beaten: 4 points (complete all progression achievements)\n' +
+                               '• Mastery: 7 points (100% complete all achievements)\n\n' +
                                '**Monthly Prizes:**\n' +
-                               '• Top 3 players receive special recognition and prizes each month\n\n' +
+                               '• Top 3 players receive special recognition and community points each month\n\n' +
                                'Use `/challenge` to see the current challenge and `/leaderboard` to see the standings.'
                     },
                     {
                         name: '📊 Challenge Rules',
                         value: '• Achievements must be earned during the challenge month to count toward standings\n' +
                                '• The challenge begins on the 1st of each month and ends on the last day\n' +
+                               '• A grace period exists for the last day of the previous month\n' +
                                '• Use `/profile` to see your current progress and achievement history\n' +
-                               '• All RetroAchievements rules must be followed (no cheating or exploits)'
+                               '• All RetroAchievements rules must be followed (no cheating or exploits)\n' +
+                               '• In case of ties at the top of the leaderboard, tiebreakers may be used'
+                    },
+                    {
+                        name: '⚔️ Tiebreakers',
+                        value: 'When users are tied in the monthly challenge standings, a tiebreaker game may be created to determine final rankings. Only tied users can participate in these special competitions. Tiebreakers are typically used for resolving ties in the top 3 positions.'
                     }
                 )
                 .setFooter({ text: 'Press "Back to Menu" to return to the main menu' })
@@ -404,15 +418,23 @@ export default {
                     value: '1. A shadow game is hidden each month\n' +
                            '2. Members can try to guess it using `/shadowguess`\n' +
                            '3. Once revealed, all members can participate for additional points\n' +
-                           '4. Use the `/challenge` command to see if it has been revealed'
+                           '4. Use the `/challenge` command to see if it has been revealed\n' +
+                           '5. Past month shadow games are automatically revealed'
                 },
                 {
                     name: '👥 Shadow Game Points',
                     value: '**Points Available:**\n' +
                            '• Participation: 1 point (earn any achievement)\n' +
-                           '• Beaten: 3 points (complete all progression requirements)\n\n' +
+                           '• Beaten: 4 points (complete all progression requirements)\n\n' +
                            'Shadow games add an element of mystery to each month\'s challenges! Note that shadow games ' +
-                           'are ineligible for mastery awards.'
+                           'are ineligible for mastery awards - the maximum is "beaten" status.'
+                },
+                {
+                    name: '🔍 Guessing the Shadow Game',
+                    value: 'To guess the shadow game, use the `/shadowguess` command with the exact title of the game.\n\n' +
+                           'If you guess correctly, the shadow game will be revealed for everyone. If your guess is incorrect, ' +
+                           'you\'ll be notified but can keep trying. There is no limit to guesses or penalty for wrong guesses.\n\n' +
+                           'Hint: Shadow games are often thematically related to the main monthly challenge!'
                 })
                 .setFooter({ text: 'Press "Back to Menu" to return to the main menu' })
                 .setTimestamp();
@@ -430,7 +452,7 @@ export default {
                     value: `**Game:** ${shadowGameInfo.title} (${shadowGameInfo.consoleName})\n\n` +
                            '**Available Points:**\n' +
                            `• **Participation:** 1 point\n` +
-                           `• **Beaten:** 3 points (requires all ${progressionCount} progression achievements` +
+                           `• **Beaten:** 4 points (requires all ${progressionCount} progression achievements` +
                            (winCount > 0 ? ` and at least one win achievement` : '') + `)\n\n` +
                            'This challenge can be completed alongside the monthly challenge.'
                 });
@@ -460,15 +482,23 @@ export default {
                     value: '1. A shadow game is hidden each month\n' +
                            '2. Members can try to guess it using `/shadowguess`\n' +
                            '3. Once revealed, all members can participate for additional points\n' +
-                           '4. Use the `/challenge` command to see if it has been revealed'
+                           '4. Use the `/challenge` command to see if it has been revealed\n' +
+                           '5. Past month shadow games are automatically revealed'
                 },
                 {
                     name: '👥 Shadow Game Points',
                     value: '**Points Available:**\n' +
                            '• Participation: 1 point (earn any achievement)\n' +
-                           '• Beaten: 3 points (complete all progression requirements)\n\n' +
+                           '• Beaten: 4 points (complete all progression requirements)\n\n' +
                            'Shadow games add an element of mystery to each month\'s challenges! Note that shadow games ' +
-                           'are ineligible for mastery awards.'
+                           'are ineligible for mastery awards - the maximum is "beaten" status.'
+                },
+                {
+                    name: '🔍 Guessing the Shadow Game',
+                    value: 'To guess the shadow game, use the `/shadowguess` command with the exact title of the game.\n\n' +
+                           'If you guess correctly, the shadow game will be revealed for everyone. If your guess is incorrect, ' +
+                           'you\'ll be notified but can keep trying. There is no limit to guesses or penalty for wrong guesses.\n\n' +
+                           'Hint: Shadow games are often thematically related to the main monthly challenge!'
                 })
                 .setFooter({ text: 'Press "Back to Menu" to return to the main menu' })
                 .setTimestamp();
@@ -488,7 +518,7 @@ export default {
                            '• 1st Place: 3 points\n' +
                            '• 2nd Place: 2 points\n' +
                            '• 3rd Place: 1 point\n\n' +
-                           'Use `/arcade racing` to see the current racing challenge or `/arcade races` to see all available racing challenges. You can also use `/arcade racing month:<name>` to view a specific month\'s challenge.'
+                           'Use the `/arcade` command and select "Racing" to view current and past racing challenges. Racing challenges typically run for one calendar month.'
                 },
                 {
                     name: '🎮 Arcade Leaderboards',
@@ -497,17 +527,22 @@ export default {
                            '• 1st Place: 3 points\n' +
                            '• 2nd Place: 2 points\n' +
                            '• 3rd Place: 1 point\n\n' +
-                           'Use `/arcade boards` to see all available arcade boards and `/arcade board id:<board_id>` to view a specific leaderboard.'
+                           'Use the `/arcade` command and select "Arcade Boards" to view all available leaderboards.'
                 },
                 {
                     name: '⚔️ Tiebreakers',
                     value: 'In case of ties in monthly challenges, special tiebreaker boards may be created to determine the final rankings.\n\n' +
-                           'Tiebreakers are used to resolve ties in the monthly challenge standings. If a tiebreaker is active, you can view it using the `/arcade tiebreaker` command.\n\n' +
-                           'Only tied participants can compete in the tiebreaker.'
+                           'Tiebreakers are used to resolve ties in the monthly challenge standings. If a tiebreaker is active, it will appear in the Arcade menu.\n\n' +
+                           'Only tied participants can compete in the tiebreaker. Results from tiebreakers help determine final rankings and point awards.'
                 },
                 {
-                    name: '📊 Arcade Menu',
-                    value: 'For a complete overview of the arcade system, use `/arcade menu` to see all available options and current active challenges.'
+                    name: '📊 Using the Arcade Menu',
+                    value: 'The `/arcade` command provides an interactive menu to explore all arcade features:\n\n' +
+                           '• View all arcade boards or select a specific board\n' +
+                           '• See the current racing challenge\n' +
+                           '• Browse past racing challenges\n' +
+                           '• Check active tiebreakers\n\n' +
+                           'All arcade leaderboards are limited to users ranked #999 or lower in the global RetroAchievements leaderboards.'
                 }
             )
             .setFooter({ text: 'Press "Back to Menu" to return to the main menu' })
@@ -523,37 +558,42 @@ export default {
                 {
                     name: '🎮 Monthly Challenge Points',
                     value: '• Participation: 1 point (earn any achievement)\n' +
-                           '• Beaten: 3 points (complete all progression requirements)\n' +
-                           '• Mastery: 3 points (100% complete all achievements)\n\n' +
+                           '• Beaten: 4 points (complete all progression requirements)\n' +
+                           '• Mastery: 7 points (100% complete all achievements)\n\n' +
                            '**Monthly Prizes:**\n' +
                            '• Top 3 players each month receive special recognition and prizes'
                 },
                 {
                     name: '👥 Shadow Challenge Points',
                     value: '• Participation: 1 point (earn any achievement)\n' +
-                           '• Beaten: 3 points (complete all progression requirements)'
+                           '• Beaten: 4 points (complete all progression requirements)\n\n' +
+                           'Note: Shadow games are capped at "Beaten" status (4 points maximum)'
                 },
                 {
                     name: '🏎️ Racing Challenge Points (Awarded Monthly)',
                     value: '• 1st Place: 3 points\n' +
                            '• 2nd Place: 2 points\n' +
                            '• 3rd Place: 1 point\n\n' +
-                           'Racing points are awarded monthly for each new track.'
+                           'Racing points are awarded at the end of each month\'s challenge.'
                 },
                 {
                     name: '🎮 Arcade Leaderboard Points',
                     value: 'Awarded annually on December 1st:\n' +
                            '• 1st Place: 3 points\n' +
                            '• 2nd Place: 2 points\n' +
-                           '• 3rd Place: 1 point'
+                           '• 3rd Place: 1 point\n\n' +
+                           'Points are awarded for each arcade board, so you can earn points from multiple boards.'
                 },
                 {
                     name: '🏅 Community Awards',
-                    value: 'Special community awards may be given by admins for notable achievements or contributions.'
+                    value: 'Special community awards may be given by admins for notable achievements or contributions. These typically range from 1-3 points per award.'
                 },
                 {
-                    name: '🏆 Year-End Prizes',
-                    value: 'On December 1st, all points are totaled and prizes are awarded to the top performers across all categories.'
+                    name: '📊 Leaderboards & Records',
+                    value: '• `/leaderboard` - View the current monthly challenge standings\n' +
+                           '• `/yearlyboard` - See the cumulative points leaderboard for the year\n' +
+                           '• `/profile` - Check your personal achievements and points\n\n' +
+                           'On December 1st, all points are totaled and prizes are awarded to the top performers across all categories.'
                 }
             )
             .setFooter({ text: 'Press "Back to Menu" to return to the main menu' })
@@ -634,6 +674,14 @@ export default {
                            '• Discuss the arcade board challenges\n\n' +
                            '**#off-topic**\n' +
                            '• For all non gaming/specific topic discussion'
+                },
+                {
+                    name: 'Registration & Participation',
+                    value: 'To participate in challenges:\n' +
+                           '1. You must be registered by an admin using the `/register` command\n' +
+                           '2. Your RetroAchievements username must be linked to your Discord account\n' +
+                           '3. Only achievements earned during the challenge period count for scoring\n' +
+                           '4. Use `/profile` to track your progress and points'
                 }
             )
             .setFooter({ text: 'Press "Back to Menu" to return to the main menu' })
