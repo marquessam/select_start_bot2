@@ -19,27 +19,33 @@ const RANK_EMOJIS = {
 const TIEBREAKER_EMOJI = '⚔️'; // Emoji to indicate tiebreaker status
 
 function isDateInCurrentMonth(dateString) {
-    // Parse the input date string
-    const inputDate = new Date(dateString.replace(' ', 'T'));
+    // Parse the input date string more reliably
+    const inputDate = new Date(dateString);
     
     // Get the current date
     const currentDate = new Date();
     
-    // Get the first day of the current month
-    const firstDayOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
+    // Get the first day of the current month (at midnight)
+    const firstDayOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1, 0, 0, 0);
     
-    // Get the last day of the previous month
+    // Get the first day of the previous month (at midnight)
+    const firstDayOfPrevMonth = new Date(firstDayOfMonth);
+    firstDayOfPrevMonth.setMonth(firstDayOfPrevMonth.getMonth() - 1);
+    
+    // Get the last day of the previous month (end of day)
     const lastDayOfPrevMonth = new Date(firstDayOfMonth);
-    lastDayOfPrevMonth.setDate(lastDayOfPrevMonth.getDate() - 1);
+    lastDayOfPrevMonth.setDate(0); // This sets to the last day of previous month
+    lastDayOfPrevMonth.setHours(23, 59, 59, 999); // End of day
+    
+    // The grace period includes the entire last day of the previous month
+    // Check if the input date is on the last day of the previous month
+    const isLastDayOfPrevMonth = inputDate.getFullYear() === lastDayOfPrevMonth.getFullYear() &&
+                                 inputDate.getMonth() === lastDayOfPrevMonth.getMonth() &&
+                                 inputDate.getDate() === lastDayOfPrevMonth.getDate();
     
     // Check if the input date is in the current month
-    const isCurrentMonth = inputDate.getMonth() === currentDate.getMonth() && 
-                           inputDate.getFullYear() === currentDate.getFullYear();
-                           
-    // Check if the input date is the last day of the previous month
-    const isLastDayOfPrevMonth = inputDate.getDate() === lastDayOfPrevMonth.getDate() &&
-                                inputDate.getMonth() === lastDayOfPrevMonth.getMonth() &&
-                                inputDate.getFullYear() === lastDayOfPrevMonth.getFullYear();
+    const isCurrentMonth = inputDate.getFullYear() === currentDate.getFullYear() &&
+                           inputDate.getMonth() === currentDate.getMonth();
     
     return isCurrentMonth || isLastDayOfPrevMonth;
 }
