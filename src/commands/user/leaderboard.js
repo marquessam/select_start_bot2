@@ -357,75 +357,92 @@ export default {
     },
 
     // New method to handle assigning ranks with tiebreaker scores
-    assignRanks(users, tiebreakerEntries, activeTiebreaker) {
-        if (!users || users.length === 0) return;
+  // Modified assignRanks method to also sort users by rank
+assignRanks(users, tiebreakerEntries, activeTiebreaker) {
+    if (!users || users.length === 0) return;
 
-        // First, add tiebreaker info to users
-        if (tiebreakerEntries && tiebreakerEntries.length > 0) {
-            for (const user of users) {
-                const entry = tiebreakerEntries.find(e => 
-                    e.username === user.username.toLowerCase()
-                );
-                
-                if (entry) {
-                    user.tiebreakerNote = `\n   (${entry.score} in ${activeTiebreaker.gameTitle})`;
-                    user.tiebreakerRank = entry.apiRank;
-                    user.hasTiebreaker = true;
-                } else {
-                    user.hasTiebreaker = false;
-                }
+    // First, add tiebreaker info to users
+    if (tiebreakerEntries && tiebreakerEntries.length > 0) {
+        for (const user of users) {
+            const entry = tiebreakerEntries.find(e => 
+                e.username === user.username.toLowerCase()
+            );
+            
+            if (entry) {
+                user.tiebreakerNote = `\n   (${entry.score} in ${activeTiebreaker.gameTitle})`;
+                user.tiebreakerRank = entry.apiRank;
+                user.hasTiebreaker = true;
+            } else {
+                user.hasTiebreaker = false;
             }
         }
+    }
 
-        // Identify tied groups and assign ranks
-        let currentRank = 1;
-        let lastAchieved = -1;
-        let lastPoints = -1;
-        let currentTieGroup = [];
-        let tieGroupStartIdx = 0;
+    // Store original order for stable sorting
+    users.forEach((user, index) => {
+        user.originalIndex = index;
+    });
 
-        // First pass: identify tie groups
-        for (let i = 0; i < users.length; i++) {
-            const user = users[i];
-            
-            // Check if this user is tied with the previous user
-            if (i > 0 && user.achieved === lastAchieved && user.points === lastPoints) {
-                // Add to current tie group
-                currentTieGroup.push(i);
-            } else {
-                // Process previous tie group if it exists
-                if (currentTieGroup.length > 1) {
-                    // This is a tie group - handle it
-                    this.processTieGroup(users, currentTieGroup, tieGroupStartIdx);
-                } else if (currentTieGroup.length === 1) {
-                    // Single user, just assign the rank
-                    users[currentTieGroup[0]].displayRank = tieGroupStartIdx + 1;
-                }
-                
-                // Start a new potential tie group
-                currentTieGroup = [i];
-                tieGroupStartIdx = i;
+    // Identify tied groups and assign ranks
+    let currentRank = 1;
+    let lastAchieved = -1;
+    let lastPoints = -1;
+    let currentTieGroup = [];
+    let tieGroupStartIdx = 0;
+
+    // First pass: identify tie groups
+    for (let i = 0; i < users.length; i++) {
+        const user = users[i];
+        
+        // Check if this user is tied with the previous user
+        if (i > 0 && user.achieved === lastAchieved && user.points === lastPoints) {
+            // Add to current tie group
+            currentTieGroup.push(i);
+        } else {
+            // Process previous tie group if it exists
+            if (currentTieGroup.length > 1) {
+                // This is a tie group - handle it
+                this.processTieGroup(users, currentTieGroup, tieGroupStartIdx);
+            } else if (currentTieGroup.length === 1) {
+                // Single user, just assign the rank
+                users[currentTieGroup[0]].displayRank = tieGroupStartIdx + 1;
             }
             
-            // Update for next comparison
-            lastAchieved = user.achieved;
-            lastPoints = user.points;
+            // Start a new potential tie group
+            currentTieGroup = [i];
+            tieGroupStartIdx = i;
         }
         
-        // Process the last tie group if it exists
-        if (currentTieGroup.length > 1) {
-            this.processTieGroup(users, currentTieGroup, tieGroupStartIdx);
-        } else if (currentTieGroup.length === 1) {
-            users[currentTieGroup[0]].displayRank = tieGroupStartIdx + 1;
-        }
+        // Update for next comparison
+        lastAchieved = user.achieved;
+        lastPoints = user.points;
+    }
+    
+    // Process the last tie group if it exists
+    if (currentTieGroup.length > 1) {
+        this.processTieGroup(users, currentTieGroup, tieGroupStartIdx);
+    } else if (currentTieGroup.length === 1) {
+        users[currentTieGroup[0]].displayRank = tieGroupStartIdx + 1;
+    }
 
-        // Final pass: ensure all users have a displayRank
-        for (let i = 0; i < users.length; i++) {
-            if (users[i].displayRank === undefined) {
-                users[i].displayRank = i + 1;
-            }
+    // Final pass: ensure all users have a displayRank
+    for (let i = 0; i < users.length; i++) {
+        if (users[i].displayRank === undefined) {
+            users[i].displayRank = i + 1;
         }
-    },
+    }
+
+    // Now re-sort the users array based on displayRank
+    users.sort((a, b) => {
+        // Primary sort: displayRank (lowest first)
+        if (a.displayRank !== b.displayRank) {
+            return a.displayRank - b.displayRank;
+        }
+        
+        // Secondary sort: preserve original order for stable sort
+        return a.originalIndex - b.originalIndex;
+    });
+},
 
     // Helper method to process a tie group
     processTieGroup(users, tieGroupIndices, startIdx) {
