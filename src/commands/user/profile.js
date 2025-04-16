@@ -716,134 +716,181 @@ export default {
     },
 
     // Create separate embeds for each page
-    async createOverviewEmbed(raUsername, profileData) {
-        const raUserInfo = profileData.raUserInfo;
-        const currentGamesProgress = profileData.currentGamesProgress;
-        const recentAchievements = profileData.recentAchievements;
+async createOverviewEmbed(raUsername, profileData) {
+    const raUserInfo = profileData.raUserInfo;
+    const currentGamesProgress = profileData.currentGamesProgress;
+    const recentAchievements = profileData.recentAchievements;
+    
+    const embed = new EmbedBuilder()
+        .setTitle(`User Profile: ${raUsername}`)
+        .setURL(`https://retroachievements.org/user/${raUsername}`)
+        .setThumbnail(raUserInfo.profileImageUrl)
+        .setColor('#0099ff');
+    
+    // Add RetroAchievements site info with improved formatting and more details
+    if (raUserInfo) {
+        // Calculate percentage ranking if possible
+        let rankPercentage = '';
+        if (raUserInfo.userStats && raUserInfo.userStats.rank && raUserInfo.userStats.totalUsers) {
+            const percentage = (raUserInfo.userStats.rank / raUserInfo.userStats.totalUsers * 100).toFixed(2);
+            rankPercentage = ` (Top ${percentage}%)`;
+        }
         
-        const embed = new EmbedBuilder()
-            .setTitle(`User Profile: ${raUsername}`)
-            .setURL(`https://retroachievements.org/user/${raUsername}`)
-            .setThumbnail(raUserInfo.profileImageUrl)
-            .setColor('#0099ff');
+        // Format dates
+        const memberSince = raUserInfo.memberSince ? 
+            new Date(raUserInfo.memberSince).toLocaleDateString('en-US', {
+                year: 'numeric', 
+                month: 'short', 
+                day: 'numeric'
+            }) : 'Unknown';
         
-        // Add user stats if available
-        if (raUserInfo.userStats) {
+        const lastActivity = raUserInfo.lastActivity ? 
+            raUserInfo.lastActivity : 'Unknown';
+        
+        // Build RA site stats section
+        const raStatsValue = [
+            `🏆 **Points:** ${raUserInfo.totalPoints || raUserInfo.score || 'N/A'} ${raUserInfo.hardcorePoints ? `(HC: ${raUserInfo.hardcorePoints})` : ''}`,
+            `🎮 **Achievements:** ${raUserInfo.totalAchievements || 'N/A'} ${raUserInfo.userStats?.totalAchievements ? `/ ${raUserInfo.userStats.totalAchievements}` : ''}`,
+            `⭐ **Mastered Games:** ${raUserInfo.totalCompletedGames || raUserInfo.userStats?.totalMasteredGames || '0'}`,
+            `📈 **Site Rank:** #${raUserInfo.userStats?.rank || 'N/A'}${rankPercentage}`,
+            `📊 **RetroRatio:** ${raUserInfo.retroRatio || 'N/A'}`,
+            `🎯 **Completion Rate:** ${raUserInfo.completionPercentage || raUserInfo.userStats?.completionPercentage || 'N/A'}%`,
+            `📅 **Member Since:** ${memberSince}`,
+            `⏱️ **Last Activity:** ${lastActivity}`
+        ].join('\n');
+        
+        embed.addFields({
+            name: '📊 RetroAchievements Site Info',
+            value: raStatsValue
+        });
+    }
+    
+    // Add rich presence if available
+    if (raUserInfo.richPresenceMsg) {
+        embed.addFields({
+            name: '🎮 Currently Playing',
+            value: raUserInfo.richPresenceMsg
+        });
+    }
+    
+    // Recent achievements section
+    if (recentAchievements && recentAchievements.length > 0) {
+        let recentAchievementsField = '';
+        
+        for (let i = 0; i < Math.min(recentAchievements.length, 3); i++) {
+            const achievement = recentAchievements[i];
+            const dateEarned = achievement.DateEarned ? 
+                new Date(achievement.DateEarned).toLocaleDateString() : 'Unknown date';
+            
+            recentAchievementsField += `**${achievement.Title}** (${achievement.Points} pts)\n` +
+                                      `Game: ${achievement.GameTitle}\n` +
+                                      `Earned: ${dateEarned}\n\n`;
+        }
+        
+        if (recentAchievementsField) {
             embed.addFields({
-                name: '📊 RetroAchievements Stats',
-                value: `🏆 Points: ${raUserInfo.userStats.totalPoints || 'N/A'}\n` +
-                       `🎮 Achievements: ${raUserInfo.userStats.totalAchievements || 'N/A'}\n` +
-                       `⭐ Mastered Games: ${raUserInfo.userStats.totalMasteredGames || '0'}\n` +
-                       `📈 Site Rank: ${raUserInfo.userStats.rank || 'N/A'}`
+                name: '🆕 Recent Achievements',
+                value: recentAchievementsField || 'No recent achievements.'
             });
         }
+    }
+    
+    // Current Challenges Section - OUR COMMUNITY
+    if (currentGamesProgress.length > 0) {
+        let currentChallengesField = '';
         
-        // Add rich presence if available
-        if (raUserInfo.richPresenceMsg) {
-            embed.addFields({
-                name: '🎮 Currently Playing',
-                value: raUserInfo.richPresenceMsg
-            });
-        }
+        for (const game of currentGamesProgress) {
+            let award = '';
+            let awardText = '';
+            let pointsEarned = 0;
         
-        // Recent achievements section
-        if (recentAchievements && recentAchievements.length > 0) {
-            let recentAchievementsField = '';
-            
-            for (let i = 0; i < Math.min(recentAchievements.length, 3); i++) {
-                const achievement = recentAchievements[i];
-                const dateEarned = achievement.DateEarned ? 
-                    new Date(achievement.DateEarned).toLocaleDateString() : 'Unknown date';
-                
-                recentAchievementsField += `**${achievement.Title}** (${achievement.Points} pts)\n` +
-                                          `Game: ${achievement.GameTitle}\n` +
-                                          `Earned: ${dateEarned}\n\n`;
-            }
-            
-            if (recentAchievementsField) {
-                embed.addFields({
-                    name: '🆕 Recent Achievements',
-                    value: recentAchievementsField || 'No recent achievements.'
-                });
-            }
-        }
-        
-        // Current Challenges Section
-        if (currentGamesProgress.length > 0) {
-            let currentChallengesField = '';
-            
-            for (const game of currentGamesProgress) {
-                let award = '';
-                let awardText = '';
-                let pointsEarned = 0;
-            
-                if (game.isShadow) {
-                    // Shadow games
-                    if (game.award === 'Beaten') {
-                        award = AWARD_EMOJIS.BEATEN;
-                        awardText = 'Beaten';
-                        pointsEarned = SHADOW_MAX_POINTS;
-                    } else if (game.earned > 0) {
-                        award = AWARD_EMOJIS.PARTICIPATION;
-                        awardText = 'Participation';
-                        pointsEarned = POINTS.PARTICIPATION;
-                    }
-                    
-                    currentChallengesField += `**${game.title} (Shadow)**\n`;
-                } else {
-                    // Regular games
-                    if (game.award === 'Mastery') {
-                        award = AWARD_EMOJIS.MASTERY;
-                        awardText = 'Mastery';
-                        pointsEarned = POINTS.MASTERY;
-                    } else if (game.award === 'Beaten') {
-                        award = AWARD_EMOJIS.BEATEN;
-                        awardText = 'Beaten';
-                        pointsEarned = POINTS.BEATEN;
-                    } else if (game.earned > 0) {
-                        award = AWARD_EMOJIS.PARTICIPATION;
-                        awardText = 'Participation';
-                        pointsEarned = POINTS.PARTICIPATION;
-                    }
-                    
-                    currentChallengesField += `**${game.title}**\n`;
+            if (game.isShadow) {
+                // Shadow games
+                if (game.award === 'Beaten') {
+                    award = AWARD_EMOJIS.BEATEN;
+                    awardText = 'Beaten';
+                    pointsEarned = SHADOW_MAX_POINTS;
+                } else if (game.earned > 0) {
+                    award = AWARD_EMOJIS.PARTICIPATION;
+                    awardText = 'Participation';
+                    pointsEarned = POINTS.PARTICIPATION;
                 }
                 
-                currentChallengesField += 
-                    `Progress: ${game.earned}/${game.total} (${game.percentage}%)\n` +
-                    `Achievements Earned This Month: ${game.earnedThisMonth}\n` +
-                    `Award: ${award} ${awardText} (${pointsEarned} pts)\n\n`;
+                currentChallengesField += `**${game.title} (Shadow)**\n`;
+            } else {
+                // Regular games
+                if (game.award === 'Mastery') {
+                    award = AWARD_EMOJIS.MASTERY;
+                    awardText = 'Mastery';
+                    pointsEarned = POINTS.MASTERY;
+                } else if (game.award === 'Beaten') {
+                    award = AWARD_EMOJIS.BEATEN;
+                    awardText = 'Beaten';
+                    pointsEarned = POINTS.BEATEN;
+                } else if (game.earned > 0) {
+                    award = AWARD_EMOJIS.PARTICIPATION;
+                    awardText = 'Participation';
+                    pointsEarned = POINTS.PARTICIPATION;
+                }
+                
+                currentChallengesField += `**${game.title}**\n`;
             }
             
-            if (currentChallengesField) {
-                embed.addFields({ 
-                    name: '🎯 Current Challenges', 
-                    value: currentChallengesField 
-                });
-            } else {
-                embed.addFields({ 
-                    name: '🎯 Current Challenges', 
-                    value: 'No achievements earned in the current challenge month.\nUse `/challenge` to see this month\'s games.'
-                });
-            }
+            currentChallengesField += 
+                `Progress: ${game.earned}/${game.total} (${game.percentage}%)\n` +
+                `Achievements Earned This Month: ${game.earnedThisMonth}\n` +
+                `Award: ${award} ${awardText} (${pointsEarned} pts)\n\n`;
+        }
+        
+        if (currentChallengesField) {
+            embed.addFields({ 
+                name: '🎯 Community Challenge Progress', 
+                value: currentChallengesField 
+            });
         } else {
             embed.addFields({ 
-                name: '🎯 Current Challenges', 
+                name: '🎯 Community Challenge Progress', 
                 value: 'No achievements earned in the current challenge month.\nUse `/challenge` to see this month\'s games.'
             });
         }
-        
-        // Add points summary teaser
-        embed.addFields({
-            name: '🏆 Total Points',
-            value: `**Community Points: ${profileData.totalPoints}**`
+    } else {
+        embed.addFields({ 
+            name: '🎯 Community Challenge Progress', 
+            value: 'No achievements earned in the current challenge month.\nUse `/challenge` to see this month\'s games.'
         });
+    }
+    
+    // Add community points summary teaser
+    embed.addFields({
+        name: '🏆 Community Points Summary',
+        value: `**Total Community Points: ${profileData.totalPoints}**\n` +
+               `*These points are specific to our community and separate from RetroAchievements site points*`
+    });
+    
+    // Add a recently played games section if available
+    if (raUserInfo.recentlyPlayedGames && raUserInfo.recentlyPlayedGames.length > 0) {
+        let recentGamesField = '';
         
-        embed.setFooter({ text: 'Use the buttons below to navigate • For community info use /help' })
-             .setTimestamp();
+        for (let i = 0; i < Math.min(raUserInfo.recentlyPlayedGames.length, 3); i++) {
+            const game = raUserInfo.recentlyPlayedGames[i];
+            recentGamesField += `**${game.title || game.Title}**\n` +
+                              `Console: ${game.consoleName || game.ConsoleName || 'Unknown'}\n` +
+                              `Last played: ${game.lastPlayed || game.LastPlayed || 'Unknown'}\n\n`;
+        }
         
-        return embed;
-    },
+        if (recentGamesField) {
+            embed.addFields({
+                name: '🎮 Recently Played Games',
+                value: recentGamesField
+            });
+        }
+    }
+    
+    embed.setFooter({ text: 'Use the buttons below to navigate • For community info use /help' })
+         .setTimestamp();
+    
+    return embed;
+},
 
     async createAwardsEmbed(raUsername, profileData) {
         const masteredGames = profileData.masteredGames;
