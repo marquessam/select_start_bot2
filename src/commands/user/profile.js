@@ -658,7 +658,7 @@ export default {
         // Create collector for button interactions
         const collector = message.createMessageComponentCollector({
             componentType: ComponentType.Button,
-            time: 600000 // Time limit: 10 minutes
+            time: 300000 // Time limit: 5 minutes
         });
 
         // Handle button clicks
@@ -706,7 +706,7 @@ export default {
 
                 // Update with disabled buttons
                 await interaction.editReply({
-                    embeds: [overviewEmbed.setFooter({ text: 'Select Start Gaming Community • Profile session expired' })],
+                    embeds: [overviewEmbed.setFooter({ text: 'Profile session expired • Use /help for more information' })],
                     components: [disabledRow]
                 });
             } catch (error) {
@@ -812,7 +812,7 @@ export default {
                 currentChallengesField += 
                     `Progress: ${game.earned}/${game.total} (${game.percentage}%)\n` +
                     `Achievements Earned This Month: ${game.earnedThisMonth}\n` +
-                    `Current Award: ${award} ${awardText} (${pointsEarned} points)\n\n`;
+                    `Award: ${award} ${awardText} (${pointsEarned} pts)\n\n`;
             }
             
             if (currentChallengesField) {
@@ -823,24 +823,23 @@ export default {
             } else {
                 embed.addFields({ 
                     name: '🎯 Current Challenges', 
-                    value: 'No achievements earned in the current challenge month.'
+                    value: 'No achievements earned in the current challenge month.\nUse `/challenge` to see this month\'s games.'
                 });
             }
         } else {
             embed.addFields({ 
                 name: '🎯 Current Challenges', 
-                value: 'No achievements earned in the current challenge month.'
+                value: 'No achievements earned in the current challenge month.\nUse `/challenge` to see this month\'s games.'
             });
         }
         
         // Add points summary teaser
         embed.addFields({
             name: '🏆 Total Points',
-            value: `**Community Points: ${profileData.totalPoints}**\n` +
-                   `(See Points tab for detailed breakdown)`
+            value: `**Community Points: ${profileData.totalPoints}**`
         });
         
-        embed.setFooter({ text: 'Select Start Gaming Community • Use the buttons to navigate' })
+        embed.setFooter({ text: 'Use the buttons below to navigate • For community info use /help' })
              .setTimestamp();
         
         return embed;
@@ -933,18 +932,18 @@ export default {
             embed.addFields({ name: '🏅 RetroAchievements Site Awards', value: raAwardsField });
         }
         
-        // Summary of awards count
+        // Simple awards count
         const totalGames = masteredGames.length + beatenGames.length + participationGames.length;
         const summaryField = 
             `**Total Challenge Games:** ${totalGames}\n` +
-            `**Mastered Games:** ${masteredGames.length} (${POINTS.MASTERY} points each)\n` +
-            `**Beaten Games:** ${beatenGames.length} (${POINTS.BEATEN} points each)\n` +
-            `**Participation Games:** ${participationGames.length} (${POINTS.PARTICIPATION} point each)\n\n` +
-            `*Note: Only achievements earned during the challenge month count toward points.*`;
+            `**Mastered Games:** ${masteredGames.length}\n` +
+            `**Beaten Games:** ${beatenGames.length}\n` +
+            `**Participation Games:** ${participationGames.length}\n\n` +
+            `For information about points, check out \`/help points\``;
         
         embed.addFields({ name: '📊 Awards Summary', value: summaryField });
         
-        embed.setFooter({ text: 'Select Start Gaming Community • Use the buttons to navigate' })
+        embed.setFooter({ text: 'Use the buttons below to navigate • For challenges info use /help challenges' })
              .setTimestamp();
         
         return embed;
@@ -960,15 +959,11 @@ export default {
             .setThumbnail(profileData.raUserInfo.profileImageUrl)
             .setColor('#9B59B6');
         
-        // Shadow Game description
+        // Simple description with help reference
         embed.setDescription(
-            'Shadow games are special monthly bonus challenges hidden within our community. ' +
-            'Once discovered, they become available to all members as an additional way to earn ' +
-            'points alongside the main monthly challenge.\n\n' +
-            '**Shadow Game Points:**\n' +
-            '• Participation: 1 point (earn any achievement)\n' +
-            '• Beaten: 4 points (complete all progression requirements)\n\n' +
-            '*Note: Shadow games are ineligible for mastery awards.*'
+            'Shadow games are bonus challenges hidden within the community.\n' +
+            'Use `/help shadow` for more information about shadow games.\n' +
+            'Use `/shadowguess` to try guessing the current shadow game.'
         );
         
         // Shadow Game Awards
@@ -1006,24 +1001,19 @@ export default {
                 value: `**Game:** ${currentShadowGame.title}\n` +
                        `**Progress:** ${currentShadowGame.earned}/${currentShadowGame.total} (${currentShadowGame.percentage}%)\n` +
                        `**Achievements Earned This Month:** ${currentShadowGame.earnedThisMonth}\n` +
-                       `**Current Award:** ${currentShadowGame.award === 'Beaten' ? AWARD_EMOJIS.BEATEN + ' Beaten' : AWARD_EMOJIS.PARTICIPATION + ' Participation'}`
+                       `**Award:** ${currentShadowGame.award === 'Beaten' ? AWARD_EMOJIS.BEATEN + ' Beaten' : AWARD_EMOJIS.PARTICIPATION + ' Participation'}`
             });
         }
         
-        // Summary of shadow game points
-        const totalShadowPoints = 
-            (beatenShadowGames.length * SHADOW_MAX_POINTS) + 
-            (participationShadowGames.length * POINTS.PARTICIPATION);
-        
+        // Simpler summary
         embed.addFields({ 
             name: '📊 Shadow Games Summary', 
             value: `**Total Shadow Games:** ${beatenShadowGames.length + participationShadowGames.length}\n` +
-                   `**Beaten Shadow Games:** ${beatenShadowGames.length} (${SHADOW_MAX_POINTS} points each)\n` +
-                   `**Participation in Shadow Games:** ${participationShadowGames.length} (${POINTS.PARTICIPATION} point each)\n` +
-                   `**Total Shadow Game Points:** ${totalShadowPoints}`
+                   `**Beaten Shadow Games:** ${beatenShadowGames.length}\n` +
+                   `**Participation Games:** ${participationShadowGames.length}`
         });
         
-        embed.setFooter({ text: 'Select Start Gaming Community • Use the buttons to navigate' })
+        embed.setFooter({ text: 'Use the buttons below to navigate • Check /challenge for current games' })
              .setTimestamp();
         
         return embed;
@@ -1039,11 +1029,10 @@ export default {
             .setThumbnail(profileData.raUserInfo.profileImageUrl)
             .setColor('#2ECC71');
         
-        // Community awards description
+        // Brief description
         embed.setDescription(
-            'Community awards are special recognitions given by administrators for ' +
-            'noteworthy achievements, contributions, or participation in special events. ' +
-            'These awards contribute to your total community points.'
+            'Community awards are special recognitions given by administrators.\n' +
+            'Use `/help community` for information about our community rules and guidelines.'
         );
         
         // Community Awards Section
@@ -1066,36 +1055,22 @@ export default {
             embed.addFields({ name: '🏅 Community Awards', value: 'No community awards yet.' });
         }
         
-        // How to earn community points
+        // Points reference instead of explanation
         embed.addFields({
-            name: '🏆 How to Earn Community Points',
-            value: '**Monthly Challenges:**\n' +
-                   '• Participation: 1 point (earn any achievement)\n' +
-                   '• Beaten: 4 points (complete all progression requirements)\n' +
-                   '• Mastery: 7 points (100% complete all achievements)\n\n' +
-                   '**Shadow Games:**\n' +
-                   '• Participation: 1 point (earn any achievement)\n' +
-                   '• Beaten: 4 points (complete all progression requirements)\n\n' +
-                   '**Racing Challenge (Monthly):**\n' +
-                   '• 1st Place: 3 points\n' +
-                   '• 2nd Place: 2 points\n' +
-                   '• 3rd Place: 1 point\n\n' +
-                   '**Arcade Leaderboards (Annually):**\n' +
-                   '• 1st Place: 3 points\n' +
-                   '• 2nd Place: 2 points\n' +
-                   '• 3rd Place: 1 point\n\n' +
-                   '**Special Community Awards:**\n' +
-                   '• Points vary based on the award'
+            name: '🏆 Community Points',
+            value: 'Community points are earned through monthly challenges, shadow games, ' +
+                   'racing events, arcade leaderboards, and special awards.\n\n' +
+                   'For detailed information about how points are earned, use `/help points`.'
         });
         
-        // Summary of community points
+        // Simple summary of community points
         embed.addFields({ 
             name: '📊 Community Points Summary', 
             value: `**Total Community Award Points:** ${communityPoints}\n` +
                    `**Total Community Awards:** ${communityAwards.length}`
         });
         
-        embed.setFooter({ text: 'Select Start Gaming Community • Use the buttons to navigate' })
+        embed.setFooter({ text: 'Use the buttons below to navigate • For more info use /help' })
              .setTimestamp();
         
         return embed;
@@ -1124,33 +1099,39 @@ export default {
         const totalChallengePoints = totalGamePoints + totalShadowPoints + currentPoints;
         const totalPoints = totalChallengePoints + communityPoints;
         
+        // Simple reference to point system
+        embed.setDescription(
+            'This is a summary of your earned community points.\n' +
+            'For detailed information about the points system, use `/help points`.'
+        );
+        
         // Points breakdown
         embed.addFields({
-            name: '🏆 Total Points Breakdown',
+            name: '🏆 Total Points',
             value: `**Total Community Points: ${totalPoints}**`
         });
         
         // Current month points
         embed.addFields({
-            name: '📅 Current Month Challenges',
+            name: '📅 Current Month',
             value: `**Points from Current Challenges:** ${currentPoints}`
         });
         
-        // Past challenges breakdown
+        // Regular game points
         embed.addFields({
-            name: '🎮 Regular Game Challenges',
+            name: '🎮 Regular Game Points',
             value: `**Total Game Challenge Points:** ${totalGamePoints}\n` +
-                   `• Mastered Games (${POINTS.MASTERY} pts each): ${masteryPoints} points\n` +
-                   `• Beaten Games (${POINTS.BEATEN} pts each): ${beatenPoints} points\n` +
-                   `• Participation (${POINTS.PARTICIPATION} pt each): ${participationPoints} points`
+                   `• Mastery: ${masteryPoints} points\n` +
+                   `• Beaten: ${beatenPoints} points\n` +
+                   `• Participation: ${participationPoints} points`
         });
         
-        // Shadow games breakdown
+        // Shadow games
         embed.addFields({
-            name: '👥 Shadow Game Challenges',
+            name: '👥 Shadow Game Points',
             value: `**Total Shadow Game Points:** ${totalShadowPoints}\n` +
-                   `• Beaten Shadow Games (${SHADOW_MAX_POINTS} pts each): ${beatenShadowPoints} points\n` +
-                   `• Shadow Participation (${POINTS.PARTICIPATION} pt each): ${partShadowPoints} points`
+                   `• Beaten: ${beatenShadowPoints} points\n` +
+                   `• Participation: ${partShadowPoints} points`
         });
         
         // Community awards
@@ -1159,14 +1140,14 @@ export default {
             value: `**Total Community Award Points:** ${communityPoints}`
         });
         
-        // Year-end prizes info
+        // Year-end reference
         embed.addFields({
-            name: '🏅 Year-End Prizes',
-            value: 'On December 1st, all points are totaled and prizes are awarded to the top performers across all categories.\n\n' +
-                   '*Note: Only achievements earned during the challenge month count toward points.*'
+            name: '🏅 Year-End Rankings',
+            value: 'All points are totaled on December 1st for year-end prizes.\n' +
+                   'Check yearly standings with `/yearlyboard`.'
         });
         
-        embed.setFooter({ text: 'Select Start Gaming Community • Use the buttons to navigate' })
+        embed.setFooter({ text: 'Use the buttons below to navigate • For details use /help points' })
              .setTimestamp();
         
         return embed;
