@@ -1,4 +1,11 @@
-import { SlashCommandBuilder, EmbedBuilder } from 'discord.js';
+import { 
+    SlashCommandBuilder, 
+    EmbedBuilder, 
+    ActionRowBuilder, 
+    ButtonBuilder, 
+    ButtonStyle,
+    ComponentType
+} from 'discord.js';
 import { User } from '../../models/User.js';
 import { Challenge } from '../../models/Challenge.js';
 import retroAPI from '../../services/retroAPI.js';
@@ -19,8 +26,8 @@ const POINTS = {
 // Shadow games are limited to beaten status maximum (4 points)
 const SHADOW_MAX_POINTS = POINTS.BEATEN;
 
-// Number of users to show per embed - REDUCED to avoid Discord embed limits
-const USERS_PER_PAGE = 8;
+// Number of users to show per embed - Increased for single page view
+const USERS_PER_PAGE = 10;
 
 // Helper function to check if an achievement was earned during its challenge month
 function wasEarnedDuringChallengeMonth(dateEarned, challengeDate) {
@@ -73,7 +80,7 @@ export default {
                 .setRequired(false)),
 
     async execute(interaction) {
-      await interaction.deferReply({ ephemeral: true });
+        await interaction.deferReply({ ephemeral: true });
 
         try {
             // Get the year from the option, default to current year
@@ -262,6 +269,7 @@ export default {
                         name: 'No Participants',
                         value: noDataMessage
                     })
+                    .setFooter({ text: 'Use /help points for more information about the points system' })
                     .setTimestamp();
                 
                 return interaction.editReply({ embeds: [embed] });
@@ -281,7 +289,7 @@ export default {
                 usersProcessed++;
             }
 
-            // NEW: Save the processed results to the database
+            // Save the processed results to the database
             try {
                 console.log(`Saving yearly processed data for ${userPoints.length} users to database...`);
                 const yearKey = `annual_${selectedYear}`;
@@ -338,16 +346,11 @@ export default {
                 // Continue execution to at least show the leaderboard
             }
 
-            // Create pages of embeds with proper tie handling
+            // Create embeds for all pages
             const embeds = this.createPaginatedEmbeds(userPoints, selectedYear, challenges.length, shouldSync, showDebug, skippedUsers);
 
-            // Send the first embed as a reply to the command
-            await interaction.editReply({ embeds: [embeds[0]] });
-            
-            // Send any remaining embeds as follow-up messages
-            for (let i = 1; i < embeds.length; i++) {
-                await interaction.followUp({ embeds: [embeds[i]] });
-            }
+            // Display the paginated leaderboard with navigation buttons
+            await this.displayPaginatedLeaderboard(interaction, embeds);
 
         } catch (error) {
             console.error('Error displaying yearly leaderboard:', error);
@@ -364,6 +367,118 @@ export default {
             }
         }
         return total;
+    },
+
+    // Method to display paginated leaderboard with navigation buttons
+    async displayPaginatedLeaderboard(interaction, embeds) {
+        // If only one page, just send it without buttons
+        if (embeds.length === 1) {
+            return interaction.editReply({ embeds: [embeds[0]] });
+        }
+
+        // Create navigation buttons
+        const row = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId('first')
+                    .setLabel('First')
+                    .setStyle(ButtonStyle.Primary)
+                    .setEmoji('⏮️'),
+                new ButtonBuilder()
+                    .setCustomId('previous')
+                    .setLabel('Previous')
+                    .setStyle(ButtonStyle.Primary)
+                    .setEmoji('◀️'),
+                new ButtonBuilder()
+                    .setCustomId('next')
+                    .setLabel('Next')
+                    .setStyle(ButtonStyle.Primary)
+                    .setEmoji('▶️'),
+                new ButtonBuilder()
+                    .setCustomId('last')
+                    .setLabel('Last')
+                    .setStyle(ButtonStyle.Primary)
+                    .setEmoji('⏭️')
+            );
+
+        let currentPage = 0;
+
+        // Send the first page with navigation buttons
+        const message = await interaction.editReply({
+            embeds: [embeds[currentPage]],
+            components: [row]
+        });
+
+        // Create collector for button interactions
+        const collector = message.createMessageComponentCollector({
+            componentType: ComponentType.Button,
+            time: 300000 // 5 minutes timeout
+        });
+
+        // Update buttons based on current page
+        const updateButtons = (page) => {
+            // Disable/enable buttons based on current page
+            row.components[0].setDisabled(page === 0); // First
+            row.components[1].setDisabled(page === 0); // Previous
+            row.components[2].setDisabled(page === embeds.length - 1); // Next
+            row.components[3].setDisabled(page === embeds.length - 1); // Last
+            
+            return row;
+        };
+
+        // Handle button clicks
+        collector.on('collect', async (i) => {
+            // Defer the update to avoid interaction timeouts
+            await i.deferUpdate();
+
+            // Handle different button clicks
+            switch (i.customId) {
+                case 'first':
+                    currentPage = 0;
+                    break;
+                case 'previous':
+                    currentPage = Math.max(0, currentPage - 1);
+                    break;
+                case 'next':
+                    currentPage = Math.min(embeds.length - 1, currentPage + 1);
+                    break;
+                case 'last':
+                    currentPage = embeds.length - 1;
+                    break;
+            }
+
+            // Update the message with the new page and updated buttons
+            await i.editReply({
+                embeds: [embeds[currentPage]],
+                components: [updateButtons(currentPage)]
+            });
+        });
+
+        // When the collector expires
+        collector.on('end', async () => {
+            try {
+                // Disable all buttons when time expires
+                const disabledRow = new ActionRowBuilder().addComponents(
+                    row.components[0].setDisabled(true),
+                    row.components[1].setDisabled(true),
+                    row.components[2].setDisabled(true),
+                    row.components[3].setDisabled(true)
+                );
+
+                // Update the message with disabled buttons
+                await interaction.editReply({
+                    embeds: [embeds[currentPage].setFooter({ 
+                        text: 'Session expired • Use /help points for more information about the points system' 
+                    })],
+                    components: [disabledRow]
+                });
+            } catch (error) {
+                console.error('Error disabling buttons:', error);
+            }
+        });
+
+        // Initially update buttons based on first page
+        return updateButtons(currentPage);
     },
 
     // Calculate points using database values but also check actual achievements
@@ -636,7 +751,7 @@ export default {
     createPaginatedEmbeds(userPoints, selectedYear, challengeCount, isSynced, showDebug, skippedUsers) {
         const embeds = [];
 
-        // Calculate how many pages we need - REDUCED PER PAGE COUNT
+        // Calculate how many pages we need
         const totalPages = Math.ceil(userPoints.length / USERS_PER_PAGE);
         
         for (let page = 0; page < totalPages; page++) {
@@ -647,67 +762,56 @@ export default {
             
             // Create embed for this page
             const embed = new EmbedBuilder()
-                .setTitle(`🏆 ${selectedYear} Yearly Leaderboard (Page ${page + 1}/${totalPages})`)
+                .setTitle(`🏆 ${selectedYear} Yearly Leaderboard`)
                 .setColor('#FFD700')
+                .setFooter({ text: `Page ${page + 1}/${totalPages} • Use /help points for more information about the points system` })
                 .setTimestamp();
             
-            // Set description for the first page
-            if (page === 0) {
-                let description = `Total Challenges: ${challengeCount}`;
-                if (isSynced) {
-                    description += "\n*Synced with RetroAchievements API*";
-                }
-                embed.setDescription(description);
+            // Set description for all pages
+            let description = `Total Challenges: ${challengeCount}`;
+            if (isSynced) {
+                description += "\n*Synced with RetroAchievements API*";
             }
+            embed.setDescription(description);
             
-            // UPDATED: Split users into multiple fields, with a minimalist field name
-            const usersPerField = 4;
-            for (let i = 0; i < usersOnPage.length; i += usersPerField) {
-                const fieldUsers = usersOnPage.slice(i, i + usersPerField);
-                
-                // Generate more compact text for this subset of users
-                let leaderboardText = '';
-                
-                fieldUsers.forEach((user) => {
-                    // Use the assigned rank that accounts for ties
-                    const rankEmoji = user.rank <= 3 ? RANK_EMOJIS[user.rank] : `${user.rank}.`;
-                    
-                    // MORE COMPACT: Use shorter format and abbreviations
-                    const m = user.stats.mastery;
-                    const b = user.stats.beaten;
-                    const p = user.stats.participation;
-                    const sb = user.stats.shadowBeaten;
-                    const sp = user.stats.shadowParticipation;
-                    
-                    // Super compact display format
-                    leaderboardText += 
-                        `${rankEmoji} **${user.username}** - ${user.totalPoints}pts ` +
-                        `(${user.challengePoints}+${user.communityPoints})\n` +
-                        `M:${m}✨${b}⭐${p}🏁 S:${sb}⭐${sp}🏁\n\n`;
-                });
-                
-                // Use a simple field name to avoid redundancy
-                embed.addFields({ name: '\u200B', value: leaderboardText });
-            }
+            // Generate leaderboard content
+            let leaderboardText = '';
             
-            // Add point system explanation to the last page
-            if (page === totalPages - 1) {
+            usersOnPage.forEach((user) => {
+                // Use the assigned rank that accounts for ties
+                const rankEmoji = user.rank <= 3 ? RANK_EMOJIS[user.rank] : `${user.rank}.`;
+                
+                // Create detailed user entry with consistent formatting
+                const m = user.stats.mastery;
+                const b = user.stats.beaten;
+                const p = user.stats.participation;
+                const sb = user.stats.shadowBeaten;
+                const sp = user.stats.shadowParticipation;
+                
+                leaderboardText += 
+                    `${rankEmoji} **${user.username}** - ${user.totalPoints} points\n` +
+                    `   Challenge: ${user.challengePoints} points | Community: ${user.communityPoints} points\n` +
+                    `   Regular: ${m}✨ ${b}⭐ ${p}🏁 | Shadow: ${sb}⭐ ${sp}🏁\n\n`;
+            });
+            
+            embed.addFields({ name: 'Leaderboard', value: leaderboardText || 'No ranked users' });
+            
+            // Add point system explanation to all pages for reference
+            embed.addFields({
+                name: 'Point System',
+                value: '✨ Mastery: 7pts | ⭐ Beaten: 4pts | 🏁 Participation: 1pt | Shadow max: Beaten (4pts)'
+            });
+            
+            // Add debug info if requested (admin only) - only on the last page
+            if (showDebug && skippedUsers.length > 0 && page === totalPages - 1) {
+                // Truncate to avoid embed limits
+                const debugUsers = skippedUsers.slice(0, 5);
+                const debugInfo = debugUsers.map(u => `${u.username}: ${u.reason.substring(0, 50)}`).join('\n');
+                
                 embed.addFields({
-                    name: 'Point System',
-                    value: '✨ Mastery: 7pts | ⭐ Beaten: 4pts | 🏁 Participation: 1pt | Shadow max: Beaten (4pts)'
+                    name: 'Debug Info',
+                    value: `${debugInfo}\n...and ${skippedUsers.length - 5} more users skipped`
                 });
-                
-                // Add debug info if requested (admin only)
-                if (showDebug && skippedUsers.length > 0) {
-                    // Truncate to avoid embed limits
-                    const debugUsers = skippedUsers.slice(0, 5);
-                    const debugInfo = debugUsers.map(u => `${u.username}: ${u.reason.substring(0, 50)}`).join('\n');
-                    
-                    embed.addFields({
-                        name: 'Debug Info',
-                        value: `${debugInfo}\n...and ${skippedUsers.length - 5} more users skipped`
-                    });
-                }
             }
             
             embeds.push(embed);
