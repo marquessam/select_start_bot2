@@ -766,44 +766,37 @@ async createOverviewEmbed(raUsername, profileData) {
         // Add a debug log to see what's actually in the API response
         console.log('Raw userInfo:', JSON.stringify(raUserInfo).substring(0, 500));
         
-        // Extract achievements count from various possible fields
-        const achievements = raUserInfo.numAchievements || 
-                            raUserInfo.totalAchievements || 
-                            raUserInfo.achievements ||
-                            (raUserInfo.userStats && raUserInfo.userStats.totalAchievements) ||
-                            (raUserInfo.numAchievements === 0 ? 0 : null);
+        // Extract achievements count from direct fields in the API response
+        // Looking at screenshot we need to check more specific fields
+        let achievements = null;
+        if (raUserInfo.numAchievements !== undefined) achievements = raUserInfo.numAchievements;
+        else if (raUserInfo.totalAchievements !== undefined) achievements = raUserInfo.totalAchievements;
+        else if (raUserInfo.achievements !== undefined) achievements = raUserInfo.achievements;
+        else if (raUserInfo.userStats && raUserInfo.userStats.totalAchievements !== undefined) 
+            achievements = raUserInfo.userStats.totalAchievements;
         
-        // Extract retroRatio from various possible fields - account for 0 values
-        const retroRatio = (raUserInfo.retroRatio !== undefined ? raUserInfo.retroRatio : 
-                           (raUserInfo.RAPoints !== undefined ? raUserInfo.RAPoints : 
-                           (raUserInfo.userStats && raUserInfo.userStats.retroRatio !== undefined ? 
-                            raUserInfo.userStats.retroRatio : '?')));
+        // For RetroRatio - based on screenshot we know this is available but not being accessed properly
+        let retroRatio = null;
+        if (raUserInfo.retroRatio !== undefined) retroRatio = raUserInfo.retroRatio;
+        else if (raUserInfo.RAPoints !== undefined) retroRatio = raUserInfo.RAPoints;
+        else if (raUserInfo.userStats && raUserInfo.userStats.retroRatio !== undefined) 
+            retroRatio = raUserInfo.userStats.retroRatio;
         
-        // Extract points from various possible fields
-        const points = (raUserInfo.totalPoints !== undefined ? raUserInfo.totalPoints : 
-                       (raUserInfo.points !== undefined ? raUserInfo.points : 
-                       (raUserInfo.score !== undefined ? raUserInfo.score : '?')));
+        // For completion rate
+        let completionRate = null;
+        if (raUserInfo.completionPercentage !== undefined) completionRate = raUserInfo.completionPercentage;
+        else if (raUserInfo.completionRate !== undefined) completionRate = raUserInfo.completionRate;
+        else if (raUserInfo.userStats && raUserInfo.userStats.completionPercentage !== undefined) 
+            completionRate = raUserInfo.userStats.completionPercentage;
         
-        // Extract rank from various possible fields
-        const rank = (raUserInfo.rank !== undefined ? raUserInfo.rank : 
-                     (raUserInfo.userStats && raUserInfo.userStats.rank !== undefined ? 
-                      raUserInfo.userStats.rank : '?'));
-        
-        // Extract completion rate
-        const completionRate = (raUserInfo.completionPercentage !== undefined ? raUserInfo.completionPercentage : 
-                               (raUserInfo.userStats && raUserInfo.userStats.completionPercentage !== undefined ? 
-                                raUserInfo.userStats.completionPercentage : '?'));
-        
-        // Build RA site stats section - properly handle zero values
+        // Build RA site stats section with improved formatting
         const raStatsValue = [
-            `🏆 **Points:** ${points === 0 ? '0' : points}${raUserInfo.hardcorePoints ? ` (HC: ${raUserInfo.hardcorePoints})` : ''}`,
-            `🎮 **Achievements:** ${achievements === 0 ? '0' : (achievements || '?')}`,
-            `⭐ **Mastered Games:** ${raUserInfo.totalCompletedGames === 0 ? '0' : 
-                                    (raUserInfo.totalCompletedGames || 
-                                     raUserInfo.masteredGamesCount || '0')}`,
-            `📈 **Site Rank:** #${rank === 0 ? '0' : rank}${rankPercentage}`,
-            `📊 **RetroRatio:** ${retroRatio === 0 ? '0' : retroRatio}`,
-            `🎯 **Completion Rate:** ${completionRate === 0 ? '0' : completionRate}${completionRate !== '?' ? '%' : ''}`,
+            `🏆 **Points:** ${points === 0 ? '0' : (points || raUserInfo.totalPoints || '—')}${raUserInfo.hardcorePoints ? ` (HC: ${raUserInfo.hardcorePoints})` : ''}`,
+            `🎮 **Achievements:** ${achievements === 0 ? '0' : (achievements || '—')}`,
+            `⭐ **Mastered Games:** ${raUserInfo.totalCompletedGames === 0 ? '0' : (raUserInfo.totalCompletedGames || raUserInfo.masteredGamesCount || '0')}`,
+            `📈 **Site Rank:** #${rank === 0 ? '0' : (rank || raUserInfo.rank || '—')}${rankPercentage}`,
+            `📊 **RetroRatio:** ${retroRatio === 0 ? '0' : (retroRatio || '—')}`,
+            `🎯 **Completion Rate:** ${completionRate === 0 ? '0%' : (completionRate ? `${completionRate}%` : '—')}`,
             `📅 **Member Since:** ${formattedMemberSince}`,
             `⏱️ **Last Activity:** ${lastActivity}`
         ].join('\n');
@@ -946,7 +939,7 @@ async createOverviewEmbed(raUsername, profileData) {
     
     return embed;
 },
-
+    
     async createAwardsEmbed(raUsername, profileData) {
         const masteredGames = profileData.masteredGames;
         const beatenGames = profileData.beatenGames;
