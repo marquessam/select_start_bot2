@@ -256,8 +256,8 @@ class AchievementFeedService {
                         achievementType = 'shadow';
                     }
                     
-                    // Create unique identifiers for this achievement
-                    const achievementBaseIdentifier = `${achievementType}:${gameId}:${achievementId}`;
+                    // Create unique identifiers for this achievement - include username for per-user uniqueness
+                    const achievementBaseIdentifier = `${user.raUsername}:${achievementType}:${gameId}:${achievementId}`;
                     
                     // Check if this achievement is already in the in-memory session history
                     if (this.sessionAnnouncementHistory.has(achievementBaseIdentifier)) {
@@ -265,13 +265,20 @@ class AchievementFeedService {
                         continue;
                     }
                     
-                    // Less strict check if this achievement ID is in the saved history
-                    // Just check the base identifier part
+                    // Check if this achievement ID is in the saved history - handle both old and new formats
                     if (achievementId !== "unknown" && user.announcedAchievements.some(id => {
                         const parts = id.split(':');
-                        if (parts.length >= 3) {
-                            return `${parts[0]}:${parts[1]}:${parts[2]}` === achievementBaseIdentifier;
+                        
+                        // New format (with username as first part)
+                        if (parts.length >= 4 && parts[0] === user.raUsername) {
+                            return `${parts[0]}:${parts[1]}:${parts[2]}:${parts[3]}` === achievementBaseIdentifier;
                         }
+                        
+                        // Old format (without username)
+                        if (parts.length >= 3) {
+                            return `${user.raUsername}:${parts[0]}:${parts[1]}:${parts[2]}` === achievementBaseIdentifier;
+                        }
+                        
                         return false;
                     })) {
                         console.log(`Achievement ${achievementTitle} already announced (by ID) for ${user.raUsername}, skipping`);
@@ -314,11 +321,11 @@ class AchievementFeedService {
                         }
                     });
                     
-                    // Add to temporary list of new announcements
+                    // Add to temporary list of new announcements with timestamp
                     const achievementIdentifier = `${achievementBaseIdentifier}:${achievementDate.getTime()}`;
                     newAnnouncementsIdentifiers.push(achievementIdentifier);
                     
-                    // Also add to session history - just the base identifier for simpler checking
+                    // Add to session history - AFTER announcement logic
                     this.sessionAnnouncementHistory.add(achievementBaseIdentifier);
                     announcementsQueuedForUser++;
                 }
@@ -387,7 +394,7 @@ class AchievementFeedService {
         console.log('Finished checking for achievements');
     }
 
-    // Improved but simpler session history initialization
+    // Improved session history initialization with backward compatibility
     async initializeSessionHistory() {
         console.log('Initializing session announcement history from persistent storage...');
         this.sessionAnnouncementHistory.clear();
@@ -403,11 +410,25 @@ class AchievementFeedService {
             for (const user of users) {
                 if (user.announcedAchievements && Array.isArray(user.announcedAchievements)) {
                     for (const achievement of user.announcedAchievements) {
-                        // Extract the base identifier (type:gameId:achievementId) without timestamp
+                        // Extract the parts - expecting username:type:gameId:achievementId:timestamp
+                        // or older format: type:gameId:achievementId:timestamp
                         const parts = achievement.split(':');
-                        if (parts.length >= 3) {
-                            // Just store the base part for simpler checking
-                            const baseIdentifier = `${parts[0]}:${parts[1]}:${parts[2]}`;
+                        
+                        // For backward compatibility, handle both formats
+                        if (parts.length >= 4) {
+                            // If username is not the first part (old format), construct with username
+                            if (parts[0] !== user.raUsername) {
+                                const baseIdentifier = `${user.raUsername}:${parts[0]}:${parts[1]}:${parts[2]}`;
+                                this.sessionAnnouncementHistory.add(baseIdentifier);
+                            } else {
+                                // New format already has username as first part
+                                const baseIdentifier = `${parts[0]}:${parts[1]}:${parts[2]}:${parts[3]}`;
+                                this.sessionAnnouncementHistory.add(baseIdentifier);
+                            }
+                            entriesAdded++;
+                        } else if (parts.length >= 3) {
+                            // Handle very old format
+                            const baseIdentifier = `${user.raUsername}:${parts[0]}:${parts[1]}:${parts[2]}`;
                             this.sessionAnnouncementHistory.add(baseIdentifier);
                             entriesAdded++;
                         }
@@ -425,10 +446,6 @@ class AchievementFeedService {
     async checkForGameAwards(user, channel, challenge, gameId, isShadow) {
         const gameIdString = String(gameId);
         console.log(`Checking for awards for ${user.raUsername} in ${isShadow ? 'shadow' : 'monthly'} game ${gameIdString}`);
-        
-        // Improved but simpler award checking logic
-        // Skip if already processed - check each award type individually
-        const awardIdentifierPrefix = isShadow ? 'shadow:award' : 'monthly:award';
         
         // Get user's game progress
         const progress = await retroAPI.getUserGameProgress(user.raUsername, gameId);
@@ -484,8 +501,10 @@ class AchievementFeedService {
             return;
         }
         
-        // Create award base identifier for checking
-        const awardBaseIdentifier = `${awardIdentifierPrefix}:${gameIdString}:${currentAward}`;
+        const awardIdentifierPrefix = isShadow ? 'shadow:award' : 'monthly:award';
+        
+        // Create award base identifier for checking - include username for per-user uniqueness
+        const awardBaseIdentifier = `${user.raUsername}:${awardIdentifierPrefix}:${gameIdString}:${currentAward}`;
         
         // Check if this award is in the session history
         if (this.sessionAnnouncementHistory.has(awardBaseIdentifier)) {
@@ -494,12 +513,22 @@ class AchievementFeedService {
         }
         
         // Check if this award is in the persistent history using the base identifier
+        // Handle both old and new identifier formats for backward compatibility
         const hasThisAward = user.announcedAchievements.some(id => {
             const parts = id.split(':');
-            if (parts.length >= 3) {
-                const storedBaseId = `${parts[0]}:${parts[1]}:${parts[2]}`;
+            
+            // New format (with username as first part)
+            if (parts.length >= 4 && parts[0] === user.raUsername) {
+                const storedBaseId = `${parts[0]}:${parts[1]}:${parts[2]}:${parts[3]}`;
                 return storedBaseId === awardBaseIdentifier;
             }
+            
+            // Old format (without username)
+            if (parts.length >= 3) {
+                const oldFormatBaseId = `${user.raUsername}:${parts[0]}:${parts[1]}:${parts[2]}`;
+                return oldFormatBaseId === awardBaseIdentifier;
+            }
+            
             return false;
         });
         
@@ -537,7 +566,7 @@ class AchievementFeedService {
         
         if (announced) {
             try {
-                // Add base identifier to session history
+                // Add to session history AFTER announcement
                 this.sessionAnnouncementHistory.add(awardBaseIdentifier);
                 
                 // Add to persistent history with atomic update to avoid version conflicts
@@ -946,19 +975,27 @@ class AchievementFeedService {
             
             for (const achievement of user.announcedAchievements) {
                 const parts = achievement.split(':');
-                if (parts.length >= 3) {
-                    const baseIdentifier = `${parts[0]}:${parts[1]}:${parts[2]}`;
-                    
-                    if (seen.has(baseIdentifier)) {
-                        // This is a duplicate
-                        console.log(`Found duplicate: ${achievement}`);
-                    } else {
-                        // New unique achievement
-                        seen.add(baseIdentifier);
-                        uniqueAchievements.push(achievement);
-                    }
+                // Handle both old and new formats
+                let baseIdentifier;
+                
+                if (parts.length >= 4 && parts[0] === user.raUsername) {
+                    // New format (username:type:gameId:achievementId)
+                    baseIdentifier = `${parts[0]}:${parts[1]}:${parts[2]}:${parts[3]}`;
+                } else if (parts.length >= 3) {
+                    // Old format (type:gameId:achievementId)
+                    baseIdentifier = `${user.raUsername}:${parts[0]}:${parts[1]}:${parts[2]}`;
                 } else {
-                    // Malformed identifier, keep it anyway
+                    // Invalid format, keep it as-is
+                    uniqueAchievements.push(achievement);
+                    continue;
+                }
+                
+                if (seen.has(baseIdentifier)) {
+                    // This is a duplicate
+                    console.log(`Found duplicate: ${achievement}`);
+                } else {
+                    // New unique achievement
+                    seen.add(baseIdentifier);
                     uniqueAchievements.push(achievement);
                 }
             }
