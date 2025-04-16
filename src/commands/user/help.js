@@ -277,13 +277,8 @@ export default {
                 },
                 {
                     name: '🏎️ Arcade & Racing',
-                    value: '• `/arcade menu` - Show arcade system menu\n' +
-                           '• `/arcade boards` - List all available arcade boards\n' +
-                           '• `/arcade board id:<board_id>` - Show a specific arcade leaderboard\n' +
-                           '• `/arcade races` - List all racing challenges\n' +
-                           '• `/arcade racing` - Show the current month\'s racing challenge\n' +
-                           '• `/arcade racing month:<month>` - View a specific racing challenge\n' +
-                           '• `/arcade tiebreaker` - Show the current tiebreaker board (if active)'
+                    value: '• `/arcade` - Show arcade system menu\n' +
+                    
                 }
             )
             .setFooter({ text: 'Press "Back to Menu" to return to the main menu' })
