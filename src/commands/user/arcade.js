@@ -78,6 +78,11 @@ export default {
                             ? 'A tiebreaker is currently active! Click to view details.'
                             : 'No tiebreaker is currently active.',
                         inline: false 
+                    },
+                    {
+                        name: 'Note',
+                        value: 'Only users ranked 999 or lower in the global leaderboards will appear in our boards.',
+                        inline: false
                     }
                 )
                 .setFooter({ text: 'Use the buttons below to navigate • Data provided by RetroAchievements.org' });
@@ -246,6 +251,7 @@ export default {
             });
             
             embed.addFields({ name: 'Arcade Boards', value: fieldValue });
+            embed.addFields({ name: 'Note', value: 'Only users ranked 999 or lower in the global leaderboards will appear in our boards.' });
             
             // Create buttons for board selection (up to 5 per row, max 3 rows = 15 buttons)
             const boardRows = [];
@@ -268,7 +274,7 @@ export default {
             // If there are too many boards, add a note
             if (boards.length > 15) {
                 embed.addFields({
-                    name: 'Note',
+                    name: 'Display Limit',
                     value: 'Only showing first 15 boards. To access other boards, use the Selection button and choose a specific board ID.'
                 });
             }
@@ -352,9 +358,11 @@ export default {
             // Add the back button as the last row
             boardRows.push(backRow);
             
+            embed.addFields({ name: 'Note', value: 'Only users ranked 999 or lower in the global leaderboards will appear in our boards.' });
+            
             if (maxBoardId > 20) {
                 embed.addFields({
-                    name: 'Note',
+                    name: 'Display Limit',
                     value: 'Only showing a subset of available boards. Check the "View All Arcade Boards" option to see a complete list.'
                 });
             }
@@ -490,8 +498,10 @@ export default {
                     const ordinalRank = ordinal(displayRank);
                     description += `${ordinalRank} (#${entry.ApiRank}) - ${entry.User}: ${entry.TrackTime}\n`;
                 });
+                
+                description += '\n*Note: Only users ranked 999 or lower in the global leaderboard are shown.*';
             } else {
-                description += 'No leaderboard entries found for registered users.';
+                description += 'No leaderboard entries found for registered users.\n\n*Note: Only users ranked 999 or lower in the global leaderboard are shown.*';
             }
             
             embed.setDescription(description);
@@ -622,6 +632,12 @@ export default {
                 value: '⏱️ Active Challenge\n✅ Completed Challenge\n⌛ Challenge Ended, Pending Results' 
             });
             
+            // Add rank disclaimer
+            embed.addFields({
+                name: 'Note',
+                value: 'Only users ranked 999 or lower in the global leaderboards will appear in our boards.'
+            });
+            
             // Create buttons for month selection (up to 10 most recent racing challenges)
             const monthRows = [];
             const recentBoards = boards.slice(0, 10); // Take up to 10 most recent
@@ -667,7 +683,7 @@ export default {
             // If there are too many boards, add a note
             if (boards.length > 10) {
                 embed.addFields({
-                    name: 'Note',
+                    name: 'Display Limit',
                     value: 'Only showing 10 most recent challenges due to button limits.'
                 });
             }
@@ -846,8 +862,9 @@ export default {
                     const medalEmoji = displayRank === 1 ? '🥇' : (displayRank === 2 ? '🥈' : (displayRank === 3 ? '🥉' : `${displayRank}.`));
                     leaderboardText += `${medalEmoji} **${entry.User}**: ${entry.TrackTime}\n`;
                 });
+                leaderboardText += '\n*Note: Only users ranked 999 or lower in the global leaderboard are shown.*';
             } else {
-                leaderboardText = 'No leaderboard entries found for registered users.';
+                leaderboardText = 'No leaderboard entries found for registered users.\n\n*Note: Only users ranked 999 or lower in the global leaderboard are shown.*';
             }
             
             embed.addFields({ name: 'Current Standings', value: leaderboardText });
@@ -1039,8 +1056,10 @@ export default {
                 if (missingParticipants.length > 0) {
                     leaderboardText += `\n**Not yet participated:**\n${missingParticipants.join(', ')}`;
                 }
+                
+                leaderboardText += '\n\n*Note: Only users ranked 999 or lower in the global leaderboard are shown.*';
             } else {
-                leaderboardText = 'No tiebreaker entries found yet.';
+                leaderboardText = 'No tiebreaker entries found yet.\n\n*Note: Only users ranked 999 or lower in the global leaderboard are shown.*';
             }
             
             embed.addFields({ name: 'Current Standings', value: leaderboardText });
