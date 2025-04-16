@@ -729,33 +729,82 @@ async createOverviewEmbed(raUsername, profileData) {
     
     // Add RetroAchievements site info with improved formatting and more details
     if (raUserInfo) {
+        // Debug data structure
+        console.log('User info structure keys:', Object.keys(raUserInfo));
+        
         // Calculate percentage ranking if possible
         let rankPercentage = '';
-        if (raUserInfo.userStats && raUserInfo.userStats.rank && raUserInfo.userStats.totalUsers) {
-            const percentage = (raUserInfo.userStats.rank / raUserInfo.userStats.totalUsers * 100).toFixed(2);
+        if (raUserInfo.rank && raUserInfo.totalRanked) {
+            const percentage = (raUserInfo.rank / raUserInfo.totalRanked * 100).toFixed(2);
             rankPercentage = ` (Top ${percentage}%)`;
         }
         
-        // Format dates
-        const memberSince = raUserInfo.memberSince ? 
-            new Date(raUserInfo.memberSince).toLocaleDateString('en-US', {
+        // Format dates - handle different possible formats from API
+        const memberSince = raUserInfo.memberSince || raUserInfo.created || raUserInfo.createdDate || raUserInfo.registrationDate;
+        const formattedMemberSince = memberSince ? 
+            new Date(memberSince).toLocaleDateString('en-US', {
                 year: 'numeric', 
                 month: 'short', 
                 day: 'numeric'
             }) : 'Unknown';
         
-        const lastActivity = raUserInfo.lastActivity ? 
-            raUserInfo.lastActivity : 'Unknown';
+        // Handle last activity formatting - might be an object or string
+        let lastActivity = 'Unknown';
+        if (raUserInfo.lastActivity) {
+            if (typeof raUserInfo.lastActivity === 'object') {
+                // If it's an object, try to extract useful info
+                lastActivity = raUserInfo.lastActivity.text || 
+                               raUserInfo.lastActivity.timestamp || 
+                               JSON.stringify(raUserInfo.lastActivity).replace(/[{}]/g, '');
+            } else {
+                lastActivity = raUserInfo.lastActivity;
+            }
+        } else if (raUserInfo.lastLogin) {
+            lastActivity = raUserInfo.lastLogin;
+        }
         
-        // Build RA site stats section
+        // Add a debug log to see what's actually in the API response
+        console.log('Raw userInfo:', JSON.stringify(raUserInfo).substring(0, 500));
+        
+        // Extract achievements count from various possible fields
+        const achievements = raUserInfo.numAchievements || 
+                            raUserInfo.totalAchievements || 
+                            raUserInfo.achievements ||
+                            (raUserInfo.userStats && raUserInfo.userStats.totalAchievements) ||
+                            (raUserInfo.numAchievements === 0 ? 0 : null);
+        
+        // Extract retroRatio from various possible fields - account for 0 values
+        const retroRatio = (raUserInfo.retroRatio !== undefined ? raUserInfo.retroRatio : 
+                           (raUserInfo.RAPoints !== undefined ? raUserInfo.RAPoints : 
+                           (raUserInfo.userStats && raUserInfo.userStats.retroRatio !== undefined ? 
+                            raUserInfo.userStats.retroRatio : '?')));
+        
+        // Extract points from various possible fields
+        const points = (raUserInfo.totalPoints !== undefined ? raUserInfo.totalPoints : 
+                       (raUserInfo.points !== undefined ? raUserInfo.points : 
+                       (raUserInfo.score !== undefined ? raUserInfo.score : '?')));
+        
+        // Extract rank from various possible fields
+        const rank = (raUserInfo.rank !== undefined ? raUserInfo.rank : 
+                     (raUserInfo.userStats && raUserInfo.userStats.rank !== undefined ? 
+                      raUserInfo.userStats.rank : '?'));
+        
+        // Extract completion rate
+        const completionRate = (raUserInfo.completionPercentage !== undefined ? raUserInfo.completionPercentage : 
+                               (raUserInfo.userStats && raUserInfo.userStats.completionPercentage !== undefined ? 
+                                raUserInfo.userStats.completionPercentage : '?'));
+        
+        // Build RA site stats section - properly handle zero values
         const raStatsValue = [
-            `🏆 **Points:** ${raUserInfo.totalPoints || raUserInfo.score || 'N/A'} ${raUserInfo.hardcorePoints ? `(HC: ${raUserInfo.hardcorePoints})` : ''}`,
-            `🎮 **Achievements:** ${raUserInfo.totalAchievements || 'N/A'} ${raUserInfo.userStats?.totalAchievements ? `/ ${raUserInfo.userStats.totalAchievements}` : ''}`,
-            `⭐ **Mastered Games:** ${raUserInfo.totalCompletedGames || raUserInfo.userStats?.totalMasteredGames || '0'}`,
-            `📈 **Site Rank:** #${raUserInfo.userStats?.rank || 'N/A'}${rankPercentage}`,
-            `📊 **RetroRatio:** ${raUserInfo.retroRatio || 'N/A'}`,
-            `🎯 **Completion Rate:** ${raUserInfo.completionPercentage || raUserInfo.userStats?.completionPercentage || 'N/A'}%`,
-            `📅 **Member Since:** ${memberSince}`,
+            `🏆 **Points:** ${points === 0 ? '0' : points}${raUserInfo.hardcorePoints ? ` (HC: ${raUserInfo.hardcorePoints})` : ''}`,
+            `🎮 **Achievements:** ${achievements === 0 ? '0' : (achievements || '?')}`,
+            `⭐ **Mastered Games:** ${raUserInfo.totalCompletedGames === 0 ? '0' : 
+                                    (raUserInfo.totalCompletedGames || 
+                                     raUserInfo.masteredGamesCount || '0')}`,
+            `📈 **Site Rank:** #${rank === 0 ? '0' : rank}${rankPercentage}`,
+            `📊 **RetroRatio:** ${retroRatio === 0 ? '0' : retroRatio}`,
+            `🎯 **Completion Rate:** ${completionRate === 0 ? '0' : completionRate}${completionRate !== '?' ? '%' : ''}`,
+            `📅 **Member Since:** ${formattedMemberSince}`,
             `⏱️ **Last Activity:** ${lastActivity}`
         ].join('\n');
         
@@ -765,11 +814,17 @@ async createOverviewEmbed(raUsername, profileData) {
         });
     }
     
-    // Add rich presence if available
-    if (raUserInfo.richPresenceMsg) {
+    // Add rich presence if available - handle different possible field names
+    const richPresence = raUserInfo.richPresenceMsg || raUserInfo.richPresence || raUserInfo.currentlyPlaying;
+    if (richPresence) {
+        // Check if it's a string or an object
+        let displayValue = typeof richPresence === 'string' ? 
+            richPresence : 
+            (richPresence.msg || richPresence.message || JSON.stringify(richPresence));
+            
         embed.addFields({
             name: '🎮 Currently Playing',
-            value: raUserInfo.richPresenceMsg
+            value: displayValue
         });
     }
     
