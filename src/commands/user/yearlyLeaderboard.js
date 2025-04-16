@@ -26,8 +26,8 @@ const POINTS = {
 // Shadow games are limited to beaten status maximum (4 points)
 const SHADOW_MAX_POINTS = POINTS.BEATEN;
 
-// Number of users to show per embed - Increased for single page view
-const USERS_PER_PAGE = 10;
+// Number of users to show per embed - Reduced to stay within Discord's field character limits
+const USERS_PER_PAGE = 5;
 
 // Helper function to check if an achievement was earned during its challenge month
 function wasEarnedDuringChallengeMonth(dateEarned, challengeDate) {
@@ -764,7 +764,7 @@ export default {
             const embed = new EmbedBuilder()
                 .setTitle(`🏆 ${selectedYear} Yearly Leaderboard`)
                 .setColor('#FFD700')
-                .setFooter({ text: `Page ${page + 1}/${totalPages} • Use /help points for more information about the points system` })
+                .setFooter({ text: `Page ${page + 1}/${totalPages} • Use /help points for more information` })
                 .setTimestamp();
             
             // Set description for all pages
@@ -774,43 +774,45 @@ export default {
             }
             embed.setDescription(description);
             
-            // Generate leaderboard content
-            let leaderboardText = '';
-            
+            // Add each user as an individual field to avoid character limits
             usersOnPage.forEach((user) => {
                 // Use the assigned rank that accounts for ties
                 const rankEmoji = user.rank <= 3 ? RANK_EMOJIS[user.rank] : `${user.rank}.`;
                 
-                // Create detailed user entry with consistent formatting
+                // Create more compact formatting to fit within Discord's field limits
                 const m = user.stats.mastery;
                 const b = user.stats.beaten;
                 const p = user.stats.participation;
                 const sb = user.stats.shadowBeaten;
                 const sp = user.stats.shadowParticipation;
                 
-                leaderboardText += 
-                    `${rankEmoji} **${user.username}** - ${user.totalPoints} points\n` +
-                    `   Challenge: ${user.challengePoints} points | Community: ${user.communityPoints} points\n` +
-                    `   Regular: ${m}✨ ${b}⭐ ${p}🏁 | Shadow: ${sb}⭐ ${sp}🏁\n\n`;
+                // Create compact content for each user's field
+                const userContent = 
+                    `Challenge: ${user.challengePoints} pts | Community: ${user.communityPoints} pts\n` +
+                    `Reg: ${m}✨ ${b}⭐ ${p}🏁 | Shadow: ${sb}⭐ ${sp}🏁`;
+                
+                // Add field for each user with rank and points in the name
+                embed.addFields({ 
+                    name: `${rankEmoji} ${user.username} - ${user.totalPoints} pts`, 
+                    value: userContent
+                });
             });
-            
-            embed.addFields({ name: 'Leaderboard', value: leaderboardText || 'No ranked users' });
             
             // Add point system explanation to all pages for reference
             embed.addFields({
                 name: 'Point System',
-                value: '✨ Mastery: 7pts | ⭐ Beaten: 4pts | 🏁 Participation: 1pt | Shadow max: Beaten (4pts)'
+                value: '✨ Mastery: 7pts | ⭐ Beaten: 4pts | 🏁 Participation: 1pt | Shadow max: 4pts'
             });
             
             // Add debug info if requested (admin only) - only on the last page
             if (showDebug && skippedUsers.length > 0 && page === totalPages - 1) {
                 // Truncate to avoid embed limits
-                const debugUsers = skippedUsers.slice(0, 5);
+                const debugUsers = skippedUsers.slice(0, 3);
                 const debugInfo = debugUsers.map(u => `${u.username}: ${u.reason.substring(0, 50)}`).join('\n');
                 
                 embed.addFields({
                     name: 'Debug Info',
-                    value: `${debugInfo}\n...and ${skippedUsers.length - 5} more users skipped`
+                    value: `${debugInfo}\n...and ${skippedUsers.length - 3} more users skipped`
                 });
             }
             
