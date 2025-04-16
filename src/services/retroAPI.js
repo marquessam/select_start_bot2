@@ -481,11 +481,13 @@ async getUserRecentAchievements(username, count = 50) {
 /**
  * Get leaderboard entries using direct API request
  * @param {number} leaderboardId - RetroAchievements leaderboard ID
+ * @param {number} offset - Starting position (0-based)
+ * @param {number} count - Number of entries to retrieve
  * @returns {Promise<Object>} Leaderboard data object with Results array
  */
-async getLeaderboardEntriesDirect(leaderboardId) {
+async getLeaderboardEntriesDirect(leaderboardId, offset = 0, count = 100) {
     try {
-        const cacheKey = `direct_leaderboard_${leaderboardId}`;
+        const cacheKey = `direct_leaderboard_${leaderboardId}_${offset}_${count}`;
         const cachedData = this.getCachedItem(cacheKey);
         
         if (cachedData) {
@@ -493,7 +495,7 @@ async getLeaderboardEntriesDirect(leaderboardId) {
         }
         
         // Make direct API request to the RetroAchievements leaderboard endpoint
-        const url = `https://retroachievements.org/API/API_GetLeaderboardEntries.php?i=${leaderboardId}&o=0&c=100&z=${process.env.RA_USERNAME}&y=${process.env.RA_API_KEY}`;
+        const url = `https://retroachievements.org/API/API_GetLeaderboardEntries.php?i=${leaderboardId}&o=${offset}&c=${count}&z=${process.env.RA_USERNAME}&y=${process.env.RA_API_KEY}`;
         
         const response = await fetch(url);
         if (!response.ok) {
@@ -554,8 +556,8 @@ async getLeaderboardEntriesDirect(leaderboardId) {
                 return cachedData;
             }
             
-            // Use direct API method instead
-            const entries = await this.getLeaderboardEntriesDirect(leaderboardId);
+            // Use direct API method and pass offset and count parameters
+            const entries = await this.getLeaderboardEntriesDirect(leaderboardId, offset, count);
 
             // Process and standardize the entries
             const processedEntries = this.processLeaderboardEntries(entries);
