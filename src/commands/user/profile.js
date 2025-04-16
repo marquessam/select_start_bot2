@@ -729,9 +729,6 @@ async createOverviewEmbed(raUsername, profileData) {
     
     // Add RetroAchievements site info with improved formatting and more details
     if (raUserInfo) {
-        // Debug data structure
-        console.log('User info structure keys:', Object.keys(raUserInfo));
-        
         // Calculate percentage ranking if possible
         let rankPercentage = '';
         if (raUserInfo.rank && raUserInfo.totalRanked) {
@@ -748,55 +745,38 @@ async createOverviewEmbed(raUsername, profileData) {
                 day: 'numeric'
             }) : 'Unknown';
         
-        // Handle last activity formatting - might be an object or string
+        // Format the lastActivity object properly
         let lastActivity = 'Unknown';
         if (raUserInfo.lastActivity) {
             if (typeof raUserInfo.lastActivity === 'object') {
-                // If it's an object, try to extract useful info
-                lastActivity = raUserInfo.lastActivity.text || 
-                               raUserInfo.lastActivity.timestamp || 
-                               JSON.stringify(raUserInfo.lastActivity).replace(/[{}]/g, '');
-            } else {
+                // Try to extract meaningful information
+                lastActivity = "Recently active"; // Default friendly message
+                
+                // If timestamp exists and is valid, use that
+                if (raUserInfo.lastActivity.timestamp && raUserInfo.lastActivity.timestamp !== 'null') {
+                    try {
+                        const timestamp = new Date(raUserInfo.lastActivity.timestamp);
+                        lastActivity = timestamp.toLocaleString();
+                    } catch (e) {
+                        // If we can't parse the timestamp, fall back to a simple message
+                        lastActivity = "Recently active";
+                    }
+                }
+            } else if (typeof raUserInfo.lastActivity === 'string') {
                 lastActivity = raUserInfo.lastActivity;
             }
         } else if (raUserInfo.lastLogin) {
             lastActivity = raUserInfo.lastLogin;
         }
         
-        // Add a debug log to see what's actually in the API response
-        console.log('Raw userInfo:', JSON.stringify(raUserInfo).substring(0, 500));
-        
-        // Extract achievements count from direct fields in the API response
-        // Looking at screenshot we need to check more specific fields
-        let achievements = null;
-        if (raUserInfo.numAchievements !== undefined) achievements = raUserInfo.numAchievements;
-        else if (raUserInfo.totalAchievements !== undefined) achievements = raUserInfo.totalAchievements;
-        else if (raUserInfo.achievements !== undefined) achievements = raUserInfo.achievements;
-        else if (raUserInfo.userStats && raUserInfo.userStats.totalAchievements !== undefined) 
-            achievements = raUserInfo.userStats.totalAchievements;
-        
-        // For RetroRatio - based on screenshot we know this is available but not being accessed properly
-        let retroRatio = null;
-        if (raUserInfo.retroRatio !== undefined) retroRatio = raUserInfo.retroRatio;
-        else if (raUserInfo.RAPoints !== undefined) retroRatio = raUserInfo.RAPoints;
-        else if (raUserInfo.userStats && raUserInfo.userStats.retroRatio !== undefined) 
-            retroRatio = raUserInfo.userStats.retroRatio;
-        
-        // For completion rate
-        let completionRate = null;
-        if (raUserInfo.completionPercentage !== undefined) completionRate = raUserInfo.completionPercentage;
-        else if (raUserInfo.completionRate !== undefined) completionRate = raUserInfo.completionRate;
-        else if (raUserInfo.userStats && raUserInfo.userStats.completionPercentage !== undefined) 
-            completionRate = raUserInfo.userStats.completionPercentage;
-        
-        // Build RA site stats section with improved formatting
+        // Build RA site stats section with direct property access
         const raStatsValue = [
-            `🏆 **Points:** ${points === 0 ? '0' : (points || raUserInfo.totalPoints || '—')}${raUserInfo.hardcorePoints ? ` (HC: ${raUserInfo.hardcorePoints})` : ''}`,
-            `🎮 **Achievements:** ${achievements === 0 ? '0' : (achievements || '—')}`,
-            `⭐ **Mastered Games:** ${raUserInfo.totalCompletedGames === 0 ? '0' : (raUserInfo.totalCompletedGames || raUserInfo.masteredGamesCount || '0')}`,
-            `📈 **Site Rank:** #${rank === 0 ? '0' : (rank || raUserInfo.rank || '—')}${rankPercentage}`,
-            `📊 **RetroRatio:** ${retroRatio === 0 ? '0' : (retroRatio || '—')}`,
-            `🎯 **Completion Rate:** ${completionRate === 0 ? '0%' : (completionRate ? `${completionRate}%` : '—')}`,
+            `🏆 **Points:** ${raUserInfo.totalPoints || 0}${raUserInfo.hardcorePoints ? ` (HC: ${raUserInfo.hardcorePoints})` : ''}`,
+            `🎮 **Achievements:** ${raUserInfo.totalAchievements || raUserInfo.numAchievements || 0}`,
+            `⭐ **Mastered Games:** ${raUserInfo.totalCompletedGames || raUserInfo.masteredGamesCount || 0}`,
+            `📈 **Site Rank:** #${raUserInfo.rank || '—'}${rankPercentage}`,
+            `📊 **RetroRatio:** ${raUserInfo.retroRatio || '—'}`,
+            `🎯 **Completion Rate:** ${raUserInfo.completionPercentage ? `${raUserInfo.completionPercentage}%` : '—'}`,
             `📅 **Member Since:** ${formattedMemberSince}`,
             `⏱️ **Last Activity:** ${lastActivity}`
         ].join('\n');
@@ -807,7 +787,7 @@ async createOverviewEmbed(raUsername, profileData) {
         });
     }
     
-    // Add rich presence if available - handle different possible field names
+    // Add rich presence if available
     const richPresence = raUserInfo.richPresenceMsg || raUserInfo.richPresence || raUserInfo.currentlyPlaying;
     if (richPresence) {
         // Check if it's a string or an object
@@ -843,7 +823,7 @@ async createOverviewEmbed(raUsername, profileData) {
         }
     }
     
-    // Current Challenges Section - OUR COMMUNITY
+    // Current Challenges Section
     if (currentGamesProgress.length > 0) {
         let currentChallengesField = '';
         
