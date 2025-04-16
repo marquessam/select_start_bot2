@@ -727,7 +727,7 @@ async createOverviewEmbed(raUsername, profileData) {
         .setThumbnail(raUserInfo.profileImageUrl)
         .setColor('#0099ff');
     
-    // Add RetroAchievements site info with simplified formatting and fewer fields
+    // Add RetroAchievements site info with minimal fields
     if (raUserInfo) {
         // Calculate percentage ranking if possible
         let rankPercentage = '';
@@ -748,8 +748,6 @@ async createOverviewEmbed(raUsername, profileData) {
         // Build RA site stats section with only the essential fields
         const raStatsValue = [
             `🏆 **Points:** ${raUserInfo.totalPoints || 0}${raUserInfo.hardcorePoints ? ` (HC: ${raUserInfo.hardcorePoints})` : ''}`,
-            `🎮 **Achievements:** ${raUserInfo.totalAchievements || raUserInfo.numAchievements || '0'}`,
-            `⭐ **Mastered Games:** ${raUserInfo.totalCompletedGames || raUserInfo.masteredGamesCount || '0'}`,
             `📈 **Site Rank:** #${raUserInfo.rank || '—'}${rankPercentage}`,
             `📅 **Member Since:** ${formattedMemberSince}`
         ].join('\n');
@@ -760,11 +758,30 @@ async createOverviewEmbed(raUsername, profileData) {
         });
     }
     
-    // Add rich presence/currently playing with simplified display
+    // Add currently playing with focus on game name
     if (raUserInfo.richPresenceMsg) {
+        // Parse the rich presence message to extract the game name
+        let gameTitle = raUserInfo.richPresenceMsg;
+        
+        // Rich presence often follows format like "Playing [Game Name]. [Additional Info]"
+        // or sometimes just has the game name directly
+        // Try to clean it up to focus on the game name
+        if (gameTitle.includes('in ')) {
+            // Format like "Monkeying around in Specter Land. [🎮] [119/204] [📀29/60]"
+            gameTitle = gameTitle.split('in ')[1];
+            if (gameTitle.includes('.')) {
+                gameTitle = gameTitle.split('.')[0];
+            }
+        } else if (gameTitle.includes('Playing')) {
+            gameTitle = gameTitle.replace('Playing', '').trim();
+            if (gameTitle.includes('.')) {
+                gameTitle = gameTitle.split('.')[0];
+            }
+        }
+        
         embed.addFields({
             name: '🎮 Currently Playing',
-            value: raUserInfo.richPresenceMsg
+            value: gameTitle.trim()
         });
     } else if (raUserInfo.lastGameID && raUserInfo.lastGameTitle) {
         // If no rich presence but we have last game info, show that instead
@@ -873,110 +890,6 @@ async createOverviewEmbed(raUsername, profileData) {
     
     return embed;
 },
-    
-    async createAwardsEmbed(raUsername, profileData) {
-        const masteredGames = profileData.masteredGames;
-        const beatenGames = profileData.beatenGames;
-        const participationGames = profileData.participationGames;
-        
-        const embed = new EmbedBuilder()
-            .setTitle(`Game Awards: ${raUsername}`)
-            .setURL(`https://retroachievements.org/user/${raUsername}`)
-            .setThumbnail(profileData.raUserInfo.profileImageUrl)
-            .setColor('#E67E22');
-        
-        // Game Awards Section
-        let gameAwardsField = '';
-        
-        if (masteredGames.length > 0) {
-            gameAwardsField += `**Mastered Games ${AWARD_EMOJIS.MASTERY}**\n`;
-            masteredGames.slice(0, 5).forEach(game => {
-                const monthYear = game.date.toLocaleString('default', { month: 'short', year: 'numeric' });
-                gameAwardsField += `${game.title} (${monthYear}): ${game.earned}/${game.total} (${game.percentage}%)\n`;
-            });
-            
-            if (masteredGames.length > 5) {
-                gameAwardsField += `*...and ${masteredGames.length - 5} more mastered games*\n`;
-            }
-            
-            gameAwardsField += '\n';
-        }
-
-        if (beatenGames.length > 0) {
-            gameAwardsField += `**Beaten Games ${AWARD_EMOJIS.BEATEN}**\n`;
-            beatenGames.slice(0, 5).forEach(game => {
-                const monthYear = game.date.toLocaleString('default', { month: 'short', year: 'numeric' });
-                gameAwardsField += `${game.title} (${monthYear}): ${game.earned}/${game.total} (${game.percentage}%)\n`;
-            });
-            
-            if (beatenGames.length > 5) {
-                gameAwardsField += `*...and ${beatenGames.length - 5} more beaten games*\n`;
-            }
-            
-            gameAwardsField += '\n';
-        }
-
-        if (participationGames.length > 0) {
-            gameAwardsField += `**Participation ${AWARD_EMOJIS.PARTICIPATION}**\n`;
-            participationGames.slice(0, 5).forEach(game => {
-                const monthYear = game.date.toLocaleString('default', { month: 'short', year: 'numeric' });
-                gameAwardsField += `${game.title} (${monthYear}): ${game.earned}/${game.total} (${game.percentage}%)\n`;
-            });
-            
-            if (participationGames.length > 5) {
-                gameAwardsField += `*...and ${participationGames.length - 5} more participation games*\n`;
-            }
-            
-            gameAwardsField += '\n';
-        }
-
-        if (gameAwardsField) {
-            embed.addFields({ name: '🎮 Past Game Awards', value: gameAwardsField });
-        } else {
-            embed.addFields({ name: '🎮 Past Game Awards', value: 'No past game awards.' });
-        }
-        
-        // Add RA awards if available
-        if (profileData.raUserInfo.awards && profileData.raUserInfo.awards.length > 0) {
-            let raAwardsField = '';
-            const raAwards = profileData.raUserInfo.awards.slice(0, 5);
-            
-            raAwards.forEach(award => {
-                const awardDate = new Date(award.awardedAt || award.AwardedAt).toLocaleDateString('en-US', {
-                    year: 'numeric',
-                    month: 'short',
-                    day: 'numeric'
-                });
-                raAwardsField += `🏅 **${award.title || award.Title}** - ${awardDate}\n`;
-                if (award.description || award.Description) {
-                    raAwardsField += `${award.description || award.Description}\n`;
-                }
-                raAwardsField += '\n';
-            });
-            
-            if (profileData.raUserInfo.awards.length > 5) {
-                raAwardsField += `*...and ${profileData.raUserInfo.awards.length - 5} more RetroAchievements awards*\n`;
-            }
-            
-            embed.addFields({ name: '🏅 RetroAchievements Site Awards', value: raAwardsField });
-        }
-        
-        // Simple awards count
-        const totalGames = masteredGames.length + beatenGames.length + participationGames.length;
-        const summaryField = 
-            `**Total Challenge Games:** ${totalGames}\n` +
-            `**Mastered Games:** ${masteredGames.length}\n` +
-            `**Beaten Games:** ${beatenGames.length}\n` +
-            `**Participation Games:** ${participationGames.length}\n\n` +
-            `For information about points, check out \`/help points\``;
-        
-        embed.addFields({ name: '📊 Awards Summary', value: summaryField });
-        
-        embed.setFooter({ text: 'Use the buttons below to navigate • For challenges info use /help challenges' })
-             .setTimestamp();
-        
-        return embed;
-    },
 
     async createShadowEmbed(raUsername, profileData) {
         const beatenShadowGames = profileData.beatenShadowGames;
