@@ -327,6 +327,9 @@ export default {
                             if (entry) {
                                 user.tiebreakerNote = `\n   (${entry.score} in ${activeTiebreaker.gameTitle})`;
                                 user.tiebreakerRank = entry.apiRank;
+                                user.hasTiebreaker = true;
+                            } else {
+                                user.hasTiebreaker = false;
                             }
                         });
                     }
@@ -429,37 +432,103 @@ export default {
                     value: 'No one has earned achievements in this challenge this month yet!'
                 });
             } else {
-                // Create final leaderboard with properly handled ties
+                // NEW RANKING LOGIC:
+                // 1. Each new "stats group" gets a new base rank
+                // 2. Within each tied group, users without tiebreaker scores get the same rank
+                // 3. Users with tiebreaker scores get individual ranks based on their position
+
                 let leaderboardText = '';
                 let currentRank = 1;
+                let currentTieGroup = [];
                 let lastAchieved = -1;
                 let lastPoints = -1;
-                
+                let tieGroupStartRank = 1;
+
                 for (let i = 0; i < workingSorted.length; i++) {
                     const progress = workingSorted[i];
                     
-                    // Check if this user has the same stats as the previous user (ignoring tiebreaker)
+                    // Check if this user is tied with the previous based on achievements and points
                     if (i > 0 && progress.achieved === lastAchieved && progress.points === lastPoints) {
-                        // This user is tied with the previous one - keep the same rank
-                        // Don't increment the rank counter
+                        // Add to current tie group
+                        currentTieGroup.push(progress);
                     } else {
-                        // New stats = new rank, which is based on position counting previous tied users
-                        currentRank = i + 1;
+                        // Process the previous tie group if it exists
+                        if (currentTieGroup.length > 0) {
+                            // First, sort the tie group by tiebreaker presence
+                            const withTiebreaker = currentTieGroup.filter(p => p.hasTiebreaker);
+                            const withoutTiebreaker = currentTieGroup.filter(p => !p.hasTiebreaker);
+                            
+                            // Assign ranks for users with tiebreakers
+                            let tieRank = tieGroupStartRank;
+                            for (const user of withTiebreaker) {
+                                const rankEmoji = tieRank <= 3 ? RANK_EMOJIS[tieRank] : `#${tieRank}`;
+                                const tiebreakerNote = user.tiebreakerNote || '';
+                                
+                                leaderboardText += `${rankEmoji} **${user.username}** ${user.award}${tiebreakerNote}\n` +
+                                                 `${user.achieved}/${currentChallenge.monthly_challange_game_total} (${user.percentage}%)\n\n`;
+                                tieRank++;
+                            }
+                            
+                            // All users without tiebreakers share the same rank
+                            if (withoutTiebreaker.length > 0) {
+                                // If there were users with tiebreakers, this group starts after them
+                                // Otherwise, they all get the original starting rank
+                                const sharedRank = withTiebreaker.length > 0 ? tieRank : tieGroupStartRank;
+                                const rankEmoji = sharedRank <= 3 ? RANK_EMOJIS[sharedRank] : `#${sharedRank}`;
+                                
+                                for (const user of withoutTiebreaker) {
+                                    leaderboardText += `${rankEmoji} **${user.username}** ${user.award}\n` +
+                                                     `${user.achieved}/${currentChallenge.monthly_challange_game_total} (${user.percentage}%)\n\n`;
+                                }
+                            }
+                        }
+                        
+                        // Start a new tie group
+                        currentTieGroup = [progress];
+                        tieGroupStartRank = i + 1;
+                        
+                        // This user is not tied with anyone yet, directly add to output
+                        const rankEmoji = tieGroupStartRank <= 3 ? RANK_EMOJIS[tieGroupStartRank] : `#${tieGroupStartRank}`;
+                        const tiebreakerNote = progress.tiebreakerNote || '';
+                        
+                        leaderboardText += `${rankEmoji} **${progress.username}** ${progress.award}${tiebreakerNote}\n` +
+                                         `${progress.achieved}/${currentChallenge.monthly_challange_game_total} (${progress.percentage}%)\n\n`;
                     }
                     
-                    // Remember this user's stats for the next comparison
+                    // Remember this user's stats
                     lastAchieved = progress.achieved;
                     lastPoints = progress.points;
+                }
+                
+                // Process the last tie group if it exists
+                if (currentTieGroup.length > 1) {
+                    // First, sort the tie group by tiebreaker presence
+                    const withTiebreaker = currentTieGroup.filter(p => p.hasTiebreaker);
+                    const withoutTiebreaker = currentTieGroup.filter(p => !p.hasTiebreaker);
                     
-                    // Set the rank emoji based on current rank
-                    const rankEmoji = currentRank <= 3 ? RANK_EMOJIS[currentRank] : `#${currentRank}`;
+                    // Assign ranks for users with tiebreakers
+                    let tieRank = tieGroupStartRank;
+                    for (const user of withTiebreaker) {
+                        const rankEmoji = tieRank <= 3 ? RANK_EMOJIS[tieRank] : `#${tieRank}`;
+                        const tiebreakerNote = user.tiebreakerNote || '';
+                        
+                        leaderboardText += `${rankEmoji} **${user.username}** ${user.award}${tiebreakerNote}\n` +
+                                         `${user.achieved}/${currentChallenge.monthly_challange_game_total} (${user.percentage}%)\n\n`;
+                        tieRank++;
+                    }
                     
-                    // Add tiebreakerNote if available
-                    const tiebreakerNote = progress.tiebreakerNote || '';
-                    
-                    // Add user entry to leaderboard
-                    leaderboardText += `${rankEmoji} **${progress.username}** ${progress.award}${tiebreakerNote}\n` +
-                                      `${progress.achieved}/${currentChallenge.monthly_challange_game_total} (${progress.percentage}%)\n\n`;
+                    // All users without tiebreakers share the same rank
+                    if (withoutTiebreaker.length > 0) {
+                        // If there were users with tiebreakers, this group starts after them
+                        // Otherwise, they all get the original starting rank
+                        const sharedRank = withTiebreaker.length > 0 ? tieRank : tieGroupStartRank;
+                        const rankEmoji = sharedRank <= 3 ? RANK_EMOJIS[sharedRank] : `#${sharedRank}`;
+                        
+                        for (const user of withoutTiebreaker) {
+                            leaderboardText += `${rankEmoji} **${user.username}** ${user.award}\n` +
+                                             `${user.achieved}/${currentChallenge.monthly_challange_game_total} (${user.percentage}%)\n\n`;
+                        }
+                    }
                 }
                 
                 embed.addFields({
