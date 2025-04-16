@@ -198,42 +198,33 @@ export default {
                 endDate: { $gte: now }
             });
 
-            // Identify tied users in the top 3 positions
+            // Identify tied users in the top 3 positions more effectively
             const tiedGroups = [];
             if (sortedProgress.length > 1) {
-                let currentTiedGroup = [sortedProgress[0]];
-                let currentRank = 1;
-
-                for (let i = 1; i < sortedProgress.length; i++) {
-                    const current = sortedProgress[i];
-                    const previous = sortedProgress[i - 1];
-
-                    // Check if tied with previous user
-                    if (current.achieved === previous.achieved && current.points === previous.points) {
-                        // Add to current tie group
-                        currentTiedGroup.push(current);
-                    } else {
-                        // If we had a tied group and it's in the top 3, add it
-                        if (currentTiedGroup.length > 1 && currentRank <= 3) {
-                            tiedGroups.push({
-                                rank: currentRank,
-                                users: [...currentTiedGroup]
-                            });
-                        }
-
-                        // Start a new tied group at new rank
-                        currentRank = i + 1;
-                        currentTiedGroup = [current];
+                // Create groups of users with identical stats
+                const statGroups = {};
+                
+                // Group users by their achievement count and points
+                sortedProgress.forEach((progress, index) => {
+                    const statKey = `${progress.achieved}-${progress.points}`;
+                    if (!statGroups[statKey]) {
+                        statGroups[statKey] = {
+                            users: [],
+                            rank: index + 1 // The rank of the first user with these stats
+                        };
                     }
-
-                    // If we're at the end and have a tied group in top 3, add it
-                    if (i === sortedProgress.length - 1 && currentTiedGroup.length > 1 && currentRank <= 3) {
+                    statGroups[statKey].users.push(progress);
+                });
+                
+                // Filter for groups with multiple users and in top 3 positions
+                Object.values(statGroups).forEach(group => {
+                    if (group.users.length > 1 && group.rank <= 3) {
                         tiedGroups.push({
-                            rank: currentRank,
-                            users: [...currentTiedGroup]
+                            rank: group.rank,
+                            users: [...group.users]
                         });
                     }
-                }
+                });
             }
 
             // Get tiebreaker data if there are tied groups and an active tiebreaker
@@ -268,6 +259,57 @@ export default {
                 } catch (error) {
                     console.error('Error fetching tiebreaker leaderboard:', error);
                 }
+            }
+
+            // Now reorder tied users based on tiebreaker results
+            if (tiedGroups.length > 0 && tiebreakerEntries.length > 0) {
+                // For each tied group, reorder users based on their tiebreaker performance
+                tiedGroups.forEach(group => {
+                    // Get tiebreaker entries for users in this group
+                    const relevantEntries = [];
+                    
+                    // For each user in tied group, find their tiebreaker entry if any
+                    group.users.forEach(user => {
+                        const entry = tiebreakerEntries.find(e => e.username === user.username.toLowerCase());
+                        if (entry) {
+                            relevantEntries.push({
+                                user: user,
+                                tiebreakerRank: entry.apiRank,
+                                score: entry.score
+                            });
+                        } else {
+                            // For users not in tiebreaker, push them to the bottom
+                            relevantEntries.push({
+                                user: user,
+                                tiebreakerRank: 999999, // Very large number to ensure they're at the bottom
+                                score: "N/A"
+                            });
+                        }
+                    });
+                    
+                    // Sort the entries by tiebreaker rank
+                    relevantEntries.sort((a, b) => a.tiebreakerRank - b.tiebreakerRank);
+                    
+                    // Find the indices of these users in the original sortedProgress array
+                    const indices = group.users.map(user => 
+                        sortedProgress.findIndex(p => p.username === user.username)
+                    );
+                    
+                    // Replace the users in sortedProgress with the reordered users
+                    for (let i = 0; i < indices.length; i++) {
+                        const targetIndex = indices[i];
+                        sortedProgress[targetIndex] = relevantEntries[i].user;
+                        
+                        // Add tiebreaker info to the user object
+                        if (relevantEntries[i].tiebreakerRank === 999999) {
+                            sortedProgress[targetIndex].tiebreakerNote = `${TIEBREAKER_EMOJI} Not in tiebreaker`;
+                            sortedProgress[targetIndex].tiebreakerRank = null;
+                        } else {
+                            sortedProgress[targetIndex].tiebreakerNote = `${TIEBREAKER_EMOJI} TB: #${relevantEntries[i].tiebreakerRank}`;
+                            sortedProgress[targetIndex].tiebreakerRank = relevantEntries[i].tiebreakerRank;
+                        }
+                    }
+                });
             }
 
             // NEW: Save the processed results to the database
@@ -360,49 +402,45 @@ export default {
                     value: 'No one has earned achievements in this challenge this month yet!'
                 });
             } else {
-                // Create final leaderboard with tiebreaker-adjusted rankings if necessary
+                // Create final leaderboard with tiebreaker-adjusted rankings
                 let leaderboardText = '';
                 let displayRank = 1;
+                
+                // Keep track of which users are in each tiebreaker group
+                const userInTieGroup = new Map();
+                tiedGroups.forEach(group => {
+                    group.users.forEach(user => {
+                        userInTieGroup.set(user.username, group.rank);
+                    });
+                });
                 
                 for (let i = 0; i < sortedProgress.length; i++) {
                     const progress = sortedProgress[i];
                     
-                    // Check if this user is in a tie group that needs tiebreaker resolution
-                    let tiebreakerNote = '';
-                    let useTiebreakerRank = false;
+                    // Determine if this user is in a tie group
+                    const inTieGroup = userInTieGroup.has(progress.username);
                     
-                    if (tiedGroups.length > 0 && activeTiebreaker) {
-                        // Find if this user is in a tied group
-                        const tiedGroup = tiedGroups.find(group => 
-                            group.users.some(u => u.username === progress.username)
-                        );
-                        
-                        if (tiedGroup) {
-                            // Find this user's tiebreaker entry
-                            const tiebreakerEntry = tiebreakerEntries.find(
-                                entry => entry.username === progress.username.toLowerCase()
-                            );
-                            
-                            if (tiebreakerEntry) {
-                                tiebreakerNote = ` ${TIEBREAKER_EMOJI} TB: #${tiebreakerEntry.apiRank}`;
-                                useTiebreakerRank = true;
-                            } else {
-                                tiebreakerNote = ` ${TIEBREAKER_EMOJI} Not in tiebreaker`;
-                            }
-                        }
-                    }
-                    
-                    // Use regular ranking if not in a tie group or tiebreaker not active
+                    // Set the rank emoji based on display rank
                     const rankEmoji = displayRank <= 3 ? RANK_EMOJIS[displayRank] : `#${displayRank}`;
+                    
+                    // Add tiebreakerNote if available from earlier processing
+                    const tiebreakerNote = progress.tiebreakerNote || '';
                     
                     // Add user entry to leaderboard
                     leaderboardText += `${rankEmoji} **${progress.username}** ${progress.award}${tiebreakerNote}\n` +
                                       `${progress.achieved}/${currentChallenge.monthly_challange_game_total} (${progress.percentage}%)\n\n`;
                     
                     // Increment display rank if not tied with next user
+                    // But carefully handle tied groups that have been reordered by tiebreaker
                     if (i + 1 < sortedProgress.length) {
                         const next = sortedProgress[i + 1];
-                        if (progress.achieved !== next.achieved || progress.points !== next.points) {
+                        
+                        // If in a tie group and next user has same achievements/points but different tiebreaker rank,
+                        // we still increment the rank
+                        const sameStats = progress.achieved === next.achieved && progress.points === next.points;
+                        const bothInTieGroup = inTieGroup && userInTieGroup.has(next.username);
+                        
+                        if (!sameStats || (bothInTieGroup && progress.tiebreakerRank !== next.tiebreakerRank)) {
                             displayRank = i + 2; // Next rank
                         }
                     }
