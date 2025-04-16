@@ -443,152 +443,159 @@ class AchievementFeedService {
         }
     }
 
-    async checkForGameAwards(user, channel, challenge, gameId, isShadow) {
-        const gameIdString = String(gameId);
-        console.log(`Checking for awards for ${user.raUsername} in ${isShadow ? 'shadow' : 'monthly'} game ${gameIdString}`);
-        
-        // Get user's game progress
-        const progress = await retroAPI.getUserGameProgress(user.raUsername, gameId);
-        
-        // Get game info
-        const gameInfo = await retroAPI.getGameInfo(gameId);
-        
-        // Get relevant achievement lists
-        const progressionAchievements = isShadow 
-            ? challenge.shadow_challange_progression_achievements 
-            : challenge.monthly_challange_progression_achievements;
-            
-        const winAchievements = isShadow
-            ? challenge.shadow_challange_win_achievements
-            : challenge.monthly_challange_win_achievements;
-            
-        const totalAchievements = isShadow
-            ? challenge.shadow_challange_game_total
-            : challenge.monthly_challange_game_total;
-        
-        // Get the user's earned achievements
-        const userEarnedAchievements = Object.entries(progress.achievements || {})
-            .filter(([id, data]) => data.hasOwnProperty('dateEarned'))
-            .map(([id]) => id);
-        
-        // Determine current award level
-        let currentAward = null;
-        
-        // Check if user has all achievements (Mastery) - only for monthly, not shadow
-        const hasAllAchievements = progress.numAwardedToUser === totalAchievements;
-        
-        // Check if user has completed all progression achievements
-        const hasAllProgressionAchievements = progressionAchievements.every(id => 
-            userEarnedAchievements.includes(id)
-        );
-        
-        // Check if user has at least one win condition (if any exist)
-        const hasWinCondition = winAchievements.length === 0 || 
-            winAchievements.some(id => userEarnedAchievements.includes(id));
-        
-        // Determine the award
-        if (hasAllAchievements && !isShadow) {
-            // Mastery is only for monthly challenges, not shadow
-            currentAward = 'MASTERY';
-        } else if (hasAllProgressionAchievements && hasWinCondition) {
-            currentAward = 'BEATEN';
-        } else if (progress.numAwardedToUser > 0) {
-            currentAward = 'PARTICIPATION';
-        }
-
-        // Skip if no award achieved
-        if (!currentAward) {
-            return;
-        }
-        
-        const awardIdentifierPrefix = isShadow ? 'shadow:award' : 'monthly:award';
-        
-        // Create award base identifier for checking - include username for per-user uniqueness
-        const awardBaseIdentifier = `${user.raUsername}:${awardIdentifierPrefix}:${gameIdString}:${currentAward}`;
-        
-        // Check if this award is in the session history
-        if (this.sessionAnnouncementHistory.has(awardBaseIdentifier)) {
-            console.log(`Award ${currentAward} already in session history for ${user.raUsername}, skipping`);
-            return;
-        }
-        
-        // Check if this award is in the persistent history using the base identifier
-        // Handle both old and new identifier formats for backward compatibility
-        const hasThisAward = user.announcedAchievements.some(id => {
-            const parts = id.split(':');
-            
-            // New format (with username as first part)
-            if (parts.length >= 4 && parts[0] === user.raUsername) {
-                const storedBaseId = `${parts[0]}:${parts[1]}:${parts[2]}:${parts[3]}`;
-                return storedBaseId === awardBaseIdentifier;
-            }
-            
-            // Old format (without username)
-            if (parts.length >= 3) {
-                const oldFormatBaseId = `${user.raUsername}:${parts[0]}:${parts[1]}:${parts[2]}`;
-                return oldFormatBaseId === awardBaseIdentifier;
-            }
-            
-            return false;
-        });
-        
-        if (hasThisAward) {
-            console.log(`Award ${currentAward} already in persistent storage for ${user.raUsername}, skipping`);
-            return;
-        }
-        
-        console.log(`Announcing ${currentAward} award for ${user.raUsername} in ${isShadow ? 'shadow' : 'monthly'} challenge`);
-        
-        // Generate award identifier with timestamp
-        const now = Date.now();
-        const awardIdentifier = `${awardBaseIdentifier}:${now}`;
-        
-        // User has reached a new award level, announce it using rate limiter
-        const announced = await this.announcementRateLimiter.add(async () => {
-            try {
-                return await this.announceGameAward(
-                    channel,
-                    user,
-                    gameInfo,
-                    currentAward,
-                    progress.numAwardedToUser,
-                    totalAchievements,
-                    isShadow,
-                    hasAllProgressionAchievements,
-                    hasWinCondition,
-                    gameId
-                );
-            } catch (error) {
-                console.error('Error in rate-limited award announcement:', error);
-                return false;
-            }
-        });
-        
-        if (announced) {
-            try {
-                // Add to session history AFTER announcement
-                this.sessionAnnouncementHistory.add(awardBaseIdentifier);
-                
-                // Add to persistent history with atomic update to avoid version conflicts
-                await User.findOneAndUpdate(
-                    { _id: user._id },
-                    { 
-                        $push: { 
-                            announcedAchievements: awardIdentifier
-                        }
-                    },
-                    { 
-                        new: true,
-                        runValidators: true
-                    }
-                );
-                
-                console.log(`Successfully added award ${currentAward} to ${user.raUsername}'s record`);
-            } catch (updateError) {
-                console.error(`Error updating user ${user.raUsername} with award:`, updateError);
-            }
+ async checkForGameAwards(user, channel, challenge, gameId, isShadow) {
+    const gameIdString = String(gameId);
+    console.log(`Checking for awards for ${user.raUsername} in ${isShadow ? 'shadow' : 'monthly'} game ${gameIdString}`);
+    
+    // CRITICAL FIX: Check if user has ANY award for this game already
+    // This simple prefix check will catch all awards for this user/game combination
+    const simpleCheckPrefix = `${user.raUsername}:${isShadow ? 'shadow:award' : 'monthly:award'}:${gameIdString}`;
+    
+    // Check in session history first
+    let hasAnyAwardInSession = false;
+    for (const entry of this.sessionAnnouncementHistory) {
+        if (entry.startsWith(simpleCheckPrefix)) {
+            console.log(`User ${user.raUsername} already has award in session history for ${isShadow ? 'shadow' : 'monthly'} game ${gameIdString}`);
+            hasAnyAwardInSession = true;
+            break;
         }
     }
+    
+    if (hasAnyAwardInSession) {
+        return;
+    }
+    
+    // Then check in database records
+    const hasAnyAwardInDb = user.announcedAchievements.some(id => {
+        // Check if this is a new format identifier (has username)
+        if (id.startsWith(simpleCheckPrefix)) {
+            return true;
+        }
+        
+        // Check if this is an old format identifier (without username)
+        const oldFormatPrefix = `${isShadow ? 'shadow:award' : 'monthly:award'}:${gameIdString}`;
+        return id.startsWith(oldFormatPrefix);
+    });
+    
+    if (hasAnyAwardInDb) {
+        console.log(`User ${user.raUsername} already has award in database for ${isShadow ? 'shadow' : 'monthly'} game ${gameIdString}`);
+        return;
+    }
+    
+    // Get user's game progress
+    const progress = await retroAPI.getUserGameProgress(user.raUsername, gameId);
+    
+    // Get game info
+    const gameInfo = await retroAPI.getGameInfo(gameId);
+    
+    // Get relevant achievement lists
+    const progressionAchievements = isShadow 
+        ? challenge.shadow_challange_progression_achievements 
+        : challenge.monthly_challange_progression_achievements;
+        
+    const winAchievements = isShadow
+        ? challenge.shadow_challange_win_achievements
+        : challenge.monthly_challange_win_achievements;
+        
+    const totalAchievements = isShadow
+        ? challenge.shadow_challange_game_total
+        : challenge.monthly_challange_game_total;
+    
+    // Get the user's earned achievements
+    const userEarnedAchievements = Object.entries(progress.achievements || {})
+        .filter(([id, data]) => data.hasOwnProperty('dateEarned'))
+        .map(([id]) => id);
+    
+    // Determine current award level
+    let currentAward = null;
+    
+    // Check if user has all achievements (Mastery) - only for monthly, not shadow
+    const hasAllAchievements = progress.numAwardedToUser === totalAchievements;
+    
+    // Check if user has completed all progression achievements
+    const hasAllProgressionAchievements = progressionAchievements.every(id => 
+        userEarnedAchievements.includes(id)
+    );
+    
+    // Check if user has at least one win condition (if any exist)
+    const hasWinCondition = winAchievements.length === 0 || 
+        winAchievements.some(id => userEarnedAchievements.includes(id));
+    
+    // Determine the award
+    if (hasAllAchievements && !isShadow) {
+        // Mastery is only for monthly challenges, not shadow
+        currentAward = 'MASTERY';
+    } else if (hasAllProgressionAchievements && hasWinCondition) {
+        currentAward = 'BEATEN';
+    } else if (progress.numAwardedToUser > 0) {
+        currentAward = 'PARTICIPATION';
+    }
+
+    // Skip if no award achieved
+    if (!currentAward) {
+        return;
+    }
+    
+    console.log(`Determined award level for ${user.raUsername}: ${currentAward}`);
+    
+    const awardIdentifierPrefix = isShadow ? 'shadow:award' : 'monthly:award';
+    
+    // Create award base identifier for checking
+    const awardBaseIdentifier = `${user.raUsername}:${awardIdentifierPrefix}:${gameIdString}:${currentAward}`;
+    
+    // Generate award identifier with timestamp
+    const now = Date.now();
+    const awardIdentifier = `${awardBaseIdentifier}:${now}`;
+    
+    console.log(`Announcing ${currentAward} award for ${user.raUsername} in ${isShadow ? 'shadow' : 'monthly'} challenge`);
+    
+    // User has reached a new award level, announce it using rate limiter
+    const announced = await this.announcementRateLimiter.add(async () => {
+        try {
+            return await this.announceGameAward(
+                channel,
+                user,
+                gameInfo,
+                currentAward,
+                progress.numAwardedToUser,
+                totalAchievements,
+                isShadow,
+                hasAllProgressionAchievements,
+                hasWinCondition,
+                gameId
+            );
+        } catch (error) {
+            console.error('Error in rate-limited award announcement:', error);
+            return false;
+        }
+    });
+    
+    if (announced) {
+        try {
+            // CRITICAL: Add to session history FIRST to prevent double announcements
+            // if multiple instances are processed before the database update completes
+            this.sessionAnnouncementHistory.add(awardBaseIdentifier);
+            
+            // Add to persistent history with atomic update to avoid version conflicts
+            await User.findOneAndUpdate(
+                { _id: user._id },
+                { 
+                    $push: { 
+                        announcedAchievements: awardIdentifier
+                    }
+                },
+                { 
+                    new: true,
+                    runValidators: true
+                }
+            );
+            
+            console.log(`Successfully added award ${currentAward} to ${user.raUsername}'s record`);
+        } catch (updateError) {
+            console.error(`Error updating user ${user.raUsername} with award:`, updateError);
+        }
+    }
+}
 
     // Get user's profile image URL with caching
     async getUserProfileImageUrl(username) {
