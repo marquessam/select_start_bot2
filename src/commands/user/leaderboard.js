@@ -1,4 +1,4 @@
-import { SlashCommandBuilder, EmbedBuilder } from 'discord.js';
+import { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType } from 'discord.js';
 import { User } from '../../models/User.js';
 import { Challenge } from '../../models/Challenge.js';
 import { ArcadeBoard } from '../../models/ArcadeBoard.js'; // Add import for ArcadeBoard
@@ -17,6 +17,9 @@ const RANK_EMOJIS = {
 };
 
 const TIEBREAKER_EMOJI = '⚔️'; // Emoji to indicate tiebreaker status
+
+// Number of users to show per page
+const USERS_PER_PAGE = 10;
 
 function isDateInCurrentMonth(dateString) {
     // Parse the input date string more reliably
@@ -403,13 +406,69 @@ export default {
             // Calculate time remaining
             const timeRemaining = formatTimeRemaining(challengeEndDate, now);
 
-            // Create embed
+            if (workingSorted.length === 0) {
+                const embed = new EmbedBuilder()
+                    .setTitle(`${monthName} Challenge Leaderboard`)
+                    .setColor('#FFD700')
+                    .setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`);
+
+                // Add game details to description
+                let description = `**Game:** ${gameInfo.title}\n` +
+                                `**Total Achievements:** ${currentChallenge.monthly_challange_game_total}\n` +
+                                `**Challenge Ends:** ${endDateFormatted}\n` +
+                                `**Time Remaining:** ${timeRemaining}\n\n` +
+                                `${AWARD_EMOJIS.MASTERY} Mastery (7pts) | ${AWARD_EMOJIS.BEATEN} Beaten (4pts) | ${AWARD_EMOJIS.PARTICIPATION} Part. (1pt)`;
+
+                // Add tiebreaker info if active
+                if (activeTiebreaker) {
+                    description += `\n\n${TIEBREAKER_EMOJI} **Active Tiebreaker:** ${activeTiebreaker.gameTitle}\n` +
+                                `*Tiebreaker results are used to determine final ranking for tied users in top positions.*`;
+                }
+                
+                description += `\n\n*Note: Only achievements earned during ${monthName} count toward challenge status.*`;
+                
+                embed.setDescription(description);
+
+                embed.addFields({
+                    name: 'No Participants',
+                    value: 'No one has earned achievements in this challenge this month yet!'
+                });
+
+                return interaction.editReply({ embeds: [embed] });
+            }
+
+            // Create paginated embeds
+            const embeds = this.createPaginatedEmbeds(workingSorted, monthName, gameInfo, currentChallenge, 
+                endDateFormatted, timeRemaining, activeTiebreaker);
+
+            // Display paginated leaderboard with navigation
+            await this.displayPaginatedLeaderboard(interaction, embeds);
+
+        } catch (error) {
+            console.error('Error displaying leaderboard:', error);
+            return interaction.editReply('An error occurred while fetching the leaderboard. Please try again.');
+        }
+    },
+
+    createPaginatedEmbeds(workingSorted, monthName, gameInfo, currentChallenge, endDateFormatted, timeRemaining, activeTiebreaker) {
+        const embeds = [];
+        const totalPages = Math.ceil(workingSorted.length / USERS_PER_PAGE);
+
+        for (let page = 0; page < totalPages; page++) {
+            // Get users for this page
+            const startIndex = page * USERS_PER_PAGE;
+            const endIndex = Math.min((page + 1) * USERS_PER_PAGE, workingSorted.length);
+            const usersOnPage = workingSorted.slice(startIndex, endIndex);
+
+            // Create embed for this page
             const embed = new EmbedBuilder()
                 .setTitle(`${monthName} Challenge Leaderboard`)
                 .setColor('#FFD700')
-                .setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`);
+                .setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`)
+                .setFooter({ text: `Page ${page + 1}/${totalPages} • Use /help points for more information` })
+                .setTimestamp();
 
-            // Add game details to description
+            // Create base description for all pages
             let description = `**Game:** ${gameInfo.title}\n` +
                             `**Total Achievements:** ${currentChallenge.monthly_challange_game_total}\n` +
                             `**Challenge Ends:** ${endDateFormatted}\n` +
@@ -419,36 +478,50 @@ export default {
             // Add tiebreaker info if active
             if (activeTiebreaker) {
                 description += `\n\n${TIEBREAKER_EMOJI} **Active Tiebreaker:** ${activeTiebreaker.gameTitle}\n` +
-                              `*Tiebreaker results are used to determine final ranking for tied users in top positions.*`;
+                            `*Tiebreaker results are used to determine final ranking for tied users in top positions.*`;
             }
             
             description += `\n\n*Note: Only achievements earned during ${monthName} count toward challenge status.*`;
             
             embed.setDescription(description);
 
-            if (workingSorted.length === 0) {
-                embed.addFields({
-                    name: 'No Participants',
-                    value: 'No one has earned achievements in this challenge this month yet!'
-                });
-            } else {
-                // NEW RANKING LOGIC:
-                // 1. Each new "stats group" gets a new base rank
-                // 2. Within each tied group, users without tiebreaker scores get the same rank
-                // 3. Users with tiebreaker scores get individual ranks based on their position
+            // Ranking logic with tiebreakers
+            let leaderboardText = '';
+            let currentRank = 1;
+            let currentTieGroup = [];
+            let lastAchieved = -1;
+            let lastPoints = -1;
+            let tieGroupStartRank = startIndex + 1;
 
-                let leaderboardText = '';
-                let currentRank = 1;
-                let currentTieGroup = [];
-                let lastAchieved = -1;
-                let lastPoints = -1;
-                let tieGroupStartRank = 1;
-
-                for (let i = 0; i < workingSorted.length; i++) {
-                    const progress = workingSorted[i];
-                    
+            for (let i = 0; i < usersOnPage.length; i++) {
+                const progress = usersOnPage[i];
+                const actualIndex = startIndex + i;
+                
+                if (i === 0 && page > 0) {
+                    // Compare with last user from previous page for ties
+                    const lastPageUser = workingSorted[startIndex - 1];
+                    if (progress.achieved === lastPageUser.achieved && progress.points === lastPageUser.points) {
+                        // Continuing a tie from the previous page
+                        // Use the rank of the last user from the previous page
+                        currentRank = page * USERS_PER_PAGE; // This is the index of the last user on previous page + 1
+                    } else {
+                        // Not tied with previous page, use actual index + 1
+                        currentRank = actualIndex + 1;
+                    }
+                    tieGroupStartRank = currentRank;
+                    lastAchieved = progress.achieved;
+                    lastPoints = progress.points;
+                    currentTieGroup = [progress];
+                } else if (i === 0) {
+                    // First user on first page
+                    currentRank = 1;
+                    tieGroupStartRank = 1;
+                    lastAchieved = progress.achieved;
+                    lastPoints = progress.points;
+                    currentTieGroup = [progress];
+                } else {
                     // Check if this user is tied with the previous based on achievements and points
-                    if (i > 0 && progress.achieved === lastAchieved && progress.points === lastPoints) {
+                    if (progress.achieved === lastAchieved && progress.points === lastPoints) {
                         // Add to current tie group
                         currentTieGroup.push(progress);
                     } else {
@@ -458,91 +531,159 @@ export default {
                             const withTiebreaker = currentTieGroup.filter(p => p.hasTiebreaker);
                             const withoutTiebreaker = currentTieGroup.filter(p => !p.hasTiebreaker);
                             
-                            // Assign ranks for users with tiebreakers
+                            // Users with tiebreakers get individual ranks
                             let tieRank = tieGroupStartRank;
-                            for (const user of withTiebreaker) {
-                                const rankEmoji = tieRank <= 3 ? RANK_EMOJIS[tieRank] : `#${tieRank}`;
-                                const tiebreakerNote = user.tiebreakerNote || '';
-                                
-                                leaderboardText += `${rankEmoji} **${user.username}** ${user.award}${tiebreakerNote}\n` +
-                                                 `${user.achieved}/${currentChallenge.monthly_challange_game_total} (${user.percentage}%)\n\n`;
-                                tieRank++;
-                            }
                             
                             // All users without tiebreakers share the same rank
                             if (withoutTiebreaker.length > 0) {
                                 // If there were users with tiebreakers, this group starts after them
                                 // Otherwise, they all get the original starting rank
-                                const sharedRank = withTiebreaker.length > 0 ? tieRank : tieGroupStartRank;
-                                const rankEmoji = sharedRank <= 3 ? RANK_EMOJIS[sharedRank] : `#${sharedRank}`;
-                                
-                                for (const user of withoutTiebreaker) {
-                                    leaderboardText += `${rankEmoji} **${user.username}** ${user.award}\n` +
-                                                     `${user.achieved}/${currentChallenge.monthly_challange_game_total} (${user.percentage}%)\n\n`;
-                                }
+                                currentRank = tieGroupStartRank + withTiebreaker.length;
                             }
                         }
                         
                         // Start a new tie group
                         currentTieGroup = [progress];
-                        tieGroupStartRank = i + 1;
-                        
-                        // This user is not tied with anyone yet, directly add to output
-                        const rankEmoji = tieGroupStartRank <= 3 ? RANK_EMOJIS[tieGroupStartRank] : `#${tieGroupStartRank}`;
-                        const tiebreakerNote = progress.tiebreakerNote || '';
-                        
-                        leaderboardText += `${rankEmoji} **${progress.username}** ${progress.award}${tiebreakerNote}\n` +
-                                         `${progress.achieved}/${currentChallenge.monthly_challange_game_total} (${progress.percentage}%)\n\n`;
+                        tieGroupStartRank = actualIndex + 1;
+                        currentRank = actualIndex + 1;
                     }
                     
-                    // Remember this user's stats
+                    // Update stats tracking
                     lastAchieved = progress.achieved;
                     lastPoints = progress.points;
                 }
                 
-                // Process the last tie group if it exists
-                if (currentTieGroup.length > 1) {
-                    // First, sort the tie group by tiebreaker presence
-                    const withTiebreaker = currentTieGroup.filter(p => p.hasTiebreaker);
-                    const withoutTiebreaker = currentTieGroup.filter(p => !p.hasTiebreaker);
-                    
-                    // Assign ranks for users with tiebreakers
-                    let tieRank = tieGroupStartRank;
-                    for (const user of withTiebreaker) {
-                        const rankEmoji = tieRank <= 3 ? RANK_EMOJIS[tieRank] : `#${tieRank}`;
-                        const tiebreakerNote = user.tiebreakerNote || '';
-                        
-                        leaderboardText += `${rankEmoji} **${user.username}** ${user.award}${tiebreakerNote}\n` +
-                                         `${user.achieved}/${currentChallenge.monthly_challange_game_total} (${user.percentage}%)\n\n`;
-                        tieRank++;
-                    }
-                    
-                    // All users without tiebreakers share the same rank
-                    if (withoutTiebreaker.length > 0) {
-                        // If there were users with tiebreakers, this group starts after them
-                        // Otherwise, they all get the original starting rank
-                        const sharedRank = withTiebreaker.length > 0 ? tieRank : tieGroupStartRank;
-                        const rankEmoji = sharedRank <= 3 ? RANK_EMOJIS[sharedRank] : `#${sharedRank}`;
-                        
-                        for (const user of withoutTiebreaker) {
-                            leaderboardText += `${rankEmoji} **${user.username}** ${user.award}\n` +
-                                             `${user.achieved}/${currentChallenge.monthly_challange_game_total} (${user.percentage}%)\n\n`;
-                        }
-                    }
-                }
+                // Set the rank emoji based on current rank
+                const rankEmoji = currentRank <= 3 ? RANK_EMOJIS[currentRank] : `#${currentRank}`;
                 
-                embed.addFields({
-                    name: `Rankings (${workingSorted.length} participants)`,
-                    value: leaderboardText || 'No rankings available.'
-                });
+                // Add tiebreakerNote if available
+                const tiebreakerNote = progress.tiebreakerNote || '';
+                
+                // Add user entry to leaderboard
+                leaderboardText += `${rankEmoji} **${progress.username}** ${progress.award}${tiebreakerNote}\n` +
+                                  `${progress.achieved}/${currentChallenge.monthly_challange_game_total} (${progress.percentage}%)\n\n`;
             }
 
-            return interaction.editReply({ embeds: [embed] });
+            embed.addFields({
+                name: `Rankings (${workingSorted.length} participants)`,
+                value: leaderboardText || 'No rankings available.'
+            });
 
-        } catch (error) {
-            console.error('Error displaying leaderboard:', error);
-            return interaction.editReply('An error occurred while fetching the leaderboard. Please try again.');
+            embeds.push(embed);
         }
+
+        return embeds;
+    },
+
+    async displayPaginatedLeaderboard(interaction, embeds) {
+        // If only one page, just send it without buttons
+        if (embeds.length === 1) {
+            return interaction.editReply({ embeds: [embeds[0]] });
+        }
+
+        // Create navigation buttons
+        const row = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId('first')
+                    .setLabel('First')
+                    .setStyle(ButtonStyle.Primary)
+                    .setEmoji('⏮️'),
+                new ButtonBuilder()
+                    .setCustomId('previous')
+                    .setLabel('Previous')
+                    .setStyle(ButtonStyle.Primary)
+                    .setEmoji('◀️'),
+                new ButtonBuilder()
+                    .setCustomId('next')
+                    .setLabel('Next')
+                    .setStyle(ButtonStyle.Primary)
+                    .setEmoji('▶️'),
+                new ButtonBuilder()
+                    .setCustomId('last')
+                    .setLabel('Last')
+                    .setStyle(ButtonStyle.Primary)
+                    .setEmoji('⏭️')
+            );
+
+        let currentPage = 0;
+
+        // Send the first page with navigation buttons
+        const message = await interaction.editReply({
+            embeds: [embeds[currentPage]],
+            components: [row]
+        });
+
+        // Create collector for button interactions
+        const collector = message.createMessageComponentCollector({
+            componentType: ComponentType.Button,
+            time: 300000 // 5 minutes timeout
+        });
+
+        // Update buttons based on current page
+        const updateButtons = (page) => {
+            // Disable/enable buttons based on current page
+            row.components[0].setDisabled(page === 0); // First
+            row.components[1].setDisabled(page === 0); // Previous
+            row.components[2].setDisabled(page === embeds.length - 1); // Next
+            row.components[3].setDisabled(page === embeds.length - 1); // Last
+            
+            return row;
+        };
+
+        // Handle button clicks
+        collector.on('collect', async (i) => {
+            // Defer the update to avoid interaction timeouts
+            await i.deferUpdate();
+
+            // Handle different button clicks
+            switch (i.customId) {
+                case 'first':
+                    currentPage = 0;
+                    break;
+                case 'previous':
+                    currentPage = Math.max(0, currentPage - 1);
+                    break;
+                case 'next':
+                    currentPage = Math.min(embeds.length - 1, currentPage + 1);
+                    break;
+                case 'last':
+                    currentPage = embeds.length - 1;
+                    break;
+            }
+
+            // Update the message with the new page and updated buttons
+            await i.editReply({
+                embeds: [embeds[currentPage]],
+                components: [updateButtons(currentPage)]
+            });
+        });
+
+        // When the collector expires
+        collector.on('end', async () => {
+            try {
+                // Disable all buttons when time expires
+                const disabledRow = new ActionRowBuilder().addComponents(
+                    row.components[0].setDisabled(true),
+                    row.components[1].setDisabled(true),
+                    row.components[2].setDisabled(true),
+                    row.components[3].setDisabled(true)
+                );
+
+                // Update the message with disabled buttons
+                await interaction.editReply({
+                    embeds: [embeds[currentPage].setFooter({ 
+                        text: 'Session expired • Use /yearlyboard to see annual rankings' 
+                    })],
+                    components: [disabledRow]
+                });
+            } catch (error) {
+                console.error('Error disabling buttons:', error);
+            }
+        });
+
+        // Initially update buttons based on first page
+        return updateButtons(currentPage);
     }
 };
 
