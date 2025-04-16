@@ -1,4 +1,11 @@
-import { SlashCommandBuilder, EmbedBuilder } from 'discord.js';
+import { 
+    SlashCommandBuilder, 
+    EmbedBuilder, 
+    ActionRowBuilder, 
+    ButtonBuilder, 
+    ButtonStyle,
+    ComponentType
+} from 'discord.js';
 import { User } from '../../models/User.js';
 import { Challenge } from '../../models/Challenge.js';
 import retroAPI from '../../services/retroAPI.js';
@@ -103,9 +110,11 @@ export default {
             .setRequired(false)),
 
     async execute(interaction) {
-      await interaction.deferReply({ ephemeral: true });
+        await interaction.deferReply({ ephemeral: true });
 
         try {
+            // Store profile data in a single object to pass between pages
+            const profileData = {};
             let raUsername = interaction.options.getString('username');
             let user;
 
@@ -151,6 +160,7 @@ export default {
 
             // Get user's RA info
             const raUserInfo = await retroAPI.getUserInfo(raUsername);
+            profileData.raUserInfo = raUserInfo;
 
             // Get current game progress and update user's progress in the database
             let currentGamesProgress = [];
@@ -321,6 +331,7 @@ export default {
                     }
                 }
             }
+            profileData.currentGamesProgress = currentGamesProgress;
 
             // Calculate awards and points
             let masteredGames = [];
@@ -542,10 +553,31 @@ export default {
                 await user.save();
             }
 
+            // Get recent achievements data
+            const recentAchievements = await retroAPI.getUserRecentAchievements(raUsername, 5);
+            profileData.recentAchievements = recentAchievements;
+
+            // Sort past games arrays by date (newest first)
+            const sortByDate = (a, b) => b.date - a.date;
+            masteredGames.sort(sortByDate);
+            beatenGames.sort(sortByDate);
+            participationGames.sort(sortByDate);
+            beatenShadowGames.sort(sortByDate);
+            participationShadowGames.sort(sortByDate);
+
+            // Store game awards in profile data
+            profileData.masteredGames = masteredGames;
+            profileData.beatenGames = beatenGames;
+            profileData.participationGames = participationGames;
+            profileData.beatenShadowGames = beatenShadowGames;
+            profileData.participationShadowGames = participationShadowGames;
+
             // Get community awards for the current year
             const currentYear = new Date().getFullYear();
             const communityAwards = user.getCommunityAwardsForYear(currentYear);
             communityPoints = user.getCommunityPointsForYear(currentYear);
+            profileData.communityAwards = communityAwards;
+            profileData.communityPoints = communityPoints;
 
             // Calculate total challenge points (current + past)
             let currentChallengePoints = 0;
@@ -569,182 +601,574 @@ export default {
                 }
             });
 
-            const totalChallengePoints = currentChallengePoints + pastChallengePoints;
-
-            // Create embed
-            const embed = new EmbedBuilder()
-                .setTitle(`User Profile: ${raUsername}`)
-                .setURL(`https://retroachievements.org/user/${raUsername}`)
-                .setThumbnail(raUserInfo.profileImageUrl)
-                .setColor('#0099ff');
-
-            // Current Challenges Section - Using hierarchical points calculation
-            let challengePoints = 0;
-            if (currentGamesProgress.length > 0) {
-                let currentChallengesField = '';
-                
-                for (const game of currentGamesProgress) {
-                    let award = '';
-                    let awardText = '';
-                    let pointsEarned = 0;
-                
-                    if (game.isShadow) {
-                        // Shadow games
-                        if (game.award === 'Beaten') {
-                            award = AWARD_EMOJIS.BEATEN;
-                            awardText = 'Beaten - All progression + at least 1 win condition';
-                            pointsEarned = SHADOW_MAX_POINTS;
-                        } else if (game.earned > 0) {
-                            award = AWARD_EMOJIS.PARTICIPATION;
-                            awardText = 'Participation';
-                            pointsEarned = POINTS.PARTICIPATION;
-                        }
-                        
-                        currentChallengesField += `**${game.title} (Shadow)**\n`;
-                    } else {
-                        // Regular games
-                        if (game.award === 'Mastery') {
-                            award = AWARD_EMOJIS.MASTERY;
-                            awardText = 'Mastery - All achievements completed';
-                            pointsEarned = POINTS.MASTERY;
-                        } else if (game.award === 'Beaten') {
-                            award = AWARD_EMOJIS.BEATEN;
-                            awardText = 'Beaten - All progression + at least 1 win condition';
-                            pointsEarned = POINTS.BEATEN;
-                        } else if (game.earned > 0) {
-                            award = AWARD_EMOJIS.PARTICIPATION;
-                            awardText = 'Participation';
-                            pointsEarned = POINTS.PARTICIPATION;
-                        }
-                        
-                        currentChallengesField += `**${game.title}**\n`;
-                    }
-                    
-                    challengePoints += pointsEarned;
-                    
-                    currentChallengesField += 
-                        `Progress: ${game.earned}/${game.total} (${game.percentage}%)\n` +
-                        `Achievements Earned This Month: ${game.earnedThisMonth}\n` +
-                        `Current Award: ${award} ${awardText} (${pointsEarned} points)\n\n`;
-                }
-                
-                if (currentChallengesField) {
-                    embed.addFields({ 
-                        name: '📊 Current Challenges', 
-                        value: currentChallengesField 
-                    });
-                } else {
-                    embed.addFields({ 
-                        name: '📊 Current Challenges', 
-                        value: 'No achievements earned in the current challenge month.'
-                    });
-                }
-            } else {
-                embed.addFields({ 
-                    name: '📊 Current Challenges', 
-                    value: 'No achievements earned in the current challenge month.'
-                });
-            }
-
-            // Game Awards Section - Sort games by date (newest first)
-            const sortByDate = (a, b) => b.date - a.date;
-            masteredGames.sort(sortByDate);
-            beatenGames.sort(sortByDate);
-            participationGames.sort(sortByDate);
-            beatenShadowGames.sort(sortByDate);
-            participationShadowGames.sort(sortByDate);
+            profileData.currentChallengePoints = currentChallengePoints;
+            profileData.pastChallengePoints = pastChallengePoints;
+            profileData.totalChallengePoints = currentChallengePoints + pastChallengePoints;
+            profileData.totalPoints = profileData.totalChallengePoints + communityPoints;
             
-            let gameAwardsField = '';
-            
-            if (masteredGames.length > 0) {
-                gameAwardsField += `**Mastered Games ${AWARD_EMOJIS.MASTERY}**\n`;
-                masteredGames.forEach(game => {
-                    const monthYear = game.date.toLocaleString('default', { month: 'short', year: 'numeric' });
-                    gameAwardsField += `${game.title} (${monthYear}): ${game.earned}/${game.total} (${game.percentage}%)\n`;
-                });
-                gameAwardsField += '\n';
-            }
-
-            if (beatenGames.length > 0) {
-                gameAwardsField += `**Beaten Games ${AWARD_EMOJIS.BEATEN}**\n`;
-                beatenGames.forEach(game => {
-                    const monthYear = game.date.toLocaleString('default', { month: 'short', year: 'numeric' });
-                    gameAwardsField += `${game.title} (${monthYear}): ${game.earned}/${game.total} (${game.percentage}%)\n`;
-                });
-                gameAwardsField += '\n';
-            }
-
-            if (participationGames.length > 0) {
-                gameAwardsField += `**Participation ${AWARD_EMOJIS.PARTICIPATION}**\n`;
-                participationGames.forEach(game => {
-                    const monthYear = game.date.toLocaleString('default', { month: 'short', year: 'numeric' });
-                    gameAwardsField += `${game.title} (${monthYear}): ${game.earned}/${game.total} (${game.percentage}%)\n`;
-                });
-                gameAwardsField += '\n';
-            }
-
-            if (gameAwardsField) {
-                embed.addFields({ name: '🎮 Past Game Awards', value: gameAwardsField });
-            } else {
-                embed.addFields({ name: '🎮 Past Game Awards', value: 'No past game awards.' });
-            }
-
-            // New section for Shadow Game Awards
-            let shadowAwardsField = '';
-            
-            if (beatenShadowGames.length > 0) {
-                shadowAwardsField += `**Beaten ${AWARD_EMOJIS.BEATEN}**\n`;
-                beatenShadowGames.forEach(game => {
-                    const monthYear = game.date.toLocaleString('default', { month: 'short', year: 'numeric' });
-                    shadowAwardsField += `${game.title} (${monthYear}): ${game.earned}/${game.total} (${game.percentage}%)\n`;
-                });
-                shadowAwardsField += '\n';
-            }
-
-            if (participationShadowGames.length > 0) {
-                shadowAwardsField += `**Participation ${AWARD_EMOJIS.PARTICIPATION}**\n`;
-                participationShadowGames.forEach(game => {
-                    const monthYear = game.date.toLocaleString('default', { month: 'short', year: 'numeric' });
-                    shadowAwardsField += `${game.title} (${monthYear}): ${game.earned}/${game.total} (${game.percentage}%)\n`;
-                });
-                shadowAwardsField += '\n';
-            }
-
-            if (shadowAwardsField) {
-                shadowAwardsField += "*Shadow games are ineligible for mastery awards*";
-                embed.addFields({ name: '👥 Shadow Game Awards', value: shadowAwardsField });
-            }
-
-            // Community Awards Section
-            if (communityAwards.length > 0) {
-                let communityAwardsField = '';
-                communityAwards.forEach(award => {
-                    const awardDate = new Date(award.awardedAt).toLocaleDateString('en-US', {
-                        year: 'numeric',
-                        month: 'short',
-                        day: 'numeric'
-                    });
-                    communityAwardsField += `🌟 **${award.title}** (${award.points} points) - ${awardDate}\n`;
-                });
-                embed.addFields({ name: '🏅 Community Awards', value: communityAwardsField });
-            } else {
-                embed.addFields({ name: '🏅 Community Awards', value: 'No community awards yet.' });
-            }
-
-            // Points Summary Section - Now includes past challenge points
-            const totalPoints = totalChallengePoints + communityPoints;
-            const pointsSummary = `**Total Current Points:** ${totalPoints}\n` +
-                `**Monthly Challenges:** ${totalChallengePoints}\n` +
-                `**Community Awards:** ${communityPoints}\n\n` +
-                `*Note: Only achievements earned during the challenge month count toward points.*`;
-
-            embed.addFields({ name: '🏆 Points Summary', value: pointsSummary });
-
-            return interaction.editReply({ embeds: [embed] });
+            // Now that we have all the data, display the profile with pagination
+            await this.displayPaginatedProfile(interaction, raUsername, profileData);
 
         } catch (error) {
             console.error('Error displaying profile:', error);
             return interaction.editReply('An error occurred while fetching the profile. Please try again.');
         }
+    },
+
+    async displayPaginatedProfile(interaction, raUsername, profileData) {
+        // Create the overview embed (main page)
+        const overviewEmbed = await this.createOverviewEmbed(raUsername, profileData);
+
+        // Create navigation buttons
+        const row = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId('overview')
+                    .setLabel('Overview')
+                    .setStyle(ButtonStyle.Primary)
+                    .setEmoji('👤'),
+                new ButtonBuilder()
+                    .setCustomId('awards')
+                    .setLabel('Awards')
+                    .setStyle(ButtonStyle.Primary)
+                    .setEmoji('🏆'),
+                new ButtonBuilder()
+                    .setCustomId('shadow')
+                    .setLabel('Shadow Games')
+                    .setStyle(ButtonStyle.Primary)
+                    .setEmoji('👥'),
+                new ButtonBuilder()
+                    .setCustomId('community')
+                    .setLabel('Community')
+                    .setStyle(ButtonStyle.Primary)
+                    .setEmoji('🌟'),
+                new ButtonBuilder()
+                    .setCustomId('points')
+                    .setLabel('Points')
+                    .setStyle(ButtonStyle.Primary)
+                    .setEmoji('📊')
+            );
+
+        // Send the initial message with buttons
+        const message = await interaction.editReply({
+            embeds: [overviewEmbed],
+            components: [row]
+        });
+
+        // Create collector for button interactions
+        const collector = message.createMessageComponentCollector({
+            componentType: ComponentType.Button,
+            time: 600000 // Time limit: 10 minutes
+        });
+
+        // Handle button clicks
+        collector.on('collect', async (i) => {
+            // We need to defer the update to avoid interaction timeouts
+            await i.deferUpdate();
+
+            // Handle different button clicks
+            switch (i.customId) {
+                case 'overview':
+                    const overviewEmbed = await this.createOverviewEmbed(raUsername, profileData);
+                    await i.editReply({ embeds: [overviewEmbed], components: [row] });
+                    break;
+                case 'awards':
+                    const awardsEmbed = await this.createAwardsEmbed(raUsername, profileData);
+                    await i.editReply({ embeds: [awardsEmbed], components: [row] });
+                    break;
+                case 'shadow':
+                    const shadowEmbed = await this.createShadowEmbed(raUsername, profileData);
+                    await i.editReply({ embeds: [shadowEmbed], components: [row] });
+                    break;
+                case 'community':
+                    const communityEmbed = await this.createCommunityEmbed(raUsername, profileData);
+                    await i.editReply({ embeds: [communityEmbed], components: [row] });
+                    break;
+                case 'points':
+                    const pointsEmbed = await this.createPointsEmbed(raUsername, profileData);
+                    await i.editReply({ embeds: [pointsEmbed], components: [row] });
+                    break;
+            }
+        });
+
+        // When the collector expires
+        collector.on('end', async () => {
+            try {
+                // Disable all buttons when time expires
+                const disabledRow = new ActionRowBuilder()
+                    .addComponents(
+                        row.components[0].setDisabled(true),
+                        row.components[1].setDisabled(true),
+                        row.components[2].setDisabled(true),
+                        row.components[3].setDisabled(true),
+                        row.components[4].setDisabled(true)
+                    );
+
+                // Update with disabled buttons
+                await interaction.editReply({
+                    embeds: [overviewEmbed.setFooter({ text: 'Select Start Gaming Community • Profile session expired' })],
+                    components: [disabledRow]
+                });
+            } catch (error) {
+                console.error('Error disabling buttons:', error);
+            }
+        });
+    },
+
+    // Create separate embeds for each page
+    async createOverviewEmbed(raUsername, profileData) {
+        const raUserInfo = profileData.raUserInfo;
+        const currentGamesProgress = profileData.currentGamesProgress;
+        const recentAchievements = profileData.recentAchievements;
+        
+        const embed = new EmbedBuilder()
+            .setTitle(`User Profile: ${raUsername}`)
+            .setURL(`https://retroachievements.org/user/${raUsername}`)
+            .setThumbnail(raUserInfo.profileImageUrl)
+            .setColor('#0099ff');
+        
+        // Add user stats if available
+        if (raUserInfo.userStats) {
+            embed.addFields({
+                name: '📊 RetroAchievements Stats',
+                value: `🏆 Points: ${raUserInfo.userStats.totalPoints || 'N/A'}\n` +
+                       `🎮 Achievements: ${raUserInfo.userStats.totalAchievements || 'N/A'}\n` +
+                       `⭐ Mastered Games: ${raUserInfo.userStats.totalMasteredGames || '0'}\n` +
+                       `📈 Site Rank: ${raUserInfo.userStats.rank || 'N/A'}`
+            });
+        }
+        
+        // Add rich presence if available
+        if (raUserInfo.richPresenceMsg) {
+            embed.addFields({
+                name: '🎮 Currently Playing',
+                value: raUserInfo.richPresenceMsg
+            });
+        }
+        
+        // Recent achievements section
+        if (recentAchievements && recentAchievements.length > 0) {
+            let recentAchievementsField = '';
+            
+            for (let i = 0; i < Math.min(recentAchievements.length, 3); i++) {
+                const achievement = recentAchievements[i];
+                const dateEarned = achievement.DateEarned ? 
+                    new Date(achievement.DateEarned).toLocaleDateString() : 'Unknown date';
+                
+                recentAchievementsField += `**${achievement.Title}** (${achievement.Points} pts)\n` +
+                                          `Game: ${achievement.GameTitle}\n` +
+                                          `Earned: ${dateEarned}\n\n`;
+            }
+            
+            if (recentAchievementsField) {
+                embed.addFields({
+                    name: '🆕 Recent Achievements',
+                    value: recentAchievementsField || 'No recent achievements.'
+                });
+            }
+        }
+        
+        // Current Challenges Section
+        if (currentGamesProgress.length > 0) {
+            let currentChallengesField = '';
+            
+            for (const game of currentGamesProgress) {
+                let award = '';
+                let awardText = '';
+                let pointsEarned = 0;
+            
+                if (game.isShadow) {
+                    // Shadow games
+                    if (game.award === 'Beaten') {
+                        award = AWARD_EMOJIS.BEATEN;
+                        awardText = 'Beaten';
+                        pointsEarned = SHADOW_MAX_POINTS;
+                    } else if (game.earned > 0) {
+                        award = AWARD_EMOJIS.PARTICIPATION;
+                        awardText = 'Participation';
+                        pointsEarned = POINTS.PARTICIPATION;
+                    }
+                    
+                    currentChallengesField += `**${game.title} (Shadow)**\n`;
+                } else {
+                    // Regular games
+                    if (game.award === 'Mastery') {
+                        award = AWARD_EMOJIS.MASTERY;
+                        awardText = 'Mastery';
+                        pointsEarned = POINTS.MASTERY;
+                    } else if (game.award === 'Beaten') {
+                        award = AWARD_EMOJIS.BEATEN;
+                        awardText = 'Beaten';
+                        pointsEarned = POINTS.BEATEN;
+                    } else if (game.earned > 0) {
+                        award = AWARD_EMOJIS.PARTICIPATION;
+                        awardText = 'Participation';
+                        pointsEarned = POINTS.PARTICIPATION;
+                    }
+                    
+                    currentChallengesField += `**${game.title}**\n`;
+                }
+                
+                currentChallengesField += 
+                    `Progress: ${game.earned}/${game.total} (${game.percentage}%)\n` +
+                    `Achievements Earned This Month: ${game.earnedThisMonth}\n` +
+                    `Current Award: ${award} ${awardText} (${pointsEarned} points)\n\n`;
+            }
+            
+            if (currentChallengesField) {
+                embed.addFields({ 
+                    name: '🎯 Current Challenges', 
+                    value: currentChallengesField 
+                });
+            } else {
+                embed.addFields({ 
+                    name: '🎯 Current Challenges', 
+                    value: 'No achievements earned in the current challenge month.'
+                });
+            }
+        } else {
+            embed.addFields({ 
+                name: '🎯 Current Challenges', 
+                value: 'No achievements earned in the current challenge month.'
+            });
+        }
+        
+        // Add points summary teaser
+        embed.addFields({
+            name: '🏆 Total Points',
+            value: `**Community Points: ${profileData.totalPoints}**\n` +
+                   `(See Points tab for detailed breakdown)`
+        });
+        
+        embed.setFooter({ text: 'Select Start Gaming Community • Use the buttons to navigate' })
+             .setTimestamp();
+        
+        return embed;
+    },
+
+    async createAwardsEmbed(raUsername, profileData) {
+        const masteredGames = profileData.masteredGames;
+        const beatenGames = profileData.beatenGames;
+        const participationGames = profileData.participationGames;
+        
+        const embed = new EmbedBuilder()
+            .setTitle(`Game Awards: ${raUsername}`)
+            .setURL(`https://retroachievements.org/user/${raUsername}`)
+            .setThumbnail(profileData.raUserInfo.profileImageUrl)
+            .setColor('#E67E22');
+        
+        // Game Awards Section
+        let gameAwardsField = '';
+        
+        if (masteredGames.length > 0) {
+            gameAwardsField += `**Mastered Games ${AWARD_EMOJIS.MASTERY}**\n`;
+            masteredGames.slice(0, 5).forEach(game => {
+                const monthYear = game.date.toLocaleString('default', { month: 'short', year: 'numeric' });
+                gameAwardsField += `${game.title} (${monthYear}): ${game.earned}/${game.total} (${game.percentage}%)\n`;
+            });
+            
+            if (masteredGames.length > 5) {
+                gameAwardsField += `*...and ${masteredGames.length - 5} more mastered games*\n`;
+            }
+            
+            gameAwardsField += '\n';
+        }
+
+        if (beatenGames.length > 0) {
+            gameAwardsField += `**Beaten Games ${AWARD_EMOJIS.BEATEN}**\n`;
+            beatenGames.slice(0, 5).forEach(game => {
+                const monthYear = game.date.toLocaleString('default', { month: 'short', year: 'numeric' });
+                gameAwardsField += `${game.title} (${monthYear}): ${game.earned}/${game.total} (${game.percentage}%)\n`;
+            });
+            
+            if (beatenGames.length > 5) {
+                gameAwardsField += `*...and ${beatenGames.length - 5} more beaten games*\n`;
+            }
+            
+            gameAwardsField += '\n';
+        }
+
+        if (participationGames.length > 0) {
+            gameAwardsField += `**Participation ${AWARD_EMOJIS.PARTICIPATION}**\n`;
+            participationGames.slice(0, 5).forEach(game => {
+                const monthYear = game.date.toLocaleString('default', { month: 'short', year: 'numeric' });
+                gameAwardsField += `${game.title} (${monthYear}): ${game.earned}/${game.total} (${game.percentage}%)\n`;
+            });
+            
+            if (participationGames.length > 5) {
+                gameAwardsField += `*...and ${participationGames.length - 5} more participation games*\n`;
+            }
+            
+            gameAwardsField += '\n';
+        }
+
+        if (gameAwardsField) {
+            embed.addFields({ name: '🎮 Past Game Awards', value: gameAwardsField });
+        } else {
+            embed.addFields({ name: '🎮 Past Game Awards', value: 'No past game awards.' });
+        }
+        
+        // Add RA awards if available
+        if (profileData.raUserInfo.awards && profileData.raUserInfo.awards.length > 0) {
+            let raAwardsField = '';
+            const raAwards = profileData.raUserInfo.awards.slice(0, 5);
+            
+            raAwards.forEach(award => {
+                const awardDate = new Date(award.awardedAt || award.AwardedAt).toLocaleDateString('en-US', {
+                    year: 'numeric',
+                    month: 'short',
+                    day: 'numeric'
+                });
+                raAwardsField += `🏅 **${award.title || award.Title}** - ${awardDate}\n`;
+                if (award.description || award.Description) {
+                    raAwardsField += `${award.description || award.Description}\n`;
+                }
+                raAwardsField += '\n';
+            });
+            
+            if (profileData.raUserInfo.awards.length > 5) {
+                raAwardsField += `*...and ${profileData.raUserInfo.awards.length - 5} more RetroAchievements awards*\n`;
+            }
+            
+            embed.addFields({ name: '🏅 RetroAchievements Site Awards', value: raAwardsField });
+        }
+        
+        // Summary of awards count
+        const totalGames = masteredGames.length + beatenGames.length + participationGames.length;
+        const summaryField = 
+            `**Total Challenge Games:** ${totalGames}\n` +
+            `**Mastered Games:** ${masteredGames.length} (${POINTS.MASTERY} points each)\n` +
+            `**Beaten Games:** ${beatenGames.length} (${POINTS.BEATEN} points each)\n` +
+            `**Participation Games:** ${participationGames.length} (${POINTS.PARTICIPATION} point each)\n\n` +
+            `*Note: Only achievements earned during the challenge month count toward points.*`;
+        
+        embed.addFields({ name: '📊 Awards Summary', value: summaryField });
+        
+        embed.setFooter({ text: 'Select Start Gaming Community • Use the buttons to navigate' })
+             .setTimestamp();
+        
+        return embed;
+    },
+
+    async createShadowEmbed(raUsername, profileData) {
+        const beatenShadowGames = profileData.beatenShadowGames;
+        const participationShadowGames = profileData.participationShadowGames;
+        
+        const embed = new EmbedBuilder()
+            .setTitle(`Shadow Game Awards: ${raUsername}`)
+            .setURL(`https://retroachievements.org/user/${raUsername}`)
+            .setThumbnail(profileData.raUserInfo.profileImageUrl)
+            .setColor('#9B59B6');
+        
+        // Shadow Game description
+        embed.setDescription(
+            'Shadow games are special monthly bonus challenges hidden within our community. ' +
+            'Once discovered, they become available to all members as an additional way to earn ' +
+            'points alongside the main monthly challenge.\n\n' +
+            '**Shadow Game Points:**\n' +
+            '• Participation: 1 point (earn any achievement)\n' +
+            '• Beaten: 4 points (complete all progression requirements)\n\n' +
+            '*Note: Shadow games are ineligible for mastery awards.*'
+        );
+        
+        // Shadow Game Awards
+        let shadowAwardsField = '';
+        
+        if (beatenShadowGames.length > 0) {
+            shadowAwardsField += `**Beaten Shadow Games ${AWARD_EMOJIS.BEATEN}**\n`;
+            beatenShadowGames.forEach(game => {
+                const monthYear = game.date.toLocaleString('default', { month: 'short', year: 'numeric' });
+                shadowAwardsField += `${game.title} (${monthYear}): ${game.earned}/${game.total} (${game.percentage}%)\n`;
+            });
+            shadowAwardsField += '\n';
+        }
+
+        if (participationShadowGames.length > 0) {
+            shadowAwardsField += `**Participation in Shadow Games ${AWARD_EMOJIS.PARTICIPATION}**\n`;
+            participationShadowGames.forEach(game => {
+                const monthYear = game.date.toLocaleString('default', { month: 'short', year: 'numeric' });
+                shadowAwardsField += `${game.title} (${monthYear}): ${game.earned}/${game.total} (${game.percentage}%)\n`;
+            });
+            shadowAwardsField += '\n';
+        }
+
+        if (shadowAwardsField) {
+            embed.addFields({ name: '👥 Shadow Game Awards', value: shadowAwardsField });
+        } else {
+            embed.addFields({ name: '👥 Shadow Game Awards', value: 'No shadow game awards yet.' });
+        }
+        
+        // Current shadow game challenge (if available)
+        const currentShadowGame = profileData.currentGamesProgress?.find(game => game.isShadow);
+        if (currentShadowGame) {
+            embed.addFields({
+                name: '🎮 Current Shadow Game Challenge',
+                value: `**Game:** ${currentShadowGame.title}\n` +
+                       `**Progress:** ${currentShadowGame.earned}/${currentShadowGame.total} (${currentShadowGame.percentage}%)\n` +
+                       `**Achievements Earned This Month:** ${currentShadowGame.earnedThisMonth}\n` +
+                       `**Current Award:** ${currentShadowGame.award === 'Beaten' ? AWARD_EMOJIS.BEATEN + ' Beaten' : AWARD_EMOJIS.PARTICIPATION + ' Participation'}`
+            });
+        }
+        
+        // Summary of shadow game points
+        const totalShadowPoints = 
+            (beatenShadowGames.length * SHADOW_MAX_POINTS) + 
+            (participationShadowGames.length * POINTS.PARTICIPATION);
+        
+        embed.addFields({ 
+            name: '📊 Shadow Games Summary', 
+            value: `**Total Shadow Games:** ${beatenShadowGames.length + participationShadowGames.length}\n` +
+                   `**Beaten Shadow Games:** ${beatenShadowGames.length} (${SHADOW_MAX_POINTS} points each)\n` +
+                   `**Participation in Shadow Games:** ${participationShadowGames.length} (${POINTS.PARTICIPATION} point each)\n` +
+                   `**Total Shadow Game Points:** ${totalShadowPoints}`
+        });
+        
+        embed.setFooter({ text: 'Select Start Gaming Community • Use the buttons to navigate' })
+             .setTimestamp();
+        
+        return embed;
+    },
+
+    async createCommunityEmbed(raUsername, profileData) {
+        const communityAwards = profileData.communityAwards;
+        const communityPoints = profileData.communityPoints;
+        
+        const embed = new EmbedBuilder()
+            .setTitle(`Community Awards: ${raUsername}`)
+            .setURL(`https://retroachievements.org/user/${raUsername}`)
+            .setThumbnail(profileData.raUserInfo.profileImageUrl)
+            .setColor('#2ECC71');
+        
+        // Community awards description
+        embed.setDescription(
+            'Community awards are special recognitions given by administrators for ' +
+            'noteworthy achievements, contributions, or participation in special events. ' +
+            'These awards contribute to your total community points.'
+        );
+        
+        // Community Awards Section
+        if (communityAwards.length > 0) {
+            let communityAwardsField = '';
+            communityAwards.forEach(award => {
+                const awardDate = new Date(award.awardedAt).toLocaleDateString('en-US', {
+                    year: 'numeric',
+                    month: 'short',
+                    day: 'numeric'
+                });
+                communityAwardsField += `🌟 **${award.title}** (${award.points} points) - ${awardDate}\n`;
+                if (award.description) {
+                    communityAwardsField += `${award.description}\n`;
+                }
+                communityAwardsField += '\n';
+            });
+            embed.addFields({ name: '🏅 Community Awards', value: communityAwardsField });
+        } else {
+            embed.addFields({ name: '🏅 Community Awards', value: 'No community awards yet.' });
+        }
+        
+        // How to earn community points
+        embed.addFields({
+            name: '🏆 How to Earn Community Points',
+            value: '**Monthly Challenges:**\n' +
+                   '• Participation: 1 point (earn any achievement)\n' +
+                   '• Beaten: 4 points (complete all progression requirements)\n' +
+                   '• Mastery: 7 points (100% complete all achievements)\n\n' +
+                   '**Shadow Games:**\n' +
+                   '• Participation: 1 point (earn any achievement)\n' +
+                   '• Beaten: 4 points (complete all progression requirements)\n\n' +
+                   '**Racing Challenge (Monthly):**\n' +
+                   '• 1st Place: 3 points\n' +
+                   '• 2nd Place: 2 points\n' +
+                   '• 3rd Place: 1 point\n\n' +
+                   '**Arcade Leaderboards (Annually):**\n' +
+                   '• 1st Place: 3 points\n' +
+                   '• 2nd Place: 2 points\n' +
+                   '• 3rd Place: 1 point\n\n' +
+                   '**Special Community Awards:**\n' +
+                   '• Points vary based on the award'
+        });
+        
+        // Summary of community points
+        embed.addFields({ 
+            name: '📊 Community Points Summary', 
+            value: `**Total Community Award Points:** ${communityPoints}\n` +
+                   `**Total Community Awards:** ${communityAwards.length}`
+        });
+        
+        embed.setFooter({ text: 'Select Start Gaming Community • Use the buttons to navigate' })
+             .setTimestamp();
+        
+        return embed;
+    },
+    
+    async createPointsEmbed(raUsername, profileData) {
+        const embed = new EmbedBuilder()
+            .setTitle(`Points Summary: ${raUsername}`)
+            .setURL(`https://retroachievements.org/user/${raUsername}`)
+            .setThumbnail(profileData.raUserInfo.profileImageUrl)
+            .setColor('#3498DB');
+        
+        // Calculate points from different categories
+        const masteryPoints = profileData.masteredGames.length * POINTS.MASTERY;
+        const beatenPoints = profileData.beatenGames.length * POINTS.BEATEN;
+        const participationPoints = profileData.participationGames.length * POINTS.PARTICIPATION;
+        
+        const beatenShadowPoints = profileData.beatenShadowGames.length * SHADOW_MAX_POINTS;
+        const partShadowPoints = profileData.participationShadowGames.length * POINTS.PARTICIPATION;
+        
+        const currentPoints = profileData.currentChallengePoints;
+        const communityPoints = profileData.communityPoints;
+        
+        const totalGamePoints = masteryPoints + beatenPoints + participationPoints;
+        const totalShadowPoints = beatenShadowPoints + partShadowPoints;
+        const totalChallengePoints = totalGamePoints + totalShadowPoints + currentPoints;
+        const totalPoints = totalChallengePoints + communityPoints;
+        
+        // Points breakdown
+        embed.addFields({
+            name: '🏆 Total Points Breakdown',
+            value: `**Total Community Points: ${totalPoints}**`
+        });
+        
+        // Current month points
+        embed.addFields({
+            name: '📅 Current Month Challenges',
+            value: `**Points from Current Challenges:** ${currentPoints}`
+        });
+        
+        // Past challenges breakdown
+        embed.addFields({
+            name: '🎮 Regular Game Challenges',
+            value: `**Total Game Challenge Points:** ${totalGamePoints}\n` +
+                   `• Mastered Games (${POINTS.MASTERY} pts each): ${masteryPoints} points\n` +
+                   `• Beaten Games (${POINTS.BEATEN} pts each): ${beatenPoints} points\n` +
+                   `• Participation (${POINTS.PARTICIPATION} pt each): ${participationPoints} points`
+        });
+        
+        // Shadow games breakdown
+        embed.addFields({
+            name: '👥 Shadow Game Challenges',
+            value: `**Total Shadow Game Points:** ${totalShadowPoints}\n` +
+                   `• Beaten Shadow Games (${SHADOW_MAX_POINTS} pts each): ${beatenShadowPoints} points\n` +
+                   `• Shadow Participation (${POINTS.PARTICIPATION} pt each): ${partShadowPoints} points`
+        });
+        
+        // Community awards
+        embed.addFields({
+            name: '🌟 Community Awards',
+            value: `**Total Community Award Points:** ${communityPoints}`
+        });
+        
+        // Year-end prizes info
+        embed.addFields({
+            name: '🏅 Year-End Prizes',
+            value: 'On December 1st, all points are totaled and prizes are awarded to the top performers across all categories.\n\n' +
+                   '*Note: Only achievements earned during the challenge month count toward points.*'
+        });
+        
+        embed.setFooter({ text: 'Select Start Gaming Community • Use the buttons to navigate' })
+             .setTimestamp();
+        
+        return embed;
     }
 };
