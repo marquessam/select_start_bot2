@@ -206,31 +206,46 @@ export default {
             let tiebreakerEntries = [];
             if (activeTiebreaker) {
                 try {
-                    // Fetch tiebreaker leaderboard entries directly
-                    const leaderboardData = await retroAPI.getLeaderboardEntriesDirect(activeTiebreaker.leaderboardId);
+                    // Fetch multiple batches of leaderboard entries
+                    const batch1 = await retroAPI.getLeaderboardEntriesDirect(activeTiebreaker.leaderboardId, 0, 500);
+                    const batch2 = await retroAPI.getLeaderboardEntriesDirect(activeTiebreaker.leaderboardId, 500, 500);
                     
-                    if (leaderboardData) {
-                        let rawEntries = [];
-                        if (Array.isArray(leaderboardData)) {
-                            rawEntries = leaderboardData;
-                        } else if (leaderboardData.Results && Array.isArray(leaderboardData.Results)) {
-                            rawEntries = leaderboardData.Results;
+                    // Combine the batches
+                    let rawEntries = [];
+                    
+                    // Process first batch
+                    if (batch1) {
+                        if (Array.isArray(batch1)) {
+                            rawEntries = [...rawEntries, ...batch1];
+                        } else if (batch1.Results && Array.isArray(batch1.Results)) {
+                            rawEntries = [...rawEntries, ...batch1.Results];
                         }
-                        
-                        // Process tiebreaker entries
-                        tiebreakerEntries = rawEntries.map(entry => {
-                            const user = entry.User || entry.user || '';
-                            const score = entry.Score || entry.score || entry.Value || entry.value || 0;
-                            const formattedScore = entry.FormattedScore || entry.formattedScore || entry.ScoreFormatted || score.toString();
-                            const rank = entry.Rank || entry.rank || 0;
-                            
-                            return {
-                                username: user.trim().toLowerCase(),
-                                score: formattedScore,
-                                apiRank: parseInt(rank, 10)
-                            };
-                        });
                     }
+                    
+                    // Process second batch
+                    if (batch2) {
+                        if (Array.isArray(batch2)) {
+                            rawEntries = [...rawEntries, ...batch2];
+                        } else if (batch2.Results && Array.isArray(batch2.Results)) {
+                            rawEntries = [...rawEntries, ...batch2.Results];
+                        }
+                    }
+                    
+                    console.log(`Total tiebreaker entries fetched: ${rawEntries.length}`);
+                    
+                    // Process tiebreaker entries
+                    tiebreakerEntries = rawEntries.map(entry => {
+                        const user = entry.User || entry.user || '';
+                        const score = entry.Score || entry.score || entry.Value || entry.value || 0;
+                        const formattedScore = entry.FormattedScore || entry.formattedScore || entry.ScoreFormatted || score.toString();
+                        const rank = entry.Rank || entry.rank || 0;
+                        
+                        return {
+                            username: user.trim().toLowerCase(),
+                            score: formattedScore,
+                            apiRank: parseInt(rank, 10)
+                        };
+                    });
                 } catch (error) {
                     console.error('Error fetching tiebreaker leaderboard:', error);
                 }
