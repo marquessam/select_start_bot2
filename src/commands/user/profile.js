@@ -727,7 +727,7 @@ async createOverviewEmbed(raUsername, profileData) {
         .setThumbnail(raUserInfo.profileImageUrl)
         .setColor('#0099ff');
     
-    // Add RetroAchievements site info with improved formatting and more details
+    // Add RetroAchievements site info with simplified formatting and fewer fields
     if (raUserInfo) {
         // Calculate percentage ranking if possible
         let rankPercentage = '';
@@ -745,40 +745,13 @@ async createOverviewEmbed(raUsername, profileData) {
                 day: 'numeric'
             }) : 'Unknown';
         
-        // Format the lastActivity object properly
-        let lastActivity = 'Unknown';
-        if (raUserInfo.lastActivity) {
-            if (typeof raUserInfo.lastActivity === 'object') {
-                // Try to extract meaningful information
-                lastActivity = "Recently active"; // Default friendly message
-                
-                // If timestamp exists and is valid, use that
-                if (raUserInfo.lastActivity.timestamp && raUserInfo.lastActivity.timestamp !== 'null') {
-                    try {
-                        const timestamp = new Date(raUserInfo.lastActivity.timestamp);
-                        lastActivity = timestamp.toLocaleString();
-                    } catch (e) {
-                        // If we can't parse the timestamp, fall back to a simple message
-                        lastActivity = "Recently active";
-                    }
-                }
-            } else if (typeof raUserInfo.lastActivity === 'string') {
-                lastActivity = raUserInfo.lastActivity;
-            }
-        } else if (raUserInfo.lastLogin) {
-            lastActivity = raUserInfo.lastLogin;
-        }
-        
-        // Build RA site stats section with direct property access
+        // Build RA site stats section with only the essential fields
         const raStatsValue = [
             `🏆 **Points:** ${raUserInfo.totalPoints || 0}${raUserInfo.hardcorePoints ? ` (HC: ${raUserInfo.hardcorePoints})` : ''}`,
-            `🎮 **Achievements:** ${raUserInfo.totalAchievements || raUserInfo.numAchievements || 0}`,
-            `⭐ **Mastered Games:** ${raUserInfo.totalCompletedGames || raUserInfo.masteredGamesCount || 0}`,
+            `🎮 **Achievements:** ${raUserInfo.totalAchievements || raUserInfo.numAchievements || '0'}`,
+            `⭐ **Mastered Games:** ${raUserInfo.totalCompletedGames || raUserInfo.masteredGamesCount || '0'}`,
             `📈 **Site Rank:** #${raUserInfo.rank || '—'}${rankPercentage}`,
-            `📊 **RetroRatio:** ${raUserInfo.retroRatio || '—'}`,
-            `🎯 **Completion Rate:** ${raUserInfo.completionPercentage ? `${raUserInfo.completionPercentage}%` : '—'}`,
-            `📅 **Member Since:** ${formattedMemberSince}`,
-            `⏱️ **Last Activity:** ${lastActivity}`
+            `📅 **Member Since:** ${formattedMemberSince}`
         ].join('\n');
         
         embed.addFields({
@@ -787,17 +760,17 @@ async createOverviewEmbed(raUsername, profileData) {
         });
     }
     
-    // Add rich presence if available
-    const richPresence = raUserInfo.richPresenceMsg || raUserInfo.richPresence || raUserInfo.currentlyPlaying;
-    if (richPresence) {
-        // Check if it's a string or an object
-        let displayValue = typeof richPresence === 'string' ? 
-            richPresence : 
-            (richPresence.msg || richPresence.message || JSON.stringify(richPresence));
-            
+    // Add rich presence/currently playing with simplified display
+    if (raUserInfo.richPresenceMsg) {
         embed.addFields({
             name: '🎮 Currently Playing',
-            value: displayValue
+            value: raUserInfo.richPresenceMsg
+        });
+    } else if (raUserInfo.lastGameID && raUserInfo.lastGameTitle) {
+        // If no rich presence but we have last game info, show that instead
+        embed.addFields({
+            name: '🎮 Last Played Game',
+            value: raUserInfo.lastGameTitle
         });
     }
     
@@ -894,25 +867,6 @@ async createOverviewEmbed(raUsername, profileData) {
         value: `**Total Community Points: ${profileData.totalPoints}**\n` +
                `*These points are specific to our community and separate from RetroAchievements site points*`
     });
-    
-    // Add a recently played games section if available
-    if (raUserInfo.recentlyPlayedGames && raUserInfo.recentlyPlayedGames.length > 0) {
-        let recentGamesField = '';
-        
-        for (let i = 0; i < Math.min(raUserInfo.recentlyPlayedGames.length, 3); i++) {
-            const game = raUserInfo.recentlyPlayedGames[i];
-            recentGamesField += `**${game.title || game.Title}**\n` +
-                              `Console: ${game.consoleName || game.ConsoleName || 'Unknown'}\n` +
-                              `Last played: ${game.lastPlayed || game.LastPlayed || 'Unknown'}\n\n`;
-        }
-        
-        if (recentGamesField) {
-            embed.addFields({
-                name: '🎮 Recently Played Games',
-                value: recentGamesField
-            });
-        }
-    }
     
     embed.setFooter({ text: 'Use the buttons below to navigate • For community info use /help' })
          .setTimestamp();
