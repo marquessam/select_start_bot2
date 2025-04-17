@@ -803,12 +803,8 @@ export default {
                 console.log(`First registered user: ${filteredEntries[0].User}, rank: ${filteredEntries[0].ApiRank}`);
             }
             
-            // Sort entries by score (for racing, usually lower is better)
-            filteredEntries.sort((a, b) => {
-                // For racing games, lower times are better
-                // This is a simplified comparison that should work for most time formats
-                return a.TrackTime.localeCompare(b.TrackTime);
-            });
+            // Sort by API rank to ensure correct ordering
+            filteredEntries.sort((a, b) => a.ApiRank - b.ApiRank);
             
             // Create clickable link to RetroAchievements leaderboard
             const leaderboardUrl = `https://retroachievements.org/leaderboardinfo.php?i=${racingBoard.leaderboardId}`;
@@ -904,196 +900,192 @@ export default {
         }
     },
 
-async handleTiebreaker(interaction, backRow) {
-    try {
-        // Get the active tiebreaker
-        const now = new Date();
-        
-        const tiebreaker = await ArcadeBoard.findOne({
-            boardType: 'tiebreaker',
-            startDate: { $lte: now },
-            endDate: { $gte: now }
-        });
-        
-        if (!tiebreaker) {
-            return interaction.editReply({
-                content: 'No tiebreaker is currently active.',
-                components: [backRow]
-            });
-        }
-        
-        // Get usernames of tied users (for display purposes only)
-        const tiedUsernames = tiebreaker.tiedUsers || [];
-        
-        // Get all registered users (same as other board types)
-        const users = await User.find({});
-        
-        // Create mapping of RA usernames (lowercase) to canonical usernames
-        const registeredUsers = new Map();
-        for (const user of users) {
-            registeredUsers.set(user.raUsername.toLowerCase(), user.raUsername);
-        }
-        
-        // Fetch multiple batches of leaderboard entries
-        const batch1 = await retroAPI.getLeaderboardEntriesDirect(tiebreaker.leaderboardId, 0, 500);
-        const batch2 = await retroAPI.getLeaderboardEntriesDirect(tiebreaker.leaderboardId, 500, 500);
-        
-        // Combine the batches
-        let rawEntries = [];
-        
-        // Process first batch
-        if (batch1) {
-            if (Array.isArray(batch1)) {
-                rawEntries = [...rawEntries, ...batch1];
-            } else if (batch1.Results && Array.isArray(batch1.Results)) {
-                rawEntries = [...rawEntries, ...batch1.Results];
-            }
-        }
-        
-        // Process second batch
-        if (batch2) {
-            if (Array.isArray(batch2)) {
-                rawEntries = [...rawEntries, ...batch2];
-            } else if (batch2.Results && Array.isArray(batch2.Results)) {
-                rawEntries = [...rawEntries, ...batch2.Results];
-            }
-        }
-        
-        console.log(`Total entries fetched for tiebreaker ${tiebreaker.boardId}: ${rawEntries.length}`);
-        
-        if (!rawEntries || rawEntries.length === 0) {
-            return interaction.editReply({
-                content: 'No leaderboard entries found for this tiebreaker.',
-                components: [backRow]
-            });
-        }
-        
-        // Process the entries with appropriate handling based on leaderboard type
-        const leaderboardEntries = rawEntries.map(entry => {
-            // Standard properties that most entries have
-            const user = entry.User || entry.user || '';
-            const score = entry.Score || entry.score || entry.Value || entry.value || 0;
-            const formattedScore = entry.FormattedScore || entry.formattedScore || entry.ScoreFormatted || score.toString();
-            const rank = entry.Rank || entry.rank || 0;
-            
-            return {
-                ApiRank: parseInt(rank, 10),
-                User: user.trim(),
-                RawScore: score,
-                TrackTime: formattedScore.toString().trim() || score.toString()
-            };
-        });
-        
-        // Filter entries to only show registered users (same as other board types)
-        const filteredEntries = leaderboardEntries.filter(entry => {
-            if (!entry.User) return false;
-            const username = entry.User.toLowerCase().trim();
-            return username && registeredUsers.has(username);
-        });
-        
-        // Debug info - log how many entries we found
-        console.log(`Found ${filteredEntries.length} registered users in tiebreaker ${tiebreaker.boardId}`);
-        if (filteredEntries.length > 0) {
-            console.log(`First registered user: ${filteredEntries[0].User}, rank: ${filteredEntries[0].ApiRank}`);
-        }
-        
-        // Sort entries by score (track time)
-        filteredEntries.sort((a, b) => {
-            // For racing games, lower times are better
-            // This is a simplified comparison that should work for most time formats
-            return a.TrackTime.localeCompare(b.TrackTime);
-        });
-        
-        // Create clickable link to RetroAchievements leaderboard
-        const leaderboardUrl = `https://retroachievements.org/leaderboardinfo.php?i=${tiebreaker.leaderboardId}`;
-        
-        // Get the current month and year
-        const monthName = now.toLocaleString('default', { month: 'long' });
-        const year = now.getFullYear();
-        
-        // Build the tiebreaker embed
-        const embed = new EmbedBuilder()
-            .setColor('#9B59B6') // Purple color
-            .setTitle(`⚔️ ${monthName} Challenge Tiebreaker`)
-            .setURL(leaderboardUrl)
-            .setDescription(`**${tiebreaker.gameTitle}**\n*${tiebreaker.description}*\n\n` +
-                           `End Date: <t:${Math.floor(tiebreaker.endDate.getTime() / 1000)}:f>\n\n` +
-                           `This tiebreaker is used to resolve ties in the ${monthName} challenge standings. ` +
-                           `Users with the same achievements and points in the top 3 positions will be ranked based on their performance in this tiebreaker.`)
-            .setFooter({ text: 'Data provided by RetroAchievements.org' });
-        
-        // Get game info for thumbnail
+    async handleTiebreaker(interaction, backRow) {
         try {
-            const gameInfo = await retroAPI.getGameInfo(tiebreaker.gameId);
-            if (gameInfo?.imageIcon) {
-                embed.setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`);
+            // Get the active tiebreaker
+            const now = new Date();
+            
+            const tiebreaker = await ArcadeBoard.findOne({
+                boardType: 'tiebreaker',
+                startDate: { $lte: now },
+                endDate: { $gte: now }
+            });
+            
+            if (!tiebreaker) {
+                return interaction.editReply({
+                    content: 'No tiebreaker is currently active.',
+                    components: [backRow]
+                });
             }
-        } catch (error) {
-            console.error('Error fetching game info:', error);
-            // Continue without the thumbnail
-        }
-        
-        // Add participants field if there are tied users defined
-        if (tiedUsernames.length > 0) {
-            embed.addFields({ 
-                name: 'Tied Participants', 
-                value: tiedUsernames.join(', ')
-            });
-        }
-        
-        // Add leaderboard field
-        let leaderboardText = '';
-        
-        if (filteredEntries.length > 0) {
-            // Display top entries (show up to 15)
-            const displayEntries = filteredEntries.slice(0, 15);
-            displayEntries.forEach((entry, index) => {
-                const displayRank = index + 1;
-                const medalEmoji = displayRank === 1 ? '🥇' : (displayRank === 2 ? '🥈' : (displayRank === 3 ? '🥉' : `${displayRank}.`));
+            
+            // Get usernames of tied users (for display purposes only)
+            const tiedUsernames = tiebreaker.tiedUsers || [];
+            
+            // Get all registered users (same as other board types)
+            const users = await User.find({});
+            
+            // Create mapping of RA usernames (lowercase) to canonical usernames
+            const registeredUsers = new Map();
+            for (const user of users) {
+                registeredUsers.set(user.raUsername.toLowerCase(), user.raUsername);
+            }
+            
+            // Fetch multiple batches of leaderboard entries
+            const batch1 = await retroAPI.getLeaderboardEntriesDirect(tiebreaker.leaderboardId, 0, 500);
+            const batch2 = await retroAPI.getLeaderboardEntriesDirect(tiebreaker.leaderboardId, 500, 500);
+            
+            // Combine the batches
+            let rawEntries = [];
+            
+            // Process first batch
+            if (batch1) {
+                if (Array.isArray(batch1)) {
+                    rawEntries = [...rawEntries, ...batch1];
+                } else if (batch1.Results && Array.isArray(batch1.Results)) {
+                    rawEntries = [...rawEntries, ...batch1.Results];
+                }
+            }
+            
+            // Process second batch
+            if (batch2) {
+                if (Array.isArray(batch2)) {
+                    rawEntries = [...rawEntries, ...batch2];
+                } else if (batch2.Results && Array.isArray(batch2.Results)) {
+                    rawEntries = [...rawEntries, ...batch2.Results];
+                }
+            }
+            
+            console.log(`Total entries fetched for tiebreaker ${tiebreaker.boardId}: ${rawEntries.length}`);
+            
+            if (!rawEntries || rawEntries.length === 0) {
+                return interaction.editReply({
+                    content: 'No leaderboard entries found for this tiebreaker.',
+                    components: [backRow]
+                });
+            }
+            
+            // Process the entries with appropriate handling based on leaderboard type
+            const leaderboardEntries = rawEntries.map(entry => {
+                // Standard properties that most entries have
+                const user = entry.User || entry.user || '';
+                const score = entry.Score || entry.score || entry.Value || entry.value || 0;
+                const formattedScore = entry.FormattedScore || entry.formattedScore || entry.ScoreFormatted || score.toString();
+                const rank = entry.Rank || entry.rank || 0;
                 
-                // Highlight tied users if they appear in the leaderboard
-                const isTiedUser = tiedUsernames.some(name => 
-                    name.toLowerCase() === entry.User.toLowerCase()
-                );
-                
-                // Add an indicator for users who are part of the tie
-                const userDisplay = isTiedUser ? `**${entry.User}** 🔄` : `**${entry.User}**`;
-                
-                leaderboardText += `${medalEmoji} ${userDisplay}: ${entry.TrackTime}\n`;
+                return {
+                    ApiRank: parseInt(rank, 10),
+                    User: user.trim(),
+                    RawScore: score,
+                    TrackTime: formattedScore.toString().trim() || score.toString()
+                };
             });
             
-            leaderboardText += '\n*Note: Only users ranked 999 or lower in the global leaderboard are shown.*';
+            // Filter entries to only show registered users (same as other board types)
+            const filteredEntries = leaderboardEntries.filter(entry => {
+                if (!entry.User) return false;
+                const username = entry.User.toLowerCase().trim();
+                return username && registeredUsers.has(username);
+            });
             
-            // Add a legend if there are tied users
+            // Debug info - log how many entries we found
+            console.log(`Found ${filteredEntries.length} registered users in tiebreaker ${tiebreaker.boardId}`);
+            if (filteredEntries.length > 0) {
+                console.log(`First registered user: ${filteredEntries[0].User}, rank: ${filteredEntries[0].ApiRank}`);
+            }
+            
+            // Sort by API rank to ensure correct ordering
+            filteredEntries.sort((a, b) => a.ApiRank - b.ApiRank);
+            
+            // Create clickable link to RetroAchievements leaderboard
+            const leaderboardUrl = `https://retroachievements.org/leaderboardinfo.php?i=${tiebreaker.leaderboardId}`;
+            
+            // Get the current month and year
+            const monthName = now.toLocaleString('default', { month: 'long' });
+            const year = now.getFullYear();
+            
+            // Build the tiebreaker embed
+            const embed = new EmbedBuilder()
+                .setColor('#9B59B6') // Purple color
+                .setTitle(`⚔️ ${monthName} Challenge Tiebreaker`)
+                .setURL(leaderboardUrl)
+                .setDescription(`**${tiebreaker.gameTitle}**\n*${tiebreaker.description}*\n\n` +
+                               `End Date: <t:${Math.floor(tiebreaker.endDate.getTime() / 1000)}:f>\n\n` +
+                               `This tiebreaker is used to resolve ties in the ${monthName} challenge standings. ` +
+                               `Users with the same achievements and points in the top 3 positions will be ranked based on their performance in this tiebreaker.`)
+                .setFooter({ text: 'Data provided by RetroAchievements.org' });
+            
+            // Get game info for thumbnail
+            try {
+                const gameInfo = await retroAPI.getGameInfo(tiebreaker.gameId);
+                if (gameInfo?.imageIcon) {
+                    embed.setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`);
+                }
+            } catch (error) {
+                console.error('Error fetching game info:', error);
+                // Continue without the thumbnail
+            }
+            
+            // Add participants field if there are tied users defined
             if (tiedUsernames.length > 0) {
-                leaderboardText += '\n🔄 = User involved in tiebreaker';
+                embed.addFields({ 
+                    name: 'Tied Participants', 
+                    value: tiedUsernames.join(', ')
+                });
             }
-        } else {
-            leaderboardText = 'No leaderboard entries found for registered users.\n\n*Note: Only users ranked 999 or lower in the global leaderboard are shown.*';
-        }
-        
-        embed.addFields({ name: 'Current Standings', value: leaderboardText });
-        
-        // Add a link to the monthly challenge leaderboard
-        const actionRow = new ActionRowBuilder()
-            .addComponents(
-                new ButtonBuilder()
-                    .setCustomId('view_monthly_leaderboard')
-                    .setLabel('View Monthly Challenge')
-                    .setStyle(ButtonStyle.Secondary),
-                backRow.components[0] // Add the back button
-            );
-        
-        await interaction.editReply({
-            embeds: [embed],
-            components: [actionRow]
-        });
-    } catch (error) {
-        console.error('Error showing tiebreaker board:', error);
-        await interaction.editReply({
-            content: 'An error occurred while retrieving the tiebreaker leaderboard.',
-            components: [backRow]
+            
+            // Add leaderboard field
+            let leaderboardText = '';
+            
+            if (filteredEntries.length > 0) {
+                // Display top entries (show up to 15)
+                const displayEntries = filteredEntries.slice(0, 15);
+                displayEntries.forEach((entry, index) => {
+                    const displayRank = index + 1;
+                    const medalEmoji = displayRank === 1 ? '🥇' : (displayRank === 2 ? '🥈' : (displayRank === 3 ? '🥉' : `${displayRank}.`));
+                    
+                    // Highlight tied users if they appear in the leaderboard
+                    const isTiedUser = tiedUsernames.some(name => 
+                        name.toLowerCase() === entry.User.toLowerCase()
+                    );
+                    
+                    // Add an indicator for users who are part of the tie
+                    const userDisplay = isTiedUser ? `**${entry.User}** 🔄` : `**${entry.User}**`;
+                    
+                    leaderboardText += `${medalEmoji} ${userDisplay}: ${entry.TrackTime}\n`;
+                });
+                
+                leaderboardText += '\n*Note: Only users ranked 999 or lower in the global leaderboard are shown.*';
+                
+                // Add a legend if there are tied users
+                if (tiedUsernames.length > 0) {
+                    leaderboardText += '\n🔄 = User involved in tiebreaker';
+                }
+            } else {
+                leaderboardText = 'No leaderboard entries found for registered users.\n\n*Note: Only users ranked 999 or lower in the global leaderboard are shown.*';
+            }
+            
+            embed.addFields({ name: 'Current Standings', value: leaderboardText });
+            
+            // Add a link to the monthly challenge leaderboard
+            const actionRow = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('view_monthly_leaderboard')
+                        .setLabel('View Monthly Challenge')
+                        .setStyle(ButtonStyle.Secondary),
+                    backRow.components[0] // Add the back button
+                );
+            
+            await interaction.editReply({
+                embeds: [embed],
+                components: [actionRow]
+            });
+        } catch (error) {
+            console.error('Error showing tiebreaker board:', error);
+            await interaction.editReply({
+                content: 'An error occurred while retrieving the tiebreaker leaderboard.',
+                components: [backRow]
             });
         }
     }
-    };
+};
