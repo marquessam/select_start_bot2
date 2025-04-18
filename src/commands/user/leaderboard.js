@@ -315,6 +315,9 @@ export default {
             if (workingSorted.length === 0) {
                 const embed = new EmbedBuilder()
                     .setTitle(`${monthName} Challenge Leaderboard`)
+                .setURL(null)
+                    // Make sure no URL is set directly
+                    .setURL(null)
                     .setColor('#FFD700')
                     .setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`);
 
