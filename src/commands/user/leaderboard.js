@@ -315,9 +315,6 @@ export default {
             if (workingSorted.length === 0) {
                 const embed = new EmbedBuilder()
                     .setTitle(`${monthName} Challenge Leaderboard`)
-                .setURL(null)
-                    // Make sure no URL is set directly
-                    .setURL(null)
                     .setColor('#FFD700')
                     .setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`);
 
@@ -495,15 +492,15 @@ export default {
             const endIndex = Math.min((page + 1) * USERS_PER_PAGE, workingSorted.length);
             const usersOnPage = workingSorted.slice(startIndex, endIndex);
 
-            // Create embed for this page
+            // Create embed for this page - IMPORTANT: Just set the title, no URL
             const embed = new EmbedBuilder()
-                .setTitle(`[${monthName} Challenge Leaderboard](https://retroachievements.org/game/${currentChallenge.monthly_challange_gameid})`)
+                .setTitle(`${monthName} Challenge Leaderboard`)
                 .setColor('#FFD700')
                 .setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`)
                 .setFooter({ text: `Page ${page + 1}/${totalPages} • Use /help points for more information` })
                 .setTimestamp();
 
-            // Create base description for all pages
+            // Create base description for all pages - Include the game link in the description
             let description = `**Game:** [${gameInfo.title}](https://retroachievements.org/game/${currentChallenge.monthly_challange_gameid})\n` +
                             `**Total Achievements:** ${currentChallenge.monthly_challange_game_total}\n` +
                             `**Challenge Ends:** ${endDateFormatted}\n` +
