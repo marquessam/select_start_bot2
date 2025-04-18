@@ -314,7 +314,7 @@ export default {
 
             if (workingSorted.length === 0) {
                 const embed = new EmbedBuilder()
-                    .setTitle(`${monthName} Challenge Leaderboard`)
+                    .setTitle(`[${monthName} Challenge Leaderboard](https://retroachievements.org/game/${currentChallenge.monthly_challange_gameid})`)
                     .setColor('#FFD700')
                     .setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`);
 
@@ -494,7 +494,7 @@ export default {
 
             // Create embed for this page
             const embed = new EmbedBuilder()
-                .setTitle(`${monthName} Challenge Leaderboard`)
+                .setTitle(`[${monthName} Challenge Leaderboard](https://retroachievements.org/game/${currentChallenge.monthly_challange_gameid})`)
                 .setColor('#FFD700')
                 .setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`)
                 .setFooter({ text: `Page ${page + 1}/${totalPages} • Use /help points for more information` })
@@ -524,8 +524,8 @@ export default {
                 // Use the pre-calculated displayRank
                 const rankEmoji = user.displayRank <= 3 ? RANK_EMOJIS[user.displayRank] : `#${user.displayRank}`;
                 
-                // Add the main user entry to leaderboard (username and award)
-                leaderboardText += `${rankEmoji} **${user.username}** ${user.award}\n`;
+                // Add the main user entry to leaderboard with link to profile
+                leaderboardText += `${rankEmoji} **[${user.username}](https://retroachievements.org/user/${user.username})** ${user.award}\n`;
                 
                 // Add the achievement stats
                 if (user.hasTiebreaker && user.tiebreakerScore) {
