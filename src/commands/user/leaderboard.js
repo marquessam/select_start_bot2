@@ -501,7 +501,7 @@ export default {
                 .setTimestamp();
 
             // Create base description for all pages
-            let description = `**Game:** ${gameInfo.title}\n` +
+            let description = `**Game:** [${gameInfo.title}](https://retroachievements.org/game/${currentChallenge.monthly_challange_gameid})\n` +
                             `**Total Achievements:** ${currentChallenge.monthly_challange_game_total}\n` +
                             `**Challenge Ends:** ${endDateFormatted}\n` +
                             `**Time Remaining:** ${timeRemaining}\n\n` +
