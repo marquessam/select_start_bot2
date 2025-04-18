@@ -314,12 +314,12 @@ export default {
 
             if (workingSorted.length === 0) {
                 const embed = new EmbedBuilder()
-                    .setTitle(`[${monthName} Challenge Leaderboard](https://retroachievements.org/game/${currentChallenge.monthly_challange_gameid})`)
+                    .setTitle(`${monthName} Challenge Leaderboard`)
                     .setColor('#FFD700')
                     .setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`);
 
                 // Add game details to description
-                let description = `**Game:** ${gameInfo.title}\n` +
+                let description = `**Game:** [${gameInfo.title}](https://retroachievements.org/game/${currentChallenge.monthly_challange_gameid})\n` +
                                 `**Total Achievements:** ${currentChallenge.monthly_challange_game_total}\n` +
                                 `**Challenge Ends:** ${endDateFormatted}\n` +
                                 `**Time Remaining:** ${timeRemaining}\n\n` +
