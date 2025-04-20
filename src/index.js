@@ -131,8 +131,8 @@ client.once(Events.ClientReady, async () => {
             });
         });
 
-        // Schedule voting poll creation (runs on the 22nd/23rd of each month - 8 days before end)
-        cron.schedule('0 12 22-31 * *', async () => {
+        // Schedule voting poll creation (runs at midnight UTC on days that are 8 days before end of month)
+        cron.schedule('0 0 22-31 * *', async () => {
             const today = new Date();
             const daysInMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
             
@@ -145,8 +145,8 @@ client.once(Events.ClientReady, async () => {
             }
         });
 
-        // Schedule vote counting (runs on the last day of each month - 1 day before end)
-        cron.schedule('0 12 28-31 * *', async () => {
+        // Schedule vote counting (runs at midnight UTC on days that are 1 day before end of month)
+        cron.schedule('0 0 28-31 * *', async () => {
             const today = new Date();
             const daysInMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
             
