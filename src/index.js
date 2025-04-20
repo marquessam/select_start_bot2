@@ -120,13 +120,6 @@ client.once(Events.ClientReady, async () => {
             monthlyTasksService.clearAllNominations().catch(error => {
                 console.error('Error clearing nominations:', error);
             });
-            
-            // Create voting poll after a short delay to ensure nominations are cleared
-            setTimeout(() => {
-                monthlyTasksService.createVotingPoll().catch(error => {
-                    console.error('Error creating voting poll:', error);
-                });
-            }, 5000); // 5 second delay
         });
 
         // Schedule arcade service to run daily at 00:15 (just after midnight)
@@ -136,6 +129,34 @@ client.once(Events.ClientReady, async () => {
             arcadeService.start().catch(error => {
                 console.error('Error in scheduled arcade service:', error);
             });
+        });
+
+        // Schedule voting poll creation (runs on the 22nd/23rd of each month - 8 days before end)
+        cron.schedule('0 12 22-31 * *', async () => {
+            const today = new Date();
+            const daysInMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
+            
+            // Only run if it's exactly 8 days before the end of the month
+            if (today.getDate() === daysInMonth - 8) {
+                console.log('Running scheduled voting poll creation...');
+                monthlyTasksService.createVotingPoll().catch(error => {
+                    console.error('Error creating voting poll:', error);
+                });
+            }
+        });
+
+        // Schedule vote counting (runs on the last day of each month - 1 day before end)
+        cron.schedule('0 12 28-31 * *', async () => {
+            const today = new Date();
+            const daysInMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
+            
+            // Only run if it's exactly 1 day before the end of the month
+            if (today.getDate() === daysInMonth - 1) {
+                console.log('Running scheduled vote counting...');
+                monthlyTasksService.countAndAnnounceVotes().catch(error => {
+                    console.error('Error counting votes:', error);
+                });
+            }
         });
 
         // Run initial stats update
