@@ -1,5 +1,6 @@
 import { User } from '../models/User.js';
 import { Challenge } from '../models/Challenge.js';
+import { Poll } from '../models/Poll.js'; // New import
 import retroAPI from './retroAPI.js';
 import { EmbedBuilder } from 'discord.js';
 import { config } from '../config/config.js';
@@ -50,6 +51,21 @@ class MonthlyTasksService {
         try {
             console.log('Creating voting poll for next month\'s challenge...');
             
+            // Check if we already have an active poll for this month
+            const now = new Date();
+            const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+            const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+            
+            const existingPoll = await Poll.findOne({
+                createdAt: { $gte: startOfMonth, $lte: endOfMonth },
+                isProcessed: false
+            });
+            
+            if (existingPoll) {
+                console.log('Voting poll already exists for this month');
+                return;
+            }
+            
             // Get all users
             const users = await User.find({});
 
@@ -80,7 +96,7 @@ class MonthlyTasksService {
             }
 
             // Get game info for all selected games
-            const gameInfoPromises = selectedGames.map(gameId => retroAPI.getGameInfo(gameId));
+            const gameInfoPromises = selectedGames.map(gameId => retroAPI.getGameInfoExtended(gameId));
             const games = await Promise.all(gameInfoPromises);
 
             // Create embed for the poll
@@ -88,9 +104,7 @@ class MonthlyTasksService {
                 .setTitle('🎮 Vote for Next Month\'s Challenge!')
                 .setDescription('React with the corresponding number to vote for a game. You can vote for up to two games!\n\n' +
                     games.map((game, index) => 
-                        `${index + 1}️⃣ **${game.title}**\n` +
-                        `└ Achievements: ${game.achievements.length}\n` +
-                        `└ [View Game](https://retroachievements.org/game/${game.id})`
+                        `${index + 1} **[${game.title}](https://retroachievements.org/game/${game.id})**`
                     ).join('\n\n'))
                 .setColor('#FF69B4')
                 .setFooter({ text: 'Voting ends in 7 days' });
@@ -111,10 +125,125 @@ class MonthlyTasksService {
                 await pollMessage.react(numberEmojis[i]);
             }
 
-            console.log('Voting poll created successfully');
+            // Calculate end date (7 days from now)
+            const endDate = new Date();
+            endDate.setDate(endDate.getDate() + 7);
+
+            // Store poll information in database
+            const pollData = {
+                messageId: pollMessage.id,
+                channelId: votingChannel.id,
+                selectedGames: games.map((game, index) => ({
+                    gameId: selectedGames[index],
+                    title: game.title,
+                    imageIcon: game.imageIcon
+                })),
+                endDate: endDate,
+                isProcessed: false
+            };
+
+            const poll = new Poll(pollData);
+            await poll.save();
+
+            console.log('Voting poll created successfully and stored in database');
             
         } catch (error) {
             console.error('Error creating voting poll:', error);
+        }
+    }
+
+    async countAndAnnounceVotes() {
+        if (!this.client) {
+            console.error('Discord client not set for monthly tasks service');
+            return;
+        }
+
+        try {
+            console.log('Counting votes and announcing results...');
+            
+            // Find all unprocessed polls
+            const unprocessedPolls = await Poll.find({ isProcessed: false });
+            
+            if (unprocessedPolls.length === 0) {
+                console.log('No unprocessed polls found');
+                return;
+            }
+            
+            // Process each poll
+            for (const poll of unprocessedPolls) {
+                try {
+                    // Get the channel and message
+                    const channel = await this.client.channels.fetch(poll.channelId);
+                    const pollMessage = await channel.messages.fetch(poll.messageId);
+                    
+                    // Get reaction counts
+                    const numberEmojis = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'];
+                    const results = [];
+                    
+                    for (let i = 0; i < poll.selectedGames.length; i++) {
+                        const game = poll.selectedGames[i];
+                        const emoji = numberEmojis[i];
+                        const reaction = pollMessage.reactions.cache.find(r => r.emoji.name === emoji);
+                        const count = reaction ? reaction.count - 1 : 0; // Subtract 1 to exclude the bot's reaction
+                        
+                        results.push({
+                            gameId: game.gameId,
+                            gameTitle: game.title,
+                            imageIcon: game.imageIcon,
+                            votes: count,
+                            index: i
+                        });
+                    }
+                    
+                    // Sort by vote count (highest first)
+                    results.sort((a, b) => b.votes - a.votes);
+                    
+                    // Get the winner
+                    const winner = results[0];
+                    
+                    // Create announcement embed
+                    const announcementEmbed = new EmbedBuilder()
+                        .setTitle('🎮 Monthly Challenge Voting Results')
+                        .setColor('#FF69B4')
+                        .setDescription(`The voting has ended for the next monthly challenge!\n\n` +
+                            `**Winner:** [${winner.gameTitle}](https://retroachievements.org/game/${winner.gameId}) with ${winner.votes} votes!\n\n` +
+                            `This game will be our next monthly challenge. The admin team will set up the challenge soon.`)
+                        .setTimestamp();
+                    
+                    // Add top 3 results
+                    let resultsText = '';
+                    for (let i = 0; i < Math.min(3, results.length); i++) {
+                        const result = results[i];
+                        const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : '🥉';
+                        resultsText += `${medal} **[${result.gameTitle}](https://retroachievements.org/game/${result.gameId})** - ${result.votes} votes\n`;
+                    }
+                    
+                    if (results.length > 3) {
+                        resultsText += '\n*All other games received fewer votes.*';
+                    }
+                    
+                    announcementEmbed.addFields({ name: 'Top Results', value: resultsText });
+                    
+                    // Add game icon if available
+                    if (winner.imageIcon) {
+                        announcementEmbed.setThumbnail(`https://retroachievements.org${winner.imageIcon}`);
+                    }
+                    
+                    // Get the announcements channel
+                    const announcementChannel = await this.client.channels.fetch('1360409399264416025');
+                    await announcementChannel.send({ embeds: [announcementEmbed] });
+                    
+                    // Mark poll as processed
+                    poll.isProcessed = true;
+                    await poll.save();
+                    
+                    console.log(`Voting results announced: ${winner.gameTitle} won with ${winner.votes} votes`);
+                } catch (pollError) {
+                    console.error(`Error processing poll ${poll._id}:`, pollError);
+                }
+            }
+        } catch (error) {
+            console.error('Error counting and announcing votes:', error);
         }
     }
 
