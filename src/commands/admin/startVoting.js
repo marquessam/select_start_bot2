@@ -156,6 +156,7 @@ export default {
             const poll = new Poll({
                 messageId: pollMessage.id,
                 channelId: channel.id,
+                resultsChannelId: resultsChannel.id, // Store results channel ID
                 selectedGames: selectedGames,
                 endDate: endDate
             });
@@ -166,20 +167,12 @@ export default {
             const jobDate = new Date(endDate.getTime());
             console.log(`Scheduling automatic vote ending for: ${jobDate}`);
             
-            // Store the job details in a database or memory so we can access the channels later
-            const jobData = {
-                pollId: poll._id,
-                channelId: channel.id,
-                resultsChannelId: resultsChannel.id,
-                messageId: pollMessage.id,
-                client: interaction.client
-            };
-            
             // Add a named job that can be identified and canceled if needed
             const jobName = `end-poll-${poll._id}`;
-            schedule.scheduleJob(jobName, jobDate, async function() {
+            const job = schedule.scheduleJob(jobName, jobDate, async function() {
                 try {
-                    await endVotingAndAnnounce(jobData);
+                    // Retrieve fresh data instead of using closure variables
+                    await endVotingProcess(poll._id.toString());
                 } catch (error) {
                     console.error('Error in scheduled job for ending voting:', error);
                 }
@@ -201,10 +194,12 @@ export default {
     }
 };
 
-// Function to handle the end of voting and announce results
-async function endVotingAndAnnounce({ pollId, channelId, resultsChannelId, messageId, client }) {
+// Function to handle the end of voting process - separated for cleaner code
+async function endVotingProcess(pollId) {
     try {
-        // Get the poll
+        console.log(`Processing end of voting for poll ${pollId}`);
+        
+        // Get the poll with fresh data
         const poll = await Poll.findById(pollId);
         if (!poll || poll.isProcessed) {
             console.log('Poll not found or already processed');
@@ -222,15 +217,36 @@ async function endVotingAndAnnounce({ pollId, channelId, resultsChannelId, messa
         poll.isProcessed = true;
         await poll.save();
 
+        // Import required Discord.js components
+        const { Client, GatewayIntentBits, EmbedBuilder } = await import('discord.js');
+        
+        // Create a temporary client just for this announcement
+        const client = new Client({ 
+            intents: [
+                GatewayIntentBits.Guilds,
+                GatewayIntentBits.GuildMessages
+            ] 
+        });
+
+        // Login with bot token
+        await client.login(process.env.DISCORD_TOKEN);
+        
+        // Wait for client to be ready
+        await new Promise(resolve => {
+            if (client.isReady()) resolve();
+            else client.once('ready', resolve);
+        });
+
         // Get vote counts for display
         const results = poll.getVoteCounts();
         
         // Get the channels
-        const pollChannel = client.channels.cache.get(channelId);
-        const resultsChannel = client.channels.cache.get(resultsChannelId);
+        const pollChannel = await client.channels.fetch(poll.channelId);
+        const resultsChannel = await client.channels.fetch(poll.resultsChannelId || poll.channelId);
         
         if (!pollChannel || !resultsChannel) {
             console.error('Could not find poll or results channel');
+            await client.destroy();
             return;
         }
 
@@ -260,7 +276,7 @@ async function endVotingAndAnnounce({ pollId, channelId, resultsChannelId, messa
 
         // Update the original poll message
         try {
-            const pollMessage = await pollChannel.messages.fetch(messageId);
+            const pollMessage = await pollChannel.messages.fetch(poll.messageId);
             
             if (pollMessage) {
                 const updatedEmbed = new EmbedBuilder()
@@ -280,15 +296,30 @@ async function endVotingAndAnnounce({ pollId, channelId, resultsChannelId, messa
         }
 
         // Clear all nominations
-        const users = await User.find({});
-        for (const user of users) {
-            user.clearCurrentNominations();
-            await user.save();
+        try {
+            // Process in smaller batches to avoid timeouts
+            const batchSize = 10;
+            const users = await User.find({});
+            
+            for (let i = 0; i < users.length; i += batchSize) {
+                const batch = users.slice(i, i + batchSize);
+                await Promise.all(batch.map(async (user) => {
+                    user.clearCurrentNominations();
+                    await user.save();
+                }));
+            }
+            
+            console.log('All nominations cleared successfully');
+        } catch (error) {
+            console.error('Error clearing nominations:', error);
         }
         
         console.log('Voting ended automatically, results announced, and nominations cleared');
         
+        // Clean up the client
+        await client.destroy();
+        
     } catch (error) {
-        console.error('Error in endVotingAndAnnounce:', error);
+        console.error('Error in endVotingProcess:', error);
     }
 }
