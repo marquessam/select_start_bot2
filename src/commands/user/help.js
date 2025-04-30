@@ -498,7 +498,7 @@ export default {
                     value: 'To guess the shadow game, use the `/shadowguess` command with the exact title of the game.\n\n' +
                            'If you guess correctly, the shadow game will be revealed for everyone. If your guess is incorrect, ' +
                            'you\'ll be notified but can keep trying. There is no limit to guesses or penalty for wrong guesses.\n\n' +
-                           'Hint: Shadow games are often thematically related to the main monthly challenge!'
+                           'Hint: The game to find each shadow games is often thematically related to the main monthly challenge!'
                 })
                 .setFooter({ text: 'Press "Back to Menu" to return to the main menu' })
                 .setTimestamp();
