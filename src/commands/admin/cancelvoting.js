@@ -1,7 +1,6 @@
 import { SlashCommandBuilder, EmbedBuilder } from 'discord.js';
 import { Poll } from '../../models/Poll.js';
 import { config } from '../../config/config.js';
-import schedule from 'node-schedule';
 
 export default {
     data: new SlashCommandBuilder()
@@ -28,10 +27,21 @@ export default {
 
             // Cancel the scheduled job if it exists
             if (activePoll.scheduledJobName) {
-                const job = schedule.scheduledJobs[activePoll.scheduledJobName];
-                if (job) {
-                    job.cancel();
-                    console.log(`Canceled scheduled job: ${activePoll.scheduledJobName}`);
+                try {
+                    // Dynamically import node-schedule only if needed
+                    const schedule = await import('node-schedule').catch(() => {
+                        console.warn('node-schedule package not available, cannot cancel scheduled job');
+                        return { scheduledJobs: {} };
+                    });
+                    
+                    const job = schedule.scheduledJobs?.[activePoll.scheduledJobName];
+                    if (job) {
+                        job.cancel();
+                        console.log(`Canceled scheduled job: ${activePoll.scheduledJobName}`);
+                    }
+                } catch (scheduleError) {
+                    console.error('Error canceling scheduled job:', scheduleError);
+                    // Continue with poll cancellation even if job cancellation fails
                 }
             }
 
