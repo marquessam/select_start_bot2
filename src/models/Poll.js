@@ -9,17 +9,21 @@ const pollSchema = new mongoose.Schema({
         type: String,
         required: true
     },
+    // Add explicit results channel ID field
+    resultsChannelId: {
+        type: String
+    },
     selectedGames: [{
         gameId: String,
         title: String,
         consoleName: String,
         imageIcon: String
     }],
-    votes: {
-        type: Map,
-        of: [String], // Array of gameIds that the user voted for
-        default: () => new Map()
-    },
+    // Use Array structure for votes instead of Map for better MongoDB compatibility
+    votes: [{
+        userId: String,
+        gameIds: [String]
+    }],
     createdAt: {
         type: Date,
         default: Date.now
@@ -48,18 +52,30 @@ const pollSchema = new mongoose.Schema({
 
 // Method to check if a user has already voted
 pollSchema.methods.hasUserVoted = function(userId) {
-    return this.votes.has(userId);
+    if (!this.votes) this.votes = [];
+    return this.votes.some(vote => vote.userId === userId);
 };
 
 // Method to add a vote for a user
 pollSchema.methods.addVote = function(userId, gameIds) {
+    // Initialize votes array if it doesn't exist
+    if (!this.votes) this.votes = [];
+    
     // Ensure gameIds is an array and contains valid game IDs from this poll
     const validGameIds = gameIds.filter(gameId => 
         this.selectedGames.some(game => game.gameId === gameId)
     );
     
     if (validGameIds.length > 0) {
-        this.votes.set(userId, validGameIds);
+        // Remove any existing votes for this user
+        this.votes = this.votes.filter(vote => vote.userId !== userId);
+        
+        // Add the new vote
+        this.votes.push({
+            userId: userId,
+            gameIds: validGameIds
+        });
+        
         return true;
     }
     return false;
@@ -81,10 +97,14 @@ pollSchema.methods.getVoteCounts = function() {
     });
     
     // Count all votes
-    for (const userVotes of this.votes.values()) {
-        for (const gameId of userVotes) {
-            if (counts[gameId]) {
-                counts[gameId].votes += 1;
+    if (this.votes && Array.isArray(this.votes)) {
+        for (const vote of this.votes) {
+            if (vote.gameIds && Array.isArray(vote.gameIds)) {
+                for (const gameId of vote.gameIds) {
+                    if (counts[gameId]) {
+                        counts[gameId].votes += 1;
+                    }
+                }
             }
         }
     }
@@ -93,7 +113,7 @@ pollSchema.methods.getVoteCounts = function() {
 };
 
 // Method to find the active poll
-pollSchema.statics.findActivePoll = function() {
+pollSchema.statics.findActivePoll = async function() {
     const now = new Date();
     return this.findOne({
         endDate: { $gt: now },
@@ -103,7 +123,7 @@ pollSchema.statics.findActivePoll = function() {
 
 // Method to process poll results and determine the winner
 pollSchema.methods.processResults = function() {
-    if (this.isProcessed) return null;
+    if (this.isProcessed) return this.winner || null;
     
     const results = this.getVoteCounts();
     if (results.length === 0) return null;
