@@ -306,11 +306,14 @@ export default {
             challengeEndDate.setDate(challengeEndDate.getDate() - 1); // Last day of current month
             challengeEndDate.setHours(23, 59, 59);  // Set to 11:59 PM
             
-            // Format the end date
-            const endDateFormatted = `${monthName} ${challengeEndDate.getDate()}${getDaySuffix(challengeEndDate.getDate())}, ${challengeEndDate.getFullYear()} at 11:59 PM`;
+            // Convert to UNIX timestamp for Discord formatting
+            const endDateTimestamp = Math.floor(challengeEndDate.getTime() / 1000);
             
-            // Calculate time remaining
-            const timeRemaining = formatTimeRemaining(challengeEndDate, now);
+            // Format the end date for display (using Discord timestamps)
+            const endDateFormatted = `<t:${endDateTimestamp}:F>`;
+            
+            // Use Discord's relative time format
+            const timeRemaining = `<t:${endDateTimestamp}:R>`;
 
             if (workingSorted.length === 0) {
                 const embed = new EmbedBuilder()
@@ -661,7 +664,7 @@ export default {
     }
 };
 
-// Helper function to get day suffix (st, nd, rd, th)
+// Helper function to get day suffix (st, nd, rd, th) - no longer needed with UNIX timestamps
 function getDaySuffix(day) {
     if (day > 3 && day < 21) return 'th';
     switch (day % 10) {
@@ -672,7 +675,7 @@ function getDaySuffix(day) {
     }
 }
 
-// Helper function to format time remaining
+// Helper function to format time remaining - no longer needed with Discord's relative time
 function formatTimeRemaining(end, now) {
     const diffMs = end - now;
     if (diffMs <= 0) return 'Challenge has ended';
