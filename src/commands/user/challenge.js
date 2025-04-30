@@ -25,7 +25,14 @@ export default {
             const now = new Date();
             const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
             const nextMonthStart = new Date(now.getFullYear(), now.getMonth() + 1, 1);
-            const lastDayOfMonth = new Date(nextMonthStart - 86400000).toISOString().split('T')[0];
+            
+            // Last day of the month at 11:59 PM
+            const lastDayOfMonth = new Date(nextMonthStart - 1);
+            lastDayOfMonth.setHours(23, 59, 59);
+            const lastDayTimestamp = Math.floor(lastDayOfMonth.getTime() / 1000);
+            
+            // String format for fallback/display
+            const lastDayOfMonthStr = lastDayOfMonth.toISOString().split('T')[0];
 
             // Get current challenge
             const currentChallenge = await Challenge.findOne({
@@ -63,7 +70,7 @@ export default {
                 // Build challenge text
                 let challengeText = 
                     `**GAME:** "${gameInfo.title}"\n` +
-                    `**DATES:** ${startDate} to ${lastDayOfMonth}\n\n` +
+                    `**DATES:** ${startDate} to <t:${lastDayTimestamp}:F>\n\n` +
                     `**POINTS AVAILABLE:**\n` +
                     `- Participation: 1 point\n` +
                     `- Beaten: 3 points\n` +
@@ -143,7 +150,7 @@ export default {
                     
                     let racingText = 
                         `**GAME:** ${gameDisplay}\n` +
-                        `**ENDS:** <t:${endTimestamp}:R>\n\n` +
+                        `**ENDS:** <t:${endTimestamp}:F> (<t:${endTimestamp}:R>)\n\n` +
                         `**POINTS AVAILABLE:**\n` +
                         `- 1st Place: 3 points\n` +
                         `- 2nd Place: 2 points\n` +
