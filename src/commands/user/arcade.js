@@ -824,6 +824,9 @@ export default {
             // Determine if race is active or completed for messaging
             const isActive = now >= racingBoard.startDate && now <= racingBoard.endDate;
             
+            // Calculate end date timestamp
+            const endTimestamp = Math.floor(racingBoard.endDate.getTime() / 1000);
+            
             // Build the leaderboard embed
             const embed = new EmbedBuilder()
                 .setColor('#9B59B6') // Purple color
@@ -831,8 +834,8 @@ export default {
                 .setURL(leaderboardUrl)
                 .setDescription(`**${gameDisplay}**\n*${racingBoard.description}*\n\n` +
                             (isActive 
-                                ? `⏱️ **Currently Active Challenge**\nEnds <t:${Math.floor(racingBoard.endDate.getTime() / 1000)}:f> (UTC)\n\nTop 3 players at the end of the month will receive award points (3/2/1)!`
-                                : `${racingBoard.pointsAwarded ? '✅ **Challenge Completed**' : '⌛ **Challenge Ended**'}\nEnded on <t:${Math.floor(racingBoard.endDate.getTime() / 1000)}:f>\n\n${racingBoard.pointsAwarded ? 'Points have been awarded to top finishers.' : 'Points will be awarded soon.'}`)
+                                ? `⏱️ **Currently Active Challenge**\nEnds <t:${endTimestamp}:F> (<t:${endTimestamp}:R>)\n\nTop 3 players at the end of the month will receive award points (3/2/1)!`
+                                : `${racingBoard.pointsAwarded ? '✅ **Challenge Completed**' : '⌛ **Challenge Ended**'}\nEnded on <t:${endTimestamp}:F>\n\n${racingBoard.pointsAwarded ? 'Points have been awarded to top finishers.' : 'Points will be awarded soon.'}`)
                 )
                 .setFooter({ text: 'Data provided by RetroAchievements.org' });
             
@@ -1003,13 +1006,16 @@ export default {
             const monthName = now.toLocaleString('default', { month: 'long' });
             const year = now.getFullYear();
             
+            // Calculate end date timestamp
+            const endTimestamp = Math.floor(tiebreaker.endDate.getTime() / 1000);
+            
             // Build the tiebreaker embed
             const embed = new EmbedBuilder()
                 .setColor('#9B59B6') // Purple color
                 .setTitle(`⚔️ ${monthName} Challenge Tiebreaker`)
                 .setURL(leaderboardUrl)
                 .setDescription(`**${tiebreaker.gameTitle}**\n*${tiebreaker.description}*\n\n` +
-                               `End Date: <t:${Math.floor(tiebreaker.endDate.getTime() / 1000)}:f>\n\n` +
+                               `End Date: <t:${endTimestamp}:F> (<t:${endTimestamp}:R>)\n\n` +
                                `This tiebreaker is used to resolve ties in the ${monthName} challenge standings. ` +
                                `Users with the same achievements and points in the top 3 positions will be ranked based on their performance in this tiebreaker.`)
                 .setFooter({ text: 'Data provided by RetroAchievements.org' });
