@@ -39,6 +39,10 @@ const pollSchema = new mongoose.Schema({
         consoleName: String,
         imageIcon: String,
         votes: Number
+    },
+    // Store the name of the scheduled job that will end this poll
+    scheduledJobName: {
+        type: String
     }
 });
 
