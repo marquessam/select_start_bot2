@@ -6,22 +6,14 @@ export default {
     data: new SlashCommandBuilder()
         .setName('clearnominations')
         .setDescription('Clear user nominations (Admin only)')
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('user')
-                .setDescription('Clear a specific user\'s nominations')
-                .addStringOption(option =>
-                    option.setName('ra_username')
-                    .setDescription('The RetroAchievements username')
-                    .setRequired(true)))
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('all')
-                .setDescription('Clear ALL users\' nominations (use with caution)')
-                .addBooleanOption(option =>
-                    option.setName('confirm')
-                    .setDescription('Confirm that you want to clear ALL nominations')
-                    .setRequired(true))),
+        .addStringOption(option =>
+            option.setName('ra_username')
+            .setDescription('The RetroAchievements username (leave empty to clear ALL nominations)')
+            .setRequired(false))
+        .addBooleanOption(option =>
+            option.setName('confirm_all')
+            .setDescription('Confirm clearing ALL nominations (required if ra_username is empty)')
+            .setRequired(false)),
 
     async execute(interaction) {
         // Check if user has admin role
@@ -35,12 +27,11 @@ export default {
         await interaction.deferReply();
         
         try {
-            const subcommand = interaction.options.getSubcommand();
+            const raUsername = interaction.options.getString('ra_username');
+            const confirmAll = interaction.options.getBoolean('confirm_all');
             
-            if (subcommand === 'user') {
-                // Clear nominations for a specific user
-                const raUsername = interaction.options.getString('ra_username');
-                
+            // Clear a specific user's nominations
+            if (raUsername) {
                 // Find the user
                 const user = await User.findOne({
                     raUsername: { $regex: new RegExp(`^${raUsername}$`, 'i') }
@@ -66,15 +57,14 @@ export default {
                     content: `Successfully cleared ${nominationCount} nomination${nominationCount !== 1 ? 's' : ''} for ${raUsername}. They can now nominate again.`
                 });
             } 
-            else if (subcommand === 'all') {
-                // Clear nominations for ALL users
-                const confirmed = interaction.options.getBoolean('confirm');
-                
-                if (!confirmed) {
-                    return interaction.editReply('Operation cancelled. You must confirm to clear ALL nominations.');
+            // Clear ALL users' nominations
+            else {
+                // Require confirmation
+                if (!confirmAll) {
+                    return interaction.editReply('You must set confirm_all to true when clearing ALL nominations.');
                 }
                 
-                // Get all users with nominations
+                // Get all users
                 const users = await User.find({});
                 let totalCleared = 0;
                 let usersAffected = 0;
