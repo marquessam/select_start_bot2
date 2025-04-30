@@ -1,9 +1,13 @@
 import Challenge from './Challenge.js';
 import User from './User.js';
+import ArcadeBoard from './ArcadeBoard.js';
+import Poll from './Poll.js';
 
 export {
     Challenge,
-    User
+    User,
+    ArcadeBoard,
+    Poll
 };
 
 // Initialize MongoDB connection
@@ -21,7 +25,9 @@ export const connectDB = async () => {
         // Create indexes for all models
         await Promise.all([
             Challenge.init(),
-            User.init()
+            User.init(),
+            ArcadeBoard.init(),
+            Poll.init()
         ]);
         
         console.log('Database indexes ensured');
@@ -36,5 +42,7 @@ export const connectDB = async () => {
 export default {
     Challenge,
     User,
+    ArcadeBoard,
+    Poll,
     connectDB
 };
