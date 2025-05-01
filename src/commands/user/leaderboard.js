@@ -1,8 +1,20 @@
-import { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType } from 'discord.js';
+import { 
+    SlashCommandBuilder, 
+    EmbedBuilder, 
+    ActionRowBuilder, 
+    ButtonBuilder, 
+    ButtonStyle, 
+    ComponentType,
+    StringSelectMenuBuilder,
+    StringSelectMenuOptionBuilder,
+    PermissionFlagsBits
+} from 'discord.js';
 import { User } from '../../models/User.js';
 import { Challenge } from '../../models/Challenge.js';
-import { ArcadeBoard } from '../../models/ArcadeBoard.js'; // Add import for ArcadeBoard
+import { ArcadeBoard } from '../../models/ArcadeBoard.js';
+import { HistoricalLeaderboard } from '../../models/HistoricalLeaderboard.js';
 import retroAPI from '../../services/retroAPI.js';
+import { config } from '../../config/config.js';
 
 const AWARD_EMOJIS = {
     MASTERY: '✨',
@@ -53,14 +65,71 @@ function isDateInCurrentMonth(dateString) {
     return isCurrentMonth || isLastDayOfPrevMonth;
 }
 
+// Helper function to get month key from date (YYYY-MM format)
+function getMonthKey(date) {
+    const year = date.getFullYear();
+    const month = (date.getMonth() + 1).toString().padStart(2, '0');
+    return `${year}-${month}`;
+}
+
+// Helper function to format ordinal numbers (1st, 2nd, 3rd, etc.)
+function ordinal(n) {
+    const s = ["th", "st", "nd", "rd"];
+    const v = n % 100;
+    return n + (s[(v - 20) % 10] || s[v] || s[0]);
+}
+
 export default {
     data: new SlashCommandBuilder()
         .setName('leaderboard')
-        .setDescription('Display the current challenge leaderboard'),
+        .setDescription('Display the current or historical challenge leaderboard')
+        // Add option to view historical leaderboards
+        .addBooleanOption(option => 
+            option.setName('history')
+                .setDescription('View historical leaderboards')
+                .setRequired(false))
+        // Add option to finalize the previous month's leaderboard (admin only)
+        .addBooleanOption(option => 
+            option.setName('finalize')
+                .setDescription('Finalize the previous month\'s leaderboard and announce winners (admin only)')
+                .setRequired(false)),
 
     async execute(interaction) {
-       await interaction.deferReply({ ephemeral: true });
+        await interaction.deferReply({ ephemeral: true });
 
+        try {
+            // Check for admin command to finalize previous month's leaderboard
+            const shouldFinalize = interaction.options.getBoolean('finalize') || false;
+            
+            if (shouldFinalize) {
+                // Check if user has admin permissions
+                if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
+                    return interaction.editReply('You need administrator permissions to finalize leaderboards.');
+                }
+                
+                // Finalize previous month's leaderboard
+                await this.finalizePreviousMonth(interaction);
+                return;
+            }
+            
+            // Check if user wants to view historical leaderboards
+            const showHistory = interaction.options.getBoolean('history') || false;
+            
+            if (showHistory) {
+                // Show historical leaderboard selector
+                await this.showHistoricalSelector(interaction);
+                return;
+            }
+            
+            // Default: Display current month's leaderboard
+            await this.displayCurrentLeaderboard(interaction);
+        } catch (error) {
+            console.error('Error executing leaderboard command:', error);
+            await interaction.editReply('An error occurred while processing your request.');
+        }
+    },
+
+    async displayCurrentLeaderboard(interaction) {
         try {
             // Get current date for finding current challenge
             const now = new Date();
@@ -79,8 +148,35 @@ export default {
                 return interaction.editReply('No active challenge found for the current month.');
             }
 
-            // Get game info
-            const gameInfo = await retroAPI.getGameInfo(currentChallenge.monthly_challange_gameid);
+            // Get game info - use stored metadata if available
+            let gameTitle = currentChallenge.monthly_game_title;
+            let gameImageUrl = currentChallenge.monthly_game_icon_url;
+            let gameInfo;
+
+            if (!gameTitle || !gameImageUrl) {
+                try {
+                    gameInfo = await retroAPI.getGameInfo(currentChallenge.monthly_challange_gameid);
+                    gameTitle = gameInfo.title;
+                    gameImageUrl = gameInfo.imageIcon;
+                    
+                    // Update challenge with metadata for future use
+                    if (gameInfo) {
+                        currentChallenge.monthly_game_title = gameTitle;
+                        currentChallenge.monthly_game_icon_url = gameImageUrl;
+                        currentChallenge.monthly_game_console = gameInfo.consoleName;
+                        await currentChallenge.save();
+                    }
+                } catch (error) {
+                    console.error('Error fetching game info:', error);
+                    // Continue with null gameInfo
+                }
+            } else {
+                // Create gameInfo object from stored data for consistency
+                gameInfo = {
+                    title: gameTitle,
+                    imageIcon: gameImageUrl
+                };
+            }
 
             // Get all registered users
             const users = await User.find({});
@@ -189,7 +285,7 @@ export default {
                 });
 
             // Check for an active tiebreaker for the current month
-            const monthKey = `${now.getFullYear()}-${(now.getMonth() + 1).toString().padStart(2, '0')}`;
+            const monthKey = getMonthKey(now);
             const activeTiebreaker = await ArcadeBoard.findOne({
                 boardType: 'tiebreaker',
                 startDate: { $lte: now },
@@ -251,7 +347,7 @@ export default {
             // Process tiebreaker and assign ranks correctly
             this.assignRanks(workingSorted, tiebreakerEntries, activeTiebreaker);
 
-            // NEW: Save the processed results to the database
+            // Save the processed results to the database (for individual users)
             const monthKeyForDB = User.formatDateKey(currentChallenge.date);
             try {
                 console.log(`Saving processed leaderboard data for ${sortedProgress.length} users to database...`);
@@ -267,8 +363,8 @@ export default {
                             achievements: achieved, // This is the time-gated count
                             totalAchievements: currentChallenge.monthly_challange_game_total,
                             percentage: parseFloat(percentage),
-                            gameTitle: gameInfo.title,
-                            gameIconUrl: gameInfo.imageIcon
+                            gameTitle: gameTitle,
+                            gameIconUrl: gameImageUrl
                         });
                         
                         await user.save();
@@ -319,10 +415,10 @@ export default {
                 const embed = new EmbedBuilder()
                     .setTitle(`${monthName} Challenge Leaderboard`)
                     .setColor('#FFD700')
-                    .setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`);
+                    .setThumbnail(`https://retroachievements.org${gameImageUrl}`);
 
                 // Add game details to description
-                let description = `**Game:** [${gameInfo.title}](https://retroachievements.org/game/${currentChallenge.monthly_challange_gameid})\n` +
+                let description = `**Game:** [${gameTitle}](https://retroachievements.org/game/${currentChallenge.monthly_challange_gameid})\n` +
                                 `**Total Achievements:** ${currentChallenge.monthly_challange_game_total}\n` +
                                 `**Challenge Ends:** ${endDateFormatted}\n` +
                                 `**Time Remaining:** ${timeRemaining}\n\n` +
@@ -342,8 +438,22 @@ export default {
                     name: 'No Participants',
                     value: 'No one has earned achievements in this challenge this month yet!'
                 });
+                
+                // Create a button to view historical leaderboards
+                const historyButton = new ActionRowBuilder()
+                    .addComponents(
+                        new ButtonBuilder()
+                            .setCustomId('view_history')
+                            .setLabel('View Historical Leaderboards')
+                            .setStyle(ButtonStyle.Secondary)
+                            .setEmoji('📚')
+                    );
 
-                return interaction.editReply({ embeds: [embed] });
+                // Return response with the history button
+                return interaction.editReply({ 
+                    embeds: [embed],
+                    components: [historyButton]
+                });
             }
 
             // Create paginated embeds
@@ -351,12 +461,411 @@ export default {
                 endDateFormatted, timeRemaining, activeTiebreaker);
 
             // Display paginated leaderboard with navigation
-            await this.displayPaginatedLeaderboard(interaction, embeds);
+            await this.displayPaginatedLeaderboard(interaction, embeds, true);
 
         } catch (error) {
             console.error('Error displaying leaderboard:', error);
             return interaction.editReply('An error occurred while fetching the leaderboard. Please try again.');
         }
+    },
+
+    async showHistoricalSelector(interaction) {
+        try {
+            // Get list of all available historical leaderboards
+            const historicalLeaderboards = await HistoricalLeaderboard.find()
+                .sort({ date: -1 }); // Sort by date descending (newest first)
+            
+            if (historicalLeaderboards.length === 0) {
+                return interaction.editReply('No historical leaderboards are available yet.');
+            }
+            
+            // Create embed for selector
+            const embed = new EmbedBuilder()
+                .setTitle('📚 Historical Leaderboards')
+                .setColor('#FFD700')
+                .setDescription('Select a month to view its challenge leaderboard:')
+                .setFooter({ text: 'Historical leaderboards are preserved at the end of each month' });
+                
+            // Create a select menu with available months
+            const selectMenu = new StringSelectMenuBuilder()
+                .setCustomId('historical_select')
+                .setPlaceholder('Select a month...');
+                
+            // Add options for each historical leaderboard (up to 25, the Discord limit)
+            const options = historicalLeaderboards.slice(0, 25).map(leaderboard => {
+                const date = new Date(leaderboard.date);
+                const monthName = date.toLocaleString('default', { month: 'long' });
+                const year = date.getFullYear();
+                
+                return new StringSelectMenuOptionBuilder()
+                    .setLabel(`${monthName} ${year}`)
+                    .setDescription(`${leaderboard.gameTitle} - ${leaderboard.participants.length} participants`)
+                    .setValue(leaderboard.monthKey);
+            });
+            
+            selectMenu.addOptions(options);
+            
+            // Add a button to return to current leaderboard
+            const currentButton = new ButtonBuilder()
+                .setCustomId('current_leaderboard')
+                .setLabel('Current Leaderboard')
+                .setStyle(ButtonStyle.Primary);
+                
+            // Create action rows
+            const selectRow = new ActionRowBuilder().addComponents(selectMenu);
+            const buttonRow = new ActionRowBuilder().addComponents(currentButton);
+            
+            // Send the selector
+            const message = await interaction.editReply({
+                embeds: [embed],
+                components: [selectRow, buttonRow]
+            });
+            
+            // Create collector for interactions
+            const collector = message.createMessageComponentCollector({
+                time: 300000 // 5 minutes
+            });
+            
+            // Handle interactions
+            collector.on('collect', async (i) => {
+                if (i.customId === 'current_leaderboard') {
+                    // Show current leaderboard
+                    await i.deferUpdate();
+                    await this.displayCurrentLeaderboard(interaction);
+                    collector.stop();
+                } 
+                else if (i.customId === 'historical_select') {
+                    // Show the selected historical leaderboard
+                    await i.deferUpdate();
+                    const selectedMonthKey = i.values[0];
+                    await this.displayHistoricalLeaderboard(interaction, selectedMonthKey);
+                    collector.stop();
+                }
+            });
+            
+            // When collector expires
+            collector.on('end', async (collected, reason) => {
+                if (reason === 'time') {
+                    try {
+                        // Disable the components
+                        const disabledSelectRow = new ActionRowBuilder().addComponents(
+                            selectMenu.setDisabled(true)
+                        );
+                        const disabledButtonRow = new ActionRowBuilder().addComponents(
+                            currentButton.setDisabled(true)
+                        );
+                        
+                        await interaction.editReply({
+                            embeds: [embed.setFooter({ text: 'Session expired • Use /leaderboard history:true to try again' })],
+                            components: [disabledSelectRow, disabledButtonRow]
+                        });
+                    } catch (error) {
+                        console.error('Error disabling components:', error);
+                    }
+                }
+            });
+        } catch (error) {
+            console.error('Error showing historical selector:', error);
+            return interaction.editReply('An error occurred while retrieving historical leaderboards.');
+        }
+    },
+
+    async displayHistoricalLeaderboard(interaction, monthKey) {
+        try {
+            // Get the historical leaderboard data
+            const leaderboard = await HistoricalLeaderboard.findOne({ monthKey });
+            
+            if (!leaderboard) {
+                return interaction.editReply(`No historical leaderboard found for ${monthKey}.`);
+            }
+            
+            // Create the leaderboard embeds from historical data
+            const date = new Date(leaderboard.date);
+            const monthName = date.toLocaleString('default', { month: 'long' });
+            const year = date.getFullYear();
+            
+            // Format gameInfo to match structure expected by createPaginatedEmbeds
+            const gameInfo = {
+                title: leaderboard.gameTitle,
+                imageIcon: leaderboard.gameImageUrl
+            };
+            
+            // Create paginated embeds using stored participant data
+            const embeds = this.createHistoricalEmbeds(leaderboard);
+            
+            // Display paginated leaderboard with navigation
+            await this.displayPaginatedLeaderboard(interaction, embeds, false);
+            
+        } catch (error) {
+            console.error('Error displaying historical leaderboard:', error);
+            return interaction.editReply('An error occurred while retrieving the historical leaderboard.');
+        }
+    },
+
+    createHistoricalEmbeds(leaderboard) {
+        const embeds = [];
+        const totalPages = Math.ceil(leaderboard.participants.length / USERS_PER_PAGE);
+        
+        // Get month name and year
+        const date = new Date(leaderboard.date);
+        const monthName = date.toLocaleString('default', { month: 'long' });
+        const year = date.getFullYear();
+        
+        for (let page = 0; page < totalPages; page++) {
+            // Get participants for this page
+            const startIndex = page * USERS_PER_PAGE;
+            const endIndex = Math.min((page + 1) * USERS_PER_PAGE, leaderboard.participants.length);
+            const participantsOnPage = leaderboard.participants.slice(startIndex, endIndex);
+            
+            // Create embed for this page
+            const embed = new EmbedBuilder()
+                .setTitle(`${monthName} ${year} Challenge Leaderboard (Historical)`)
+                .setColor('#FFD700')
+                .setFooter({ text: `Page ${page + 1}/${totalPages} • Historical record` })
+                .setTimestamp(new Date(leaderboard.createdAt));
+                
+            // Add thumbnail if available
+            if (leaderboard.gameImageUrl) {
+                embed.setThumbnail(`https://retroachievements.org${leaderboard.gameImageUrl}`);
+            }
+            
+            // Create description
+            let description = `**Game:** [${leaderboard.gameTitle}](https://retroachievements.org/game/${leaderboard.gameId})\n` +
+                            `**Total Achievements:** ${leaderboard.totalAchievements}\n` +
+                            `**Challenge Period:** ${monthName} ${year}\n\n` +
+                            `${AWARD_EMOJIS.MASTERY} Mastery (7pts) | ${AWARD_EMOJIS.BEATEN} Beaten (4pts) | ${AWARD_EMOJIS.PARTICIPATION} Part. (1pt)`;
+            
+            // Add tiebreaker info if applicable
+            if (leaderboard.tiebreakerInfo && leaderboard.tiebreakerInfo.isActive) {
+                description += `\n\n${TIEBREAKER_EMOJI} **Tiebreaker Game:** ${leaderboard.tiebreakerInfo.gameTitle}\n` +
+                            `*Tiebreaker results were used to determine final ranking for tied users in top positions.*`;
+            }
+                            
+            description += `\n\n*This is a historical record of the ${monthName} ${year} challenge.*`;
+            
+            embed.setDescription(description);
+            
+            // Format leaderboard text
+            let leaderboardText = '';
+            
+            for (const participant of participantsOnPage) {
+                // Use the stored displayRank
+                const rankEmoji = participant.displayRank <= 3 ? RANK_EMOJIS[participant.displayRank] : `#${participant.displayRank}`;
+                
+                // Add the participant entry
+                leaderboardText += `${rankEmoji} **[${participant.username}](https://retroachievements.org/user/${participant.username})** ${participant.award}\n`;
+                
+                // Add achievement stats
+                if (participant.hasTiebreaker && participant.tiebreakerScore) {
+                    leaderboardText += `${participant.achievements}/${leaderboard.totalAchievements} (${participant.percentage}%)\n`;
+                    leaderboardText += `${TIEBREAKER_EMOJI} ${participant.tiebreakerScore}\n\n`;
+                } else {
+                    leaderboardText += `${participant.achievements}/${leaderboard.totalAchievements} (${participant.percentage}%)\n\n`;
+                }
+            }
+            
+            embed.addFields({
+                name: `Final Rankings (${leaderboard.participants.length} participants)`,
+                value: leaderboardText || 'No participants found.'
+            });
+            
+            // Add winners section if this is the first page
+            if (page === 0 && leaderboard.winners && leaderboard.winners.length > 0) {
+                let winnersText = '';
+                leaderboard.winners.forEach(winner => {
+                    const medalEmoji = winner.rank === 1 ? '🥇' : (winner.rank === 2 ? '🥈' : '🥉');
+                    winnersText += `${medalEmoji} **${winner.username}**: ${winner.achievements}/${leaderboard.totalAchievements} (${winner.percentage}%) ${winner.award}\n`;
+                    
+                    // Add tiebreaker info if available
+                    if (winner.tiebreakerScore) {
+                        winnersText += `   ${TIEBREAKER_EMOJI} Tiebreaker: ${winner.tiebreakerScore}\n`;
+                    }
+                });
+                
+                embed.addFields({
+                    name: '🏆 Winners',
+                    value: winnersText
+                });
+            }
+            
+            // Add shadow challenge info if applicable
+            if (page === 0 && leaderboard.shadowChallengeInfo && leaderboard.shadowChallengeInfo.wasRevealed) {
+                embed.addFields({
+                    name: 'Shadow Challenge',
+                    value: `This month also featured a shadow challenge: **${leaderboard.shadowChallengeInfo.gameTitle}**`
+                });
+            }
+            
+            embeds.push(embed);
+        }
+        
+        return embeds;
+    },
+
+    async displayPaginatedLeaderboard(interaction, embeds, isCurrentMonth) {
+        // If only one page, just send it with appropriate components
+        if (embeds.length === 1) {
+            // Create a button to view historical leaderboards if viewing current month
+            const historyButton = isCurrentMonth ? 
+                new ActionRowBuilder()
+                    .addComponents(
+                        new ButtonBuilder()
+                            .setCustomId('view_history')
+                            .setLabel('View Historical Leaderboards')
+                            .setStyle(ButtonStyle.Secondary)
+                            .setEmoji('📚')
+                    )
+                : new ActionRowBuilder()
+                    .addComponents(
+                        new ButtonBuilder()
+                            .setCustomId('current_leaderboard')
+                            .setLabel('Current Leaderboard')
+                            .setStyle(ButtonStyle.Primary)
+                    );
+                
+            return interaction.editReply({ 
+                embeds: [embeds[0]], 
+                components: [historyButton]
+            });
+        }
+
+        // Create navigation buttons
+        const navRow = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId('first')
+                    .setLabel('First')
+                    .setStyle(ButtonStyle.Primary)
+                    .setEmoji('⏮️'),
+                new ButtonBuilder()
+                    .setCustomId('previous')
+                    .setLabel('Previous')
+                    .setStyle(ButtonStyle.Primary)
+                    .setEmoji('◀️'),
+                new ButtonBuilder()
+                    .setCustomId('next')
+                    .setLabel('Next')
+                    .setStyle(ButtonStyle.Primary)
+                    .setEmoji('▶️'),
+                new ButtonBuilder()
+                    .setCustomId('last')
+                    .setLabel('Last')
+                    .setStyle(ButtonStyle.Primary)
+                    .setEmoji('⏭️')
+            );
+            
+        // Add a button to view history or current leaderboard
+        const actionButton = isCurrentMonth ?
+            new ButtonBuilder()
+                .setCustomId('view_history')
+                .setLabel('View Historical Leaderboards')
+                .setStyle(ButtonStyle.Secondary)
+                .setEmoji('📚')
+            : new ButtonBuilder()
+                .setCustomId('current_leaderboard')
+                .setLabel('Current Leaderboard')
+                .setStyle(ButtonStyle.Primary);
+                
+        const actionRow = new ActionRowBuilder().addComponents(actionButton);
+
+        let currentPage = 0;
+
+        // Send the first page with navigation buttons
+        const message = await interaction.editReply({
+            embeds: [embeds[currentPage]],
+            components: [navRow, actionRow]
+        });
+
+        // Create collector for button interactions
+        const collector = message.createMessageComponentCollector({
+            componentType: ComponentType.Button,
+            time: 300000 // 5 minutes timeout
+        });
+
+        // Update buttons based on current page
+        const updateButtons = (page) => {
+            // Disable/enable buttons based on current page
+            navRow.components[0].setDisabled(page === 0); // First
+            navRow.components[1].setDisabled(page === 0); // Previous
+            navRow.components[2].setDisabled(page === embeds.length - 1); // Next
+            navRow.components[3].setDisabled(page === embeds.length - 1); // Last
+            
+            return navRow;
+        };
+
+        // Handle button clicks
+        collector.on('collect', async (i) => {
+            // Handle navigation buttons
+            if (['first', 'previous', 'next', 'last'].includes(i.customId)) {
+                // Defer the update to avoid interaction timeouts
+                await i.deferUpdate();
+
+                // Handle different button clicks
+                switch (i.customId) {
+                    case 'first':
+                        currentPage = 0;
+                        break;
+                    case 'previous':
+                        currentPage = Math.max(0, currentPage - 1);
+                        break;
+                    case 'next':
+                        currentPage = Math.min(embeds.length - 1, currentPage + 1);
+                        break;
+                    case 'last':
+                        currentPage = embeds.length - 1;
+                        break;
+                }
+
+                // Update the message with the new page and updated buttons
+                await i.editReply({
+                    embeds: [embeds[currentPage]],
+                    components: [updateButtons(currentPage), actionRow]
+                });
+            }
+            // Handle action buttons
+            else if (i.customId === 'view_history') {
+                await i.deferUpdate();
+                await this.showHistoricalSelector(interaction);
+                collector.stop();
+            }
+            else if (i.customId === 'current_leaderboard') {
+                await i.deferUpdate();
+                await this.displayCurrentLeaderboard(interaction);
+                collector.stop();
+            }
+        });
+
+        // When the collector expires
+        collector.on('end', async (collected, reason) => {
+            if (reason === 'time') {
+                try {
+                    // Disable all buttons when time expires
+                    const disabledNavRow = new ActionRowBuilder().addComponents(
+                        navRow.components[0].setDisabled(true),
+                        navRow.components[1].setDisabled(true),
+                        navRow.components[2].setDisabled(true),
+                        navRow.components[3].setDisabled(true)
+                    );
+                    
+                    const disabledActionRow = new ActionRowBuilder().addComponents(
+                        actionButton.setDisabled(true)
+                    );
+
+                    // Update the message with disabled buttons
+                    await interaction.editReply({
+                        embeds: [embeds[currentPage].setFooter({ 
+                            text: 'Session expired • Use /leaderboard again to start a new session' 
+                        })],
+                        components: [disabledNavRow, disabledActionRow]
+                    });
+                } catch (error) {
+                    console.error('Error disabling buttons:', error);
+                }
+            }
+        });
+
+        // Initially update buttons based on first page
+        return updateButtons(currentPage);
     },
 
     // Method to handle assigning ranks with tiebreaker scores
@@ -495,7 +1004,7 @@ export default {
             const endIndex = Math.min((page + 1) * USERS_PER_PAGE, workingSorted.length);
             const usersOnPage = workingSorted.slice(startIndex, endIndex);
 
-            // Create embed for this page - IMPORTANT: Just set the title, no URL
+            // Create embed for this page
             const embed = new EmbedBuilder()
                 .setTitle(`${monthName} Challenge Leaderboard`)
                 .setColor('#FFD700')
@@ -503,7 +1012,7 @@ export default {
                 .setFooter({ text: `Page ${page + 1}/${totalPages} • Use /help points for more information` })
                 .setTimestamp();
 
-            // Create base description for all pages - Include the game link in the description
+            // Create base description for all pages
             let description = `**Game:** [${gameInfo.title}](https://retroachievements.org/game/${currentChallenge.monthly_challange_gameid})\n` +
                             `**Total Achievements:** ${currentChallenge.monthly_challange_game_total}\n` +
                             `**Challenge Ends:** ${endDateFormatted}\n` +
@@ -552,140 +1061,458 @@ export default {
         return embeds;
     },
 
-    async displayPaginatedLeaderboard(interaction, embeds) {
-        // If only one page, just send it without buttons
-        if (embeds.length === 1) {
-            return interaction.editReply({ embeds: [embeds[0]] });
-        }
-
-        // Create navigation buttons
-        const row = new ActionRowBuilder()
-            .addComponents(
-                new ButtonBuilder()
-                    .setCustomId('first')
-                    .setLabel('First')
-                    .setStyle(ButtonStyle.Primary)
-                    .setEmoji('⏮️'),
-                new ButtonBuilder()
-                    .setCustomId('previous')
-                    .setLabel('Previous')
-                    .setStyle(ButtonStyle.Primary)
-                    .setEmoji('◀️'),
-                new ButtonBuilder()
-                    .setCustomId('next')
-                    .setLabel('Next')
-                    .setStyle(ButtonStyle.Primary)
-                    .setEmoji('▶️'),
-                new ButtonBuilder()
-                    .setCustomId('last')
-                    .setLabel('Last')
-                    .setStyle(ButtonStyle.Primary)
-                    .setEmoji('⏭️')
-            );
-
-        let currentPage = 0;
-
-        // Send the first page with navigation buttons
-        const message = await interaction.editReply({
-            embeds: [embeds[currentPage]],
-            components: [row]
-        });
-
-        // Create collector for button interactions
-        const collector = message.createMessageComponentCollector({
-            componentType: ComponentType.Button,
-            time: 300000 // 5 minutes timeout
-        });
-
-        // Update buttons based on current page
-        const updateButtons = (page) => {
-            // Disable/enable buttons based on current page
-            row.components[0].setDisabled(page === 0); // First
-            row.components[1].setDisabled(page === 0); // Previous
-            row.components[2].setDisabled(page === embeds.length - 1); // Next
-            row.components[3].setDisabled(page === embeds.length - 1); // Last
+    // Method to finalize the previous month's leaderboard and announce winners
+    async finalizePreviousMonth(interaction) {
+        try {
+            // Get current date
+            const now = new Date();
             
-            return row;
-        };
-
-        // Handle button clicks
-        collector.on('collect', async (i) => {
-            // Defer the update to avoid interaction timeouts
-            await i.deferUpdate();
-
-            // Handle different button clicks
-            switch (i.customId) {
-                case 'first':
-                    currentPage = 0;
-                    break;
-                case 'previous':
-                    currentPage = Math.max(0, currentPage - 1);
-                    break;
-                case 'next':
-                    currentPage = Math.min(embeds.length - 1, currentPage + 1);
-                    break;
-                case 'last':
-                    currentPage = embeds.length - 1;
-                    break;
+            // Get previous month's date range
+            const currentMonth = now.getMonth();
+            const currentYear = now.getFullYear();
+            
+            // Calculate previous month
+            let prevMonth = currentMonth - 1;
+            let prevYear = currentYear;
+            if (prevMonth < 0) {
+                prevMonth = 11;  // December
+                prevYear = currentYear - 1;
             }
-
-            // Update the message with the new page and updated buttons
-            await i.editReply({
-                embeds: [embeds[currentPage]],
-                components: [updateButtons(currentPage)]
+            
+            const prevMonthStart = new Date(prevYear, prevMonth, 1);
+            const prevMonthEnd = new Date(currentYear, currentMonth, 0, 23, 59, 59); // Last day of prev month
+            
+            // Format month key for lookup
+            const monthKey = getMonthKey(prevMonthStart);
+            
+            // Check if we already have a finalized leaderboard for this month
+            const existingLeaderboard = await HistoricalLeaderboard.findOne({ 
+                monthKey,
+                isFinalized: true 
             });
-        });
-
-        // When the collector expires
-        collector.on('end', async () => {
-            try {
-                // Disable all buttons when time expires
-                const disabledRow = new ActionRowBuilder().addComponents(
-                    row.components[0].setDisabled(true),
-                    row.components[1].setDisabled(true),
-                    row.components[2].setDisabled(true),
-                    row.components[3].setDisabled(true)
-                );
-
-                // Update the message with disabled buttons
-                await interaction.editReply({
-                    embeds: [embeds[currentPage].setFooter({ 
-                        text: 'Session expired • Use /yearlyboard to see annual rankings' 
-                    })],
-                    components: [disabledRow]
-                });
-            } catch (error) {
-                console.error('Error disabling buttons:', error);
+            
+            if (existingLeaderboard) {
+                // If results haven't been announced yet but leaderboard exists
+                if (!existingLeaderboard.resultsAnnounced) {
+                    return interaction.editReply({
+                        content: `Leaderboard for ${monthKey} is already finalized but hasn't been announced. Would you like to announce the results now?`,
+                        components: [
+                            new ActionRowBuilder().addComponents(
+                                new ButtonBuilder()
+                                    .setCustomId('announce_results')
+                                    .setLabel('Announce Results')
+                                    .setStyle(ButtonStyle.Primary),
+                                new ButtonBuilder()
+                                    .setCustomId('cancel_announce')
+                                    .setLabel('Cancel')
+                                    .setStyle(ButtonStyle.Secondary)
+                            )
+                        ]
+                    });
+                } else {
+                    return interaction.editReply(`Leaderboard for ${monthKey} is already finalized and results have been announced.`);
+                }
             }
-        });
-
-        // Initially update buttons based on first page
-        return updateButtons(currentPage);
+            
+            // Get the challenge for the previous month
+            const challenge = await Challenge.findOne({
+                date: {
+                    $gte: prevMonthStart,
+                    $lt: prevMonthEnd
+                }
+            });
+            
+            if (!challenge) {
+                return interaction.editReply(`No challenge found for ${monthKey}.`);
+            }
+            
+            // Get game info - use stored metadata if available
+            let gameTitle = challenge.monthly_game_title;
+            let gameImageUrl = challenge.monthly_game_icon_url;
+            let consoleName = challenge.monthly_game_console;
+            
+            // If metadata isn't stored in the Challenge model, fetch it
+            if (!gameTitle || !gameImageUrl) {
+                try {
+                    const gameInfo = await retroAPI.getGameInfo(challenge.monthly_challange_gameid);
+                    gameTitle = gameInfo.title;
+                    gameImageUrl = gameInfo.imageIcon;
+                    consoleName = gameInfo.consoleName;
+                    
+                    // Update the challenge with this metadata for future use
+                    if (gameInfo) {
+                        challenge.monthly_game_title = gameTitle;
+                        challenge.monthly_game_icon_url = gameImageUrl;
+                        challenge.monthly_game_console = consoleName;
+                        await challenge.save();
+                    }
+                } catch (error) {
+                    console.error(`Error fetching game info for ${challenge.monthly_challange_gameid}:`, error);
+                    return interaction.editReply('An error occurred while fetching game information. Please try again.');
+                }
+            }
+            
+            // Get all users and their progress data as stored by statsUpdateService
+            const users = await User.find({});
+            const monthKeyForUser = User.formatDateKey(challenge.date);
+            
+            // Get all users who participated in the challenge - directly use statsUpdateService's data
+            const participants = users.filter(user => 
+                user.monthlyChallenges && 
+                user.monthlyChallenges.has(monthKeyForUser) &&
+                user.monthlyChallenges.get(monthKeyForUser).achievements > 0
+            );
+            
+            if (participants.length === 0) {
+                return interaction.editReply(`No participants found for the ${monthKey} challenge.`);
+            }
+            
+            // Map user data to the format needed for the historical leaderboard
+            // This uses the cached data from statsUpdateService
+            const leaderboardParticipants = participants.map(user => {
+                const challengeData = user.monthlyChallenges.get(monthKeyForUser);
+                const points = challengeData.progress || 0;
+                
+                // Determine award emoji based on points
+                let award = '';
+                if (points === 7) award = AWARD_EMOJIS.MASTERY;
+                else if (points === 4) award = AWARD_EMOJIS.BEATEN;
+                else if (points === 1) award = AWARD_EMOJIS.PARTICIPATION;
+                
+                return {
+                    username: user.raUsername,
+                    achievements: challengeData.achievements,
+                    percentage: challengeData.percentage,
+                    points: points,
+                    award: award
+                };
+            });
+            
+            // Sort participants by achievements and points
+            leaderboardParticipants.sort((a, b) => {
+                if (b.achievements !== a.achievements) {
+                    return b.achievements - a.achievements;
+                }
+                return b.points - a.points;
+            });
+            
+            // Check if there was a tiebreaker for this month
+            const tiebreaker = await ArcadeBoard.findOne({
+                boardType: 'tiebreaker',
+                monthKey: monthKey
+            });
+            
+            // Process tiebreaker information if available
+            let tiebreakerEntries = [];
+            let tiebreakerInfo = null;
+            
+            if (tiebreaker) {
+                try {
+                    // Fetch tiebreaker leaderboard entries
+                    const batch1 = await retroAPI.getLeaderboardEntriesDirect(tiebreaker.leaderboardId, 0, 500);
+                    const batch2 = await retroAPI.getLeaderboardEntriesDirect(tiebreaker.leaderboardId, 500, 500);
+                    
+                    // Process entries (similar to the display logic)
+                    let rawEntries = [];
+                    
+                    if (batch1) {
+                        if (Array.isArray(batch1)) {
+                            rawEntries = [...rawEntries, ...batch1];
+                        } else if (batch1.Results && Array.isArray(batch1.Results)) {
+                            rawEntries = [...rawEntries, ...batch1.Results];
+                        }
+                    }
+                    
+                    if (batch2) {
+                        if (Array.isArray(batch2)) {
+                            rawEntries = [...rawEntries, ...batch2];
+                        } else if (batch2.Results && Array.isArray(batch2.Results)) {
+                            rawEntries = [...rawEntries, ...batch2.Results];
+                        }
+                    }
+                    
+                    tiebreakerEntries = rawEntries.map(entry => {
+                        const user = entry.User || entry.user || '';
+                        const score = entry.Score || entry.score || entry.Value || entry.value || 0;
+                        const formattedScore = entry.FormattedScore || entry.formattedScore || entry.ScoreFormatted || score.toString();
+                        const rank = entry.Rank || entry.rank || 0;
+                        
+                        return {
+                            username: user.trim().toLowerCase(),
+                            score: formattedScore,
+                            apiRank: parseInt(rank, 10)
+                        };
+                    });
+                    
+                    // Store tiebreaker info
+                    tiebreakerInfo = {
+                        gameId: tiebreaker.gameId,
+                        gameTitle: tiebreaker.gameTitle,
+                        leaderboardId: tiebreaker.leaderboardId,
+                        isActive: true
+                    };
+                } catch (error) {
+                    console.error('Error fetching tiebreaker entries:', error);
+                }
+            }
+            
+            // Store original order for stable sorting
+            leaderboardParticipants.forEach((participant, index) => {
+                participant.originalIndex = index;
+            });
+            
+            // Add tiebreaker info to participants
+            if (tiebreakerEntries && tiebreakerEntries.length > 0) {
+                for (const participant of leaderboardParticipants) {
+                    const entry = tiebreakerEntries.find(e => 
+                        e.username === participant.username.toLowerCase()
+                    );
+                    
+                    if (entry) {
+                        participant.tiebreakerScore = entry.score;
+                        participant.tiebreakerRank = entry.apiRank;
+                        participant.hasTiebreaker = true;
+                    } else {
+                        participant.hasTiebreaker = false;
+                    }
+                }
+            }
+            
+            // Apply the same rank calculation logic as in the display function
+            this.assignRanks(leaderboardParticipants, tiebreakerEntries, tiebreaker);
+            
+            // Create winners array (top 3 participants)
+            const winners = leaderboardParticipants
+                .filter(p => p.displayRank <= 3)
+                .map(p => ({
+                    rank: p.displayRank,
+                    username: p.username,
+                    achievements: p.achievements,
+                    percentage: p.percentage,
+                    award: p.award,
+                    points: p.points,
+                    tiebreakerScore: p.tiebreakerScore || null
+                }));
+            
+            // Check for shadow challenge info
+            let shadowChallengeInfo = null;
+            if (challenge.shadow_challange_gameid && challenge.shadow_challange_revealed) {
+                // Get shadow game info - use stored metadata if available
+                let shadowGameTitle = challenge.shadow_game_title;
+                let shadowGameImageUrl = challenge.shadow_game_icon_url;
+                
+                // If metadata isn't stored in the Challenge model, fetch it
+                if (!shadowGameTitle || !shadowGameImageUrl) {
+                    try {
+                        const shadowGameInfo = await retroAPI.getGameInfo(challenge.shadow_challange_gameid);
+                        shadowGameTitle = shadowGameInfo.title;
+                        shadowGameImageUrl = shadowGameInfo.imageIcon;
+                        
+                        // Update the challenge with this metadata for future use
+                        if (shadowGameInfo) {
+                            challenge.shadow_game_title = shadowGameTitle;
+                            challenge.shadow_game_icon_url = shadowGameImageUrl;
+                            await challenge.save();
+                        }
+                    } catch (error) {
+                        console.error(`Error fetching shadow game info for ${challenge.shadow_challange_gameid}:`, error);
+                    }
+                }
+                
+                shadowChallengeInfo = {
+                    gameId: challenge.shadow_challange_gameid,
+                    gameTitle: shadowGameTitle,
+                    gameImageUrl: shadowGameImageUrl,
+                    totalAchievements: challenge.shadow_challange_game_total,
+                    wasRevealed: true
+                };
+            }
+                
+            // Create the historical leaderboard record
+            const historicalLeaderboard = new HistoricalLeaderboard({
+                monthKey: monthKey,
+                date: prevMonthStart,
+                challengeId: challenge._id,
+                gameId: challenge.monthly_challange_gameid,
+                gameTitle: gameTitle,
+                gameImageUrl: gameImageUrl,
+                consoleName: consoleName,
+                totalAchievements: challenge.monthly_challange_game_total,
+                progressionAchievements: challenge.monthly_challange_progression_achievements || [],
+                winAchievements: challenge.monthly_challange_win_achievements || [],
+                participants: leaderboardParticipants,
+                winners: winners,
+                tiebreakerInfo: tiebreakerInfo,
+                shadowChallengeInfo: shadowChallengeInfo,
+                isFinalized: true,
+                resultsAnnounced: false
+            });
+            
+            // Save the historical leaderboard
+            await historicalLeaderboard.save();
+            
+            // Notify the user and provide options to announce
+            await interaction.editReply({
+                content: `Successfully finalized the leaderboard for ${monthKey}. Would you like to announce the results now?`,
+                components: [
+                    new ActionRowBuilder().addComponents(
+                        new ButtonBuilder()
+                            .setCustomId('announce_results')
+                            .setLabel('Announce Results')
+                            .setStyle(ButtonStyle.Primary),
+                        new ButtonBuilder()
+                            .setCustomId('cancel_announce')
+                            .setLabel('Later')
+                            .setStyle(ButtonStyle.Secondary)
+                    )
+                ]
+            });
+            
+            // Create collector for button interaction
+            const message = await interaction.fetchReply();
+            const collector = message.createMessageComponentCollector({
+                componentType: ComponentType.Button,
+                time: 60000 // 1 minute
+            });
+            
+            collector.on('collect', async (i) => {
+                await i.deferUpdate();
+                
+                if (i.customId === 'announce_results') {
+                    // Announce the results
+                    await this.announceResults(interaction, historicalLeaderboard);
+                    collector.stop();
+                } else if (i.customId === 'cancel_announce') {
+                    await interaction.editReply({
+                        content: `Leaderboard for ${monthKey} has been finalized. You can announce the results later using \`/leaderboard finalize:true\`.`,
+                        components: []
+                    });
+                    collector.stop();
+                }
+            });
+            
+            collector.on('end', async (collected, reason) => {
+                if (reason === 'time') {
+                    await interaction.editReply({
+                        content: `Leaderboard for ${monthKey} has been finalized. You can announce the results later using \`/leaderboard finalize:true\`.`,
+                        components: []
+                    });
+                }
+            });
+            
+        } catch (error) {
+            console.error('Error finalizing leaderboard:', error);
+            return interaction.editReply('An error occurred while finalizing the leaderboard.');
+        }
+    },
+    
+    async announceResults(interaction, leaderboard) {
+        try {
+            // Get the announcement channel from config
+            const announcementChannelId = config.discord.announcementChannelId;
+            
+            if (!announcementChannelId) {
+                return interaction.editReply('Announcement channel ID is not configured. Please check your config.js file.');
+            }
+            
+            // Get the guild and channel
+            const guild = interaction.guild;
+            const announcementChannel = await guild.channels.fetch(announcementChannelId);
+            
+            if (!announcementChannel) {
+                return interaction.editReply(`Announcement channel with ID ${announcementChannelId} not found.`);
+            }
+            
+            // Format date for display
+            const date = new Date(leaderboard.date);
+            const monthName = date.toLocaleString('default', { month: 'long' });
+            const year = date.getFullYear();
+            
+            // Create the announcement embed
+            const embed = new EmbedBuilder()
+                .setTitle(`🏆 ${monthName} ${year} Challenge Results 🏆`)
+                .setColor('#FFD700')
+                .setDescription(`The results for the **${monthName} ${year}** monthly challenge are in! Congratulations to all participants who tackled **${leaderboard.gameTitle}**!`)
+                .setThumbnail(`https://retroachievements.org${leaderboard.gameImageUrl}`);
+                
+            // Add winners section
+            if (leaderboard.winners && leaderboard.winners.length > 0) {
+                let winnersText = '';
+                
+                leaderboard.winners.forEach(winner => {
+                    const medalEmoji = winner.rank === 1 ? '🥇' : (winner.rank === 2 ? '🥈' : '🥉');
+                    winnersText += `${medalEmoji} **${winner.username}**: ${winner.achievements}/${leaderboard.totalAchievements} (${winner.percentage}%) ${winner.award}\n`;
+                    
+                    // Add tiebreaker info if available
+                    if (winner.tiebreakerScore) {
+                        winnersText += `   ${TIEBREAKER_EMOJI} Tiebreaker: ${winner.tiebreakerScore}\n`;
+                    }
+                });
+                
+                embed.addFields({
+                    name: 'Winners',
+                    value: winnersText
+                });
+            } else {
+                embed.addFields({
+                    name: 'No Winners',
+                    value: 'No participants qualified for the top 3 positions.'
+                });
+            }
+            
+            // Add total participants count
+            embed.addFields({
+                name: 'Participation',
+                value: `A total of **${leaderboard.participants.length}** members participated in this challenge.`
+            });
+            
+            // Add shadow challenge info if applicable
+            if (leaderboard.shadowChallengeInfo && leaderboard.shadowChallengeInfo.wasRevealed) {
+                embed.addFields({
+                    name: 'Shadow Challenge',
+                    value: `This month also featured a shadow challenge: **${leaderboard.shadowChallengeInfo.gameTitle}**`
+                });
+            }
+            
+            // Add view leaderboard instructions
+            embed.addFields({
+                name: 'View Complete Leaderboard',
+                value: 'Use `/leaderboard history:true` to view the full historical leaderboard and see all participants.'
+            });
+            
+            embed.setFooter({ text: 'Monthly Challenge • RetroAchievements' });
+            embed.setTimestamp();
+            
+            // Send the announcement
+            await announcementChannel.send({ embeds: [embed] });
+            
+            // Update the historical leaderboard to mark as announced
+            leaderboard.resultsAnnounced = true;
+            await leaderboard.save();
+            
+            // Attempt to notify the API to refresh its cache
+            try {
+                const response = await fetch('https://select-start-api-production.up.railway.app/api/admin/force-update', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'x-api-key': '0000'
+                    },
+                    body: JSON.stringify({ target: 'leaderboards' })
+                });
+                
+                console.log('API notification response:', response.ok ? 'Success' : 'Failed');
+            } catch (apiError) {
+                console.error('Error notifying API:', apiError);
+                // Continue execution even if API notification fails
+            }
+            
+            // Notify the admin
+            return interaction.editReply(`Successfully announced the results for ${monthName} ${year} in ${announcementChannel}.`);
+            
+        } catch (error) {
+            console.error('Error announcing results:', error);
+            return interaction.editReply('An error occurred while announcing the results.');
+        }
     }
 };
-
-// Helper function to get day suffix (st, nd, rd, th) - no longer needed with UNIX timestamps
-function getDaySuffix(day) {
-    if (day > 3 && day < 21) return 'th';
-    switch (day % 10) {
-        case 1: return 'st';
-        case 2: return 'nd';
-        case 3: return 'rd';
-        default: return 'th';
-    }
-}
-
-// Helper function to format time remaining - no longer needed with Discord's relative time
-function formatTimeRemaining(end, now) {
-    const diffMs = end - now;
-    if (diffMs <= 0) return 'Challenge has ended';
-    
-    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-    const diffHrs = Math.floor((diffMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-    
-    if (diffDays === 0) {
-        return `${diffHrs} hour${diffHrs !== 1 ? 's' : ''}`;
-    } else {
-        return `${diffDays} day${diffDays !== 1 ? 's' : ''} and ${diffHrs} hour${diffHrs !== 1 ? 's' : ''}`;
-    }
-}
