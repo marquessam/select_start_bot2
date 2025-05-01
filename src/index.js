@@ -9,6 +9,7 @@ import statsUpdateService from './services/statsUpdateService.js';
 import achievementFeedService from './services/achievementFeedService.js';
 import monthlyTasksService from './services/monthlyTasksService.js';
 import arcadeService from './services/arcadeService.js';
+import { LeaderboardScheduler } from './services/LeaderboardScheduler.js'; // Add LeaderboardScheduler import
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -98,6 +99,22 @@ client.once(Events.ClientReady, async () => {
         monthlyTasksService.setClient(client);
         arcadeService.setClient(client);
 
+        // Initialize the leaderboard scheduler
+        const leaderboardScheduler = new LeaderboardScheduler(client);
+        leaderboardScheduler.initialize();
+        console.log('Leaderboard scheduler initialized');
+
+        // Check if we need to finalize the previous month's leaderboard
+        // This helps in case the bot was offline during the scheduled time
+        const now = new Date();
+        const currentDay = now.getDate();
+        
+        // Only run the check if it's the first few days of the month (1-3)
+        if (currentDay <= 3) {
+            console.log('Checking if previous month\'s leaderboard needs to be finalized...');
+            await leaderboardScheduler.finalizeLeaderboard();
+        }
+
         // Schedule stats updates every 30 minutes
         cron.schedule('*/30 * * * *', () => {
             console.log('Running scheduled stats update...');
@@ -119,6 +136,14 @@ client.once(Events.ClientReady, async () => {
             console.log('Running monthly tasks...');
             monthlyTasksService.clearAllNominations().catch(error => {
                 console.error('Error clearing nominations:', error);
+            });
+        });
+
+        // Schedule leaderboard finalization on the 1st of each month at 00:15
+        cron.schedule('15 0 1 * *', () => {
+            console.log('Running scheduled leaderboard finalization...');
+            leaderboardScheduler.finalizeLeaderboard().catch(error => {
+                console.error('Error in leaderboard finalization:', error);
             });
         });
 
