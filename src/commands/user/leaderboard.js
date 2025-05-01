@@ -6,8 +6,7 @@ import {
     ButtonStyle, 
     ComponentType,
     StringSelectMenuBuilder,
-    StringSelectMenuOptionBuilder,
-    PermissionFlagsBits
+    StringSelectMenuOptionBuilder
 } from 'discord.js';
 import { User } from '../../models/User.js';
 import { Challenge } from '../../models/Challenge.js';
@@ -82,51 +81,11 @@ function ordinal(n) {
 export default {
     data: new SlashCommandBuilder()
         .setName('leaderboard')
-        .setDescription('Display the current or historical challenge leaderboard')
-        // Add option to view historical leaderboards
-        .addBooleanOption(option => 
-            option.setName('history')
-                .setDescription('View historical leaderboards')
-                .setRequired(false))
-        // Add option to finalize the previous month's leaderboard (admin only)
-        .addBooleanOption(option => 
-            option.setName('finalize')
-                .setDescription('Finalize the previous month\'s leaderboard and announce winners (admin only)')
-                .setRequired(false)),
+        .setDescription('Display the current or historical challenge leaderboard'),
 
     async execute(interaction) {
         await interaction.deferReply({ ephemeral: true });
-
-        try {
-            // Check for admin command to finalize previous month's leaderboard
-            const shouldFinalize = interaction.options.getBoolean('finalize') || false;
-            
-            if (shouldFinalize) {
-                // Check if user has admin permissions
-                if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
-                    return interaction.editReply('You need administrator permissions to finalize leaderboards.');
-                }
-                
-                // Finalize previous month's leaderboard
-                await this.finalizePreviousMonth(interaction);
-                return;
-            }
-            
-            // Check if user wants to view historical leaderboards
-            const showHistory = interaction.options.getBoolean('history') || false;
-            
-            if (showHistory) {
-                // Show historical leaderboard selector
-                await this.showHistoricalSelector(interaction);
-                return;
-            }
-            
-            // Default: Display current month's leaderboard
-            await this.displayCurrentLeaderboard(interaction);
-        } catch (error) {
-            console.error('Error executing leaderboard command:', error);
-            await interaction.editReply('An error occurred while processing your request.');
-        }
+        await this.displayCurrentLeaderboard(interaction);
     },
 
     async displayCurrentLeaderboard(interaction) {
@@ -556,7 +515,7 @@ export default {
                         );
                         
                         await interaction.editReply({
-                            embeds: [embed.setFooter({ text: 'Session expired • Use /leaderboard history:true to try again' })],
+                            embeds: [embed.setFooter({ text: 'Session expired • Use /leaderboard again to try again' })],
                             components: [disabledSelectRow, disabledButtonRow]
                         });
                     } catch (error) {
@@ -795,43 +754,48 @@ export default {
 
         // Handle button clicks
         collector.on('collect', async (i) => {
-            // Handle navigation buttons
-            if (['first', 'previous', 'next', 'last'].includes(i.customId)) {
-                // Defer the update to avoid interaction timeouts
-                await i.deferUpdate();
+            try {
+                // Handle navigation buttons
+                if (['first', 'previous', 'next', 'last'].includes(i.customId)) {
+                    // Defer the update to avoid interaction timeouts
+                    await i.deferUpdate();
 
-                // Handle different button clicks
-                switch (i.customId) {
-                    case 'first':
-                        currentPage = 0;
-                        break;
-                    case 'previous':
-                        currentPage = Math.max(0, currentPage - 1);
-                        break;
-                    case 'next':
-                        currentPage = Math.min(embeds.length - 1, currentPage + 1);
-                        break;
-                    case 'last':
-                        currentPage = embeds.length - 1;
-                        break;
+                    // Handle different button clicks
+                    switch (i.customId) {
+                        case 'first':
+                            currentPage = 0;
+                            break;
+                        case 'previous':
+                            currentPage = Math.max(0, currentPage - 1);
+                            break;
+                        case 'next':
+                            currentPage = Math.min(embeds.length - 1, currentPage + 1);
+                            break;
+                        case 'last':
+                            currentPage = embeds.length - 1;
+                            break;
+                    }
+
+                    // Update the message with the new page and updated buttons
+                    await i.editReply({
+                        embeds: [embeds[currentPage]],
+                        components: [updateButtons(currentPage), actionRow]
+                    });
                 }
-
-                // Update the message with the new page and updated buttons
-                await i.editReply({
-                    embeds: [embeds[currentPage]],
-                    components: [updateButtons(currentPage), actionRow]
-                });
-            }
-            // Handle action buttons
-            else if (i.customId === 'view_history') {
-                await i.deferUpdate();
-                await this.showHistoricalSelector(interaction);
-                collector.stop();
-            }
-            else if (i.customId === 'current_leaderboard') {
-                await i.deferUpdate();
-                await this.displayCurrentLeaderboard(interaction);
-                collector.stop();
+                // Handle action buttons
+                else if (i.customId === 'view_history') {
+                    await i.deferUpdate();
+                    await this.showHistoricalSelector(interaction);
+                    collector.stop();
+                }
+                else if (i.customId === 'current_leaderboard') {
+                    await i.deferUpdate();
+                    await this.displayCurrentLeaderboard(interaction);
+                    collector.stop();
+                }
+            } catch (error) {
+                console.error('Error handling button interaction:', error);
+                // Try to recover by not stopping the collector
             }
         });
 
@@ -1061,7 +1025,7 @@ export default {
         return embeds;
     },
 
-    // Method to finalize the previous month's leaderboard and announce winners
+    // Method to finalize the previous month's leaderboard - used by cron job, not user facing
     async finalizePreviousMonth(interaction) {
         try {
             // Get current date
@@ -1094,6 +1058,13 @@ export default {
             if (existingLeaderboard) {
                 // If results haven't been announced yet but leaderboard exists
                 if (!existingLeaderboard.resultsAnnounced) {
+                    // When called by cron job (not interactive), announce now
+                    if (!interaction.guild) {
+                        await this.announceResults(null, existingLeaderboard);
+                        return;
+                    }
+                    
+                    // Otherwise ask for confirmation
                     return interaction.editReply({
                         content: `Leaderboard for ${monthKey} is already finalized but hasn't been announced. Would you like to announce the results now?`,
                         components: [
@@ -1110,7 +1081,9 @@ export default {
                         ]
                     });
                 } else {
-                    return interaction.editReply(`Leaderboard for ${monthKey} is already finalized and results have been announced.`);
+                    return interaction.editReply ? 
+                        interaction.editReply(`Leaderboard for ${monthKey} is already finalized and results have been announced.`) : 
+                        console.log(`Leaderboard for ${monthKey} is already finalized and results have been announced.`);
                 }
             }
             
@@ -1123,7 +1096,9 @@ export default {
             });
             
             if (!challenge) {
-                return interaction.editReply(`No challenge found for ${monthKey}.`);
+                return interaction.editReply ? 
+                    interaction.editReply(`No challenge found for ${monthKey}.`) : 
+                    console.log(`No challenge found for ${monthKey}.`);
             }
             
             // Get game info - use stored metadata if available
@@ -1148,7 +1123,10 @@ export default {
                     }
                 } catch (error) {
                     console.error(`Error fetching game info for ${challenge.monthly_challange_gameid}:`, error);
-                    return interaction.editReply('An error occurred while fetching game information. Please try again.');
+                    if (interaction.editReply) {
+                        return interaction.editReply('An error occurred while fetching game information. Please try again.');
+                    }
+                    return;
                 }
             }
             
@@ -1164,7 +1142,9 @@ export default {
             );
             
             if (participants.length === 0) {
-                return interaction.editReply(`No participants found for the ${monthKey} challenge.`);
+                return interaction.editReply ? 
+                    interaction.editReply(`No participants found for the ${monthKey} challenge.`) : 
+                    console.log(`No participants found for the ${monthKey} challenge.`);
             }
             
             // Map user data to the format needed for the historical leaderboard
@@ -1351,6 +1331,13 @@ export default {
             // Save the historical leaderboard
             await historicalLeaderboard.save();
             
+            // If this is called by cron job (not interactive), announce immediately
+            if (!interaction.guild) {
+                console.log(`Leaderboard for ${monthKey} has been finalized. Announcing results automatically.`);
+                await this.announceResults(null, historicalLeaderboard);
+                return;
+            }
+            
             // Notify the user and provide options to announce
             await interaction.editReply({
                 content: `Successfully finalized the leaderboard for ${monthKey}. Would you like to announce the results now?`,
@@ -1384,7 +1371,7 @@ export default {
                     collector.stop();
                 } else if (i.customId === 'cancel_announce') {
                     await interaction.editReply({
-                        content: `Leaderboard for ${monthKey} has been finalized. You can announce the results later using \`/leaderboard finalize:true\`.`,
+                        content: `Leaderboard for ${monthKey} has been finalized. You can announce the results later using \`/leaderboard\` and the automated monthly system.`,
                         components: []
                     });
                     collector.stop();
@@ -1394,7 +1381,7 @@ export default {
             collector.on('end', async (collected, reason) => {
                 if (reason === 'time') {
                     await interaction.editReply({
-                        content: `Leaderboard for ${monthKey} has been finalized. You can announce the results later using \`/leaderboard finalize:true\`.`,
+                        content: `Leaderboard for ${monthKey} has been finalized. Results will be announced automatically at the start of next month.`,
                         components: []
                     });
                 }
@@ -1402,7 +1389,9 @@ export default {
             
         } catch (error) {
             console.error('Error finalizing leaderboard:', error);
-            return interaction.editReply('An error occurred while finalizing the leaderboard.');
+            if (interaction.editReply) {
+                return interaction.editReply('An error occurred while finalizing the leaderboard.');
+            }
         }
     },
     
@@ -1412,15 +1401,35 @@ export default {
             const announcementChannelId = config.discord.announcementChannelId;
             
             if (!announcementChannelId) {
-                return interaction.editReply('Announcement channel ID is not configured. Please check your config.js file.');
+                const errorMsg = 'Announcement channel ID is not configured. Please check your config.js file.';
+                if (interaction) {
+                    return interaction.editReply(errorMsg);
+                }
+                console.error(errorMsg);
+                return;
             }
             
             // Get the guild and channel
-            const guild = interaction.guild;
+            let guild;
+            if (interaction && interaction.guild) {
+                guild = interaction.guild;
+            } else {
+                guild = this.client ? this.client.guilds.cache.first() : null;
+                if (!guild) {
+                    const errorMsg = 'Could not find guild for announcement';
+                    if (interaction) return interaction.editReply(errorMsg);
+                    console.error(errorMsg);
+                    return;
+                }
+            }
+            
             const announcementChannel = await guild.channels.fetch(announcementChannelId);
             
             if (!announcementChannel) {
-                return interaction.editReply(`Announcement channel with ID ${announcementChannelId} not found.`);
+                const errorMsg = `Announcement channel with ID ${announcementChannelId} not found.`;
+                if (interaction) return interaction.editReply(errorMsg);
+                console.error(errorMsg);
+                return;
             }
             
             // Format date for display
@@ -1477,7 +1486,7 @@ export default {
             // Add view leaderboard instructions
             embed.addFields({
                 name: 'View Complete Leaderboard',
-                value: 'Use `/leaderboard history:true` to view the full historical leaderboard and see all participants.'
+                value: 'Use `/leaderboard` and click the "View Historical Leaderboards" button to see all participants.'
             });
             
             embed.setFooter({ text: 'Monthly Challenge • RetroAchievements' });
@@ -1508,11 +1517,16 @@ export default {
             }
             
             // Notify the admin
-            return interaction.editReply(`Successfully announced the results for ${monthName} ${year} in ${announcementChannel}.`);
+            if (interaction) {
+                return interaction.editReply(`Successfully announced the results for ${monthName} ${year} in ${announcementChannel}.`);
+            }
+            console.log(`Successfully announced the results for ${monthName} ${year}`);
             
         } catch (error) {
             console.error('Error announcing results:', error);
-            return interaction.editReply('An error occurred while announcing the results.');
+            if (interaction) {
+                return interaction.editReply('An error occurred while announcing the results.');
+            }
         }
     }
 };
