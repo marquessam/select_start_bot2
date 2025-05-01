@@ -9,7 +9,6 @@ import statsUpdateService from './services/statsUpdateService.js';
 import achievementFeedService from './services/achievementFeedService.js';
 import monthlyTasksService from './services/monthlyTasksService.js';
 import arcadeService from './services/arcadeService.js';
-import { LeaderboardScheduler } from './services/LeaderboardScheduler.js'; // Add LeaderboardScheduler import
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -99,22 +98,6 @@ client.once(Events.ClientReady, async () => {
         monthlyTasksService.setClient(client);
         arcadeService.setClient(client);
 
-        // Initialize the leaderboard scheduler
-        const leaderboardScheduler = new LeaderboardScheduler(client);
-        leaderboardScheduler.initialize();
-        console.log('Leaderboard scheduler initialized');
-
-        // Check if we need to finalize the previous month's leaderboard
-        // This helps in case the bot was offline during the scheduled time
-        const now = new Date();
-        const currentDay = now.getDate();
-        
-        // Only run the check if it's the first few days of the month (1-3)
-        if (currentDay <= 3) {
-            console.log('Checking if previous month\'s leaderboard needs to be finalized...');
-            await leaderboardScheduler.finalizeLeaderboard();
-        }
-
         // Schedule stats updates every 30 minutes
         cron.schedule('*/30 * * * *', () => {
             console.log('Running scheduled stats update...');
@@ -139,14 +122,6 @@ client.once(Events.ClientReady, async () => {
             });
         });
 
-        // Schedule leaderboard finalization on the 1st of each month at 00:15
-        cron.schedule('15 0 1 * *', () => {
-            console.log('Running scheduled leaderboard finalization...');
-            leaderboardScheduler.finalizeLeaderboard().catch(error => {
-                console.error('Error in leaderboard finalization:', error);
-            });
-        });
-
         // Schedule arcade service to run daily at 00:15 (just after midnight)
         // This will check for completed racing challenges and award points
         cron.schedule('15 0 * * *', () => {
@@ -155,6 +130,80 @@ client.once(Events.ClientReady, async () => {
                 console.error('Error in scheduled arcade service:', error);
             });
         });
+
+        // Schedule automated monthly leaderboard finalization
+        // Run at 00:20 on the 1st of each month (after other monthly tasks)
+        cron.schedule('20 0 1 * *', async () => {
+            console.log('Finalizing previous month\'s leaderboard...');
+            try {
+                // Find the leaderboard command
+                const leaderboardCommand = client.commands.get('leaderboard');
+                if (leaderboardCommand) {
+                    // Create a mock interaction for the finalize function
+                    const mockInteraction = {
+                        deferReply: async () => {},
+                        editReply: async (message) => { 
+                            if (typeof message === 'string') {
+                                console.log('Finalization result:', message);
+                            } else {
+                                console.log('Finalization completed successfully');
+                            }
+                        },
+                        fetchReply: async () => ({ 
+                            createMessageComponentCollector: () => ({
+                                on: () => {},
+                                stop: () => {}
+                            })
+                        }),
+                        guild: client.guilds.cache.first(),
+                        member: { permissions: { has: () => true } }, // Mock admin permissions
+                        options: { getBoolean: () => true }  // Mock finalize:true parameter
+                    };
+                    
+                    // Execute the finalization function directly
+                    await leaderboardCommand.finalizePreviousMonth(mockInteraction);
+                }
+            } catch (error) {
+                console.error('Error in leaderboard finalization:', error);
+            }
+        });
+
+        // Check if we need to finalize the previous month's leaderboard on startup
+        // Only run the check if it's the first few days of the month (1-3)
+        const now = new Date();
+        const currentDay = now.getDate();
+        if (currentDay <= 3) {
+            console.log('Checking if previous month\'s leaderboard needs to be finalized...');
+            try {
+                const leaderboardCommand = client.commands.get('leaderboard');
+                if (leaderboardCommand) {
+                    // Create a mock interaction just like above
+                    const mockInteraction = {
+                        deferReply: async () => {},
+                        editReply: async (message) => { 
+                            if (typeof message === 'string') {
+                                console.log('Finalization check result:', message);
+                            } else {
+                                console.log('Finalization check completed');
+                            }
+                        },
+                        fetchReply: async () => ({ 
+                            createMessageComponentCollector: () => ({
+                                on: () => {},
+                                stop: () => {}
+                            })
+                        }),
+                        guild: client.guilds.cache.first(),
+                        member: { permissions: { has: () => true } },
+                        options: { getBoolean: () => true }
+                    };
+                    
+                    await leaderboardCommand.finalizePreviousMonth(mockInteraction);
+                }
+            } catch (error) {
+                console.error('Error in startup leaderboard finalization check:', error);
+            }
+        }
 
         // Schedule voting poll creation (runs at midnight UTC on days that are 8 days before end of month)
         cron.schedule('0 0 22-31 * *', async () => {
