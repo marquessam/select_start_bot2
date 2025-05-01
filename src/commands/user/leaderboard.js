@@ -408,11 +408,46 @@ export default {
                             .setEmoji('📚')
                     );
 
-                // Return response with the history button
-                return interaction.editReply({ 
+                // Send the message with the button
+                const message = await interaction.editReply({ 
                     embeds: [embed],
                     components: [historyButton]
                 });
+                
+                // Create a collector for the button
+                const collector = message.createMessageComponentCollector({
+                    time: 300000 // 5 minutes
+                });
+                
+                // Handle button click
+                collector.on('collect', async (i) => {
+                    if (i.customId === 'view_history') {
+                        await i.deferUpdate();
+                        await this.showHistoricalSelector(interaction);
+                        collector.stop();
+                    }
+                });
+                
+                // Handle collector timeout
+                collector.on('end', async (collected, reason) => {
+                    if (reason === 'time') {
+                        try {
+                            // Disable the button when time expires
+                            const disabledButton = new ActionRowBuilder().addComponents(
+                                ButtonBuilder.from(historyButton.components[0]).setDisabled(true)
+                            );
+                            
+                            await interaction.editReply({
+                                embeds: [embed],
+                                components: [disabledButton]
+                            });
+                        } catch (error) {
+                            console.error('Error disabling button:', error);
+                        }
+                    }
+                });
+                
+                return;
             }
 
             // Create paginated embeds
@@ -681,11 +716,51 @@ export default {
                             .setLabel('Current Leaderboard')
                             .setStyle(ButtonStyle.Primary)
                     );
-                
-            return interaction.editReply({ 
+            
+            // Send the message with the button
+            const message = await interaction.editReply({ 
                 embeds: [embeds[0]], 
                 components: [historyButton]
             });
+            
+            // Create a collector for the button
+            const collector = message.createMessageComponentCollector({
+                time: 300000 // 5 minutes
+            });
+            
+            // Handle button click
+            collector.on('collect', async (i) => {
+                if (i.customId === 'view_history') {
+                    await i.deferUpdate();
+                    await this.showHistoricalSelector(interaction);
+                    collector.stop();
+                } else if (i.customId === 'current_leaderboard') {
+                    await i.deferUpdate();
+                    await this.displayCurrentLeaderboard(interaction);
+                    collector.stop();
+                }
+            });
+            
+            // Handle collector timeout
+            collector.on('end', async (collected, reason) => {
+                if (reason === 'time') {
+                    try {
+                        // Disable the button when time expires
+                        const disabledButton = new ActionRowBuilder().addComponents(
+                            ButtonBuilder.from(historyButton.components[0]).setDisabled(true)
+                        );
+                        
+                        await interaction.editReply({
+                            embeds: [embeds[0]],
+                            components: [disabledButton]
+                        });
+                    } catch (error) {
+                        console.error('Error disabling button:', error);
+                    }
+                }
+            });
+            
+            return;
         }
 
         // Create navigation buttons
