@@ -3,10 +3,9 @@ import { User } from '../models/User.js';
 import { Challenge } from '../models/Challenge.js';
 import { ArcadeBoard } from '../models/ArcadeBoard.js';
 import { HistoricalLeaderboard } from '../models/HistoricalLeaderboard.js';
-import retroAPI from '../services/retroAPI.js';
+import retroAPI from './retroAPI.js';
 import { config } from '../config/config.js';
 import leaderboardCommand from '../commands/user/leaderboard.js';
-import logger from '../utils/logger.js';
 
 // Helper function to get month key from date (YYYY-MM format)
 function getMonthKey(date) {
@@ -37,12 +36,12 @@ export class LeaderboardScheduler {
         // Schedule task to run at 00:15 on the 1st day of each month
         // This gives a buffer after midnight to ensure all systems are ready
         cron.schedule('15 0 1 * *', async () => {
-            logger.info('Running scheduled leaderboard finalization task');
+            console.log('Running scheduled leaderboard finalization task');
             await this.finalizeLeaderboard();
         });
 
         this.initialized = true;
-        logger.info('Leaderboard scheduler initialized');
+        console.log('Leaderboard scheduler initialized');
     }
 
     // Method to finalize the previous month's leaderboard
@@ -66,7 +65,7 @@ export class LeaderboardScheduler {
             const monthKey = getMonthKey(prevMonthStart);
             const monthName = prevMonthStart.toLocaleString('default', { month: 'long' });
             
-            logger.info(`Attempting to finalize leaderboard for ${monthKey}`);
+            console.log(`Attempting to finalize leaderboard for ${monthKey}`);
             
             // Check if already finalized
             const existingLeaderboard = await HistoricalLeaderboard.findOne({ 
@@ -75,11 +74,11 @@ export class LeaderboardScheduler {
             });
             
             if (existingLeaderboard) {
-                logger.info(`Leaderboard for ${monthKey} is already finalized`);
+                console.log(`Leaderboard for ${monthKey} is already finalized`);
                 
                 // If not yet announced, announce it now
                 if (!existingLeaderboard.resultsAnnounced) {
-                    logger.info(`Announcing results for ${monthKey}`);
+                    console.log(`Announcing results for ${monthKey}`);
                     await this.announceResults(existingLeaderboard);
                 }
                 
@@ -95,7 +94,7 @@ export class LeaderboardScheduler {
             });
             
             if (!challenge) {
-                logger.error(`No challenge found for ${monthKey}`);
+                console.error(`No challenge found for ${monthKey}`);
                 return;
             }
             
@@ -120,7 +119,7 @@ export class LeaderboardScheduler {
                         await challenge.save();
                     }
                 } catch (error) {
-                    logger.error(`Error fetching game info for ${challenge.monthly_challange_gameid}:`, error);
+                    console.error(`Error fetching game info for ${challenge.monthly_challange_gameid}:`, error);
                 }
             }
             
@@ -136,7 +135,7 @@ export class LeaderboardScheduler {
             );
             
             if (participants.length === 0) {
-                logger.warn(`No participants found for the ${monthKey} challenge`);
+                console.warn(`No participants found for the ${monthKey} challenge`);
                 return;
             }
             
@@ -224,7 +223,7 @@ export class LeaderboardScheduler {
                         isActive: true
                     };
                 } catch (error) {
-                    logger.error('Error fetching tiebreaker entries:', error);
+                    console.error('Error fetching tiebreaker entries:', error);
                 }
             }
             
@@ -287,7 +286,7 @@ export class LeaderboardScheduler {
                             await challenge.save();
                         }
                     } catch (error) {
-                        logger.error(`Error fetching shadow game info for ${challenge.shadow_challange_gameid}:`, error);
+                        console.error(`Error fetching shadow game info for ${challenge.shadow_challange_gameid}:`, error);
                     }
                 }
                 
@@ -322,13 +321,13 @@ export class LeaderboardScheduler {
             
             // Save the historical leaderboard
             await historicalLeaderboard.save();
-            logger.info(`Successfully finalized leaderboard for ${monthKey}`);
+            console.log(`Successfully finalized leaderboard for ${monthKey}`);
             
             // Announce results
             await this.announceResults(historicalLeaderboard);
             
         } catch (error) {
-            logger.error('Error in automatic leaderboard finalization:', error);
+            console.error('Error in automatic leaderboard finalization:', error);
         }
     }
     
@@ -339,21 +338,21 @@ export class LeaderboardScheduler {
             const announcementChannelId = config.discord.announcementChannelId;
             
             if (!announcementChannelId) {
-                logger.error('Announcement channel ID is not configured in config.js');
+                console.error('Announcement channel ID is not configured in config.js');
                 return;
             }
             
             // Get the guild and channel
             const guild = this.client.guilds.cache.first(); // Assumes bot is in only one guild
             if (!guild) {
-                logger.error('Could not find guild for announcement');
+                console.error('Could not find guild for announcement');
                 return;
             }
             
             const announcementChannel = await guild.channels.fetch(announcementChannelId);
             
             if (!announcementChannel) {
-                logger.error(`Announcement channel with ID ${announcementChannelId} not found`);
+                console.error(`Announcement channel with ID ${announcementChannelId} not found`);
                 return;
             }
             
@@ -436,16 +435,16 @@ export class LeaderboardScheduler {
                     body: JSON.stringify({ target: 'leaderboards' })
                 });
                 
-                logger.info('API notification response:', response.ok ? 'Success' : 'Failed');
+                console.log('API notification response:', response.ok ? 'Success' : 'Failed');
             } catch (apiError) {
-                logger.error('Error notifying API:', apiError);
+                console.error('Error notifying API:', apiError);
                 // Continue execution even if API notification fails
             }
             
-            logger.info(`Successfully announced the results for ${monthName} ${year}`);
+            console.log(`Successfully announced the results for ${monthName} ${year}`);
             
         } catch (error) {
-            logger.error('Error announcing results:', error);
+            console.error('Error announcing results:', error);
         }
     }
 }
