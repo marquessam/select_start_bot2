@@ -2,12 +2,14 @@ import Challenge from './Challenge.js';
 import User from './User.js';
 import ArcadeBoard from './ArcadeBoard.js';
 import Poll from './Poll.js';
+import { HistoricalLeaderboard } from './HistoricalLeaderboard.js';
 
 export {
     Challenge,
     User,
     ArcadeBoard,
-    Poll
+    Poll,
+    HistoricalLeaderboard
 };
 
 // Initialize MongoDB connection
@@ -27,7 +29,8 @@ export const connectDB = async () => {
             Challenge.init(),
             User.init(),
             ArcadeBoard.init(),
-            Poll.init()
+            Poll.init(),
+            HistoricalLeaderboard.init()
         ]);
         
         console.log('Database indexes ensured');
@@ -44,5 +47,6 @@ export default {
     User,
     ArcadeBoard,
     Poll,
+    HistoricalLeaderboard,
     connectDB
 };
