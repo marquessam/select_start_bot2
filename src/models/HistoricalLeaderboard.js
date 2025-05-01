@@ -23,7 +23,7 @@ const historicalLeaderboardSchema = new mongoose.Schema({
     
     // Game information
     gameId: {
-        type: String, // Changed to String to match Challenge model
+        type: String, // String to match Challenge model
         required: true
     },
     
