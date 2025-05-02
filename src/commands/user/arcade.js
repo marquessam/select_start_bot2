@@ -260,8 +260,8 @@ export default {
                 });
             }
             
-            // Sort boards by boardId as numbers, not as strings
-            boards.sort((a, b) => parseInt(a.boardId) - parseInt(b.boardId));
+            // Sort boards alphabetically by game title
+            boards.sort((a, b) => a.gameTitle.localeCompare(b.gameTitle));
             
             const embed = new EmbedBuilder()
                 .setTitle('🎮 Available Arcade Leaderboards')
@@ -319,8 +319,8 @@ export default {
                 });
             }
             
-            // Sort boards by boardId as numbers, not as strings
-            boards.sort((a, b) => parseInt(a.boardId) - parseInt(b.boardId));
+            // Sort boards alphabetically by game title
+            boards.sort((a, b) => a.gameTitle.localeCompare(b.gameTitle));
             
             const embed = new EmbedBuilder()
                 .setTitle('🎮 Select an Arcade Board')
