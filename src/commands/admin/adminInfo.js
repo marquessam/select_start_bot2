@@ -64,7 +64,7 @@ async handleArcadeBoards(interaction) {
         const embed = new EmbedBuilder()
             .setTitle('🎮 RetroAchievements Arcade Boards')
             .setColor('#9B59B6') // Purple color
-            .setDescription('Here\'s a list of all available arcade leaderboards. Click on any game title to view its leaderboard on RetroAchievements.org!')
+            .setDescription('Here\'s a list of all available arcade leaderboards.')
             .setFooter({ text: 'Data provided by RetroAchievements.org' });
         
         // Add explanation of how arcade works
@@ -89,7 +89,7 @@ async handleArcadeBoards(interaction) {
         
         embed.addFields({ 
             name: 'How to Participate', 
-            value: 'Use `/arcade` to view detailed leaderboards and track your progress. Only users ranked 999 or lower in the global leaderboards will appear in our boards.' 
+            value: 'Use `/arcade` to view detailed leaderboards and track your progress.' 
         });
         
         await interaction.editReply({ embeds: [embed] });
@@ -206,45 +206,45 @@ async handleArcadeBoards(interaction) {
         }
     },
 
-    async handleOverview(interaction) {
-        await interaction.deferReply({ ephemeral: false }); // Not ephemeral so it can be seen by everyone
+async handleOverview(interaction) {
+    await interaction.deferReply({ ephemeral: false }); // Not ephemeral so it can be seen by everyone
 
-        try {
-            const embed = new EmbedBuilder()
-                .setTitle('Community Overview')
-                .setColor('#2ECC71')
-                .setDescription('Welcome to the Select Start Gaming Community! We focus on RetroAchievements challenges, competitions, and building a friendly retro gaming community.')
-                .addFields(
-                    {
-                        name: '🎮 Monthly Challenges',
-                        value: 'Each month, we select a game chosen by community vote. Everyone competes to earn achievements in that game. Monthly prizes are awarded to the top 3 players. There are also hidden "shadow games" that add an extra challenge!'
-                    },
-                    {
-                        name: '🏆 Point System',
-                        value: 'You can earn points by participating in monthly challenges, discovering shadow games, racing competitions, and arcade leaderboards. Points accumulate throughout the year for annual prizes.'
-                    },
-                    {
-                        name: '🗳️ Game Nominations',
-                        value: 'Each month, you can nominate up to two games for the next challenge. In the last week of the month, 10 games are randomly selected from all nominations for community voting.'
-                    },
-                    {
-                        name: '🏎️ Racing & Arcade',
-                        value: 'We have monthly racing challenges and year-round arcade leaderboards. Compete for the top positions to earn additional community points! Racing points are awarded monthly for each new track.'
-                    },
-                    {
-                        name: '🏅 Year-End Awards',
-                        value: 'On December 1st, yearly points are totaled and prizes are awarded to top performers across all categories.'
-                    }
-                )
-                .setFooter({ text: 'Select Start Gaming Community' })
-                .setTimestamp();
+    try {
+        const embed = new EmbedBuilder()
+            .setTitle('Community Overview')
+            .setColor('#2ECC71')
+            .setDescription('Welcome to the Select Start Gaming Community! We focus on RetroAchievements challenges, competitions, and building a friendly retro gaming community.')
+            .addFields(
+                {
+                    name: '🎮 Monthly Challenges',
+                    value: 'Each month, we select a game chosen by community vote. Everyone competes to earn achievements in that game. Monthly prizes are awarded to the top 3 players. There are also hidden "shadow games" that add an extra challenge!'
+                },
+                {
+                    name: '🗳️ Game Nominations',
+                    value: 'Each month, you can nominate up to two games for the next challenge. In the last week of the month, 10 games are randomly selected from all nominations for community voting.'
+                },
+                {
+                    name: '🏎️ Racing & Arcade',
+                    value: 'We have monthly racing challenges and year-round arcade leaderboards. Compete for the top positions to earn additional community points! Racing points are awarded monthly for each new track. Arcade boards remain open until December 1st, providing a way to earn points without monthly deadlines.'
+                },
+                {
+                    name: '🏆 Point System',
+                    value: 'You can earn points by participating in monthly challenges, discovering shadow games, racing competitions, and arcade leaderboards. Points accumulate throughout the year for annual prizes.'
+                },
+                {
+                    name: '🏅 Year-End Awards',
+                    value: 'On December 1st, yearly points are totaled and prizes are awarded to top performers across all categories.'
+                }
+            )
+            .setFooter({ text: 'Select Start Gaming Community' })
+            .setTimestamp();
 
-            await interaction.editReply({ embeds: [embed] });
-        } catch (error) {
-            console.error('Error showing overview:', error);
-            await interaction.editReply('An error occurred while creating the overview information.');
-        }
-    },
+        await interaction.editReply({ embeds: [embed] });
+    } catch (error) {
+        console.error('Error showing overview:', error);
+        await interaction.editReply('An error occurred while creating the overview information.');
+    }
+},
 
     async handleCommands(interaction) {
         await interaction.deferReply({ ephemeral: false }); // Not ephemeral so it can be seen by everyone
