@@ -4,7 +4,8 @@ import {
     ActionRowBuilder, 
     ButtonBuilder, 
     ButtonStyle,
-    ComponentType
+    ComponentType,
+    StringSelectMenuBuilder
 } from 'discord.js';
 import { User } from '../../models/User.js';
 import retroAPI from '../../services/retroAPI.js';
@@ -193,6 +194,31 @@ export default {
                 }
             });
 
+            // Handle dropdown menu selections
+            const dropdownCollector = message.createMessageComponentCollector({
+                componentType: ComponentType.StringSelect,
+                time: 600000 // 10 minutes
+            });
+
+            dropdownCollector.on('collect', async (i) => {
+                await i.deferUpdate();
+
+                // Generate back button for sub-menus
+                const backRow = new ActionRowBuilder()
+                    .addComponents(
+                        new ButtonBuilder()
+                            .setCustomId('back_to_menu')
+                            .setLabel('Back to Menu')
+                            .setStyle(ButtonStyle.Secondary)
+                            .setEmoji('↩️')
+                    );
+
+                if (i.customId === 'select_arcade_board' || i.customId === 'select_specific_board') {
+                    const boardId = i.values[0].replace('board_', '');
+                    await this.handleShowSpecificBoard(i, boardId, backRow);
+                }
+            });
+
             // When collector expires
             collector.on('end', async () => {
                 try {
@@ -240,49 +266,38 @@ export default {
             const embed = new EmbedBuilder()
                 .setTitle('🎮 Available Arcade Leaderboards')
                 .setColor('#9B59B6') // Purple color
-                .setDescription('Select a board to view its leaderboard.')
-                .setFooter({ text: 'Select a board button or go back to menu • Data provided by RetroAchievements.org' });
+                .setDescription('Select a board from the dropdown menu to view its leaderboard.')
+                .setFooter({ text: 'Use the dropdown to select a board or go back to menu • Data provided by RetroAchievements.org' });
             
-            // Create a simplified list with just board IDs and titles
+            // Create a list of board titles for the embed
             let fieldValue = '';
             boards.forEach(board => {
-                // Add just the board ID and title
-                fieldValue += `**${board.boardId}**: ${board.gameTitle}\n`;
+                fieldValue += `**${board.gameTitle}**\n`;
             });
             
             embed.addFields({ name: 'Arcade Boards', value: fieldValue });
             embed.addFields({ name: 'Note', value: 'Only users ranked 999 or lower in the global leaderboards will appear in our boards.' });
             
-            // Create buttons for board selection (up to 5 per row, max 3 rows = 15 buttons)
-            const boardRows = [];
-            for (let i = 0; i < Math.min(boards.length, 15); i += 5) {
-                const row = new ActionRowBuilder();
-                for (let j = i; j < Math.min(i + 5, boards.length, 15); j++) {
-                    row.addComponents(
-                        new ButtonBuilder()
-                            .setCustomId(`board_${boards[j].boardId}`)
-                            .setLabel(`Board ${boards[j].boardId}`)
-                            .setStyle(ButtonStyle.Secondary)
-                    );
-                }
-                boardRows.push(row);
-            }
+            // Create dropdown menu for board selection
+            const selectMenu = new StringSelectMenuBuilder()
+                .setCustomId('select_arcade_board')
+                .setPlaceholder('Select a board to view')
+                .addOptions(
+                    boards.map(board => ({
+                        label: board.gameTitle.substring(0, 100), // Ensure label isn't too long
+                        description: `View the leaderboard for ${board.gameTitle}`.substring(0, 100), // Ensure description isn't too long
+                        value: `board_${board.boardId}`
+                    }))
+                );
             
-            // Add the back button as the last row
-            boardRows.push(backRow);
+            const selectRow = new ActionRowBuilder().addComponents(selectMenu);
             
-            // If there are too many boards, add a note
-            if (boards.length > 15) {
-                embed.addFields({
-                    name: 'Display Limit',
-                    value: 'Only showing first 15 boards. To access other boards, use the Selection button and choose a specific board ID.'
-                });
-            }
-            
+            // Send message with dropdown
             await interaction.editReply({ 
                 embeds: [embed],
-                components: boardRows
+                components: [selectRow, backRow]
             });
+            
         } catch (error) {
             console.error('Error listing arcade boards:', error);
             await interaction.editReply({
@@ -310,67 +325,30 @@ export default {
             const embed = new EmbedBuilder()
                 .setTitle('🎮 Select an Arcade Board')
                 .setColor('#9B59B6') // Purple color
-                .setDescription('Select a board from the buttons below.')
+                .setDescription('Select a board from the dropdown menu.')
                 .setFooter({ text: 'Use the back button to return to the menu' });
-            
-            // Create buttons for board selection
-            // For selection, use a more compact approach with multiple rows of boards grouped by ranges
-            const boardRows = [];
-            
-            // Get the max board ID to determine ranges
-            const maxBoardId = Math.max(...boards.map(b => parseInt(b.boardId)));
-            
-            // Group boards into ranges (e.g., Boards 1-5, 6-10, etc.)
-            const rangeSize = 5;
-            for (let rangeStart = 1; rangeStart <= maxBoardId; rangeStart += rangeSize) {
-                const rangeEnd = Math.min(rangeStart + rangeSize - 1, maxBoardId);
-                
-                // Check if there are boards in this range
-                const boardsInRange = boards.filter(b => {
-                    const id = parseInt(b.boardId);
-                    return id >= rangeStart && id <= rangeEnd;
-                });
-                
-                if (boardsInRange.length > 0) {
-                    // Create a new row for this range
-                    const row = new ActionRowBuilder();
-                    
-                    // For each board in this range, add a button
-                    boardsInRange.forEach(board => {
-                        row.addComponents(
-                            new ButtonBuilder()
-                                .setCustomId(`board_${board.boardId}`)
-                                .setLabel(`Board ${board.boardId}`)
-                                .setStyle(ButtonStyle.Secondary)
-                        );
-                    });
-                    
-                    // Add this row to the collection
-                    boardRows.push(row);
-                    
-                    // Only show up to 4 rows (in addition to the back button row)
-                    if (boardRows.length >= 4) {
-                        break;
-                    }
-                }
-            }
-            
-            // Add the back button as the last row
-            boardRows.push(backRow);
             
             embed.addFields({ name: 'Note', value: 'Only users ranked 999 or lower in the global leaderboards will appear in our boards.' });
             
-            if (maxBoardId > 20) {
-                embed.addFields({
-                    name: 'Display Limit',
-                    value: 'Only showing a subset of available boards. Check the "View All Arcade Boards" option to see a complete list.'
-                });
-            }
+            // Create dropdown for board selection
+            const selectMenu = new StringSelectMenuBuilder()
+                .setCustomId('select_specific_board')
+                .setPlaceholder('Select a board to view')
+                .addOptions(
+                    boards.map(board => ({
+                        label: board.gameTitle.substring(0, 100), // Ensure label isn't too long
+                        description: `View the leaderboard for ${board.gameTitle}`.substring(0, 100), // Ensure description isn't too long
+                        value: `board_${board.boardId}`
+                    }))
+                );
+            
+            const selectRow = new ActionRowBuilder().addComponents(selectMenu);
             
             await interaction.editReply({
                 embeds: [embed],
-                components: boardRows
+                components: [selectRow, backRow]
             });
+            
         } catch (error) {
             console.error('Error creating board selection:', error);
             await interaction.editReply({
@@ -638,60 +616,58 @@ export default {
                 value: 'Only users ranked 999 or lower in the global leaderboards will appear in our boards.'
             });
             
-            // Create buttons for month selection (up to 10 most recent racing challenges)
-            const monthRows = [];
-            const recentBoards = boards.slice(0, 10); // Take up to 10 most recent
-            
-            // Split into rows of 2 buttons each
-            for (let i = 0; i < recentBoards.length; i += 2) {
-                const row = new ActionRowBuilder();
-                
-                // First button in the row
-                const board1 = recentBoards[i];
-                const month1 = new Date(board1.startDate).toLocaleString('default', { month: 'long' });
-                const year1 = new Date(board1.startDate).getFullYear();
-                const monthKey1 = `${year1}-${(new Date(board1.startDate).getMonth() + 1).toString().padStart(2, '0')}`;
-                
-                row.addComponents(
-                    new ButtonBuilder()
-                        .setCustomId(`racing_month_${monthKey1}`)
-                        .setLabel(`${month1} ${year1}`)
-                        .setStyle(ButtonStyle.Secondary)
+            // Create dropdown for racing challenge selection
+            const selectMenu = new StringSelectMenuBuilder()
+                .setCustomId('select_racing_challenge')
+                .setPlaceholder('Select a racing challenge')
+                .addOptions(
+                    boards.map(board => {
+                        const startDate = new Date(board.startDate);
+                        const monthName = startDate.toLocaleString('default', { month: 'long' });
+                        const year = startDate.getFullYear();
+                        const monthKey = `${year}-${(startDate.getMonth() + 1).toString().padStart(2, '0')}`;
+                        
+                        // Status emoji for label
+                        let statusEmoji = '';
+                        if (now >= board.startDate && now <= board.endDate) {
+                            statusEmoji = '⏱️ '; // Active
+                        } else if (board.pointsAwarded) {
+                            statusEmoji = '✅ '; // Completed
+                        } else if (now > board.endDate) {
+                            statusEmoji = '⌛ '; // Ended, pending
+                        }
+                        
+                        return {
+                            label: `${statusEmoji}${monthName} ${year}`.substring(0, 100),
+                            description: board.gameTitle.substring(0, 100),
+                            value: `racing_month_${monthKey}`
+                        };
+                    })
                 );
-                
-                // Second button if available
-                if (i + 1 < recentBoards.length) {
-                    const board2 = recentBoards[i + 1];
-                    const month2 = new Date(board2.startDate).toLocaleString('default', { month: 'long' });
-                    const year2 = new Date(board2.startDate).getFullYear();
-                    const monthKey2 = `${year2}-${(new Date(board2.startDate).getMonth() + 1).toString().padStart(2, '0')}`;
-                    
-                    row.addComponents(
-                        new ButtonBuilder()
-                            .setCustomId(`racing_month_${monthKey2}`)
-                            .setLabel(`${month2} ${year2}`)
-                            .setStyle(ButtonStyle.Secondary)
-                    );
-                }
-                
-                monthRows.push(row);
-            }
             
-            // Add the back button as the last row
-            monthRows.push(backRow);
-            
-            // If there are too many boards, add a note
-            if (boards.length > 10) {
-                embed.addFields({
-                    name: 'Display Limit',
-                    value: 'Only showing 10 most recent challenges due to button limits.'
-                });
-            }
+            const selectRow = new ActionRowBuilder().addComponents(selectMenu);
             
             await interaction.editReply({ 
                 embeds: [embed],
-                components: monthRows
+                components: [selectRow, backRow]
             });
+            
+            // Add collector for dropdown menu
+            const message = await interaction.fetchReply();
+            const filter = i => i.customId === 'select_racing_challenge' && i.user.id === interaction.user.id;
+            
+            const collector = message.createMessageComponentCollector({
+                filter,
+                componentType: ComponentType.StringSelect,
+                time: 600000 // 10 minutes
+            });
+            
+            collector.on('collect', async i => {
+                const monthKey = i.values[0].replace('racing_month_', '');
+                await i.deferUpdate();
+                await this.handleShowSpecificRacing(i, monthKey, backRow);
+            });
+            
         } catch (error) {
             console.error('Error listing racing boards:', error);
             await interaction.editReply({
