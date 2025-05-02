@@ -47,49 +47,57 @@ export default {
         }
     },
 
-    async handleArcadeBoards(interaction) {
-        await interaction.deferReply({ ephemeral: false }); // Not ephemeral so it can be seen by everyone
+async handleArcadeBoards(interaction) {
+    await interaction.deferReply({ ephemeral: false }); // Not ephemeral so it can be seen by everyone
 
-        try {
-            // Get all arcade boards
-            const boards = await ArcadeBoard.find({ boardType: 'arcade' });
-            
-            if (boards.length === 0) {
-                return interaction.editReply('No arcade boards are currently configured.');
-            }
-            
-            // Sort boards alphabetically by game title
-            boards.sort((a, b) => a.gameTitle.localeCompare(b.gameTitle));
-            
-            const embed = new EmbedBuilder()
-                .setTitle('🎮 RetroAchievements Arcade Boards')
-                .setColor('#9B59B6') // Purple color
-                .setDescription('Here\'s a list of all available arcade leaderboards. Click on any game title to view its leaderboard on RetroAchievements.org!')
-                .setFooter({ text: 'Data provided by RetroAchievements.org' });
-            
-            // Create a list of board titles with hyperlinks
-            let boardsList = '';
-            boards.forEach(board => {
-                const leaderboardUrl = `https://retroachievements.org/leaderboardinfo.php?i=${board.leaderboardId}`;
-                boardsList += `• [${board.gameTitle}](${leaderboardUrl})\n`;
-            });
-            
-            embed.addFields({ 
-                name: 'Available Boards', 
-                value: boardsList || 'No boards available.' 
-            });
-            
-            embed.addFields({ 
-                name: 'How to Participate', 
-                value: 'Use `/arcade` to view detailed leaderboards and track your progress. Only users ranked 999 or lower in the global leaderboards will appear in our boards.' 
-            });
-            
-            await interaction.editReply({ embeds: [embed] });
-        } catch (error) {
-            console.error('Error listing arcade boards:', error);
-            await interaction.editReply('An error occurred while retrieving arcade boards.');
+    try {
+        // Get all arcade boards
+        const boards = await ArcadeBoard.find({ boardType: 'arcade' });
+        
+        if (boards.length === 0) {
+            return interaction.editReply('No arcade boards are currently configured.');
         }
-    },
+        
+        // Sort boards alphabetically by game title
+        boards.sort((a, b) => a.gameTitle.localeCompare(b.gameTitle));
+        
+        const embed = new EmbedBuilder()
+            .setTitle('🎮 RetroAchievements Arcade Boards')
+            .setColor('#9B59B6') // Purple color
+            .setDescription('Here\'s a list of all available arcade leaderboards. Click on any game title to view its leaderboard on RetroAchievements.org!')
+            .setFooter({ text: 'Data provided by RetroAchievements.org' });
+        
+        // Add explanation of how arcade works
+        embed.addFields({
+            name: 'How Arcade Works',
+            value: 'Each month we add 1-2 arcade boards to our collection. You are only competing against other members of Select Start and must place in the top 999 of the global leaderboard to appear in our rankings.\n\n' +
+                   'Boards remain open until the end of the year and will be locked on December 1st. Those placing 1st, 2nd, and 3rd will receive 3, 2, and 1 points respectively.\n\n' + 
+                   'The arcade is a way for members to collect points without the pressure of a monthly deadline or if you aren\'t interested in the month\'s official challenges.'
+        });
+        
+        // Create a list of board titles with hyperlinks
+        let boardsList = '';
+        boards.forEach(board => {
+            const leaderboardUrl = `https://retroachievements.org/leaderboardinfo.php?i=${board.leaderboardId}`;
+            boardsList += `• [${board.gameTitle}](${leaderboardUrl})\n`;
+        });
+        
+        embed.addFields({ 
+            name: 'Available Boards', 
+            value: boardsList || 'No boards available.' 
+        });
+        
+        embed.addFields({ 
+            name: 'How to Participate', 
+            value: 'Use `/arcade` to view detailed leaderboards and track your progress. Only users ranked 999 or lower in the global leaderboards will appear in our boards.' 
+        });
+        
+        await interaction.editReply({ embeds: [embed] });
+    } catch (error) {
+        console.error('Error listing arcade boards:', error);
+        await interaction.editReply('An error occurred while retrieving arcade boards.');
+    }
+},
 
     async handleChallenges(interaction) {
         await interaction.deferReply({ ephemeral: false }); // Not ephemeral so it can be seen by everyone
