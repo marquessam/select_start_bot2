@@ -64,7 +64,7 @@ async handleArcadeBoards(interaction) {
         const embed = new EmbedBuilder()
             .setTitle('🎮 RetroAchievements Arcade Boards')
             .setColor('#9B59B6') // Purple color
-            .setDescription('Here\'s a list of all available arcade leaderboards.')
+            .setDescription(' ')
             .setFooter({ text: 'Data provided by RetroAchievements.org' });
         
         // Add explanation of how arcade works
