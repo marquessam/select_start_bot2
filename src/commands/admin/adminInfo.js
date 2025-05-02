@@ -21,6 +21,16 @@ export default {
             subcommand
                 .setName('challenges')
                 .setDescription('Display a shareable list of current challenges')
+        )
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('overview')
+                .setDescription('Display a shareable community overview')
+        )
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('commands')
+                .setDescription('Display a shareable list of available commands')
         ),
 
     async execute(interaction) {
@@ -30,6 +40,10 @@ export default {
             await this.handleArcadeBoards(interaction);
         } else if (subcommand === 'challenges') {
             await this.handleChallenges(interaction);
+        } else if (subcommand === 'overview') {
+            await this.handleOverview(interaction);
+        } else if (subcommand === 'commands') {
+            await this.handleCommands(interaction);
         }
     },
 
@@ -181,6 +195,90 @@ export default {
         } catch (error) {
             console.error('Error retrieving challenges:', error);
             await interaction.editReply('An error occurred while retrieving challenge information.');
+        }
+    },
+
+    async handleOverview(interaction) {
+        await interaction.deferReply({ ephemeral: false }); // Not ephemeral so it can be seen by everyone
+
+        try {
+            const embed = new EmbedBuilder()
+                .setTitle('Community Overview')
+                .setColor('#2ECC71')
+                .setDescription('Welcome to the Select Start Gaming Community! We focus on RetroAchievements challenges, competitions, and building a friendly retro gaming community.')
+                .addFields(
+                    {
+                        name: '🎮 Monthly Challenges',
+                        value: 'Each month, we select a game chosen by community vote. Everyone competes to earn achievements in that game. Monthly prizes are awarded to the top 3 players. There are also hidden "shadow games" that add an extra challenge!'
+                    },
+                    {
+                        name: '🏆 Point System',
+                        value: 'You can earn points by participating in monthly challenges, discovering shadow games, racing competitions, and arcade leaderboards. Points accumulate throughout the year for annual prizes.'
+                    },
+                    {
+                        name: '🗳️ Game Nominations',
+                        value: 'Each month, you can nominate up to two games for the next challenge. In the last week of the month, 10 games are randomly selected from all nominations for community voting.'
+                    },
+                    {
+                        name: '🏎️ Racing & Arcade',
+                        value: 'We have monthly racing challenges and year-round arcade leaderboards. Compete for the top positions to earn additional community points! Racing points are awarded monthly for each new track.'
+                    },
+                    {
+                        name: '🏅 Year-End Awards',
+                        value: 'On December 1st, yearly points are totaled and prizes are awarded to top performers across all categories.'
+                    }
+                )
+                .setFooter({ text: 'Select Start Gaming Community' })
+                .setTimestamp();
+
+            await interaction.editReply({ embeds: [embed] });
+        } catch (error) {
+            console.error('Error showing overview:', error);
+            await interaction.editReply('An error occurred while creating the overview information.');
+        }
+    },
+
+    async handleCommands(interaction) {
+        await interaction.deferReply({ ephemeral: false }); // Not ephemeral so it can be seen by everyone
+
+        try {
+            const embed = new EmbedBuilder()
+                .setTitle('Available Commands')
+                .setColor('#E74C3C')
+                .setDescription('Here are the commands you can use in the Select Start community:')
+                .addFields(
+                    {
+                        name: '📋 Community Information',
+                        value: '• `/help` - Display help information with interactive buttons'
+                    },
+                    {
+                        name: '🏆 Challenges & Leaderboards',
+                        value: '• `/challenge` - Show the current monthly, shadow, and racing challenges\n' +
+                               '• `/leaderboard` - Display the current monthly challenge leaderboard\n' +
+                               '• `/yearlyboard` - Display the yearly points leaderboard\n' +
+                               '• `/profile [username]` - Show your or someone else\'s profile and achievements\n' +
+                               '• `/shadowguess` - Try to guess the hidden shadow game'
+                    },
+                    {
+                        name: '🗳️ Nominations & Voting',
+                        value: '• `/nominate` - Nominate a game for the next monthly challenge\n' +
+                               '• `/nominations` - Show all current nominations for the next month'
+                    },
+                    {
+                        name: '🏎️ Arcade & Racing',
+                        value: '• `/arcade` - Interactive menu for arcade boards and racing challenges\n' +
+                               '  - View all arcade leaderboards\n' +
+                               '  - Check current and past racing challenges\n' +
+                               '  - See active tiebreaker competitions'
+                    }
+                )
+                .setFooter({ text: 'Select Start Gaming Community' })
+                .setTimestamp();
+
+            await interaction.editReply({ embeds: [embed] });
+        } catch (error) {
+            console.error('Error showing commands:', error);
+            await interaction.editReply('An error occurred while creating the commands information.');
         }
     }
 };
