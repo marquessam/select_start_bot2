@@ -88,6 +88,7 @@ export default {
             // Last day of the month at 11:59 PM
             const lastDayOfMonth = new Date(nextMonthStart - 1);
             lastDayOfMonth.setHours(23, 59, 59);
+            const lastDayTimestamp = Math.floor(lastDayOfMonth.getTime() / 1000);
             
             // Get current challenge
             const currentChallenge = await Challenge.findOne({
@@ -103,132 +104,79 @@ export default {
                 startDate: { $lte: now },
                 endDate: { $gte: now }
             });
-            
-            // Get arcade boards with year-end expiration
-            const arcadeBoards = await ArcadeBoard.find({ 
-                boardType: 'arcade'
-            });
 
             const embed = new EmbedBuilder()
                 .setColor('#32CD32')  // Lime green color
-                .setTitle('Current RetroAchievements Challenges')
-                .setDescription('Here are all active challenges. Join in and earn points!')
+                .setTitle('RetroAchievements Current Challenges')
+                .setDescription('Here are the current challenges you can participate in this month:')
                 .setFooter({ text: 'Use /challenge for more detailed information' });
 
-            // Build a table-like structure with formatted rows
-            let tableContent = "```\n";
-            tableContent += "Game                    | Challenge Type    | Points Possible     | End Date\n";
-            tableContent += "------------------------|-------------------|---------------------|----------\n";
-            
-            // Add monthly challenge to table
-            if (currentChallenge && currentChallenge.monthly_challange_gameid) {
-                const gameInfo = await retroAPI.getGameInfo(currentChallenge.monthly_challange_gameid);
-                const month = now.toLocaleString('default', { month: 'long' });
-                const lastDay = lastDayOfMonth.getDate();
-                
-                // Format with appropriate spacing for table
-                const gameName = gameInfo.title.substring(0, 23).padEnd(24);
-                const type = "Monthly Challenge".padEnd(19);
-                const points = "1 - participate\n3 - beaten\n3 - mastery".padEnd(21);
-                const endDate = `${month} ${lastDay}`.padEnd(10);
-                
-                tableContent += `${gameName}| ${type}| ${points}| ${endDate}\n`;
-            }
-            
-            // Add shadow challenge to table if revealed
-            if (currentChallenge && currentChallenge.shadow_challange_gameid && 
-                (currentChallenge.shadow_challange_revealed || isPastChallenge(currentChallenge.date))) {
-                
-                const gameInfo = await retroAPI.getGameInfo(currentChallenge.shadow_challange_gameid);
-                const month = now.toLocaleString('default', { month: 'long' });
-                
-                const gameName = gameInfo.title.substring(0, 23).padEnd(24);
-                const type = `${month} Shadow Game`.padEnd(19);
-                const points = "1 - participate\n3 - beaten".padEnd(21);
-                const endDate = `${month} ${lastDayOfMonth.getDate()}`.padEnd(10);
-                
-                tableContent += `${gameName}| ${type}| ${points}| ${endDate}\n`;
-            }
-            
-            // Add racing challenge to table
-            if (activeRacing) {
-                const trackDisplay = activeRacing.trackName ? ` - ${activeRacing.trackName}` : '';
-                const gameDisplay = `${activeRacing.gameTitle}${trackDisplay}`;
-                
-                const endDate = new Date(activeRacing.endDate);
-                const month = endDate.toLocaleString('default', { month: 'long' });
-                const day = endDate.getDate();
-                
-                const gameName = gameDisplay.substring(0, 23).padEnd(24);
-                const type = "Racing".padEnd(19);
-                const points = "3 - 1st place\n2 - 2nd place\n1 - 3rd place".padEnd(21);
-                const endDateStr = `${month} ${day}`.padEnd(10);
-                
-                tableContent += `${gameName}| ${type}| ${points}| ${endDateStr}\n`;
-            }
-            
-            // Add arcade boards (limit to a few to keep embed manageable)
-            if (arcadeBoards && arcadeBoards.length > 0) {
-                // Sort alphabetically and take top boards
-                const sortedBoards = arcadeBoards.sort((a, b) => a.gameTitle.localeCompare(b.gameTitle)).slice(0, 3);
-                
-                for (const board of sortedBoards) {
-                    const gameName = board.gameTitle.substring(0, 23).padEnd(24);
-                    const type = "Arcade".padEnd(19);
-                    const points = "Leaderboard".padEnd(21);
-                    const endDate = "Year End".padEnd(10);
-                    
-                    tableContent += `${gameName}| ${type}| ${points}| ${endDate}\n`;
-                }
-                
-                if (arcadeBoards.length > 3) {
-                    tableContent += "... and more arcade boards. Use /admininfo arcade to see all.\n";
-                }
-            }
-            
-            tableContent += "```";
-            
-            embed.addFields({ name: 'Challenge Overview', value: tableContent });
-            
-            // Add links section for clickable game titles
-            let linksSection = "";
-            
+            // Monthly Challenge
             if (currentChallenge && currentChallenge.monthly_challange_gameid) {
                 const gameInfo = await retroAPI.getGameInfo(currentChallenge.monthly_challange_gameid);
                 const gameUrl = `https://retroachievements.org/game/${currentChallenge.monthly_challange_gameid}`;
-                linksSection += `• Monthly: [${gameInfo.title}](${gameUrl})\n`;
+                
+                let monthlyText = `**Game:** [${gameInfo.title}](${gameUrl})\n`;
+                monthlyText += `**Ends:** <t:${lastDayTimestamp}:F>\n\n`;
+                monthlyText += `**Points Available:**\n`;
+                monthlyText += `• Participation: 1 point\n`;
+                monthlyText += `• Beaten: 3 points\n`;
+                monthlyText += `• Mastery: 3 points\n`;
+                
+                embed.addFields({ name: '🏆 Monthly Challenge', value: monthlyText });
+                
+                if (gameInfo.imageIcon) {
+                    embed.setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`);
+                }
+            } else {
+                embed.addFields({ name: '🏆 Monthly Challenge', value: 'No active challenge found for the current month.' });
             }
-            
+
+            // Shadow Challenge
             if (currentChallenge && currentChallenge.shadow_challange_gameid && 
                 (currentChallenge.shadow_challange_revealed || isPastChallenge(currentChallenge.date))) {
-                const gameInfo = await retroAPI.getGameInfo(currentChallenge.shadow_challange_gameid);
-                const gameUrl = `https://retroachievements.org/game/${currentChallenge.shadow_challange_gameid}`;
-                linksSection += `• Shadow: [${gameInfo.title}](${gameUrl})\n`;
+                const shadowGameInfo = await retroAPI.getGameInfo(currentChallenge.shadow_challange_gameid);
+                const shadowUrl = `https://retroachievements.org/game/${currentChallenge.shadow_challange_gameid}`;
+                
+                let shadowText = `**Game:** [${shadowGameInfo.title}](${shadowUrl})\n`;
+                shadowText += `**Ends:** <t:${lastDayTimestamp}:F>\n\n`;
+                shadowText += `**Points Available:**\n`;
+                shadowText += `• Participation: 1 point\n`;
+                shadowText += `• Beaten: 3 points\n`;
+                
+                embed.addFields({ name: '👥 Shadow Challenge', value: shadowText });
             } else if (currentChallenge && currentChallenge.shadow_challange_gameid) {
-                linksSection += `• Shadow: *Hidden (use /shadowguess to unlock)*\n`;
+                embed.addFields({ 
+                    name: '👥 Shadow Challenge', 
+                    value: 'A shadow challenge exists but has not yet been revealed. Try `/shadowguess` to unlock it!' 
+                });
+            } else {
+                embed.addFields({ name: '👥 Shadow Challenge', value: 'No shadow challenge is set for the current month.' });
             }
-            
+
+            // Racing Challenge
             if (activeRacing) {
+                const trackDisplay = activeRacing.trackName ? ` - ${activeRacing.trackName}` : '';
+                const gameDisplay = `${activeRacing.gameTitle}${trackDisplay}`;
                 const leaderboardUrl = `https://retroachievements.org/leaderboardinfo.php?i=${activeRacing.leaderboardId}`;
-                linksSection += `• Racing: [${activeRacing.gameTitle}](${leaderboardUrl})\n`;
-            }
-            
-            if (arcadeBoards && arcadeBoards.length > 0) {
-                // Add the same 3 boards we showed in the table
-                const sortedBoards = arcadeBoards.sort((a, b) => a.gameTitle.localeCompare(b.gameTitle)).slice(0, 3);
                 
-                for (const board of sortedBoards) {
-                    const leaderboardUrl = `https://retroachievements.org/leaderboardinfo.php?i=${board.leaderboardId}`;
-                    linksSection += `• Arcade: [${board.gameTitle}](${leaderboardUrl})\n`;
-                }
+                const endTimestamp = Math.floor(activeRacing.endDate.getTime() / 1000);
                 
-                if (arcadeBoards.length > 3) {
-                    linksSection += `• *+ ${arcadeBoards.length - 3} more arcade boards*\n`;
-                }
+                let racingText = `**Game:** [${gameDisplay}](${leaderboardUrl})\n`;
+                racingText += `**Ends:** <t:${endTimestamp}:F>\n\n`;
+                racingText += `**Points Available:**\n`;
+                racingText += `• 1st Place: 3 points\n`;
+                racingText += `• 2nd Place: 2 points\n`;
+                racingText += `• 3rd Place: 1 point\n`;
+                
+                embed.addFields({ name: '🏎️ Racing Challenge', value: racingText });
+            } else {
+                embed.addFields({ 
+                    name: '🏎️ Racing Challenge', 
+                    value: 'No racing challenge is currently active. Check back soon!' 
+                });
             }
-            
-            embed.addFields({ name: 'Game Links', value: linksSection || "No active challenges found." });
-            
+
             await interaction.editReply({ embeds: [embed] });
         } catch (error) {
             console.error('Error retrieving challenges:', error);
