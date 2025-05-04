@@ -102,12 +102,7 @@ export default {
                         .setCustomId('arcade_boards_list')
                         .setLabel('View All Arcade Boards')
                         .setStyle(ButtonStyle.Secondary) // Gray with slight purple tint
-                        .setEmoji('🎯'),
-                    new ButtonBuilder()
-                        .setCustomId('arcade_board_select')
-                        .setLabel('Select Specific Board')
-                        .setStyle(ButtonStyle.Secondary)
-                        .setEmoji('🎮')
+                        .setEmoji('🎯')
                 );
 
             const row2 = new ActionRowBuilder()
@@ -167,9 +162,6 @@ export default {
                 switch (i.customId) {
                     case 'arcade_boards_list':
                         await this.handleListArcadeBoards(i, backRow);
-                        break;
-                    case 'arcade_board_select':
-                        await this.handleBoardSelection(i, backRow);
                         break;
                     case 'racing_current':
                         await this.handleCurrentRacing(i, backRow);
@@ -255,69 +247,75 @@ export default {
         }
     },
 
-async handleListArcadeBoards(interaction, backRow) {
-    try {
-        // Get all arcade boards
-        const boards = await ArcadeBoard.find({ boardType: 'arcade' });
-        
-        if (boards.length === 0) {
-            return interaction.editReply({
-                content: 'No arcade boards are currently configured.',
+    async handleListArcadeBoards(interaction, backRow) {
+        try {
+            // Get all arcade boards
+            const boards = await ArcadeBoard.find({ boardType: 'arcade' });
+            
+            if (boards.length === 0) {
+                return interaction.editReply({
+                    content: 'No arcade boards are currently configured.',
+                    components: [backRow]
+                });
+            }
+            
+            // Sort boards alphabetically by game title
+            boards.sort((a, b) => a.gameTitle.localeCompare(b.gameTitle));
+            
+            const embed = new EmbedBuilder()
+                .setTitle('🎮 Available Arcade Leaderboards')
+                .setColor('#9B59B6') // Purple color
+                .setDescription('Here\'s a list of all available arcade leaderboards. Click on any game title to view its leaderboard on RetroAchievements.org, or use the dropdown menu below to view our community leaderboard!')
+                .setFooter({ text: 'Data provided by RetroAchievements.org' });
+            
+            // Create a list of board titles with hyperlinks
+            let boardsList = '';
+            boards.forEach(board => {
+                const leaderboardUrl = `https://retroachievements.org/leaderboardinfo.php?i=${board.leaderboardId}`;
+                boardsList += `• [${board.gameTitle}](${leaderboardUrl})\n`;
+            });
+            
+            embed.addFields({ 
+                name: 'Available Boards', 
+                value: boardsList || 'No boards available.' 
+            });
+            
+            embed.addFields({ 
+                name: 'Note', 
+                value: 'Only users ranked 999 or lower in the global leaderboards will appear in our boards. Use the dropdown menu below to see the community leaderboard for a specific game.' 
+            });
+            
+            // Create dropdown for board selection
+            const selectMenu = new StringSelectMenuBuilder()
+                .setCustomId('select_specific_board')
+                .setPlaceholder('Select a community leaderboard to view')
+                .addOptions(
+                    boards.map(board => ({
+                        label: board.gameTitle.substring(0, 100), // Ensure label isn't too long
+                        description: `View the leaderboard for ${board.gameTitle}`.substring(0, 100), // Ensure description isn't too long
+                        value: `board_${board.boardId}`
+                    }))
+                );
+            
+            // Create rows for components
+            const selectRow = new ActionRowBuilder().addComponents(selectMenu);
+            const buttonRow = new ActionRowBuilder().addComponents(backRow.components[0]);
+            
+            // Send message with links and dropdown menu
+            await interaction.editReply({ 
+                embeds: [embed],
+                components: [selectRow, buttonRow]
+            });
+            
+        } catch (error) {
+            console.error('Error listing arcade boards:', error);
+            await interaction.editReply({
+                content: 'An error occurred while retrieving arcade boards.',
                 components: [backRow]
             });
         }
-        
-        // Sort boards alphabetically by game title
-        boards.sort((a, b) => a.gameTitle.localeCompare(b.gameTitle));
-        
-        const embed = new EmbedBuilder()
-            .setTitle('🎮 Available Arcade Leaderboards')
-            .setColor('#9B59B6') // Purple color
-            .setDescription('Here\'s a list of all available arcade leaderboards. Click on any game title to view its leaderboard on RetroAchievements.org!')
-            .setFooter({ text: 'Data provided by RetroAchievements.org' });
-        
-        // Create a list of board titles with hyperlinks
-        let boardsList = '';
-        boards.forEach(board => {
-            const leaderboardUrl = `https://retroachievements.org/leaderboardinfo.php?i=${board.leaderboardId}`;
-            boardsList += `• [${board.gameTitle}](${leaderboardUrl})\n`;
-        });
-        
-        embed.addFields({ 
-            name: 'Available Boards', 
-            value: boardsList || 'No boards available.' 
-        });
-        
-        embed.addFields({ 
-            name: 'Note', 
-            value: 'Only users ranked 999 or lower in the global leaderboards will appear in our boards. Use the buttons below to see the community leaderboard for a specific game.' 
-        });
-        
-        // Create buttons for navigation
-        const actionRow = new ActionRowBuilder()
-            .addComponents(
-                new ButtonBuilder()
-                    .setCustomId('arcade_board_select')
-                    .setLabel('Select Community Leaderboard')
-                    .setStyle(ButtonStyle.Secondary)
-                    .setEmoji('🎮'),
-                backRow.components[0] // Add the back button
-            );
-        
-        // Send message with links and a button to view community leaderboards
-        await interaction.editReply({ 
-            embeds: [embed],
-            components: [actionRow]
-        });
-        
-    } catch (error) {
-        console.error('Error listing arcade boards:', error);
-        await interaction.editReply({
-            content: 'An error occurred while retrieving arcade boards.',
-            components: [backRow]
-        });
-    }
-},
+    },
+    
     async handleBoardSelection(interaction, backRow) {
         try {
             // Get all arcade boards for the selection menu
@@ -970,7 +968,7 @@ async handleListArcadeBoards(interaction, backRow) {
                 };
             });
             
-            // Filter entries to only show registered users (same as other board types)
+            // Filter entries to only show registered users
             const filteredEntries = leaderboardEntries.filter(entry => {
                 if (!entry.User) return false;
                 const username = entry.User.toLowerCase().trim();
