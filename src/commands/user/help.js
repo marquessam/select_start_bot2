@@ -237,7 +237,7 @@ export default {
                 },
                 {
                     name: '🗳️ Game Nominations',
-                    value: 'Each month, you can nominate up to two games for the next challenge. In the last week of the month, 10 games are randomly selected from all nominations for community voting.'
+                    value: 'Each month, you can nominate up to two games for the next challenge. In the last week of the month, 10 games are randomly selected from all nominations for community voting. A final community-wide vote is then held to determine next month\'s game.'
                 },
                 {
                     name: '🏎️ Racing & Arcade',
@@ -273,7 +273,8 @@ export default {
                 {
                     name: '🗳️ Nominations & Voting',
                     value: '• `/nominate` - Nominate a game for the next monthly challenge\n' +
-                           '• `/nominations` - Show all current nominations for the next month'
+                           '• `/nominations` - Show all current nominations for the next month\n' +
+                           '• `/vote` - Cast your vote for the next monthly challenge (when voting is active)'
                 },
                 {
                     name: '🏎️ Arcade & Racing',
@@ -327,10 +328,10 @@ export default {
                     {
                         name: '🎮 Monthly Challenges',
                         value: 'Each month, we select a game based on community votes. Everyone competes to earn achievements in that game throughout the month.\n\n' +
-                               '**Points Available:**\n' +
+                               '**Points Available (Cumulative):**\n' +
                                '• Participation: 1 point (earn any achievement)\n' +
-                               '• Beaten: 4 points (complete' + (progressionInfo ? ` ${progressionInfo}${winInfo}` : ' all progression achievements') + ')\n' +
-                               '• Mastery: 7 points (100% complete all achievements)\n\n' +
+                               '• Beaten: 4 points total (1 for participation + 3 for completing' + (progressionInfo ? ` ${progressionInfo}${winInfo}` : ' all progression achievements') + ')\n' +
+                               '• Mastery: 7 points total (1 for participation + 3 for beaten + 3 for 100% completing all achievements)\n\n' +
                                '**Monthly Prizes:**\n' +
                                '• Top 3 players receive special recognition and community points each month\n\n' +
                                'Use `/challenge` to see the current challenge and `/leaderboard` to see the standings.'
@@ -363,10 +364,10 @@ export default {
                     {
                         name: '🎮 Monthly Challenges',
                         value: 'Each month, we select a game based on community votes. Everyone competes to earn achievements in that game throughout the month.\n\n' +
-                               '**Points Available:**\n' +
+                               '**Points Available (Cumulative):**\n' +
                                '• Participation: 1 point (earn any achievement)\n' +
-                               '• Beaten: 4 points (complete all progression achievements)\n' +
-                               '• Mastery: 7 points (100% complete all achievements)\n\n' +
+                               '• Beaten: 4 points total (1 for participation + 3 for completing all progression achievements)\n' +
+                               '• Mastery: 7 points total (1 for participation + 3 for beaten + 3 for 100% completing all achievements)\n\n' +
                                '**Monthly Prizes:**\n' +
                                '• Top 3 players receive special recognition and community points each month\n\n' +
                                'Use `/challenge` to see the current challenge and `/leaderboard` to see the standings.'
@@ -422,12 +423,12 @@ export default {
                            '5. Past month shadow games are automatically revealed'
                 },
                 {
-                    name: '👥 Shadow Game Points',
+                    name: '👥 Shadow Game Points (Cumulative)',
                     value: '**Points Available:**\n' +
                            '• Participation: 1 point (earn any achievement)\n' +
-                           '• Beaten: 4 points (complete all progression requirements)\n\n' +
+                           '• Beaten: 4 points total (1 for participation + 3 for completing all progression requirements)\n\n' +
                            'Shadow games add an element of mystery to each month\'s challenges! Note that shadow games ' +
-                           'are ineligible for mastery awards - the maximum is "beaten" status.'
+                           'are ineligible for mastery awards - the maximum is "beaten" status (4 points total).'
                 },
                 {
                     name: '🔍 Guessing the Shadow Game',
@@ -450,9 +451,9 @@ export default {
                 embed.addFields({
                     name: 'Current Challenge',
                     value: `**Game:** ${shadowGameInfo.title} (${shadowGameInfo.consoleName})\n\n` +
-                           '**Available Points:**\n' +
+                           '**Available Points (Cumulative):**\n' +
                            `• **Participation:** 1 point\n` +
-                           `• **Beaten:** 4 points (requires all ${progressionCount} progression achievements` +
+                           `• **Beaten:** 4 points total (1 for participation + 3 for completing all ${progressionCount} progression achievements` +
                            (winCount > 0 ? ` and at least one win achievement` : '') + `)\n\n` +
                            'This challenge can be completed alongside the monthly challenge.'
                 });
@@ -486,12 +487,12 @@ export default {
                            '5. Past month shadow games are automatically revealed'
                 },
                 {
-                    name: '👥 Shadow Game Points',
+                    name: '👥 Shadow Game Points (Cumulative)',
                     value: '**Points Available:**\n' +
                            '• Participation: 1 point (earn any achievement)\n' +
-                           '• Beaten: 4 points (complete all progression requirements)\n\n' +
+                           '• Beaten: 4 points total (1 for participation + 3 for completing all progression requirements)\n\n' +
                            'Shadow games add an element of mystery to each month\'s challenges! Note that shadow games ' +
-                           'are ineligible for mastery awards - the maximum is "beaten" status.'
+                           'are ineligible for mastery awards - the maximum is "beaten" status (4 points total).'
                 },
                 {
                     name: '🔍 Guessing the Shadow Game',
@@ -556,17 +557,17 @@ export default {
             .setDescription('Points are awarded across different activities and tracked throughout the year:')
             .addFields(
                 {
-                    name: '🎮 Monthly Challenge Points',
+                    name: '🎮 Monthly Challenge Points (Cumulative)',
                     value: '• Participation: 1 point (earn any achievement)\n' +
-                           '• Beaten: 4 points (complete all progression requirements)\n' +
-                           '• Mastery: 7 points (100% complete all achievements)\n\n' +
+                           '• Beaten: 4 points total (1 for participation + 3 for completing all progression requirements)\n' +
+                           '• Mastery: 7 points total (1 for participation + 3 for beaten + 3 for 100% completing all achievements)\n\n' +
                            '**Monthly Prizes:**\n' +
                            '• Top 3 players each month receive special recognition and prizes'
                 },
                 {
-                    name: '👥 Shadow Challenge Points',
+                    name: '👥 Shadow Challenge Points (Cumulative)',
                     value: '• Participation: 1 point (earn any achievement)\n' +
-                           '• Beaten: 4 points (complete all progression requirements)\n\n' +
+                           '• Beaten: 4 points total (1 for participation + 3 for completing all progression requirements)\n\n' +
                            'Note: Shadow games are capped at "Beaten" status (4 points maximum)'
                 },
                 {
