@@ -67,14 +67,14 @@ export default {
                 const progressionCount = currentChallenge.monthly_challange_progression_achievements.length;
                 const winCount = currentChallenge.monthly_challange_win_achievements.length;
                 
-                // Build challenge text
+                // Build challenge text with clarified point structure
                 let challengeText = 
                     `**GAME:** "${gameInfo.title}"\n` +
                     `**DATES:** ${startDate} to <t:${lastDayTimestamp}:F>\n\n` +
-                    `**POINTS AVAILABLE:**\n` +
+                    `**POINTS AVAILABLE (CUMULATIVE):**\n` +
                     `- Participation: 1 point\n` +
-                    `- Beaten: 3 points\n` +
-                    `- Mastery: 3 points\n\n` +
+                    `- Beaten: 4 points total (1 for participation + 3 for completion)\n` +
+                    `- Mastery: 7 points total (1 for participation + 3 for beaten + 3 for mastery)\n\n` +
                     `**RULES:**\n` +
                     `- To earn "beaten" status, all ${progressionCount} progression achievements must be completed` +
                     (winCount > 0 ? ` and at least one of the ${winCount} win achievements must be earned` : '') + `\n` +
@@ -110,10 +110,11 @@ export default {
                     
                     let shadowText = 
                         `**GAME:** ${shadowGameInfo.title}\n\n` +
-                        `**POINTS AVAILABLE:**\n` +
+                        `**POINTS AVAILABLE (CUMULATIVE):**\n` +
                         `- Participation: 1 point\n` +
-                        `- Beaten: 3 points (requires all ${progressionCount} progression achievements` +
-                        (winCount > 0 ? ` and at least one win achievement` : '') + `)\n\n` +
+                        `- Beaten: 4 points total (1 for participation + 3 for completion)\n\n` +
+                        `This challenge requires all ${progressionCount} progression achievements` +
+                        (winCount > 0 ? ` and at least one win achievement` : '') + ` to be completed.\n\n` +
                         `This challenge runs parallel to the monthly challenge.\n` +
                         `*Note: Shadow games are ineligible for mastery awards.*`;
                     
