@@ -12,6 +12,12 @@ const suggestionSchema = new mongoose.Schema({
             return this.type === 'arcade' || this.type === 'racing';
         }
     },
+    leaderboardId: {
+        type: String,
+        required: function() {
+            return this.type === 'arcade' || this.type === 'racing';
+        }
+    },
     gameTitle: {
         type: String,
         required: function() {
