@@ -139,60 +139,94 @@ export default {
             collector.on('collect', async i => {
                 // Only respond if the interaction is from the original user
                 if (i.user.id === interaction.user.id) {
+                    // Store selection value before attempting to process
                     const selectedValue = i.values[0];
 
                     try {
-                        // Check if the interaction has already been acknowledged
-                        if (!i.deferred && !i.replied) {
-                            await i.deferUpdate();
-                        }
-                        
-                        // Handle the selected option
-                        switch (selectedValue) {
-                            case 'view_pending':
-                                await this.viewSuggestions(i, { status: 'pending' }, 'Pending Suggestions');
-                                break;
-                            case 'view_all':
-                                await this.viewSuggestions(i, {}, 'All Suggestions');
-                                break;
-                            case 'view_arcade':
-                                await this.viewSuggestions(i, { type: 'arcade' }, 'Arcade Board Suggestions');
-                                break;
-                            case 'view_racing':
-                                await this.viewSuggestions(i, { type: 'racing' }, 'Racing Challenge Suggestions');
-                                break;
-                            case 'view_bot':
-                                await this.viewSuggestions(i, { type: 'bot' }, 'Bot Improvement Suggestions');
-                                break;
-                            case 'view_other':
-                                await this.viewSuggestions(i, { type: 'other' }, 'Other Suggestions');
-                                break;
+                        // Check if interaction is still valid before proceeding
+                        if (i.isSelectMenu()) {
+                            try {
+                                // Try to acknowledge the interaction first
+                                if (!i.deferred && !i.replied) {
+                                    await i.deferUpdate().catch(e => {
+                                        console.error('Error deferring update (non-critical):', e.message);
+                                        // If we can't defer, the interaction may be expired, but we'll continue with the flow
+                                    });
+                                }
+                                
+                                // Handle the selected option using the original interaction instead of 'i'
+                                // This is more reliable as the original interaction is less likely to expire
+                                switch (selectedValue) {
+                                    case 'view_pending':
+                                        await this.viewSuggestions(interaction, { status: 'pending' }, 'Pending Suggestions');
+                                        break;
+                                    case 'view_all':
+                                        await this.viewSuggestions(interaction, {}, 'All Suggestions');
+                                        break;
+                                    case 'view_arcade':
+                                        await this.viewSuggestions(interaction, { type: 'arcade' }, 'Arcade Board Suggestions');
+                                        break;
+                                    case 'view_racing':
+                                        await this.viewSuggestions(interaction, { type: 'racing' }, 'Racing Challenge Suggestions');
+                                        break;
+                                    case 'view_bot':
+                                        await this.viewSuggestions(interaction, { type: 'bot' }, 'Bot Improvement Suggestions');
+                                        break;
+                                    case 'view_other':
+                                        await this.viewSuggestions(interaction, { type: 'other' }, 'Other Suggestions');
+                                        break;
+                                }
+                            } catch (innerError) {
+                                // If we get here, the interaction itself may be invalid
+                                console.error('Error in menu select action:', innerError);
+                                
+                                // Try to use the original interaction as a fallback
+                                switch (selectedValue) {
+                                    case 'view_pending':
+                                        await this.viewSuggestions(interaction, { status: 'pending' }, 'Pending Suggestions');
+                                        break;
+                                    case 'view_all':
+                                        await this.viewSuggestions(interaction, {}, 'All Suggestions');
+                                        break;
+                                    case 'view_arcade':
+                                        await this.viewSuggestions(interaction, { type: 'arcade' }, 'Arcade Board Suggestions');
+                                        break;
+                                    case 'view_racing':
+                                        await this.viewSuggestions(interaction, { type: 'racing' }, 'Racing Challenge Suggestions');
+                                        break;
+                                    case 'view_bot':
+                                        await this.viewSuggestions(interaction, { type: 'bot' }, 'Bot Improvement Suggestions');
+                                        break;
+                                    case 'view_other':
+                                        await this.viewSuggestions(interaction, { type: 'other' }, 'Other Suggestions');
+                                        break;
+                                }
+                            }
                         }
                     } catch (error) {
                         console.error('Error handling menu selection:', error);
-                        // Only try to respond if we haven't already
-                        if (!i.replied) {
-                            try {
-                                await i.followUp({ 
-                                    content: 'An error occurred while processing your selection. Please try again.', 
-                                    ephemeral: true 
-                                });
-                            } catch (followUpError) {
-                                console.error('Error sending follow-up message:', followUpError);
-                            }
+                        // Don't try to respond to the collector interaction as it may be invalid
+                        // Instead, try to update the original message
+                        try {
+                            await interaction.editReply({
+                                content: 'An error occurred while processing your selection. Please try the command again.',
+                                components: []
+                            }).catch(e => console.error('Could not update original message:', e.message));
+                        } catch (finalError) {
+                            console.error('Failed to recover from error:', finalError);
                         }
                     }
                 } else {
                     try {
-                        // Only reply if we haven't already
-                        if (!i.replied) {
+                        // For unauthorized users, handle more safely
+                        if (!i.replied && !i.deferred) {
                             await i.reply({ 
                                 content: 'This menu is not for you. Please use the `/suggestadmin` command to start your own session.',
                                 ephemeral: true 
-                            });
+                            }).catch(e => console.error('Could not reply to unauthorized user:', e.message));
                         }
                     } catch (error) {
-                        console.error('Error replying to unauthorized user:', error);
+                        console.error('Error handling unauthorized user:', error);
                     }
                 }
             });
@@ -325,43 +359,63 @@ export default {
             
             collector.on('collect', async i => {
                 if (i.user.id === interaction.user.id) {
+                    // Store the interaction data before attempting to process
+                    const suggestionId = i.customId === 'select_suggestion' ? i.values[0] : null;
+                    const buttonAction = i.customId;
+                    
                     try {
-                        // Check if interaction has already been acknowledged
-                        if (!i.deferred && !i.replied) {
-                            await i.deferUpdate();
-                        }
-                        
-                        if (i.customId === 'select_suggestion') {
-                            const suggestionId = i.values[0];
-                            await this.viewSuggestionDetails(i, suggestionId, filter, title);
-                        } else if (i.customId === 'back_to_menu') {
-                            await this.showMainMenu(i);
+                        // Check if interaction is still valid before proceeding
+                        if (i.isSelectMenu() || i.isButton()) {
+                            try {
+                                // Try to acknowledge the interaction first
+                                if (!i.deferred && !i.replied) {
+                                    await i.deferUpdate().catch(e => {
+                                        console.error('Error deferring update (non-critical):', e.message);
+                                        // If we can't defer, the interaction may be expired, but we'll continue with the flow
+                                    });
+                                }
+                                
+                                // Now handle the interaction based on stored data
+                                if (buttonAction === 'select_suggestion' && suggestionId) {
+                                    await this.viewSuggestionDetails(interaction, suggestionId, filter, title);
+                                } else if (buttonAction === 'back_to_menu') {
+                                    await this.showMainMenu(interaction);
+                                }
+                            } catch (innerError) {
+                                // If we get here, the interaction itself may be invalid
+                                console.error('Error processing interaction action:', innerError);
+                                // Try to use the original interaction as a fallback
+                                if (buttonAction === 'select_suggestion' && suggestionId) {
+                                    await this.viewSuggestionDetails(interaction, suggestionId, filter, title);
+                                } else if (buttonAction === 'back_to_menu') {
+                                    await this.showMainMenu(interaction);
+                                }
+                            }
                         }
                     } catch (error) {
                         console.error('Error handling suggestion selection:', error);
-                        // Only try to respond if we haven't already
-                        if (!i.replied) {
-                            try {
-                                await i.followUp({ 
-                                    content: 'An error occurred while processing your selection. Please try again.', 
-                                    ephemeral: true 
-                                });
-                            } catch (followUpError) {
-                                console.error('Error sending follow-up message:', followUpError);
-                            }
+                        // Don't try to respond to the interaction as it may be invalid
+                        // Instead, try to update the original message
+                        try {
+                            await interaction.editReply({
+                                content: 'An error occurred while processing your selection. Please try the command again.',
+                                components: []
+                            }).catch(e => console.error('Could not update original message:', e.message));
+                        } catch (finalError) {
+                            console.error('Failed to recover from error:', finalError);
                         }
                     }
                 } else {
                     try {
-                        // Only reply if we haven't already
-                        if (!i.replied) {
+                        // For unauthorized users, handle more safely
+                        if (!i.replied && !i.deferred) {
                             await i.reply({ 
                                 content: 'This menu is not for you. Please use the `/suggestadmin` command to start your own session.',
                                 ephemeral: true 
-                            });
+                            }).catch(e => console.error('Could not reply to unauthorized user:', e.message));
                         }
                     } catch (error) {
-                        console.error('Error replying to unauthorized user:', error);
+                        console.error('Error handling unauthorized user:', error);
                     }
                 }
             });
