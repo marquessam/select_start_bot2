@@ -271,9 +271,10 @@ export default {
                            '• `/shadowguess` - Try to guess the hidden shadow game'
                 },
                 {
-                    name: '🗳️ Nominations & Voting',
+                    name: '🗳️ Nominations & Suggestions',
                     value: '• `/nominate` - Nominate a game for the next monthly challenge\n' +
                            '• `/nominations` - Show all current nominations for the next month\n' +
+                           '• `/suggest` - Submit ideas for arcade boards, racing tracks, bot improvements, or other suggestions\n' +
                            '• `/vote` - Cast your vote for the next monthly challenge (when voting is active)'
                 },
                 {
@@ -544,6 +545,10 @@ export default {
                            '• Browse past racing challenges\n' +
                            '• Check active tiebreakers\n\n' +
                            'All arcade leaderboards are limited to users ranked #999 or lower in the global RetroAchievements leaderboards.'
+                },
+                {
+                    name: '💡 Suggesting New Boards',
+                    value: 'Have a game or track you want to see added to our arcade or racing challenges? Use the `/suggest` command to submit your ideas! You\'ll need both the Game ID and Leaderboard ID from RetroAchievements.'
                 }
             )
             .setFooter({ text: 'Press "Back to Menu" to return to the main menu' })
@@ -632,6 +637,12 @@ export default {
                            '• **Platform Eligibility**: PlayStation 2 and GameCube games are **not eligible** for nomination'
                 },
                 {
+                    name: '💡 Other Suggestions',
+                    value: 'Want to suggest other improvements to the community?\n' +
+                           '• Use `/suggest` to recommend arcade boards, racing challenges, bot features, or other ideas\n' +
+                           '• View existing suggestions to see what others have proposed'
+                },
+                {
                     name: 'Need to Change Your Nomination?',
                     value: 'If you want to change your nomination, ask an admin to use the `/clearnominations` command to reset your nominations'
                 }
@@ -683,6 +694,13 @@ export default {
                            '2. Your RetroAchievements username must be linked to your Discord account\n' +
                            '3. Only achievements earned during the challenge period count for scoring\n' +
                            '4. Use `/profile` to track your progress and points'
+                },
+                {
+                    name: 'Community Feedback',
+                    value: 'We welcome your ideas to improve the community:\n' +
+                           '1. Use `/suggest` to submit ideas for arcade boards, racing challenges, or bot improvements\n' +
+                           '2. Provide constructive feedback in a respectful manner\n' +
+                           '3. Consider suggesting ideas that benefit the broader community'
                 }
             )
             .setFooter({ text: 'Press "Back to Menu" to return to the main menu' })
