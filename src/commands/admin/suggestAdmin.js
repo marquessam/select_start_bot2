@@ -769,27 +769,32 @@ export default {
             collector.on('collect', async i => {
                 if (i.user.id === interaction.user.id) {
                     try {
-                        // Store the selected status before attempting any operations
-                        let newStatus = null;
-                        if (i.isSelectMenu() && i.customId === 'select_status') {
-                            newStatus = i.values[0];
-                        }
-                        
-                        // Try to acknowledge the interaction, but don't fail if it's expired
-                        try {
-                            if (!i.deferred && !i.replied) {
-                                await i.deferUpdate().catch(e => {
-                                    console.log('Status menu: Error deferring update (non-critical):', e.message);
-                                });
-                            }
-                        } catch (ackError) {
-                            console.log('Status menu: Error acknowledging interaction (non-critical):', ackError.message);
-                        }
-                        
-                        if (i.customId === 'select_status' && newStatus) {
-                            // Use a try-catch for showing the modal, which can also fail if the interaction expires
+                        // Step 1: Check if this is a back button or status selection
+                        if (i.customId === 'back_to_details') {
+                            // Try to acknowledge the interaction, but don't fail if it's expired
                             try {
-                                // Show response modal
+                                if (!i.deferred && !i.replied) {
+                                    await i.deferUpdate().catch(e => {
+                                        console.log('Status menu: Back button - Error deferring update (non-critical):', e.message);
+                                    });
+                                }
+                            } catch (ackError) {
+                                console.log('Status menu: Back button - Acknowledge error (non-critical):', ackError.message);
+                            }
+                            
+                            // Use the original interaction for returning to details
+                            await this.viewSuggestionDetails(interaction, suggestion._id, previousFilter, previousTitle);
+                            return;
+                        }
+                        
+                        // Step 2: Handle status selection
+                        if (i.customId === 'select_status' && i.isSelectMenu()) {
+                            const newStatus = i.values[0];
+                            
+                            // THIS IS THE KEY CHANGE: Don't defer the update when we need to show a modal
+                            // Instead, try to directly show the modal without acknowledging first
+                            try {
+                                // Create the modal
                                 const modal = new ModalBuilder()
                                     .setCustomId('status_update_modal')
                                     .setTitle('Update Suggestion Status');
@@ -815,9 +820,10 @@ export default {
                                 const responseRow = new ActionRowBuilder().addComponents(responseInput);
                                 modal.addComponents(statusRow, responseRow);
                                 
-                                // Show the modal
-                                await i.showModal(modal).catch(modalError => {
-                                    throw new Error('Could not show modal: ' + modalError.message);
+                                // Try to show the modal WITHOUT deferring first
+                                await i.showModal(modal).catch(showModalError => {
+                                    // If showing the modal fails, we need alternative approach
+                                    throw new Error('Modal display failed: ' + showModalError.message);
                                 });
                                 
                                 // Wait for modal submission
@@ -841,7 +847,7 @@ export default {
                                     const newStatus = modalSubmission.fields.getTextInputValue('status');
                                     const response = modalSubmission.fields.getTextInputValue('response');
                                     
-                                    // Update the suggestion
+                                    // Update the suggestion in the database
                                     suggestion.status = newStatus;
                                     if (response) {
                                         suggestion.adminResponse = response;
@@ -854,8 +860,7 @@ export default {
                                     // Try to notify the user if enabled
                                     await this.notifyUser(interaction, suggestion, newStatus, response);
                                     
-                                    // Show success message - try to use the modal submission first,
-                                    // but fall back to the original interaction if needed
+                                    // Show success message
                                     const successEmbed = new EmbedBuilder()
                                         .setTitle('Status Updated')
                                         .setDescription(`The status for **${suggestion.title || suggestion.gameTitle}** has been updated to **${newStatus}**.`)
@@ -896,9 +901,16 @@ export default {
                                         });
                                     }
                                     
-                                    // Handle post-update navigation with more resilient code
+                                    // Set up button handler for post-update navigation
                                     try {
-                                        const updateMessage = await modalSubmission.fetchReply().catch(() => message);
+                                        let updateMessage;
+                                        try {
+                                            updateMessage = await modalSubmission.fetchReply();
+                                        } catch (fetchError) {
+                                            console.log('Failed to fetch modal reply, using original message:', fetchError.message);
+                                            updateMessage = message;
+                                        }
+                                        
                                         const updateCollector = updateMessage.createMessageComponentCollector({
                                             componentType: ComponentType.Button,
                                             time: 300000 // 5 minutes
@@ -906,11 +918,11 @@ export default {
                                         
                                         updateCollector.on('collect', async updateI => {
                                             if (updateI.user.id === interaction.user.id) {
-                                                // Store the button action first
+                                                // Store the button action
                                                 const buttonAction = updateI.customId;
                                                 
                                                 try {
-                                                    // Try to acknowledge the interaction, but don't fail if it's expired
+                                                    // Try to acknowledge the interaction
                                                     try {
                                                         if (!updateI.deferred && !updateI.replied) {
                                                             await updateI.deferUpdate().catch(e => {
@@ -929,7 +941,6 @@ export default {
                                                     }
                                                 } catch (error) {
                                                     console.error('Error handling post-update navigation:', error);
-                                                    // Try to update the original message as a fallback
                                                     await interaction.editReply({
                                                         content: 'An error occurred. Please try the command again.',
                                                         components: []
@@ -940,30 +951,229 @@ export default {
                                     } catch (collectorError) {
                                         console.error('Error setting up post-update collector:', collectorError);
                                     }
-                                } catch (error) {
-                                    console.error('Error processing modal submission:', error);
-                                    if (error.code !== 'INTERACTION_COLLECTOR_ERROR') {
-                                        try {
-                                            await interaction.followUp({
-                                                content: 'An error occurred while updating the status. Please try again.',
-                                                ephemeral: true
-                                            }).catch(e => console.error('Error sending follow-up:', e.message));
-                                        } catch (followUpError) {
-                                            console.error('Error sending follow-up:', followUpError);
-                                        }
-                                    }
+                                } catch (modalError) {
+                                    console.error('Error processing modal submission:', modalError);
+                                    // If we have a modal error, update the original message
+                                    await interaction.editReply({
+                                        content: 'The status update was cancelled or timed out. Please try again.',
+                                        components: [backRow]  // Just show back button
+                                    }).catch(e => console.error('Could not update with modal error message:', e.message));
                                 }
-                            } catch (modalError) {
-                                console.error('Error showing modal:', modalError);
-                                // If we can't show the modal, update the message with an error
-                                await interaction.editReply({
-                                    content: 'Sorry, there was an error processing your request. Please try the command again.',
-                                    components: []
-                                }).catch(e => console.error('Could not update with error message:', e.message));
+                            } catch (showModalError) {
+                                console.error(showModalError);
+                                
+                                // FALLBACK APPROACH: If modal fails, let's use a different method
+                                // First acknowledge the interaction if not already done
+                                try {
+                                    if (!i.deferred && !i.replied) {
+                                        await i.deferUpdate().catch(e => {
+                                            console.log('Status menu: Error deferring after modal fail (non-critical):', e.message);
+                                        });
+                                    }
+                                } catch (deferError) {
+                                    console.log('Defer error in fallback approach (non-critical):', deferError.message);
+                                }
+                                
+                                // Create a new message asking for text input instead
+                                const fallbackEmbed = new EmbedBuilder()
+                                    .setTitle(`Updating Status: ${suggestion.title || suggestion.gameTitle}`)
+                                    .setDescription(`Status will be set to: **${newStatus}**\n\nModal display failed, using alternative approach. Please enter your response in chat, or click "Skip Response" to update without a response.`)
+                                    .setColor('#FFA500')  // Orange to indicate the alternative flow
+                                    .setTimestamp();
+                                
+                                const fallbackRow = new ActionRowBuilder()
+                                    .addComponents(
+                                        new ButtonBuilder()
+                                            .setCustomId('skip_response')
+                                            .setLabel('Skip Response')
+                                            .setStyle(ButtonStyle.Primary),
+                                        new ButtonBuilder()
+                                            .setCustomId('cancel_update')
+                                            .setLabel('Cancel Update')
+                                            .setStyle(ButtonStyle.Secondary)
+                                    );
+                                
+                                try {
+                                    // Use the original interaction for the fallback
+                                    await interaction.editReply({
+                                        embeds: [fallbackEmbed],
+                                        components: [fallbackRow]
+                                    });
+                                    
+                                    // Create a message collector for the response
+                                    const messageCollector = interaction.channel.createMessageCollector({
+                                        filter: m => m.author.id === interaction.user.id,
+                                        time: 300000,  // 5 minutes
+                                        max: 1
+                                    });
+                                    
+                                    const buttonCollector = message.createMessageComponentCollector({
+                                        filter: b => b.customId === 'skip_response' || b.customId === 'cancel_update',
+                                        time: 300000  // 5 minutes
+                                    });
+                                    
+                                    // Set up a flag to track if we've processed a response already
+                                    let hasProcessedResponse = false;
+                                    
+                                    // Handle button clicks
+                                    buttonCollector.on('collect', async buttonInteraction => {
+                                        if (buttonInteraction.user.id !== interaction.user.id) return;
+                                        if (hasProcessedResponse) return;
+                                        
+                                        try {
+                                            // Acknowledge the button interaction
+                                            await buttonInteraction.deferUpdate().catch(e => {
+                                                console.log('Fallback button: Error deferring (non-critical):', e.message);
+                                            });
+                                            
+                                            // Mark that we've processed a response
+                                            hasProcessedResponse = true;
+                                            
+                                            // Stop the message collector since we got a button response
+                                            messageCollector.stop();
+                                            
+                                            if (buttonInteraction.customId === 'skip_response') {
+                                                // Update the suggestion without a response
+                                                suggestion.status = newStatus;
+                                                suggestion.adminResponseDate = new Date();
+                                                suggestion.adminRespondedBy = interaction.user.tag;
+                                                await suggestion.save();
+                                                
+                                                // Notify the user if enabled
+                                                await this.notifyUser(interaction, suggestion, newStatus, null);
+                                                
+                                                // Show success message
+                                                const successEmbed = new EmbedBuilder()
+                                                    .setTitle('Status Updated')
+                                                    .setDescription(`The status for **${suggestion.title || suggestion.gameTitle}** has been updated to **${newStatus}**.`)
+                                                    .setColor('#00FF00')
+                                                    .setTimestamp();
+                                                
+                                                const successRow = new ActionRowBuilder()
+                                                    .addComponents(
+                                                        new ButtonBuilder()
+                                                            .setCustomId('view_details')
+                                                            .setLabel('View Details')
+                                                            .setStyle(ButtonStyle.Primary)
+                                                            .setEmoji('🔍'),
+                                                        new ButtonBuilder()
+                                                            .setCustomId('back_to_list')
+                                                            .setLabel('Back to List')
+                                                            .setStyle(ButtonStyle.Secondary)
+                                                            .setEmoji('↩️')
+                                                    );
+                                                
+                                                await interaction.editReply({
+                                                    embeds: [successEmbed],
+                                                    components: [successRow]
+                                                });
+                                            } else if (buttonInteraction.customId === 'cancel_update') {
+                                                // Return to details view
+                                                await this.viewSuggestionDetails(interaction, suggestion._id, previousFilter, previousTitle);
+                                            }
+                                        } catch (buttonError) {
+                                            console.error('Error handling fallback button:', buttonError);
+                                            await interaction.editReply({
+                                                content: 'An error occurred. Please try the command again.',
+                                                components: []
+                                            }).catch(e => console.error('Could not update with button error message:', e.message));
+                                        }
+                                    });
+                                    
+                                    // Handle message submission for response
+                                    messageCollector.on('collect', async m => {
+                                        if (hasProcessedResponse) return;
+                                        
+                                        try {
+                                            // Mark that we've processed a response
+                                            hasProcessedResponse = true;
+                                            
+                                            // Stop the button collector since we got a message response
+                                            buttonCollector.stop();
+                                            
+                                            // Get the response text
+                                            const response = m.content;
+                                            
+                                            // Try to delete the user's message to keep the channel clean
+                                            try {
+                                                await m.delete().catch(() => {});
+                                            } catch (deleteError) {
+                                                console.log('Could not delete user message (non-critical):', deleteError.message);
+                                            }
+                                            
+                                            // Update the suggestion with the response
+                                            suggestion.status = newStatus;
+                                            suggestion.adminResponse = response;
+                                            suggestion.adminResponseDate = new Date();
+                                            suggestion.adminRespondedBy = interaction.user.tag;
+                                            await suggestion.save();
+                                            
+                                            // Notify the user if enabled
+                                            await this.notifyUser(interaction, suggestion, newStatus, response);
+                                            
+                                            // Show success message
+                                            const successEmbed = new EmbedBuilder()
+                                                .setTitle('Status Updated')
+                                                .setDescription(`The status for **${suggestion.title || suggestion.gameTitle}** has been updated to **${newStatus}**.`)
+                                                .setColor('#00FF00')
+                                                .setTimestamp();
+                                            
+                                            if (response) {
+                                                successEmbed.addFields({ 
+                                                    name: 'Response', 
+                                                    value: response 
+                                                });
+                                            }
+                                            
+                                            const successRow = new ActionRowBuilder()
+                                                .addComponents(
+                                                    new ButtonBuilder()
+                                                        .setCustomId('view_details')
+                                                        .setLabel('View Details')
+                                                        .setStyle(ButtonStyle.Primary)
+                                                        .setEmoji('🔍'),
+                                                    new ButtonBuilder()
+                                                        .setCustomId('back_to_list')
+                                                        .setLabel('Back to List')
+                                                        .setStyle(ButtonStyle.Secondary)
+                                                        .setEmoji('↩️')
+                                                );
+                                            
+                                            await interaction.editReply({
+                                                embeds: [successEmbed],
+                                                components: [successRow]
+                                            });
+                                        } catch (messageError) {
+                                            console.error('Error handling fallback message response:', messageError);
+                                            await interaction.editReply({
+                                                content: 'An error occurred. Please try the command again.',
+                                                components: []
+                                            }).catch(e => console.error('Could not update with message error message:', e.message));
+                                        }
+                                    });
+                                    
+                                    // Handle collector end events
+                                    messageCollector.on('end', async (collected, reason) => {
+                                        if (reason === 'time' && !hasProcessedResponse) {
+                                            // If we timed out without a response, update the message
+                                            try {
+                                                await interaction.editReply({
+                                                    content: 'Status update timed out. Please try again.',
+                                                    components: [backRow]  // Just show back button
+                                                });
+                                            } catch (timeoutError) {
+                                                console.error('Error handling message collector timeout:', timeoutError);
+                                            }
+                                        }
+                                    });
+                                } catch (fallbackError) {
+                                    console.error('Error setting up fallback approach:', fallbackError);
+                                    await interaction.editReply({
+                                        content: 'An error occurred. Please try the command again.',
+                                        components: []
+                                    }).catch(e => console.error('Could not update with fallback error message:', e.message));
+                                }
                             }
-                        } else if (i.customId === 'back_to_details') {
-                            // Use the original interaction for navigation
-                            await this.viewSuggestionDetails(interaction, suggestion._id, previousFilter, previousTitle);
                         }
                     } catch (error) {
                         console.error('Error handling status update action:', error);
@@ -990,6 +1200,7 @@ export default {
                         console.error('Error replying to unauthorized user:', error);
                     }
                 }
+            });
             });
             
             // When collector expires
