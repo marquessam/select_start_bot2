@@ -268,9 +268,10 @@ async handleOverview(interaction) {
                                '• `/shadowguess` - Try to guess the hidden shadow game'
                     },
                     {
-                        name: '🗳️ Nominations & Voting',
+                        name: '🗳️ Nominations & Suggestions',
                         value: '• `/nominate` - Nominate a game for the next monthly challenge\n' +
-                               '• `/nominations` - Show all current nominations for the next month'
+                               '• `/nominations` - Show all current nominations for the next month\n' +
+                               '• `/suggest` - Suggest arcade boards, racing tracks, or bot improvements'
                     },
                     {
                         name: '🏎️ Arcade & Racing',
