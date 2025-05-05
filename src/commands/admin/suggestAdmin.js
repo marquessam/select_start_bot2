@@ -1201,7 +1201,6 @@ export default {
                     }
                 }
             });
-            });
             
             // When collector expires
             collector.on('end', async (collected, reason) => {
