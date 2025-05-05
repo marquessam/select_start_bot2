@@ -1,74 +1,18 @@
-import { 
-    SlashCommandBuilder, 
-    EmbedBuilder, 
-    ActionRowBuilder, 
-    StringSelectMenuBuilder,
-    ComponentType 
-} from 'discord.js';
-import { User } from '../../models/User.js';
+import { SlashCommandBuilder, EmbedBuilder } from 'discord.js';
 import { Suggestion } from '../../models/Suggestion.js';
+import { User } from '../../models/User.js';
+import { ArcadeBoard } from '../../models/ArcadeBoard.js';
+import { config } from '../../config/config.js';
 import retroAPI from '../../services/retroAPI.js';
 
 export default {
     data: new SlashCommandBuilder()
-        .setName('suggest')
-        .setDescription('Suggest improvements or new content for the community')
+        .setName('suggestadmin')
+        .setDescription('Manage community suggestions')
         .addSubcommand(subcommand =>
             subcommand
-                .setName('arcade')
-                .setDescription('Suggest a new arcade board')
-                .addStringOption(option =>
-                    option.setName('gameid')
-                    .setDescription('The RetroAchievements Game ID (final numbers in the URL)')
-                    .setRequired(true))
-                .addStringOption(option =>
-                    option.setName('description')
-                    .setDescription('Why would this game make a good arcade board?')
-                    .setRequired(true)))
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('racing')
-                .setDescription('Suggest a racing track/game for future racing challenges')
-                .addStringOption(option =>
-                    option.setName('gameid')
-                    .setDescription('The RetroAchievements Game ID (final numbers in the URL)')
-                    .setRequired(true))
-                .addStringOption(option =>
-                    option.setName('trackname')
-                    .setDescription('The specific track name (if applicable)')
-                    .setRequired(false))
-                .addStringOption(option =>
-                    option.setName('description')
-                    .setDescription('Why would this make a good racing challenge?')
-                    .setRequired(true)))
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('bot')
-                .setDescription('Suggest an improvement to the bot')
-                .addStringOption(option =>
-                    option.setName('feature')
-                    .setDescription('What feature would you like to suggest?')
-                    .setRequired(true))
-                .addStringOption(option =>
-                    option.setName('description')
-                    .setDescription('Describe your suggestion in detail')
-                    .setRequired(true)))
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('other')
-                .setDescription('Make another type of suggestion')
-                .addStringOption(option =>
-                    option.setName('title')
-                    .setDescription('A short title for your suggestion')
-                    .setRequired(true))
-                .addStringOption(option =>
-                    option.setName('description')
-                    .setDescription('Describe your suggestion in detail')
-                    .setRequired(true)))
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('view')
-                .setDescription('View all current suggestions')
+                .setName('list')
+                .setDescription('List all pending suggestions')
                 .addStringOption(option =>
                     option.setName('type')
                     .setDescription('Filter suggestions by type')
@@ -79,509 +23,642 @@ export default {
                         { name: 'Racing Tracks', value: 'racing' },
                         { name: 'Bot Improvements', value: 'bot' },
                         { name: 'Other Suggestions', value: 'other' }
-                    ))),
+                    ))
+                .addStringOption(option =>
+                    option.setName('status')
+                    .setDescription('Filter suggestions by status')
+                    .setRequired(false)
+                    .addChoices(
+                        { name: 'All Statuses', value: 'all' },
+                        { name: 'Pending', value: 'pending' },
+                        { name: 'Approved', value: 'approved' },
+                        { name: 'Rejected', value: 'rejected' },
+                        { name: 'Implemented', value: 'implemented' }
+                    )))
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('view')
+                .setDescription('View a specific suggestion')
+                .addStringOption(option =>
+                    option.setName('id')
+                    .setDescription('The suggestion ID to view')
+                    .setRequired(true)))
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('update')
+                .setDescription('Update the status of a suggestion')
+                .addStringOption(option =>
+                    option.setName('id')
+                    .setDescription('The suggestion ID to update')
+                    .setRequired(true))
+                .addStringOption(option =>
+                    option.setName('status')
+                    .setDescription('The new status for the suggestion')
+                    .setRequired(true)
+                    .addChoices(
+                        { name: 'Pending', value: 'pending' },
+                        { name: 'Approved', value: 'approved' },
+                        { name: 'Rejected', value: 'rejected' },
+                        { name: 'Implemented', value: 'implemented' }
+                    ))
+                .addStringOption(option =>
+                    option.setName('response')
+                    .setDescription('Optional response to the suggestion')
+                    .setRequired(false)))
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('implement')
+                .setDescription('Implement an arcade or racing suggestion')
+                .addStringOption(option =>
+                    option.setName('id')
+                    .setDescription('The suggestion ID to implement')
+                    .setRequired(true))
+                .addStringOption(option =>
+                    option.setName('board_id')
+                    .setDescription('Custom board ID for the new board')
+                    .setRequired(true))
+                .addIntegerOption(option =>
+                    option.setName('leaderboard_id')
+                    .setDescription('RetroAchievements leaderboard ID')
+                    .setRequired(true))
+                .addStringOption(option =>
+                    option.setName('description')
+                    .setDescription('Description for the board (defaults to suggestion description)')
+                    .setRequired(false)))
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('delete')
+                .setDescription('Delete a suggestion')
+                .addStringOption(option =>
+                    option.setName('id')
+                    .setDescription('The suggestion ID to delete')
+                    .setRequired(true))),
 
     async execute(interaction) {
+        // Check if user has admin role
+        if (!interaction.member.roles.cache.has(config.bot.roles.admin)) {
+            return interaction.reply({
+                content: 'You do not have permission to use this command.',
+                ephemeral: true
+            });
+        }
+
         await interaction.deferReply({ ephemeral: true });
 
         try {
             const subcommand = interaction.options.getSubcommand();
-
-            // Handle view subcommand separately
-            if (subcommand === 'view') {
-                return this.handleViewSuggestions(interaction);
-            }
-
-            // Handle other subcommands for making suggestions
-            const user = await User.findOne({ discordId: interaction.user.id });
-            if (!user) {
-                return interaction.editReply('You are not registered. Please ask an admin to register you first.');
-            }
-
-            // Process the suggestion based on the subcommand
+            
             switch(subcommand) {
-                case 'arcade':
-                    await this.handleArcadeSuggestion(interaction, user);
+                case 'list':
+                    await this.listSuggestions(interaction);
                     break;
-                case 'racing':
-                    await this.handleRacingSuggestion(interaction, user);
+                case 'view':
+                    await this.viewSuggestion(interaction);
                     break;
-                case 'bot':
-                    await this.handleBotSuggestion(interaction, user);
+                case 'update':
+                    await this.updateSuggestion(interaction);
                     break;
-                case 'other':
-                    await this.handleOtherSuggestion(interaction, user);
+                case 'implement':
+                    await this.implementSuggestion(interaction);
+                    break;
+                case 'delete':
+                    await this.deleteSuggestion(interaction);
                     break;
                 default:
-                    return interaction.editReply('Invalid subcommand. Please try again.');
+                    await interaction.editReply('Invalid subcommand');
             }
-
         } catch (error) {
-            console.error('Error in suggest command:', error);
-            return interaction.editReply('An error occurred while processing your suggestion. Please try again.');
+            console.error('Error executing suggestadmin command:', error);
+            await interaction.editReply('An error occurred while processing your request.');
         }
     },
 
-    async handleArcadeSuggestion(interaction, user) {
+    async listSuggestions(interaction) {
         try {
-            const gameId = interaction.options.getString('gameid');
-            const description = interaction.options.getString('description');
-
-            // Validate game exists via RetroAPI
-            const gameInfo = await retroAPI.getGameInfo(gameId);
-            if (!gameInfo) {
-                return interaction.editReply('Game not found. Please check the game ID (the numbers at the end of the game URL on RetroAchievements.org).');
-            }
-
-            // Create new suggestion
-            const newSuggestion = new Suggestion({
-                type: 'arcade',
-                gameId,
-                gameTitle: gameInfo.title,
-                consoleName: gameInfo.consoleName,
-                description,
-                suggestedBy: user.raUsername,
-                discordId: user.discordId,
-                suggestionDate: new Date()
-            });
-
-            await newSuggestion.save();
-
-            // Create a response embed
-            const embed = new EmbedBuilder()
-                .setTitle('Arcade Board Suggestion Submitted')
-                .setColor('#00FF00')
-                .setThumbnail(gameInfo.imageIcon ? `https://retroachievements.org${gameInfo.imageIcon}` : null)
-                .setDescription(`Your suggestion for **${gameInfo.title}** has been submitted!`)
-                .addFields(
-                    { 
-                        name: 'Game Details', 
-                        value: `**Console:** ${gameInfo.consoleName}\n**Achievements:** ${gameInfo.achievements ? Object.keys(gameInfo.achievements).length : 'Unknown'}\n[View Game Page](https://retroachievements.org/game/${gameId})`
-                    },
-                    {
-                        name: 'Your Reason', 
-                        value: description
-                    }
-                )
-                .setFooter({ text: 'Thank you for your suggestion!' })
-                .setTimestamp();
-
-            return interaction.editReply({ embeds: [embed] });
-
-        } catch (error) {
-            console.error('Error handling arcade suggestion:', error);
-            return interaction.editReply('An error occurred while submitting your arcade board suggestion. Please try again.');
-        }
-    },
-
-    async handleRacingSuggestion(interaction, user) {
-        try {
-            const gameId = interaction.options.getString('gameid');
-            const trackName = interaction.options.getString('trackname') || '';
-            const description = interaction.options.getString('description');
-
-            // Validate game exists via RetroAPI
-            const gameInfo = await retroAPI.getGameInfo(gameId);
-            if (!gameInfo) {
-                return interaction.editReply('Game not found. Please check the game ID (the numbers at the end of the game URL on RetroAchievements.org).');
-            }
-
-            // Create new suggestion
-            const newSuggestion = new Suggestion({
-                type: 'racing',
-                gameId,
-                gameTitle: gameInfo.title,
-                consoleName: gameInfo.consoleName,
-                trackName,
-                description,
-                suggestedBy: user.raUsername,
-                discordId: user.discordId,
-                suggestionDate: new Date()
-            });
-
-            await newSuggestion.save();
-
-            // Create a response embed
-            const embed = new EmbedBuilder()
-                .setTitle('Racing Challenge Suggestion Submitted')
-                .setColor('#00BFFF')
-                .setThumbnail(gameInfo.imageIcon ? `https://retroachievements.org${gameInfo.imageIcon}` : null)
-                .setDescription(`Your suggestion for **${gameInfo.title}**${trackName ? ` (${trackName})` : ''} has been submitted!`)
-                .addFields(
-                    { 
-                        name: 'Game Details', 
-                        value: `**Console:** ${gameInfo.consoleName}\n**Achievements:** ${gameInfo.achievements ? Object.keys(gameInfo.achievements).length : 'Unknown'}\n[View Game Page](https://retroachievements.org/game/${gameId})`
-                    },
-                    {
-                        name: 'Your Reason', 
-                        value: description
-                    }
-                )
-                .setFooter({ text: 'Thank you for your suggestion!' })
-                .setTimestamp();
-
-            return interaction.editReply({ embeds: [embed] });
-
-        } catch (error) {
-            console.error('Error handling racing suggestion:', error);
-            return interaction.editReply('An error occurred while submitting your racing challenge suggestion. Please try again.');
-        }
-    },
-
-    async handleBotSuggestion(interaction, user) {
-        try {
-            const feature = interaction.options.getString('feature');
-            const description = interaction.options.getString('description');
-
-            // Create new suggestion
-            const newSuggestion = new Suggestion({
-                type: 'bot',
-                title: feature,
-                description,
-                suggestedBy: user.raUsername,
-                discordId: user.discordId,
-                suggestionDate: new Date()
-            });
-
-            await newSuggestion.save();
-
-            // Create a response embed
-            const embed = new EmbedBuilder()
-                .setTitle('Bot Improvement Suggestion Submitted')
-                .setColor('#FF9900')
-                .setDescription(`Your suggestion for a bot improvement has been submitted!`)
-                .addFields(
-                    { 
-                        name: 'Feature', 
-                        value: feature
-                    },
-                    {
-                        name: 'Description', 
-                        value: description
-                    }
-                )
-                .setFooter({ text: 'Thank you for your suggestion!' })
-                .setTimestamp();
-
-            return interaction.editReply({ embeds: [embed] });
-
-        } catch (error) {
-            console.error('Error handling bot suggestion:', error);
-            return interaction.editReply('An error occurred while submitting your bot improvement suggestion. Please try again.');
-        }
-    },
-
-    async handleOtherSuggestion(interaction, user) {
-        try {
-            const title = interaction.options.getString('title');
-            const description = interaction.options.getString('description');
-
-            // Create new suggestion
-            const newSuggestion = new Suggestion({
-                type: 'other',
-                title,
-                description,
-                suggestedBy: user.raUsername,
-                discordId: user.discordId,
-                suggestionDate: new Date()
-            });
-
-            await newSuggestion.save();
-
-            // Create a response embed
-            const embed = new EmbedBuilder()
-                .setTitle('Suggestion Submitted')
-                .setColor('#9B59B6')
-                .setDescription(`Your suggestion has been submitted!`)
-                .addFields(
-                    { 
-                        name: 'Title', 
-                        value: title
-                    },
-                    {
-                        name: 'Description', 
-                        value: description
-                    }
-                )
-                .setFooter({ text: 'Thank you for your suggestion!' })
-                .setTimestamp();
-
-            return interaction.editReply({ embeds: [embed] });
-
-        } catch (error) {
-            console.error('Error handling other suggestion:', error);
-            return interaction.editReply('An error occurred while submitting your suggestion. Please try again.');
-        }
-    },
-
-    async handleViewSuggestions(interaction) {
-        try {
-            const filterType = interaction.options.getString('type') || 'all';
+            const typeFilter = interaction.options.getString('type') || 'all';
+            const statusFilter = interaction.options.getString('status') || 'all';
             
-            // Get suggestions based on filter
-            const filter = filterType !== 'all' ? { type: filterType } : {};
-            const suggestions = await Suggestion.find(filter).sort({ suggestionDate: -1 });
+            // Build query based on filters
+            const query = {};
+            if (typeFilter !== 'all') {
+                query.type = typeFilter;
+            }
+            if (statusFilter !== 'all') {
+                query.status = statusFilter;
+            }
+            
+            // Get suggestions
+            const suggestions = await Suggestion.find(query).sort({ suggestionDate: -1 });
             
             if (suggestions.length === 0) {
-                return interaction.editReply(`No ${filterType !== 'all' ? filterType + ' ' : ''}suggestions found.`);
+                return interaction.editReply(`No ${typeFilter !== 'all' ? typeFilter + ' ' : ''}suggestions found${statusFilter !== 'all' ? ' with status ' + statusFilter : ''}.`);
             }
-
-            // Group suggestions by type
-            const suggestionsByType = {
-                'arcade': [],
-                'racing': [],
-                'bot': [],
-                'other': []
-            };
             
-            suggestions.forEach(suggestion => {
-                if (suggestionsByType[suggestion.type]) {
-                    suggestionsByType[suggestion.type].push(suggestion);
-                }
-            });
-            
-            // Create initial embed with introduction
+            // Create response embed
             const embed = new EmbedBuilder()
-                .setTitle('📋 Community Suggestions')
-                .setDescription(`Here are the current community suggestions${filterType !== 'all' ? ' for ' + filterType : ''}:`)
-                .setColor('#00BFFF')
+                .setTitle('📋 Suggestion Management')
+                .setDescription(`Found ${suggestions.length} suggestion(s)${typeFilter !== 'all' ? ' of type ' + typeFilter : ''}${statusFilter !== 'all' ? ' with status ' + statusFilter : ''}.`)
+                .setColor('#FF9900')
                 .setTimestamp();
                 
-            // Add fields for each category that has suggestions
-            if (filterType === 'all' || filterType === 'arcade') {
-                if (suggestionsByType.arcade.length > 0) {
-                    let arcadeText = '';
-                    suggestionsByType.arcade.slice(0, 10).forEach(s => {
-                        arcadeText += `**${s.gameTitle}** (${s.consoleName})\n` +
-                                     `Suggested by: ${s.suggestedBy} on ${new Date(s.suggestionDate).toLocaleDateString()}\n` +
-                                     `Reason: ${s.description.substring(0, 100)}${s.description.length > 100 ? '...' : ''}\n` +
-                                     `[View Game](https://retroachievements.org/game/${s.gameId})\n\n`;
-                    });
-                    
-                    embed.addFields({
-                        name: '🎯 Arcade Board Suggestions',
-                        value: arcadeText || 'No arcade suggestions yet.'
-                    });
-                }
-            }
+            // Add suggestions (limit to 10 for readability)
+            const displaySuggestions = suggestions.slice(0, 10);
             
-            if (filterType === 'all' || filterType === 'racing') {
-                if (suggestionsByType.racing.length > 0) {
-                    let racingText = '';
-                    suggestionsByType.racing.slice(0, 10).forEach(s => {
-                        racingText += `**${s.gameTitle}**${s.trackName ? ` (${s.trackName})` : ''} (${s.consoleName})\n` +
-                                     `Suggested by: ${s.suggestedBy} on ${new Date(s.suggestionDate).toLocaleDateString()}\n` +
-                                     `Reason: ${s.description.substring(0, 100)}${s.description.length > 100 ? '...' : ''}\n` +
-                                     `[View Game](https://retroachievements.org/game/${s.gameId})\n\n`;
-                    });
-                    
-                    embed.addFields({
-                        name: '🏎️ Racing Challenge Suggestions',
-                        value: racingText || 'No racing suggestions yet.'
-                    });
-                }
-            }
-            
-            if (filterType === 'all' || filterType === 'bot') {
-                if (suggestionsByType.bot.length > 0) {
-                    let botText = '';
-                    suggestionsByType.bot.slice(0, 10).forEach(s => {
-                        botText += `**${s.title}**\n` +
-                                  `Suggested by: ${s.suggestedBy} on ${new Date(s.suggestionDate).toLocaleDateString()}\n` +
-                                  `Description: ${s.description.substring(0, 100)}${s.description.length > 100 ? '...' : ''}\n\n`;
-                    });
-                    
-                    embed.addFields({
-                        name: '🤖 Bot Improvement Suggestions',
-                        value: botText || 'No bot improvement suggestions yet.'
-                    });
-                }
-            }
-            
-            if (filterType === 'all' || filterType === 'other') {
-                if (suggestionsByType.other.length > 0) {
-                    let otherText = '';
-                    suggestionsByType.other.slice(0, 10).forEach(s => {
-                        otherText += `**${s.title}**\n` +
-                                    `Suggested by: ${s.suggestedBy} on ${new Date(s.suggestionDate).toLocaleDateString()}\n` +
-                                    `Description: ${s.description.substring(0, 100)}${s.description.length > 100 ? '...' : ''}\n\n`;
-                    });
-                    
-                    embed.addFields({
-                        name: '💡 Other Suggestions',
-                        value: otherText || 'No other suggestions yet.'
-                    });
-                }
-            }
-            
-            embed.addFields({
-                name: 'Want to make a suggestion?',
-                value: 'Use `/suggest arcade`, `/suggest racing`, `/suggest bot`, or `/suggest other` to submit your ideas!'
-            });
-            
-            // Create dropdown for filtering suggestions
-            const selectMenu = new StringSelectMenuBuilder()
-                .setCustomId('filter_suggestions')
-                .setPlaceholder('Filter suggestions by type')
-                .addOptions([
-                    { label: 'All Suggestions', value: 'all' },
-                    { label: 'Arcade Boards', value: 'arcade' },
-                    { label: 'Racing Tracks', value: 'racing' },
-                    { label: 'Bot Improvements', value: 'bot' },
-                    { label: 'Other Suggestions', value: 'other' }
-                ]);
+            for (const suggestion of displaySuggestions) {
+                let fieldValue = '';
                 
-            const row = new ActionRowBuilder().addComponents(selectMenu);
-            
-            const response = await interaction.editReply({
-                embeds: [embed],
-                components: [row]
-            });
-            
-            // Set up collector for dropdown menu
-            const collector = response.createMessageComponentCollector({
-                componentType: ComponentType.StringSelect,
-                time: 300000 // 5 minutes
-            });
-            
-            collector.on('collect', async i => {
-                if (i.user.id === interaction.user.id) {
-                    const selectedType = i.values[0];
-                    
-                    await i.deferUpdate();
-                    
-                    // Get suggestions for the selected type
-                    const newFilter = selectedType !== 'all' ? { type: selectedType } : {};
-                    const newSuggestions = await Suggestion.find(newFilter).sort({ suggestionDate: -1 });
-                    
-                    if (newSuggestions.length === 0) {
-                        return i.editReply(`No ${selectedType !== 'all' ? selectedType + ' ' : ''}suggestions found.`);
-                    }
-                    
-                    // Re-group suggestions by type
-                    const newSuggestionsByType = {
-                        'arcade': [],
-                        'racing': [],
-                        'bot': [],
-                        'other': []
-                    };
-                    
-                    newSuggestions.forEach(suggestion => {
-                        if (newSuggestionsByType[suggestion.type]) {
-                            newSuggestionsByType[suggestion.type].push(suggestion);
+                // Format field value based on suggestion type
+                switch (suggestion.type) {
+                    case 'arcade':
+                    case 'racing':
+                        fieldValue = `**Game:** ${suggestion.gameTitle} (${suggestion.consoleName})\n`;
+                        if (suggestion.type === 'racing' && suggestion.trackName) {
+                            fieldValue += `**Track:** ${suggestion.trackName}\n`;
                         }
-                    });
-                    
-                    // Create new embed
-                    const newEmbed = new EmbedBuilder()
-                        .setTitle('📋 Community Suggestions')
-                        .setDescription(`Here are the current community suggestions${selectedType !== 'all' ? ' for ' + selectedType : ''}:`)
-                        .setColor('#00BFFF')
-                        .setTimestamp();
+                        fieldValue += `**Description:** ${suggestion.description.substring(0, 100)}${suggestion.description.length > 100 ? '...' : ''}\n`;
+                        break;
                         
-                    // Add fields for each category based on the filter
-                    if (selectedType === 'all' || selectedType === 'arcade') {
-                        if (newSuggestionsByType.arcade.length > 0) {
-                            let arcadeText = '';
-                            newSuggestionsByType.arcade.slice(0, 10).forEach(s => {
-                                arcadeText += `**${s.gameTitle}** (${s.consoleName})\n` +
-                                            `Suggested by: ${s.suggestedBy} on ${new Date(s.suggestionDate).toLocaleDateString()}\n` +
-                                            `Reason: ${s.description.substring(0, 100)}${s.description.length > 100 ? '...' : ''}\n` +
-                                            `[View Game](https://retroachievements.org/game/${s.gameId})\n\n`;
-                            });
-                            
-                            newEmbed.addFields({
-                                name: '🎯 Arcade Board Suggestions',
-                                value: arcadeText || 'No arcade suggestions yet.'
-                            });
-                        }
-                    }
-                    
-                    if (selectedType === 'all' || selectedType === 'racing') {
-                        if (newSuggestionsByType.racing.length > 0) {
-                            let racingText = '';
-                            newSuggestionsByType.racing.slice(0, 10).forEach(s => {
-                                racingText += `**${s.gameTitle}**${s.trackName ? ` (${s.trackName})` : ''} (${s.consoleName})\n` +
-                                            `Suggested by: ${s.suggestedBy} on ${new Date(s.suggestionDate).toLocaleDateString()}\n` +
-                                            `Reason: ${s.description.substring(0, 100)}${s.description.length > 100 ? '...' : ''}\n` +
-                                            `[View Game](https://retroachievements.org/game/${s.gameId})\n\n`;
-                            });
-                            
-                            newEmbed.addFields({
-                                name: '🏎️ Racing Challenge Suggestions',
-                                value: racingText || 'No racing suggestions yet.'
-                            });
-                        }
-                    }
-                    
-                    if (selectedType === 'all' || selectedType === 'bot') {
-                        if (newSuggestionsByType.bot.length > 0) {
-                            let botText = '';
-                            newSuggestionsByType.bot.slice(0, 10).forEach(s => {
-                                botText += `**${s.title}**\n` +
-                                        `Suggested by: ${s.suggestedBy} on ${new Date(s.suggestionDate).toLocaleDateString()}\n` +
-                                        `Description: ${s.description.substring(0, 100)}${s.description.length > 100 ? '...' : ''}\n\n`;
-                            });
-                            
-                            newEmbed.addFields({
-                                name: '🤖 Bot Improvement Suggestions',
-                                value: botText || 'No bot improvement suggestions yet.'
-                            });
-                        }
-                    }
-                    
-                    if (selectedType === 'all' || selectedType === 'other') {
-                        if (newSuggestionsByType.other.length > 0) {
-                            let otherText = '';
-                            newSuggestionsByType.other.slice(0, 10).forEach(s => {
-                                otherText += `**${s.title}**\n` +
-                                            `Suggested by: ${s.suggestedBy} on ${new Date(s.suggestionDate).toLocaleDateString()}\n` +
-                                            `Description: ${s.description.substring(0, 100)}${s.description.length > 100 ? '...' : ''}\n\n`;
-                            });
-                            
-                            newEmbed.addFields({
-                                name: '💡 Other Suggestions',
-                                value: otherText || 'No other suggestions yet.'
-                            });
-                        }
-                    }
-                    
-                    newEmbed.addFields({
-                        name: 'Want to make a suggestion?',
-                        value: 'Use `/suggest arcade`, `/suggest racing`, `/suggest bot`, or `/suggest other` to submit your ideas!'
-                    });
-                    
-                    await i.editReply({
-                        embeds: [newEmbed],
-                        components: [row]
-                    });
-                } else {
-                    await i.reply({ 
-                        content: 'This menu is not for you. Please use the `/suggest view` command to see suggestions.',
-                        ephemeral: true 
-                    });
+                    case 'bot':
+                    case 'other':
+                        fieldValue = `**Description:** ${suggestion.description.substring(0, 100)}${suggestion.description.length > 100 ? '...' : ''}\n`;
+                        break;
                 }
+                
+                fieldValue += `**By:** ${suggestion.suggestedBy} on ${new Date(suggestion.suggestionDate).toLocaleDateString()}\n`;
+                fieldValue += `**Status:** ${suggestion.status}\n`;
+                
+                if (suggestion.adminResponse) {
+                    fieldValue += `**Admin Response:** ${suggestion.adminResponse.substring(0, 100)}${suggestion.adminResponse.length > 100 ? '...' : ''}\n`;
+                }
+                
+                fieldValue += `**ID:** \`${suggestion._id}\``;
+                
+                // Add icon based on type
+                let icon = '';
+                switch (suggestion.type) {
+                    case 'arcade': icon = '🎯 '; break;
+                    case 'racing': icon = '🏎️ '; break;
+                    case 'bot': icon = '🤖 '; break;
+                    case 'other': icon = '💡 '; break;
+                }
+                
+                // Add icon based on status
+                let statusIcon = '';
+                switch (suggestion.status) {
+                    case 'pending': statusIcon = '⏳ '; break;
+                    case 'approved': statusIcon = '✅ '; break;
+                    case 'rejected': statusIcon = '❌ '; break;
+                    case 'implemented': statusIcon = '🚀 '; break;
+                }
+                
+                const title = suggestion.title || suggestion.gameTitle;
+                embed.addFields({
+                    name: `${icon}${statusIcon}${title}`,
+                    value: fieldValue
+                });
+            }
+            
+            // Add note if there are more suggestions
+            if (suggestions.length > 10) {
+                embed.addFields({
+                    name: 'More Results',
+                    value: `Showing 10 out of ${suggestions.length} suggestions. Use filters to narrow down results.`
+                });
+            }
+            
+            // Add usage instructions
+            embed.addFields({
+                name: 'Commands',
+                value: '• Use `/suggestadmin view id:<suggestion_id>` to view a specific suggestion in detail.\n' +
+                       '• Use `/suggestadmin update id:<suggestion_id> status:<status>` to update a suggestion status.\n' +
+                       '• Use `/suggestadmin implement id:<suggestion_id>` to implement an arcade or racing suggestion.'
             });
             
-            // When collector expires
-            collector.on('end', async () => {
-                try {
-                    const disabledRow = new ActionRowBuilder().addComponents(
-                        StringSelectMenuBuilder.from(selectMenu).setDisabled(true)
-                    );
-                    
-                    await interaction.editReply({
-                        embeds: [embed.setFooter({ text: 'This menu has expired. Use /suggest view again to see suggestions.' })],
-                        components: [disabledRow]
-                    });
-                } catch (error) {
-                    console.error('Error disabling suggestion view menu:', error);
-                }
-            });
+            return interaction.editReply({ embeds: [embed] });
             
         } catch (error) {
-            console.error('Error viewing suggestions:', error);
-            return interaction.editReply('An error occurred while retrieving suggestions. Please try again.');
+            console.error('Error listing suggestions:', error);
+            return interaction.editReply('An error occurred while listing suggestions. Please try again.');
+        }
+    },
+
+    async viewSuggestion(interaction) {
+        try {
+            const suggestionId = interaction.options.getString('id');
+            
+            // Get the suggestion
+            const suggestion = await Suggestion.findById(suggestionId);
+            
+            if (!suggestion) {
+                return interaction.editReply(`Suggestion with ID "${suggestionId}" not found.`);
+            }
+            
+            // Create response embed
+            const embed = new EmbedBuilder()
+                .setTitle(`Suggestion: ${suggestion.title || suggestion.gameTitle}`)
+                .setColor('#FF9900')
+                .setTimestamp();
+                
+            // Add main content based on suggestion type
+            let description = '';
+            
+            switch (suggestion.type) {
+                case 'arcade':
+                    description = `**Type:** Arcade Board Suggestion\n` +
+                                 `**Game:** ${suggestion.gameTitle} (${suggestion.consoleName})\n` +
+                                 `**Game ID:** ${suggestion.gameId}\n` +
+                                 `**Description:** ${suggestion.description}\n\n` +
+                                 `[View Game on RetroAchievements](https://retroachievements.org/game/${suggestion.gameId})`;
+                    break;
+                    
+                case 'racing':
+                    description = `**Type:** Racing Challenge Suggestion\n` +
+                                 `**Game:** ${suggestion.gameTitle} (${suggestion.consoleName})\n` +
+                                 `**Game ID:** ${suggestion.gameId}\n` +
+                                 `**Track Name:** ${suggestion.trackName || 'N/A'}\n` +
+                                 `**Description:** ${suggestion.description}\n\n` +
+                                 `[View Game on RetroAchievements](https://retroachievements.org/game/${suggestion.gameId})`;
+                    break;
+                    
+                case 'bot':
+                    description = `**Type:** Bot Improvement Suggestion\n` +
+                                 `**Feature:** ${suggestion.title}\n` +
+                                 `**Description:** ${suggestion.description}`;
+                    break;
+                    
+                case 'other':
+                    description = `**Type:** Other Suggestion\n` +
+                                 `**Title:** ${suggestion.title}\n` +
+                                 `**Description:** ${suggestion.description}`;
+                    break;
+            }
+            
+            embed.setDescription(description);
+            
+            // Add metadata fields
+            embed.addFields(
+                {
+                    name: 'Suggestion Info',
+                    value: `**Suggested By:** ${suggestion.suggestedBy}\n` +
+                           `**Date:** ${new Date(suggestion.suggestionDate).toLocaleString()}\n` +
+                           `**Status:** ${suggestion.status}\n` +
+                           `**ID:** \`${suggestion._id}\``
+                }
+            );
+            
+            // Add admin response if it exists
+            if (suggestion.adminResponse) {
+                embed.addFields(
+                    {
+                        name: 'Admin Response',
+                        value: `**Response:** ${suggestion.adminResponse}\n` +
+                               `**By:** ${suggestion.adminRespondedBy || 'Unknown'}\n` +
+                               `**Date:** ${suggestion.adminResponseDate ? new Date(suggestion.adminResponseDate).toLocaleString() : 'N/A'}`
+                    }
+                );
+            }
+            
+            // Add command options
+            embed.addFields(
+                {
+                    name: 'Available Actions',
+                    value: `• Update status: \`/suggestadmin update id:${suggestion._id} status:<status> [response:<text>]\`\n` +
+                           (suggestion.type === 'arcade' || suggestion.type === 'racing' 
+                               ? `• Implement: \`/suggestadmin implement id:${suggestion._id} board_id:<id> leaderboard_id:<id>\`\n` 
+                               : '') +
+                           `• Delete: \`/suggestadmin delete id:${suggestion._id}\``
+                }
+            );
+            
+            return interaction.editReply({ embeds: [embed] });
+            
+        } catch (error) {
+            console.error('Error viewing suggestion:', error);
+            return interaction.editReply('An error occurred while viewing the suggestion. Please try again.');
+        }
+    },
+
+    async updateSuggestion(interaction) {
+        try {
+            const suggestionId = interaction.options.getString('id');
+            const newStatus = interaction.options.getString('status');
+            const response = interaction.options.getString('response') || '';
+            
+            // Get the suggestion
+            const suggestion = await Suggestion.findById(suggestionId);
+            
+            if (!suggestion) {
+                return interaction.editReply(`Suggestion with ID "${suggestionId}" not found.`);
+            }
+            
+            // Update the suggestion
+            suggestion.status = newStatus;
+            if (response) {
+                suggestion.adminResponse = response;
+                suggestion.adminResponseDate = new Date();
+                suggestion.adminRespondedBy = interaction.user.tag;
+            }
+            
+            await suggestion.save();
+            
+            // Get suggester's user object to notify them if enabled in config
+            const notifyOnStatusChange = config.suggestions?.notifyOnStatusChange || false;
+            if (notifyOnStatusChange) {
+                try {
+                    const user = await User.findOne({ discordId: suggestion.discordId });
+                    if (user) {
+                        // Try to DM the user
+                        const member = await interaction.guild.members.fetch(suggestion.discordId);
+                        if (member) {
+                            try {
+                                // Create a notification embed
+                                const notifyEmbed = new EmbedBuilder()
+                                    .setTitle('Suggestion Update')
+                                    .setColor(
+                                        newStatus === 'approved' ? '#00FF00' : 
+                                        newStatus === 'rejected' ? '#FF0000' : 
+                                        newStatus === 'implemented' ? '#0099FF' : '#FFCC00'
+                                    )
+                                    .setDescription(`Your suggestion has been ${newStatus}!`)
+                                    .addFields(
+                                        {
+                                            name: 'Suggestion',
+                                            value: suggestion.title || suggestion.gameTitle
+                                        }
+                                    );
+                                    
+                                if (response) {
+                                    notifyEmbed.addFields(
+                                        {
+                                            name: 'Admin Response',
+                                            value: response
+                                        }
+                                    );
+                                }
+                                
+                                await member.send({ embeds: [notifyEmbed] });
+                                console.log(`Sent suggestion update notification to ${user.raUsername}`);
+                            } catch (dmError) {
+                                console.error('Error sending DM to user:', dmError);
+                                // Continue even if DM fails
+                            }
+                        }
+                    }
+                } catch (userError) {
+                    console.error('Error finding/notifying user:', userError);
+                    // Continue even if user notification fails
+                }
+            }
+            
+            // Create response embed
+            const embed = new EmbedBuilder()
+                .setTitle('Suggestion Updated')
+                .setDescription(`Successfully updated suggestion status to **${newStatus}**.`)
+                .setColor('#00FF00')
+                .setTimestamp();
+                
+            embed.addFields(
+                {
+                    name: 'Suggestion',
+                    value: `**ID:** \`${suggestion._id}\`\n` +
+                           `**Title:** ${suggestion.title || suggestion.gameTitle}\n` +
+                           `**By:** ${suggestion.suggestedBy}`
+                }
+            );
+            
+            if (response) {
+                embed.addFields(
+                    {
+                        name: 'Response',
+                        value: response
+                    }
+                );
+            }
+            
+            // Add next steps based on type and status
+            if (newStatus === 'approved' && (suggestion.type === 'arcade' || suggestion.type === 'racing')) {
+                embed.addFields(
+                    {
+                        name: 'Next Steps',
+                        value: `You can now implement this suggestion with:\n` +
+                               `\`/suggestadmin implement id:${suggestion._id} board_id:<id> leaderboard_id:<id>\``
+                    }
+                );
+            }
+            
+            return interaction.editReply({ embeds: [embed] });
+            
+        } catch (error) {
+            console.error('Error updating suggestion:', error);
+            return interaction.editReply('An error occurred while updating the suggestion. Please try again.');
+        }
+    },
+
+    async implementSuggestion(interaction) {
+        try {
+            const suggestionId = interaction.options.getString('id');
+            const boardId = interaction.options.getString('board_id');
+            const leaderboardId = interaction.options.getInteger('leaderboard_id');
+            const customDescription = interaction.options.getString('description');
+            
+            // Get the suggestion
+            const suggestion = await Suggestion.findById(suggestionId);
+            
+            if (!suggestion) {
+                return interaction.editReply(`Suggestion with ID "${suggestionId}" not found.`);
+            }
+            
+            // Validate suggestion type
+            if (suggestion.type !== 'arcade' && suggestion.type !== 'racing') {
+                return interaction.editReply(`Cannot implement a suggestion of type "${suggestion.type}". Only arcade and racing suggestions can be implemented.`);
+            }
+            
+            // Check if board ID already exists
+            const existingBoard = await ArcadeBoard.findOne({ boardId });
+            if (existingBoard) {
+                return interaction.editReply(`A board with ID "${boardId}" already exists.`);
+            }
+            
+            // Validate game exists and get info
+            const gameInfo = await retroAPI.getGameInfo(suggestion.gameId);
+            if (!gameInfo) {
+                return interaction.editReply('Game not found. Please check the game ID.');
+            }
+            
+            // Use the customDescription if provided, otherwise use the original suggestion description
+            const description = customDescription || suggestion.description;
+            
+            // Create board based on suggestion type
+            let newBoard;
+            
+            if (suggestion.type === 'arcade') {
+                // Create new arcade board
+                newBoard = new ArcadeBoard({
+                    boardId,
+                    boardType: 'arcade',
+                    leaderboardId,
+                    gameId: suggestion.gameId,
+                    gameTitle: gameInfo.title,
+                    consoleName: gameInfo.consoleName || 'Unknown',
+                    description
+                });
+            } else if (suggestion.type === 'racing') {
+                // For racing boards, we need to set up start and end dates
+                const now = new Date();
+                const year = now.getFullYear();
+                const month = now.getMonth() + 1;
+                
+                // Calculate start and end dates (current month by default)
+                const startDate = new Date(year, month - 1, 1);
+                const endDate = new Date(year, month, 0, 23, 59, 59);
+                
+                // Generate month key
+                const monthKey = `${year}-${month.toString().padStart(2, '0')}`;
+                
+                // Get the full game title and console name
+                const gameFull = `${gameInfo.title} (${gameInfo.consoleName})`;
+                
+                // Create new racing board
+                newBoard = new ArcadeBoard({
+                    boardId,
+                    boardType: 'racing',
+                    leaderboardId,
+                    gameId: suggestion.gameId,
+                    gameTitle: gameFull,
+                    trackName: suggestion.trackName || '',
+                    consoleName: gameInfo.consoleName || 'Unknown',
+                    description,
+                    startDate,
+                    endDate,
+                    monthKey
+                });
+            }
+            
+            // Save the new board
+            await newBoard.save();
+            
+            // Update the suggestion status
+            suggestion.status = 'implemented';
+            suggestion.adminResponse = `Implemented as ${suggestion.type} board with ID: ${boardId}`;
+            suggestion.adminResponseDate = new Date();
+            suggestion.adminRespondedBy = interaction.user.tag;
+            await suggestion.save();
+            
+            // Create notification for the user if enabled
+            const notifyOnImplementation = config.suggestions?.notifyOnImplementation || false;
+            if (notifyOnImplementation) {
+                try {
+                    // Try to DM the user
+                    const member = await interaction.guild.members.fetch(suggestion.discordId);
+                    if (member) {
+                        try {
+                            // Create a notification embed
+                            const notifyEmbed = new EmbedBuilder()
+                                .setTitle('Suggestion Implemented!')
+                                .setColor('#0099FF')
+                                .setDescription(`Your ${suggestion.type} suggestion has been implemented!`)
+                                .addFields(
+                                    {
+                                        name: 'Suggestion',
+                                        value: `**Game:** ${suggestion.gameTitle}` + 
+                                               (suggestion.type === 'racing' && suggestion.trackName ? `\n**Track:** ${suggestion.trackName}` : '')
+                                    },
+                                    {
+                                        name: 'Now Available',
+                                        value: `You can check it out with the \`/arcade\` command!`
+                                    }
+                                );
+                                
+                            if (gameInfo.imageIcon) {
+                                notifyEmbed.setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`);
+                            }
+                                
+                            await member.send({ embeds: [notifyEmbed] });
+                        } catch (dmError) {
+                            console.error('Error sending DM to user:', dmError);
+                            // Continue even if DM fails
+                        }
+                    }
+                } catch (userError) {
+                    console.error('Error finding/notifying user:', userError);
+                    // Continue even if user notification fails
+                }
+            }
+            
+            // Create response embed
+            const embed = new EmbedBuilder()
+                .setTitle(`${suggestion.type === 'arcade' ? 'Arcade Board' : 'Racing Challenge'} Created`)
+                .setDescription(`Successfully implemented suggestion as a ${suggestion.type} board!`)
+                .setColor('#00FF00')
+                .setTimestamp();
+                
+            embed.addFields(
+                {
+                    name: 'Board Details',
+                    value: `**Game:** ${gameInfo.title}\n` + 
+                           `**Board ID:** ${boardId}\n` +
+                           `**Leaderboard ID:** ${leaderboardId}\n` +
+                           `**Description:** ${description}` +
+                           (suggestion.type === 'racing' && suggestion.trackName ? `\n**Track:** ${suggestion.trackName}` : '')
+                }
+            );
+            
+            embed.addFields(
+                {
+                    name: 'Next Steps',
+                    value: `• View the board with \`/arcade\`\n` +
+                           `• Announce the board with \`/arcadeadmin announce board_id:${boardId}\``
+                }
+            );
+            
+            if (gameInfo.imageIcon) {
+                embed.setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`);
+            }
+            
+            return interaction.editReply({ embeds: [embed] });
+            
+        } catch (error) {
+            console.error('Error implementing suggestion:', error);
+            return interaction.editReply('An error occurred while implementing the suggestion. Please try again.');
+        }
+    },
+
+    async deleteSuggestion(interaction) {
+        try {
+            const suggestionId = interaction.options.getString('id');
+            
+            // Get the suggestion
+            const suggestion = await Suggestion.findById(suggestionId);
+            
+            if (!suggestion) {
+                return interaction.editReply(`Suggestion with ID "${suggestionId}" not found.`);
+            }
+            
+            // Delete the suggestion
+            await Suggestion.findByIdAndDelete(suggestionId);
+            
+            // Create response embed
+            const embed = new EmbedBuilder()
+                .setTitle('Suggestion Deleted')
+                .setDescription(`Successfully deleted the suggestion.`)
+                .setColor('#FF0000')
+                .setTimestamp();
+                
+            embed.addFields(
+                {
+                    name: 'Deleted Suggestion',
+                    value: `**ID:** \`${suggestion._id}\`\n` +
+                           `**Title:** ${suggestion.title || suggestion.gameTitle}\n` +
+                           `**Type:** ${suggestion.type}\n` +
+                           `**By:** ${suggestion.suggestedBy}`
+                }
+            );
+            
+            return interaction.editReply({ embeds: [embed] });
+            
+        } catch (error) {
+            console.error('Error deleting suggestion:', error);
+            return interaction.editReply('An error occurred while deleting the suggestion. Please try again.');
         }
     }
 };
