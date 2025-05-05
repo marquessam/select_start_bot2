@@ -142,7 +142,10 @@ export default {
                     const selectedValue = i.values[0];
 
                     try {
-                        await i.deferUpdate();
+                        // Check if the interaction has already been acknowledged
+                        if (!i.deferred && !i.replied) {
+                            await i.deferUpdate();
+                        }
                         
                         // Handle the selected option
                         switch (selectedValue) {
@@ -167,15 +170,27 @@ export default {
                         }
                     } catch (error) {
                         console.error('Error handling menu selection:', error);
-                        // Don't try to reply if there's an error with the interaction
-                        // since it might already be acknowledged
+                        // Only try to respond if we haven't already
+                        if (!i.replied) {
+                            try {
+                                await i.followUp({ 
+                                    content: 'An error occurred while processing your selection. Please try again.', 
+                                    ephemeral: true 
+                                });
+                            } catch (followUpError) {
+                                console.error('Error sending follow-up message:', followUpError);
+                            }
+                        }
                     }
                 } else {
                     try {
-                        await i.reply({ 
-                            content: 'This menu is not for you. Please use the `/suggestadmin` command to start your own session.',
-                            ephemeral: true 
-                        });
+                        // Only reply if we haven't already
+                        if (!i.replied) {
+                            await i.reply({ 
+                                content: 'This menu is not for you. Please use the `/suggestadmin` command to start your own session.',
+                                ephemeral: true 
+                            });
+                        }
                     } catch (error) {
                         console.error('Error replying to unauthorized user:', error);
                     }
@@ -311,7 +326,10 @@ export default {
             collector.on('collect', async i => {
                 if (i.user.id === interaction.user.id) {
                     try {
-                        await i.deferUpdate();
+                        // Check if interaction has already been acknowledged
+                        if (!i.deferred && !i.replied) {
+                            await i.deferUpdate();
+                        }
                         
                         if (i.customId === 'select_suggestion') {
                             const suggestionId = i.values[0];
@@ -321,13 +339,27 @@ export default {
                         }
                     } catch (error) {
                         console.error('Error handling suggestion selection:', error);
+                        // Only try to respond if we haven't already
+                        if (!i.replied) {
+                            try {
+                                await i.followUp({ 
+                                    content: 'An error occurred while processing your selection. Please try again.', 
+                                    ephemeral: true 
+                                });
+                            } catch (followUpError) {
+                                console.error('Error sending follow-up message:', followUpError);
+                            }
+                        }
                     }
                 } else {
                     try {
-                        await i.reply({ 
-                            content: 'This menu is not for you. Please use the `/suggestadmin` command to start your own session.',
-                            ephemeral: true 
-                        });
+                        // Only reply if we haven't already
+                        if (!i.replied) {
+                            await i.reply({ 
+                                content: 'This menu is not for you. Please use the `/suggestadmin` command to start your own session.',
+                                ephemeral: true 
+                            });
+                        }
                     } catch (error) {
                         console.error('Error replying to unauthorized user:', error);
                     }
@@ -500,7 +532,10 @@ export default {
             collector.on('collect', async i => {
                 if (i.user.id === interaction.user.id) {
                     try {
-                        await i.deferUpdate();
+                        // Check if interaction has already been acknowledged
+                        if (!i.deferred && !i.replied) {
+                            await i.deferUpdate();
+                        }
                         
                         switch (i.customId) {
                             case 'update_status':
@@ -521,13 +556,27 @@ export default {
                         }
                     } catch (error) {
                         console.error('Error handling button click:', error);
+                        // Only try to respond if we haven't already
+                        if (!i.replied) {
+                            try {
+                                await i.followUp({ 
+                                    content: 'An error occurred while processing your selection. Please try again.', 
+                                    ephemeral: true 
+                                });
+                            } catch (followUpError) {
+                                console.error('Error sending follow-up message:', followUpError);
+                            }
+                        }
                     }
                 } else {
                     try {
-                        await i.reply({ 
-                            content: 'This menu is not for you. Please use the `/suggestadmin` command to start your own session.',
-                            ephemeral: true 
-                        });
+                        // Only reply if we haven't already
+                        if (!i.replied) {
+                            await i.reply({ 
+                                content: 'This menu is not for you. Please use the `/suggestadmin` command to start your own session.',
+                                ephemeral: true 
+                            });
+                        }
                     } catch (error) {
                         console.error('Error replying to unauthorized user:', error);
                     }
@@ -636,7 +685,11 @@ export default {
                     try {
                         if (i.customId === 'select_status') {
                             const newStatus = i.values[0];
-                            await i.deferUpdate();
+                            
+                            // Check if interaction has already been acknowledged
+                            if (!i.deferred && !i.replied) {
+                                await i.deferUpdate();
+                            }
                             
                             // Show response modal
                             const modal = new ModalBuilder()
@@ -673,7 +726,10 @@ export default {
                                     time: 600000 // 10 minutes to fill out the form
                                 });
                                 
-                                await modalSubmission.deferUpdate();
+                                // Check if interaction has already been acknowledged
+                                if (!modalSubmission.deferred && !modalSubmission.replied) {
+                                    await modalSubmission.deferUpdate();
+                                }
                                 
                                 // Get values from modal
                                 const newStatus = modalSubmission.fields.getTextInputValue('status');
@@ -735,7 +791,10 @@ export default {
                                 updateCollector.on('collect', async updateI => {
                                     if (updateI.user.id === interaction.user.id) {
                                         try {
-                                            await updateI.deferUpdate();
+                                            // Check if interaction has already been acknowledged
+                                            if (!updateI.deferred && !updateI.replied) {
+                                                await updateI.deferUpdate();
+                                            }
                                             
                                             if (updateI.customId === 'view_details') {
                                                 await this.viewSuggestionDetails(updateI, suggestion._id, previousFilter, previousTitle);
@@ -761,7 +820,10 @@ export default {
                                 }
                             }
                         } else if (i.customId === 'back_to_details') {
-                            await i.deferUpdate();
+                            // Check if interaction has already been acknowledged
+                            if (!i.deferred && !i.replied) {
+                                await i.deferUpdate();
+                            }
                             await this.viewSuggestionDetails(i, suggestion._id, previousFilter, previousTitle);
                         }
                     } catch (error) {
@@ -769,10 +831,13 @@ export default {
                     }
                 } else {
                     try {
-                        await i.reply({ 
-                            content: 'This menu is not for you. Please use the `/suggestadmin` command to start your own session.',
-                            ephemeral: true 
-                        });
+                        // Only reply if we haven't already
+                        if (!i.replied) {
+                            await i.reply({ 
+                                content: 'This menu is not for you. Please use the `/suggestadmin` command to start your own session.',
+                                ephemeral: true 
+                            });
+                        }
                     } catch (error) {
                         console.error('Error replying to unauthorized user:', error);
                     }
@@ -868,6 +933,11 @@ export default {
                 if (i.user.id === interaction.user.id) {
                     try {
                         if (i.customId === 'open_implementation_form') {
+                            // Check if interaction has already been acknowledged
+                            if (!i.deferred && !i.replied) {
+                                await i.deferUpdate();
+                            }
+                            
                             // Create implementation modal
                             const modal = new ModalBuilder()
                                 .setCustomId('implementation_modal')
@@ -903,7 +973,10 @@ export default {
                                     time: 600000 // 10 minutes to fill out the form
                                 });
                                 
-                                await modalSubmission.deferUpdate();
+                                // Check if interaction has already been acknowledged
+                                if (!modalSubmission.deferred && !modalSubmission.replied) {
+                                    await modalSubmission.deferUpdate();
+                                }
                                 
                                 // Get values from modal
                                 const boardId = modalSubmission.fields.getTextInputValue('boardId');
@@ -941,7 +1014,10 @@ export default {
                                     retryCollector.on('collect', async retryI => {
                                         if (retryI.user.id === interaction.user.id) {
                                             try {
-                                                await retryI.deferUpdate();
+                                                // Check if interaction has already been acknowledged
+                                                if (!retryI.deferred && !retryI.replied) {
+                                                    await retryI.deferUpdate();
+                                                }
                                                 await this.handleImplementSuggestion(retryI, suggestion, previousFilter, previousTitle);
                                             } catch (error) {
                                                 console.error('Error handling retry:', error);
@@ -1072,7 +1148,10 @@ export default {
                                 implCollector.on('collect', async implI => {
                                     if (implI.user.id === interaction.user.id) {
                                         try {
-                                            await implI.deferUpdate();
+                                            // Check if interaction has already been acknowledged
+                                            if (!implI.deferred && !implI.replied) {
+                                                await implI.deferUpdate();
+                                            }
                                             
                                             if (implI.customId === 'back_to_list') {
                                                 await this.viewSuggestions(implI, previousFilter, previousTitle);
@@ -1098,7 +1177,10 @@ export default {
                                 }
                             }
                         } else if (i.customId === 'back_to_details') {
-                            await i.deferUpdate();
+                            // Check if interaction has already been acknowledged
+                            if (!i.deferred && !i.replied) {
+                                await i.deferUpdate();
+                            }
                             await this.viewSuggestionDetails(i, suggestion._id, previousFilter, previousTitle);
                         }
                     } catch (error) {
@@ -1106,10 +1188,13 @@ export default {
                     }
                 } else {
                     try {
-                        await i.reply({ 
-                            content: 'This menu is not for you. Please use the `/suggestadmin` command to start your own session.',
-                            ephemeral: true 
-                        });
+                        // Only reply if we haven't already
+                        if (!i.replied) {
+                            await i.reply({ 
+                                content: 'This menu is not for you. Please use the `/suggestadmin` command to start your own session.',
+                                ephemeral: true 
+                            });
+                        }
                     } catch (error) {
                         console.error('Error replying to unauthorized user:', error);
                     }
@@ -1191,7 +1276,10 @@ export default {
             collector.on('collect', async i => {
                 if (i.user.id === interaction.user.id) {
                     try {
-                        await i.deferUpdate();
+                        // Check if interaction has already been acknowledged
+                        if (!i.deferred && !i.replied) {
+                            await i.deferUpdate();
+                        }
                         
                         if (i.customId === 'confirm_delete') {
                             // Delete the suggestion
@@ -1241,7 +1329,10 @@ export default {
                             delCollector.on('collect', async delI => {
                                 if (delI.user.id === interaction.user.id) {
                                     try {
-                                        await delI.deferUpdate();
+                                        // Check if interaction has already been acknowledged
+                                        if (!delI.deferred && !delI.replied) {
+                                            await delI.deferUpdate();
+                                        }
                                         
                                         if (delI.customId === 'back_to_list') {
                                             await this.viewSuggestions(delI, previousFilter, previousTitle);
@@ -1262,10 +1353,13 @@ export default {
                     }
                 } else {
                     try {
-                        await i.reply({ 
-                            content: 'This menu is not for you. Please use the `/suggestadmin` command to start your own session.',
-                            ephemeral: true 
-                        });
+                        // Only reply if we haven't already
+                        if (!i.replied) {
+                            await i.reply({ 
+                                content: 'This menu is not for you. Please use the `/suggestadmin` command to start your own session.',
+                                ephemeral: true 
+                            });
+                        }
                     } catch (error) {
                         console.error('Error replying to unauthorized user:', error);
                     }
