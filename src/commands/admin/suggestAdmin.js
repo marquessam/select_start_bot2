@@ -137,37 +137,48 @@ export default {
             });
 
             collector.on('collect', async i => {
+                // Only respond if the interaction is from the original user
                 if (i.user.id === interaction.user.id) {
                     const selectedValue = i.values[0];
-                    
-                    await i.deferUpdate();
-                    
-                    // Handle the selected option
-                    switch (selectedValue) {
-                        case 'view_pending':
-                            await this.viewSuggestions(i, { status: 'pending' }, 'Pending Suggestions');
-                            break;
-                        case 'view_all':
-                            await this.viewSuggestions(i, {}, 'All Suggestions');
-                            break;
-                        case 'view_arcade':
-                            await this.viewSuggestions(i, { type: 'arcade' }, 'Arcade Board Suggestions');
-                            break;
-                        case 'view_racing':
-                            await this.viewSuggestions(i, { type: 'racing' }, 'Racing Challenge Suggestions');
-                            break;
-                        case 'view_bot':
-                            await this.viewSuggestions(i, { type: 'bot' }, 'Bot Improvement Suggestions');
-                            break;
-                        case 'view_other':
-                            await this.viewSuggestions(i, { type: 'other' }, 'Other Suggestions');
-                            break;
+
+                    try {
+                        await i.deferUpdate();
+                        
+                        // Handle the selected option
+                        switch (selectedValue) {
+                            case 'view_pending':
+                                await this.viewSuggestions(i, { status: 'pending' }, 'Pending Suggestions');
+                                break;
+                            case 'view_all':
+                                await this.viewSuggestions(i, {}, 'All Suggestions');
+                                break;
+                            case 'view_arcade':
+                                await this.viewSuggestions(i, { type: 'arcade' }, 'Arcade Board Suggestions');
+                                break;
+                            case 'view_racing':
+                                await this.viewSuggestions(i, { type: 'racing' }, 'Racing Challenge Suggestions');
+                                break;
+                            case 'view_bot':
+                                await this.viewSuggestions(i, { type: 'bot' }, 'Bot Improvement Suggestions');
+                                break;
+                            case 'view_other':
+                                await this.viewSuggestions(i, { type: 'other' }, 'Other Suggestions');
+                                break;
+                        }
+                    } catch (error) {
+                        console.error('Error handling menu selection:', error);
+                        // Don't try to reply if there's an error with the interaction
+                        // since it might already be acknowledged
                     }
                 } else {
-                    await i.reply({ 
-                        content: 'This menu is not for you. Please use the `/suggestadmin` command to start your own session.',
-                        ephemeral: true 
-                    });
+                    try {
+                        await i.reply({ 
+                            content: 'This menu is not for you. Please use the `/suggestadmin` command to start your own session.',
+                            ephemeral: true 
+                        });
+                    } catch (error) {
+                        console.error('Error replying to unauthorized user:', error);
+                    }
                 }
             });
 
@@ -299,19 +310,27 @@ export default {
             
             collector.on('collect', async i => {
                 if (i.user.id === interaction.user.id) {
-                    await i.deferUpdate();
-                    
-                    if (i.customId === 'select_suggestion') {
-                        const suggestionId = i.values[0];
-                        await this.viewSuggestionDetails(i, suggestionId, filter, title);
-                    } else if (i.customId === 'back_to_menu') {
-                        await this.showMainMenu(i);
+                    try {
+                        await i.deferUpdate();
+                        
+                        if (i.customId === 'select_suggestion') {
+                            const suggestionId = i.values[0];
+                            await this.viewSuggestionDetails(i, suggestionId, filter, title);
+                        } else if (i.customId === 'back_to_menu') {
+                            await this.showMainMenu(i);
+                        }
+                    } catch (error) {
+                        console.error('Error handling suggestion selection:', error);
                     }
                 } else {
-                    await i.reply({ 
-                        content: 'This menu is not for you. Please use the `/suggestadmin` command to start your own session.',
-                        ephemeral: true 
-                    });
+                    try {
+                        await i.reply({ 
+                            content: 'This menu is not for you. Please use the `/suggestadmin` command to start your own session.',
+                            ephemeral: true 
+                        });
+                    } catch (error) {
+                        console.error('Error replying to unauthorized user:', error);
+                    }
                 }
             });
             
@@ -480,30 +499,38 @@ export default {
             
             collector.on('collect', async i => {
                 if (i.user.id === interaction.user.id) {
-                    await i.deferUpdate();
-                    
-                    switch (i.customId) {
-                        case 'update_status':
-                            await this.handleUpdateStatus(i, suggestion, previousFilter, previousTitle);
-                            break;
-                        case 'implement':
-                            await this.handleImplementSuggestion(i, suggestion, previousFilter, previousTitle);
-                            break;
-                        case 'delete':
-                            await this.handleDeleteSuggestion(i, suggestion, previousFilter, previousTitle);
-                            break;
-                        case 'back_to_list':
-                            await this.viewSuggestions(i, previousFilter, previousTitle);
-                            break;
-                        case 'back_to_menu':
-                            await this.showMainMenu(i);
-                            break;
+                    try {
+                        await i.deferUpdate();
+                        
+                        switch (i.customId) {
+                            case 'update_status':
+                                await this.handleUpdateStatus(i, suggestion, previousFilter, previousTitle);
+                                break;
+                            case 'implement':
+                                await this.handleImplementSuggestion(i, suggestion, previousFilter, previousTitle);
+                                break;
+                            case 'delete':
+                                await this.handleDeleteSuggestion(i, suggestion, previousFilter, previousTitle);
+                                break;
+                            case 'back_to_list':
+                                await this.viewSuggestions(i, previousFilter, previousTitle);
+                                break;
+                            case 'back_to_menu':
+                                await this.showMainMenu(i);
+                                break;
+                        }
+                    } catch (error) {
+                        console.error('Error handling button click:', error);
                     }
                 } else {
-                    await i.reply({ 
-                        content: 'This menu is not for you. Please use the `/suggestadmin` command to start your own session.',
-                        ephemeral: true 
-                    });
+                    try {
+                        await i.reply({ 
+                            content: 'This menu is not for you. Please use the `/suggestadmin` command to start your own session.',
+                            ephemeral: true 
+                        });
+                    } catch (error) {
+                        console.error('Error replying to unauthorized user:', error);
+                    }
                 }
             });
             
@@ -606,133 +633,149 @@ export default {
             
             collector.on('collect', async i => {
                 if (i.user.id === interaction.user.id) {
-                    if (i.customId === 'select_status') {
-                        const newStatus = i.values[0];
-                        await i.deferUpdate();
-                        
-                        // Show response modal
-                        const modal = new ModalBuilder()
-                            .setCustomId('status_update_modal')
-                            .setTitle('Update Suggestion Status');
+                    try {
+                        if (i.customId === 'select_status') {
+                            const newStatus = i.values[0];
+                            await i.deferUpdate();
                             
-                        // Add status field (hidden)
-                        const statusInput = new TextInputBuilder()
-                            .setCustomId('status')
-                            .setLabel('Status (Do not change)')
-                            .setValue(newStatus)
-                            .setStyle(TextInputStyle.Short)
-                            .setRequired(true);
-                            
-                        // Add response field
-                        const responseInput = new TextInputBuilder()
-                            .setCustomId('response')
-                            .setLabel('Response to User (Optional)')
-                            .setPlaceholder('Provide feedback or explanation for the status change...')
-                            .setStyle(TextInputStyle.Paragraph)
-                            .setRequired(false);
-                            
-                        // Add fields to modal
-                        const statusRow = new ActionRowBuilder().addComponents(statusInput);
-                        const responseRow = new ActionRowBuilder().addComponents(responseInput);
-                        modal.addComponents(statusRow, responseRow);
-                        
-                        // Show the modal
-                        await i.showModal(modal);
-                        
-                        // Wait for modal submission
-                        try {
-                            const modalSubmission = await i.awaitModalSubmit({
-                                time: 600000 // 10 minutes to fill out the form
-                            });
-                            
-                            await modalSubmission.deferUpdate();
-                            
-                            // Get values from modal
-                            const newStatus = modalSubmission.fields.getTextInputValue('status');
-                            const response = modalSubmission.fields.getTextInputValue('response');
-                            
-                            // Update the suggestion
-                            suggestion.status = newStatus;
-                            if (response) {
-                                suggestion.adminResponse = response;
-                                suggestion.adminResponseDate = new Date();
-                                suggestion.adminRespondedBy = interaction.user.tag;
-                            }
-                            
-                            await suggestion.save();
-                            
-                            // Try to notify the user if enabled
-                            await this.notifyUser(interaction, suggestion, newStatus, response);
-                            
-                            // Show success message
-                            const successEmbed = new EmbedBuilder()
-                                .setTitle('Status Updated')
-                                .setDescription(`The status for **${suggestion.title || suggestion.gameTitle}** has been updated to **${newStatus}**.`)
-                                .setColor('#00FF00')
-                                .setTimestamp();
+                            // Show response modal
+                            const modal = new ModalBuilder()
+                                .setCustomId('status_update_modal')
+                                .setTitle('Update Suggestion Status');
                                 
-                            if (response) {
-                                successEmbed.addFields({ 
-                                    name: 'Response', 
-                                    value: response 
+                            // Add status field (hidden)
+                            const statusInput = new TextInputBuilder()
+                                .setCustomId('status')
+                                .setLabel('Status (Do not change)')
+                                .setValue(newStatus)
+                                .setStyle(TextInputStyle.Short)
+                                .setRequired(true);
+                                
+                            // Add response field
+                            const responseInput = new TextInputBuilder()
+                                .setCustomId('response')
+                                .setLabel('Response to User (Optional)')
+                                .setPlaceholder('Provide feedback or explanation for the status change...')
+                                .setStyle(TextInputStyle.Paragraph)
+                                .setRequired(false);
+                                
+                            // Add fields to modal
+                            const statusRow = new ActionRowBuilder().addComponents(statusInput);
+                            const responseRow = new ActionRowBuilder().addComponents(responseInput);
+                            modal.addComponents(statusRow, responseRow);
+                            
+                            // Show the modal
+                            await i.showModal(modal);
+                            
+                            // Wait for modal submission
+                            try {
+                                const modalSubmission = await i.awaitModalSubmit({
+                                    time: 600000 // 10 minutes to fill out the form
                                 });
-                            }
-                            
-                            const actionRow = new ActionRowBuilder()
-                                .addComponents(
-                                    new ButtonBuilder()
-                                        .setCustomId('view_details')
-                                        .setLabel('View Details')
-                                        .setStyle(ButtonStyle.Primary)
-                                        .setEmoji('🔍'),
-                                    new ButtonBuilder()
-                                        .setCustomId('back_to_list')
-                                        .setLabel('Back to List')
-                                        .setStyle(ButtonStyle.Secondary)
-                                        .setEmoji('↩️')
-                                );
                                 
-                            await modalSubmission.editReply({
-                                embeds: [successEmbed],
-                                components: [actionRow]
-                            });
-                            
-                            // Handle post-update navigation
-                            const updateMessage = await modalSubmission.fetchReply();
-                            const updateCollector = updateMessage.createMessageComponentCollector({
-                                componentType: ComponentType.Button,
-                                time: 300000 // 5 minutes
-                            });
-                            
-                            updateCollector.on('collect', async updateI => {
-                                if (updateI.user.id === interaction.user.id) {
-                                    await updateI.deferUpdate();
+                                await modalSubmission.deferUpdate();
+                                
+                                // Get values from modal
+                                const newStatus = modalSubmission.fields.getTextInputValue('status');
+                                const response = modalSubmission.fields.getTextInputValue('response');
+                                
+                                // Update the suggestion
+                                suggestion.status = newStatus;
+                                if (response) {
+                                    suggestion.adminResponse = response;
+                                    suggestion.adminResponseDate = new Date();
+                                    suggestion.adminRespondedBy = interaction.user.tag;
+                                }
+                                
+                                await suggestion.save();
+                                
+                                // Try to notify the user if enabled
+                                await this.notifyUser(interaction, suggestion, newStatus, response);
+                                
+                                // Show success message
+                                const successEmbed = new EmbedBuilder()
+                                    .setTitle('Status Updated')
+                                    .setDescription(`The status for **${suggestion.title || suggestion.gameTitle}** has been updated to **${newStatus}**.`)
+                                    .setColor('#00FF00')
+                                    .setTimestamp();
                                     
-                                    if (updateI.customId === 'view_details') {
-                                        await this.viewSuggestionDetails(updateI, suggestion._id, previousFilter, previousTitle);
-                                    } else if (updateI.customId === 'back_to_list') {
-                                        await this.viewSuggestions(updateI, previousFilter, previousTitle);
+                                if (response) {
+                                    successEmbed.addFields({ 
+                                        name: 'Response', 
+                                        value: response 
+                                    });
+                                }
+                                
+                                const actionRow = new ActionRowBuilder()
+                                    .addComponents(
+                                        new ButtonBuilder()
+                                            .setCustomId('view_details')
+                                            .setLabel('View Details')
+                                            .setStyle(ButtonStyle.Primary)
+                                            .setEmoji('🔍'),
+                                        new ButtonBuilder()
+                                            .setCustomId('back_to_list')
+                                            .setLabel('Back to List')
+                                            .setStyle(ButtonStyle.Secondary)
+                                            .setEmoji('↩️')
+                                    );
+                                    
+                                await modalSubmission.editReply({
+                                    embeds: [successEmbed],
+                                    components: [actionRow]
+                                });
+                                
+                                // Handle post-update navigation
+                                const updateMessage = await modalSubmission.fetchReply();
+                                const updateCollector = updateMessage.createMessageComponentCollector({
+                                    componentType: ComponentType.Button,
+                                    time: 300000 // 5 minutes
+                                });
+                                
+                                updateCollector.on('collect', async updateI => {
+                                    if (updateI.user.id === interaction.user.id) {
+                                        try {
+                                            await updateI.deferUpdate();
+                                            
+                                            if (updateI.customId === 'view_details') {
+                                                await this.viewSuggestionDetails(updateI, suggestion._id, previousFilter, previousTitle);
+                                            } else if (updateI.customId === 'back_to_list') {
+                                                await this.viewSuggestions(updateI, previousFilter, previousTitle);
+                                            }
+                                        } catch (error) {
+                                            console.error('Error handling post-update navigation:', error);
+                                        }
+                                    }
+                                });
+                            } catch (error) {
+                                console.error('Error processing modal submission:', error);
+                                if (error.code !== 'INTERACTION_COLLECTOR_ERROR') {
+                                    try {
+                                        await interaction.followUp({
+                                            content: 'An error occurred while updating the status. Please try again.',
+                                            ephemeral: true
+                                        });
+                                    } catch (followUpError) {
+                                        console.error('Error sending follow-up:', followUpError);
                                     }
                                 }
-                            });
-                        } catch (error) {
-                            if (error.code === 'INTERACTION_COLLECTOR_ERROR') {
-                                console.log('Modal timed out');
-                                await this.viewSuggestionDetails(interaction, suggestion._id, previousFilter, previousTitle);
-                            } else {
-                                console.error('Error processing modal submission:', error);
-                                await interaction.editReply('An error occurred while updating the status. Please try again.');
                             }
+                        } else if (i.customId === 'back_to_details') {
+                            await i.deferUpdate();
+                            await this.viewSuggestionDetails(i, suggestion._id, previousFilter, previousTitle);
                         }
-                    } else if (i.customId === 'back_to_details') {
-                        await i.deferUpdate();
-                        await this.viewSuggestionDetails(i, suggestion._id, previousFilter, previousTitle);
+                    } catch (error) {
+                        console.error('Error handling status update action:', error);
                     }
                 } else {
-                    await i.reply({ 
-                        content: 'This menu is not for you. Please use the `/suggestadmin` command to start your own session.',
-                        ephemeral: true 
-                    });
+                    try {
+                        await i.reply({ 
+                            content: 'This menu is not for you. Please use the `/suggestadmin` command to start your own session.',
+                            ephemeral: true 
+                        });
+                    } catch (error) {
+                        console.error('Error replying to unauthorized user:', error);
+                    }
                 }
             });
             
@@ -823,233 +866,253 @@ export default {
             
             collector.on('collect', async i => {
                 if (i.user.id === interaction.user.id) {
-                    if (i.customId === 'open_implementation_form') {
-                        // Create implementation modal
-                        const modal = new ModalBuilder()
-                            .setCustomId('implementation_modal')
-                            .setTitle(`Implement ${suggestion.type.charAt(0).toUpperCase() + suggestion.type.slice(1)} Board`);
+                    try {
+                        if (i.customId === 'open_implementation_form') {
+                            // Create implementation modal
+                            const modal = new ModalBuilder()
+                                .setCustomId('implementation_modal')
+                                .setTitle(`Implement ${suggestion.type.charAt(0).toUpperCase() + suggestion.type.slice(1)} Board`);
+                                
+                            // Add board ID field
+                            const boardIdInput = new TextInputBuilder()
+                                .setCustomId('boardId')
+                                .setLabel('Board ID (unique identifier)')
+                                .setPlaceholder(`${suggestion.type}-${suggestion.gameId}`)
+                                .setStyle(TextInputStyle.Short)
+                                .setRequired(true);
+                                
+                            // Add description field
+                            const descriptionInput = new TextInputBuilder()
+                                .setCustomId('description')
+                                .setLabel('Board Description')
+                                .setValue(suggestion.description)
+                                .setStyle(TextInputStyle.Paragraph)
+                                .setRequired(true);
+                                
+                            // Add fields to modal
+                            const boardIdRow = new ActionRowBuilder().addComponents(boardIdInput);
+                            const descriptionRow = new ActionRowBuilder().addComponents(descriptionInput);
+                            modal.addComponents(boardIdRow, descriptionRow);
                             
-                        // Add board ID field
-                        const boardIdInput = new TextInputBuilder()
-                            .setCustomId('boardId')
-                            .setLabel('Board ID (unique identifier)')
-                            .setPlaceholder(`${suggestion.type}-${suggestion.gameId}`)
-                            .setStyle(TextInputStyle.Short)
-                            .setRequired(true);
+                            // Show the modal
+                            await i.showModal(modal);
                             
-                        // Add description field
-                        const descriptionInput = new TextInputBuilder()
-                            .setCustomId('description')
-                            .setLabel('Board Description')
-                            .setValue(suggestion.description)
-                            .setStyle(TextInputStyle.Paragraph)
-                            .setRequired(true);
-                            
-                        // Add fields to modal
-                        const boardIdRow = new ActionRowBuilder().addComponents(boardIdInput);
-                        const descriptionRow = new ActionRowBuilder().addComponents(descriptionInput);
-                        modal.addComponents(boardIdRow, descriptionRow);
-                        
-                        // Show the modal
-                        await i.showModal(modal);
-                        
-                        // Wait for modal submission
-                        try {
-                            const modalSubmission = await i.awaitModalSubmit({
-                                time: 600000 // 10 minutes to fill out the form
-                            });
-                            
-                            await modalSubmission.deferUpdate();
-                            
-                            // Get values from modal
-                            const boardId = modalSubmission.fields.getTextInputValue('boardId');
-                            const description = modalSubmission.fields.getTextInputValue('description');
-                            
-                            // Validate board ID doesn't already exist
-                            const existingBoard = await ArcadeBoard.findOne({ boardId });
-                            if (existingBoard) {
-                                const errorEmbed = new EmbedBuilder()
-                                    .setTitle('Error')
-                                    .setDescription(`A board with ID "${boardId}" already exists. Please choose a different board ID.`)
-                                    .setColor('#FF0000')
+                            // Wait for modal submission
+                            try {
+                                const modalSubmission = await i.awaitModalSubmit({
+                                    time: 600000 // 10 minutes to fill out the form
+                                });
+                                
+                                await modalSubmission.deferUpdate();
+                                
+                                // Get values from modal
+                                const boardId = modalSubmission.fields.getTextInputValue('boardId');
+                                const description = modalSubmission.fields.getTextInputValue('description');
+                                
+                                // Validate board ID doesn't already exist
+                                const existingBoard = await ArcadeBoard.findOne({ boardId });
+                                if (existingBoard) {
+                                    const errorEmbed = new EmbedBuilder()
+                                        .setTitle('Error')
+                                        .setDescription(`A board with ID "${boardId}" already exists. Please choose a different board ID.`)
+                                        .setColor('#FF0000')
+                                        .setTimestamp();
+                                        
+                                    const backButton = new ActionRowBuilder()
+                                        .addComponents(
+                                            new ButtonBuilder()
+                                                .setCustomId('try_again')
+                                                .setLabel('Try Again')
+                                                .setStyle(ButtonStyle.Primary)
+                                        );
+                                        
+                                    await modalSubmission.editReply({
+                                        embeds: [errorEmbed],
+                                        components: [backButton]
+                                    });
+                                    
+                                    // Handle retry
+                                    const retryMessage = await modalSubmission.fetchReply();
+                                    const retryCollector = retryMessage.createMessageComponentCollector({
+                                        componentType: ComponentType.Button,
+                                        time: 300000 // 5 minutes
+                                    });
+                                    
+                                    retryCollector.on('collect', async retryI => {
+                                        if (retryI.user.id === interaction.user.id) {
+                                            try {
+                                                await retryI.deferUpdate();
+                                                await this.handleImplementSuggestion(retryI, suggestion, previousFilter, previousTitle);
+                                            } catch (error) {
+                                                console.error('Error handling retry:', error);
+                                            }
+                                        }
+                                    });
+                                    
+                                    return;
+                                }
+                                
+                                // Get game info
+                                const gameInfo = await retroAPI.getGameInfo(suggestion.gameId);
+                                if (!gameInfo) {
+                                    return modalSubmission.editReply('Game not found. Please check the game ID.');
+                                }
+                                
+                                // Create new board based on suggestion type
+                                let newBoard;
+                                
+                                if (suggestion.type === 'arcade') {
+                                    // Create arcade board
+                                    newBoard = new ArcadeBoard({
+                                        boardId,
+                                        boardType: 'arcade',
+                                        leaderboardId: suggestion.leaderboardId,
+                                        gameId: suggestion.gameId,
+                                        gameTitle: gameInfo.title,
+                                        consoleName: gameInfo.consoleName || 'Unknown',
+                                        description
+                                    });
+                                } else if (suggestion.type === 'racing') {
+                                    // For racing boards, we need to set up start and end dates
+                                    const now = new Date();
+                                    const year = now.getFullYear();
+                                    const month = now.getMonth() + 1;
+                                    
+                                    // Calculate start and end dates (current month by default)
+                                    const startDate = new Date(year, month - 1, 1);
+                                    const endDate = new Date(year, month, 0, 23, 59, 59);
+                                    
+                                    // Generate month key
+                                    const monthKey = `${year}-${month.toString().padStart(2, '0')}`;
+                                    
+                                    // Get the full game title and console name
+                                    const gameFull = `${gameInfo.title} (${gameInfo.consoleName})`;
+                                    
+                                    // Create new racing board
+                                    newBoard = new ArcadeBoard({
+                                        boardId,
+                                        boardType: 'racing',
+                                        leaderboardId: suggestion.leaderboardId,
+                                        gameId: suggestion.gameId,
+                                        gameTitle: gameFull,
+                                        trackName: suggestion.trackName || '',
+                                        consoleName: gameInfo.consoleName || 'Unknown',
+                                        description,
+                                        startDate,
+                                        endDate,
+                                        monthKey
+                                    });
+                                }
+                                
+                                // Save the new board
+                                await newBoard.save();
+                                
+                                // Update the suggestion status
+                                suggestion.status = 'implemented';
+                                suggestion.adminResponse = `Implemented as ${suggestion.type} board with ID: ${boardId}`;
+                                suggestion.adminResponseDate = new Date();
+                                suggestion.adminRespondedBy = interaction.user.tag;
+                                await suggestion.save();
+                                
+                                // Notify the user of implementation
+                                await this.notifyImplementation(interaction, suggestion, boardId);
+                                
+                                // Show success message
+                                const successEmbed = new EmbedBuilder()
+                                    .setTitle(`${suggestion.type.charAt(0).toUpperCase() + suggestion.type.slice(1)} Board Created`)
+                                    .setDescription(`Successfully implemented suggestion as a ${suggestion.type} board!`)
+                                    .setColor('#00FF00')
+                                    .addFields(
+                                        {
+                                            name: 'Board Details',
+                                            value: `**Game:** ${gameInfo.title}\n` + 
+                                                   `**Board ID:** ${boardId}\n` +
+                                                   `**Leaderboard ID:** ${suggestion.leaderboardId}\n` +
+                                                   `**Description:** ${description}` +
+                                                   (suggestion.type === 'racing' && suggestion.trackName ? `\n**Track:** ${suggestion.trackName}` : '')
+                                        },
+                                        {
+                                            name: 'Next Steps',
+                                            value: `• View the board with \`/arcade\`\n` +
+                                                   `• Announce the board with \`/arcadeadmin announce board_id:${boardId}\``
+                                        }
+                                    )
                                     .setTimestamp();
                                     
-                                const backButton = new ActionRowBuilder()
+                                if (gameInfo.imageIcon) {
+                                    successEmbed.setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`);
+                                }
+                                
+                                const successActionRow = new ActionRowBuilder()
                                     .addComponents(
                                         new ButtonBuilder()
-                                            .setCustomId('try_again')
-                                            .setLabel('Try Again')
-                                            .setStyle(ButtonStyle.Primary)
+                                            .setCustomId('back_to_list')
+                                            .setLabel('Back to Suggestions')
+                                            .setStyle(ButtonStyle.Secondary)
+                                            .setEmoji('↩️'),
+                                        new ButtonBuilder()
+                                            .setCustomId('back_to_menu')
+                                            .setLabel('Main Menu')
+                                            .setStyle(ButtonStyle.Secondary)
+                                            .setEmoji('🏠')
                                     );
                                     
                                 await modalSubmission.editReply({
-                                    embeds: [errorEmbed],
-                                    components: [backButton]
+                                    embeds: [successEmbed],
+                                    components: [successActionRow]
                                 });
                                 
-                                // Handle retry
-                                const retryMessage = await modalSubmission.fetchReply();
-                                const retryCollector = retryMessage.createMessageComponentCollector({
+                                // Handle post-implementation navigation
+                                const implMessage = await modalSubmission.fetchReply();
+                                const implCollector = implMessage.createMessageComponentCollector({
                                     componentType: ComponentType.Button,
                                     time: 300000 // 5 minutes
                                 });
                                 
-                                retryCollector.on('collect', async retryI => {
-                                    if (retryI.user.id === interaction.user.id) {
-                                        await retryI.deferUpdate();
-                                        await this.handleImplementSuggestion(retryI, suggestion, previousFilter, previousTitle);
+                                implCollector.on('collect', async implI => {
+                                    if (implI.user.id === interaction.user.id) {
+                                        try {
+                                            await implI.deferUpdate();
+                                            
+                                            if (implI.customId === 'back_to_list') {
+                                                await this.viewSuggestions(implI, previousFilter, previousTitle);
+                                            } else if (implI.customId === 'back_to_menu') {
+                                                await this.showMainMenu(implI);
+                                            }
+                                        } catch (error) {
+                                            console.error('Error handling post-implementation navigation:', error);
+                                        }
                                     }
                                 });
-                                
-                                return;
-                            }
-                            
-                            // Get game info
-                            const gameInfo = await retroAPI.getGameInfo(suggestion.gameId);
-                            if (!gameInfo) {
-                                return modalSubmission.editReply('Game not found. Please check the game ID.');
-                            }
-                            
-                            // Create new board based on suggestion type
-                            let newBoard;
-                            
-                            if (suggestion.type === 'arcade') {
-                                // Create arcade board
-                                newBoard = new ArcadeBoard({
-                                    boardId,
-                                    boardType: 'arcade',
-                                    leaderboardId: suggestion.leaderboardId,
-                                    gameId: suggestion.gameId,
-                                    gameTitle: gameInfo.title,
-                                    consoleName: gameInfo.consoleName || 'Unknown',
-                                    description
-                                });
-                            } else if (suggestion.type === 'racing') {
-                                // For racing boards, we need to set up start and end dates
-                                const now = new Date();
-                                const year = now.getFullYear();
-                                const month = now.getMonth() + 1;
-                                
-                                // Calculate start and end dates (current month by default)
-                                const startDate = new Date(year, month - 1, 1);
-                                const endDate = new Date(year, month, 0, 23, 59, 59);
-                                
-                                // Generate month key
-                                const monthKey = `${year}-${month.toString().padStart(2, '0')}`;
-                                
-                                // Get the full game title and console name
-                                const gameFull = `${gameInfo.title} (${gameInfo.consoleName})`;
-                                
-                                // Create new racing board
-                                newBoard = new ArcadeBoard({
-                                    boardId,
-                                    boardType: 'racing',
-                                    leaderboardId: suggestion.leaderboardId,
-                                    gameId: suggestion.gameId,
-                                    gameTitle: gameFull,
-                                    trackName: suggestion.trackName || '',
-                                    consoleName: gameInfo.consoleName || 'Unknown',
-                                    description,
-                                    startDate,
-                                    endDate,
-                                    monthKey
-                                });
-                            }
-                            
-                            // Save the new board
-                            await newBoard.save();
-                            
-                            // Update the suggestion status
-                            suggestion.status = 'implemented';
-                            suggestion.adminResponse = `Implemented as ${suggestion.type} board with ID: ${boardId}`;
-                            suggestion.adminResponseDate = new Date();
-                            suggestion.adminRespondedBy = interaction.user.tag;
-                            await suggestion.save();
-                            
-                            // Notify the user of implementation
-                            await this.notifyImplementation(interaction, suggestion, boardId);
-                            
-                            // Show success message
-                            const successEmbed = new EmbedBuilder()
-                                .setTitle(`${suggestion.type.charAt(0).toUpperCase() + suggestion.type.slice(1)} Board Created`)
-                                .setDescription(`Successfully implemented suggestion as a ${suggestion.type} board!`)
-                                .setColor('#00FF00')
-                                .addFields(
-                                    {
-                                        name: 'Board Details',
-                                        value: `**Game:** ${gameInfo.title}\n` + 
-                                               `**Board ID:** ${boardId}\n` +
-                                               `**Leaderboard ID:** ${suggestion.leaderboardId}\n` +
-                                               `**Description:** ${description}` +
-                                               (suggestion.type === 'racing' && suggestion.trackName ? `\n**Track:** ${suggestion.trackName}` : '')
-                                    },
-                                    {
-                                        name: 'Next Steps',
-                                        value: `• View the board with \`/arcade\`\n` +
-                                               `• Announce the board with \`/arcadeadmin announce board_id:${boardId}\``
-                                    }
-                                )
-                                .setTimestamp();
-                                
-                            if (gameInfo.imageIcon) {
-                                successEmbed.setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`);
-                            }
-                            
-                            const successActionRow = new ActionRowBuilder()
-                                .addComponents(
-                                    new ButtonBuilder()
-                                        .setCustomId('back_to_list')
-                                        .setLabel('Back to Suggestions')
-                                        .setStyle(ButtonStyle.Secondary)
-                                        .setEmoji('↩️'),
-                                    new ButtonBuilder()
-                                        .setCustomId('back_to_menu')
-                                        .setLabel('Main Menu')
-                                        .setStyle(ButtonStyle.Secondary)
-                                        .setEmoji('🏠')
-                                );
-                                
-                            await modalSubmission.editReply({
-                                embeds: [successEmbed],
-                                components: [successActionRow]
-                            });
-                            
-                            // Handle post-implementation navigation
-                            const implMessage = await modalSubmission.fetchReply();
-                            const implCollector = implMessage.createMessageComponentCollector({
-                                componentType: ComponentType.Button,
-                                time: 300000 // 5 minutes
-                            });
-                            
-                            implCollector.on('collect', async implI => {
-                                if (implI.user.id === interaction.user.id) {
-                                    await implI.deferUpdate();
-                                    
-                                    if (implI.customId === 'back_to_list') {
-                                        await this.viewSuggestions(implI, previousFilter, previousTitle);
-                                    } else if (implI.customId === 'back_to_menu') {
-                                        await this.showMainMenu(implI);
+                            } catch (error) {
+                                console.error('Error processing implementation:', error);
+                                if (error.code !== 'INTERACTION_COLLECTOR_ERROR') {
+                                    try {
+                                        await interaction.followUp({
+                                            content: 'An error occurred during implementation. Please try again.',
+                                            ephemeral: true
+                                        });
+                                    } catch (followUpError) {
+                                        console.error('Error sending follow-up:', followUpError);
                                     }
                                 }
-                            });
-                        } catch (error) {
-                            if (error.code === 'INTERACTION_COLLECTOR_ERROR') {
-                                console.log('Modal timed out');
-                                await this.viewSuggestionDetails(interaction, suggestion._id, previousFilter, previousTitle);
-                            } else {
-                                console.error('Error processing implementation:', error);
-                                await interaction.editReply('An error occurred during implementation. Please try again.');
                             }
+                        } else if (i.customId === 'back_to_details') {
+                            await i.deferUpdate();
+                            await this.viewSuggestionDetails(i, suggestion._id, previousFilter, previousTitle);
                         }
-                    } else if (i.customId === 'back_to_details') {
-                        await i.deferUpdate();
-                        await this.viewSuggestionDetails(i, suggestion._id, previousFilter, previousTitle);
+                    } catch (error) {
+                        console.error('Error handling implementation action:', error);
                     }
                 } else {
-                    await i.reply({ 
-                        content: 'This menu is not for you. Please use the `/suggestadmin` command to start your own session.',
-                        ephemeral: true 
-                    });
+                    try {
+                        await i.reply({ 
+                            content: 'This menu is not for you. Please use the `/suggestadmin` command to start your own session.',
+                            ephemeral: true 
+                        });
+                    } catch (error) {
+                        console.error('Error replying to unauthorized user:', error);
+                    }
                 }
             });
             
@@ -1127,73 +1190,85 @@ export default {
             
             collector.on('collect', async i => {
                 if (i.user.id === interaction.user.id) {
-                    await i.deferUpdate();
-                    
-                    if (i.customId === 'confirm_delete') {
-                        // Delete the suggestion
-                        await Suggestion.findByIdAndDelete(suggestion._id);
+                    try {
+                        await i.deferUpdate();
                         
-                        // Show success message
-                        const successEmbed = new EmbedBuilder()
-                            .setTitle('Suggestion Deleted')
-                            .setDescription(`The suggestion has been successfully deleted.`)
-                            .setColor('#00FF00')
-                            .addFields(
-                                {
-                                    name: 'Deleted Suggestion',
-                                    value: `**Type:** ${suggestion.type}\n` +
-                                           `**Title:** ${suggestion.title || suggestion.gameTitle}\n` +
-                                           `**By:** ${suggestion.suggestedBy}`
-                                }
-                            )
-                            .setTimestamp();
+                        if (i.customId === 'confirm_delete') {
+                            // Delete the suggestion
+                            await Suggestion.findByIdAndDelete(suggestion._id);
                             
-                        const successActionRow = new ActionRowBuilder()
-                            .addComponents(
-                                new ButtonBuilder()
-                                    .setCustomId('back_to_list')
-                                    .setLabel('Back to Suggestions')
-                                    .setStyle(ButtonStyle.Secondary)
-                                    .setEmoji('↩️'),
-                                new ButtonBuilder()
-                                    .setCustomId('back_to_menu')
-                                    .setLabel('Main Menu')
-                                    .setStyle(ButtonStyle.Secondary)
-                                    .setEmoji('🏠')
-                            );
-                            
-                        await i.editReply({
-                            embeds: [successEmbed],
-                            components: [successActionRow]
-                        });
-                        
-                        // Handle post-deletion navigation
-                        const delMessage = await i.fetchReply();
-                        const delCollector = delMessage.createMessageComponentCollector({
-                            componentType: ComponentType.Button,
-                            time: 300000 // 5 minutes
-                        });
-                        
-                        delCollector.on('collect', async delI => {
-                            if (delI.user.id === interaction.user.id) {
-                                await delI.deferUpdate();
+                            // Show success message
+                            const successEmbed = new EmbedBuilder()
+                                .setTitle('Suggestion Deleted')
+                                .setDescription(`The suggestion has been successfully deleted.`)
+                                .setColor('#00FF00')
+                                .addFields(
+                                    {
+                                        name: 'Deleted Suggestion',
+                                        value: `**Type:** ${suggestion.type}\n` +
+                                               `**Title:** ${suggestion.title || suggestion.gameTitle}\n` +
+                                               `**By:** ${suggestion.suggestedBy}`
+                                    }
+                                )
+                                .setTimestamp();
                                 
-                                if (delI.customId === 'back_to_list') {
-                                    await this.viewSuggestions(delI, previousFilter, previousTitle);
-                                } else if (delI.customId === 'back_to_menu') {
-                                    await this.showMainMenu(delI);
+                            const successActionRow = new ActionRowBuilder()
+                                .addComponents(
+                                    new ButtonBuilder()
+                                        .setCustomId('back_to_list')
+                                        .setLabel('Back to Suggestions')
+                                        .setStyle(ButtonStyle.Secondary)
+                                        .setEmoji('↩️'),
+                                    new ButtonBuilder()
+                                        .setCustomId('back_to_menu')
+                                        .setLabel('Main Menu')
+                                        .setStyle(ButtonStyle.Secondary)
+                                        .setEmoji('🏠')
+                                );
+                                
+                            await i.editReply({
+                                embeds: [successEmbed],
+                                components: [successActionRow]
+                            });
+                            
+                            // Handle post-deletion navigation
+                            const delMessage = await i.fetchReply();
+                            const delCollector = delMessage.createMessageComponentCollector({
+                                componentType: ComponentType.Button,
+                                time: 300000 // 5 minutes
+                            });
+                            
+                            delCollector.on('collect', async delI => {
+                                if (delI.user.id === interaction.user.id) {
+                                    try {
+                                        await delI.deferUpdate();
+                                        
+                                        if (delI.customId === 'back_to_list') {
+                                            await this.viewSuggestions(delI, previousFilter, previousTitle);
+                                        } else if (delI.customId === 'back_to_menu') {
+                                            await this.showMainMenu(delI);
+                                        }
+                                    } catch (error) {
+                                        console.error('Error handling post-deletion navigation:', error);
+                                    }
                                 }
-                            }
-                        });
-                    } else if (i.customId === 'cancel_delete') {
-                        // Cancel deletion, go back to suggestion details
-                        await this.viewSuggestionDetails(i, suggestion._id, previousFilter, previousTitle);
+                            });
+                        } else if (i.customId === 'cancel_delete') {
+                            // Cancel deletion, go back to suggestion details
+                            await this.viewSuggestionDetails(i, suggestion._id, previousFilter, previousTitle);
+                        }
+                    } catch (error) {
+                        console.error('Error handling delete action:', error);
                     }
                 } else {
-                    await i.reply({ 
-                        content: 'This menu is not for you. Please use the `/suggestadmin` command to start your own session.',
-                        ephemeral: true 
-                    });
+                    try {
+                        await i.reply({ 
+                            content: 'This menu is not for you. Please use the `/suggestadmin` command to start your own session.',
+                            ephemeral: true 
+                        });
+                    } catch (error) {
+                        console.error('Error replying to unauthorized user:', error);
+                    }
                 }
             });
             
