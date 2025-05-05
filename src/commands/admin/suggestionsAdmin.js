@@ -7,7 +7,7 @@ import retroAPI from '../../services/retroAPI.js';
 
 export default {
     data: new SlashCommandBuilder()
-        .setName('suggestadmin')
+        .setName('suggestionsadmin')
         .setDescription('Manage community suggestions')
         .addSubcommand(subcommand =>
             subcommand
@@ -229,9 +229,9 @@ export default {
             // Add usage instructions
             embed.addFields({
                 name: 'Commands',
-                value: '• Use `/suggestadmin view id:<suggestion_id>` to view a specific suggestion in detail.\n' +
-                       '• Use `/suggestadmin update id:<suggestion_id> status:<status>` to update a suggestion status.\n' +
-                       '• Use `/suggestadmin implement id:<suggestion_id>` to implement an arcade or racing suggestion.'
+                value: '• Use `/suggestionsadmin view id:<suggestion_id>` to view a specific suggestion in detail.\n' +
+                       '• Use `/suggestionsadmin update id:<suggestion_id> status:<status>` to update a suggestion status.\n' +
+                       '• Use `/suggestionsadmin implement id:<suggestion_id>` to implement an arcade or racing suggestion.'
             });
             
             return interaction.editReply({ embeds: [embed] });
@@ -322,11 +322,11 @@ export default {
             embed.addFields(
                 {
                     name: 'Available Actions',
-                    value: `• Update status: \`/suggestadmin update id:${suggestion._id} status:<status> [response:<text>]\`\n` +
+                    value: `• Update status: \`/suggestionsadmin update id:${suggestion._id} status:<status> [response:<text>]\`\n` +
                            (suggestion.type === 'arcade' || suggestion.type === 'racing' 
-                               ? `• Implement: \`/suggestadmin implement id:${suggestion._id} board_id:<id> leaderboard_id:<id>\`\n` 
+                               ? `• Implement: \`/suggestionsadmin implement id:${suggestion._id} board_id:<id> leaderboard_id:<id>\`\n` 
                                : '') +
-                           `• Delete: \`/suggestadmin delete id:${suggestion._id}\``
+                           `• Delete: \`/suggestionsadmin delete id:${suggestion._id}\``
                 }
             );
             
