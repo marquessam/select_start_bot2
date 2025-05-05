@@ -7,7 +7,7 @@ import retroAPI from '../../services/retroAPI.js';
 
 export default {
     data: new SlashCommandBuilder()
-        .setName('suggestionsadmin')
+        .setName('suggestadmin')
         .setDescription('Manage community suggestions')
         .addSubcommand(subcommand =>
             subcommand
@@ -229,9 +229,9 @@ export default {
             // Add usage instructions
             embed.addFields({
                 name: 'Commands',
-                value: '• Use `/suggestionsadmin view id:<suggestion_id>` to view a specific suggestion in detail.\n' +
-                       '• Use `/suggestionsadmin update id:<suggestion_id> status:<status>` to update a suggestion status.\n' +
-                       '• Use `/suggestionsadmin implement id:<suggestion_id>` to implement an arcade or racing suggestion.'
+                value: '• Use `/suggestadmin view id:<suggestion_id>` to view a specific suggestion in detail.\n' +
+                       '• Use `/suggestadmin update id:<suggestion_id> status:<status>` to update a suggestion status.\n' +
+                       '• Use `/suggestadmin implement id:<suggestion_id>` to implement an arcade or racing suggestion.'
             });
             
             return interaction.editReply({ embeds: [embed] });
@@ -267,17 +267,21 @@ export default {
                     description = `**Type:** Arcade Board Suggestion\n` +
                                  `**Game:** ${suggestion.gameTitle} (${suggestion.consoleName})\n` +
                                  `**Game ID:** ${suggestion.gameId}\n` +
+                                 `**Leaderboard ID:** ${suggestion.leaderboardId}\n` +
                                  `**Description:** ${suggestion.description}\n\n` +
-                                 `[View Game on RetroAchievements](https://retroachievements.org/game/${suggestion.gameId})`;
+                                 `[View Game on RetroAchievements](https://retroachievements.org/game/${suggestion.gameId})\n` +
+                                 `[View Leaderboard](https://retroachievements.org/leaderboardinfo.php?i=${suggestion.leaderboardId})`;
                     break;
                     
                 case 'racing':
                     description = `**Type:** Racing Challenge Suggestion\n` +
                                  `**Game:** ${suggestion.gameTitle} (${suggestion.consoleName})\n` +
                                  `**Game ID:** ${suggestion.gameId}\n` +
+                                 `**Leaderboard ID:** ${suggestion.leaderboardId}\n` +
                                  `**Track Name:** ${suggestion.trackName || 'N/A'}\n` +
                                  `**Description:** ${suggestion.description}\n\n` +
-                                 `[View Game on RetroAchievements](https://retroachievements.org/game/${suggestion.gameId})`;
+                                 `[View Game on RetroAchievements](https://retroachievements.org/game/${suggestion.gameId})\n` +
+                                 `[View Leaderboard](https://retroachievements.org/leaderboardinfo.php?i=${suggestion.leaderboardId})`;
                     break;
                     
                 case 'bot':
@@ -322,11 +326,11 @@ export default {
             embed.addFields(
                 {
                     name: 'Available Actions',
-                    value: `• Update status: \`/suggestionsadmin update id:${suggestion._id} status:<status> [response:<text>]\`\n` +
+                    value: `• Update status: \`/suggestadmin update id:${suggestion._id} status:<status> [response:<text>]\`\n` +
                            (suggestion.type === 'arcade' || suggestion.type === 'racing' 
-                               ? `• Implement: \`/suggestionsadmin implement id:${suggestion._id} board_id:<id> leaderboard_id:<id>\`\n` 
+                               ? `• Implement: \`/suggestadmin implement id:${suggestion._id} board_id:<id> leaderboard_id:<id>\`\n` 
                                : '') +
-                           `• Delete: \`/suggestionsadmin delete id:${suggestion._id}\``
+                           `• Delete: \`/suggestadmin delete id:${suggestion._id}\``
                 }
             );
             
