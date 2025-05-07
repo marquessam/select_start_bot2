@@ -625,6 +625,7 @@ class AchievementFeedService {
         }
     }
 
+// Achievement announcement with proper logo URL
 async announceAchievement(channel, user, gameInfo, achievement, achievementType, gameId) {
     try {
         console.log(`Creating embed for achievement announcement: ${achievement.Title || 'Unknown Achievement'} (${achievementType})`);
@@ -649,19 +650,29 @@ async announceAchievement(channel, user, gameInfo, achievement, achievementType,
         const platformText = gameInfo?.consoleName ? ` • ${gameInfo.consoleName}` : '';
         embed.setTitle(`${gameInfo?.title || 'Unknown Game'}${platformText}`);
         
+        // Using the raw GitHub URL for the logo (for monthly/shadow challenges)
+        const logoUrl = 'https://raw.githubusercontent.com/marquessam/select_start_bot2/3ba450708d484438ecb0a476782a1bd1b232f242/assets/logo_simple.png';
+        
         // Set "Achievement Unlocked" as the author (top line)
         if (achievementType === 'monthly' || achievementType === 'shadow') {
-            // Use our logo for monthly/shadow challenges
+            // For monthly/shadow challenges, use our logo
             embed.setAuthor({
                 name: 'Achievement Unlocked',
-                iconURL: 'assets/logo_simple.png'
+                iconURL: logoUrl
             });
         } else {
-            // Use game icon for regular achievements
-            embed.setAuthor({
-                name: 'Achievement Unlocked',
-                iconURL: gameInfo?.imageIcon ? `https://retroachievements.org${gameInfo.imageIcon}` : null
-            });
+            // For regular achievements, use game icon if available
+            if (gameInfo?.imageIcon) {
+                embed.setAuthor({
+                    name: 'Achievement Unlocked',
+                    iconURL: `https://retroachievements.org${gameInfo.imageIcon}`
+                });
+            } else {
+                // No icon available
+                embed.setAuthor({
+                    name: 'Achievement Unlocked'
+                });
+            }
         }
         
         // Set the thumbnail (right side) to ALWAYS be the achievement badge
@@ -687,14 +698,14 @@ async announceAchievement(channel, user, gameInfo, achievement, achievementType,
         
         embed.setDescription(description);
 
-        // Add points and user info at the bottom
+        // Simplified footer - just points and user icon
         let footerText = "";
         if (achievement.Points) {
             footerText = `Points: ${achievement.Points}`;
         }
         
         embed.setFooter({
-            text: `${user.raUsername} • ${footerText}`,
+            text: footerText,
             iconURL: profileImageUrl
         });
 
@@ -725,7 +736,8 @@ async announceAchievement(channel, user, gameInfo, achievement, achievementType,
         return false;
     }
 }
-    
+
+// Award announcement with proper logo URL
 async announceGameAward(channel, user, gameInfo, awardLevel, achieved, total, isShadow, hasAllProgression, hasWinCondition, gameId) {
     try {
         console.log(`Creating embed for ${awardLevel} award announcement for ${user.raUsername}`);
@@ -742,11 +754,14 @@ async announceGameAward(channel, user, gameInfo, awardLevel, achieved, total, is
         const platformText = gameInfo?.consoleName ? ` • ${gameInfo.consoleName}` : '';
         embed.setTitle(`${gameInfo?.title || 'Unknown Game'}${platformText}`);
         
-        // Set challenge award type as the author (top line)
+        // Using the raw GitHub URL for the logo
+        const logoUrl = 'https://raw.githubusercontent.com/marquessam/select_start_bot2/3ba450708d484438ecb0a476782a1bd1b232f242/assets/logo_simple.png';
+        
+        // Set challenge award type as the author (top line) with logo
         const challengeType = isShadow ? 'Shadow Challenge' : 'Monthly Challenge';
         embed.setAuthor({
             name: `${challengeType} Award`,
-            iconURL: 'assets/logo_simple.png'
+            iconURL: logoUrl
         });
         
         // Set thumbnail (right side) - use game icon for awards
@@ -780,11 +795,11 @@ async announceGameAward(channel, user, gameInfo, awardLevel, achieved, total, is
         
         embed.setDescription(description);
 
-        // Add progress info and user info at the bottom
+        // Simplified footer - just progress info and user icon
         const progressText = `Progress: ${achieved}/${total} (${Math.round(achieved/total*100)}%)`;
         
         embed.setFooter({
-            text: `Earned by ${user.raUsername} • ${progressText}`,
+            text: progressText,
             iconURL: profileImageUrl
         });
 
