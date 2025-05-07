@@ -1,6 +1,3 @@
-Here's the complete leaderboard code with the hardcore mode notes added:
-
-```javascript
 import { 
     SlashCommandBuilder, 
     EmbedBuilder, 
