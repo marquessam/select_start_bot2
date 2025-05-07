@@ -625,106 +625,97 @@ class AchievementFeedService {
         }
     }
 
-    async announceAchievement(channel, user, gameInfo, achievement, achievementType, gameId) {
-        try {
-            console.log(`Creating embed for achievement announcement: ${achievement.Title || 'Unknown Achievement'} (${achievementType})`);
-            
-            // Set color based on achievement type
-            let color = '#4CAF50';  // Green for regular achievements
-            let challengeText = "";
-            
-            if (achievementType === 'monthly') {
-                color = '#FFD700';  // Yellow for monthly
-                challengeText = "Monthly Challenge";
-            } else if (achievementType === 'shadow') {
-                color = '#9B59B6';  // Purple for shadow
-                challengeText = "Shadow Challenge";
-            } else if (achievementType === 'award') {
-                color = '#3498DB';  // Blue for awards
-            }
-            
-            // Create embed with game icon and title at the top
-            const embed = new EmbedBuilder()
-                .setColor(color)
-                .setTimestamp();
-            
-            // Set the game as author with icon
-            embed.setAuthor({
-                name: gameInfo?.title || 'Unknown Game',
-                iconURL: gameInfo?.imageIcon ? `https://retroachievements.org${gameInfo.imageIcon}` : null,
-                url: `https://retroachievements.org/game/${gameId}`
-            });
-            
-            // Set title to only show challenge type if applicable (no "Achievement Unlocked" text)
-            if (challengeText) {
-                embed.setTitle(challengeText);
-            }
-            
-            // Get user's profile image URL for footer
-            const profileImageUrl = await this.getUserProfileImageUrl(user.raUsername);
-            
-            // Set thumbnail to achievement image if available
-            if (achievement.BadgeName) {
-                const badgeUrl = `https://media.retroachievements.org/Badge/${achievement.BadgeName}.png`;
-                embed.setThumbnail(badgeUrl);
-            }
-            
-            // Create user link
-            const userLink = `[${user.raUsername}](https://retroachievements.org/user/${user.raUsername})`;
-            
-            // Build description
-            let description = `**${achievement.Title || 'Unknown Achievement'}**\n`;
-            
-            // Add console info if available
-            if (gameInfo?.consoleName) {
-                description += `${gameInfo.title} • ${gameInfo.consoleName}\n`;
-            }
-            
-            // Add points
-            if (achievement.Points) {
-                description += `Points: ${achievement.Points}\n`;
-            }
-            
-            // Add achievement description if available (in italics)
-            if (achievement.Description) {
-                description += `*${achievement.Description}*`;
-            }
-            
-            embed.setDescription(description);
-
-            // Add user info at the bottom
-            embed.setFooter({
-                text: `Earned by ${user.raUsername}`,
-                iconURL: profileImageUrl
-            });
-
-            console.log(`Sending achievement announcement to channel`);
-            
-            // Send the announcement
-            try {
-                const sentMessage = await channel.send({ embeds: [embed] });
-                console.log(`Successfully sent achievement announcement, message ID: ${sentMessage.id}`);
-                return true;
-            } catch (sendError) {
-                console.error(`Failed to send announcement: ${sendError.message}`);
-                
-                // Try a plain text fallback
-                try {
-                    const fallbackText = `**${user.raUsername}** earned "${achievement.Title || 'an achievement'}" in ${gameInfo?.title || 'a game'}`;
-                    await channel.send(fallbackText);
-                    console.log('Sent plain text fallback message');
-                    return true;
-                } catch (fallbackError) {
-                    console.error(`Even fallback message failed: ${fallbackError.message}`);
-                    return false;
-                }
-            }
-
-        } catch (error) {
-            console.error('Error announcing achievement:', error);
-            return false;
+async announceAchievement(channel, user, gameInfo, achievement, achievementType, gameId) {
+    try {
+        console.log(`Creating embed for achievement announcement: ${achievement.Title || 'Unknown Achievement'} (${achievementType})`);
+        
+        // Set color based on achievement type
+        let color = '#4CAF50';  // Green for regular achievements
+        let challengeTag = "";
+        
+        if (achievementType === 'monthly') {
+            color = '#FFD700';  // Yellow for monthly
+            challengeTag = "Monthly Challenge: ";
+        } else if (achievementType === 'shadow') {
+            color = '#9B59B6';  // Purple for shadow
+            challengeTag = "Shadow Challenge: ";
+        } else if (achievementType === 'award') {
+            color = '#3498DB';  // Blue for awards
         }
+        
+        // Create embed
+        const embed = new EmbedBuilder()
+            .setColor(color)
+            .setTimestamp();
+        
+        // Set the game title and platform at the top as author
+        const platformText = gameInfo?.consoleName ? ` • ${gameInfo.consoleName}` : '';
+        embed.setAuthor({
+            name: `${gameInfo?.title || 'Unknown Game'}${platformText}`,
+            iconURL: gameInfo?.imageIcon ? `https://retroachievements.org${gameInfo.imageIcon}` : null,
+            url: `https://retroachievements.org/game/${gameId}`
+        });
+        
+        // Get user's profile image URL for footer
+        const profileImageUrl = await this.getUserProfileImageUrl(user.raUsername);
+        
+        // Set thumbnail to achievement image if available
+        if (achievement.BadgeName) {
+            const badgeUrl = `https://media.retroachievements.org/Badge/${achievement.BadgeName}.png`;
+            embed.setThumbnail(badgeUrl);
+        }
+        
+        // Create user link
+        const userLink = `[${user.raUsername}](https://retroachievements.org/user/${user.raUsername})`;
+        
+        // Build description per format
+        let description = `**${achievement.Title || 'Unknown Achievement'}**\n`;
+        
+        // Add points
+        if (achievement.Points) {
+            description += `Points: ${achievement.Points}\n`;
+        }
+        
+        // Add achievement description if available (in italics)
+        if (achievement.Description) {
+            description += `*${achievement.Description}*`;
+        }
+        
+        embed.setDescription(description);
+
+        // Add user info at the bottom
+        embed.setFooter({
+            text: `Earned by ${user.raUsername}`,
+            iconURL: profileImageUrl
+        });
+
+        console.log(`Sending achievement announcement to channel`);
+        
+        // Send the announcement
+        try {
+            const sentMessage = await channel.send({ embeds: [embed] });
+            console.log(`Successfully sent achievement announcement, message ID: ${sentMessage.id}`);
+            return true;
+        } catch (sendError) {
+            console.error(`Failed to send announcement: ${sendError.message}`);
+            
+            // Try a plain text fallback
+            try {
+                const fallbackText = `**${user.raUsername}** earned "${achievement.Title || 'an achievement'}" in ${gameInfo?.title || 'a game'}`;
+                await channel.send(fallbackText);
+                console.log('Sent plain text fallback message');
+                return true;
+            } catch (fallbackError) {
+                console.error(`Even fallback message failed: ${fallbackError.message}`);
+                return false;
+            }
+        }
+
+    } catch (error) {
+        console.error('Error announcing achievement:', error);
+        return false;
     }
+}
 
     async announceGameAward(channel, user, gameInfo, awardLevel, achieved, total, isShadow, hasAllProgression, hasWinCondition, gameId) {
         try {
