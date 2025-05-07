@@ -627,6 +627,7 @@ class AchievementFeedService {
 
 // Achievement announcement with proper logo URL
 // Achievement announcement with correct challenge labels and clickable game title
+// Achievement announcement with GitHub logo URL
 async announceAchievement(channel, user, gameInfo, achievement, achievementType, gameId) {
     try {
         console.log(`Creating embed for achievement announcement: ${achievement.Title || 'Unknown Achievement'} (${achievementType})`);
@@ -660,18 +661,26 @@ async announceAchievement(channel, user, gameInfo, achievement, achievementType,
             authorName = 'Shadow Challenge';
         }
         
+        // Raw GitHub URL for logo
+        const logoUrl = 'https://raw.githubusercontent.com/marquessam/select_start_bot2/a58a4136ff0597217bb9fb181115de3f152b71e4/assets/logo_simple.png';
+        
         // Set author with appropriate icon
         if (achievementType === 'monthly' || achievementType === 'shadow') {
             // Use our logo for monthly/shadow challenges
             embed.setAuthor({
                 name: authorName,
-                iconURL: 'assets/logo_simple.png'
+                iconURL: logoUrl
             });
-        } else {
+        } else if (gameInfo?.imageIcon) {
             // Use game icon for regular achievements
             embed.setAuthor({
                 name: authorName,
-                iconURL: gameInfo?.imageIcon ? `https://retroachievements.org${gameInfo.imageIcon}` : null
+                iconURL: `https://retroachievements.org${gameInfo.imageIcon}`
+            });
+        } else {
+            // Set text only with no icon if we don't have a valid URL
+            embed.setAuthor({
+                name: authorName
             });
         }
         
@@ -737,7 +746,7 @@ async announceAchievement(channel, user, gameInfo, achievement, achievementType,
     }
 }
 
-// Award announcement with clickable game title
+// Award announcement with GitHub logo URL
 async announceGameAward(channel, user, gameInfo, awardLevel, achieved, total, isShadow, hasAllProgression, hasWinCondition, gameId) {
     try {
         console.log(`Creating embed for ${awardLevel} award announcement for ${user.raUsername}`);
@@ -755,11 +764,14 @@ async announceGameAward(channel, user, gameInfo, awardLevel, achieved, total, is
         embed.setTitle(`${gameInfo?.title || 'Unknown Game'}${platformText}`);
         embed.setURL(`https://retroachievements.org/game/${gameId}`);
         
+        // Raw GitHub URL for logo
+        const logoUrl = 'https://raw.githubusercontent.com/marquessam/select_start_bot2/a58a4136ff0597217bb9fb181115de3f152b71e4/assets/logo_simple.png';
+        
         // Set challenge award type as the author (top line)
         const challengeType = isShadow ? 'Shadow Challenge' : 'Monthly Challenge';
         embed.setAuthor({
             name: `${challengeType} Award`,
-            iconURL: 'assets/logo_simple.png'
+            iconURL: logoUrl
         });
         
         // Set thumbnail (right side) - use game icon for awards
