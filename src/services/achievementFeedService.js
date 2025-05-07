@@ -694,7 +694,7 @@ async announceAchievement(channel, user, gameInfo, achievement, achievementType,
         }
         
         embed.setFooter({
-            text: `Earned by ${user.raUsername} • ${footerText}`,
+            text: `${user.raUsername} • ${footerText}`,
             iconURL: profileImageUrl
         });
 
