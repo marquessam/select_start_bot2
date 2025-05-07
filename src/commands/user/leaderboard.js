@@ -1,3 +1,6 @@
+Here's the complete leaderboard code with the hardcore mode notes added:
+
+```javascript
 import { 
     SlashCommandBuilder, 
     EmbedBuilder, 
@@ -389,7 +392,8 @@ export default {
                                 `*Tiebreaker results are used to determine final ranking for tied users in top positions.*`;
                 }
                 
-                description += `\n\n*Note: Only achievements earned during ${monthName} count toward challenge status.*`;
+                description += `\n\n*Note: Only achievements earned during ${monthName} **in Hardcore Mode** count toward challenge status.*`;
+                description += `\n⚠️ *Save states and rewind features are not allowed. Fast forward is permitted.*`;
                 
                 embed.setDescription(description);
 
@@ -636,6 +640,7 @@ export default {
             }
                             
             description += `\n\n*This is a historical record of the ${monthName} ${year} challenge.*`;
+            description += `\n*⚠️ All achievements were earned in Hardcore Mode with no save states or rewind.*`;
             
             embed.setDescription(description);
             
@@ -907,6 +912,74 @@ export default {
         return updateButtons(currentPage);
     },
 
+    createPaginatedEmbeds(workingSorted, monthName, gameInfo, currentChallenge, endDateFormatted, timeRemaining, activeTiebreaker) {
+        const embeds = [];
+        const totalPages = Math.ceil(workingSorted.length / USERS_PER_PAGE);
+
+        for (let page = 0; page < totalPages; page++) {
+            // Get users for this page
+            const startIndex = page * USERS_PER_PAGE;
+            const endIndex = Math.min((page + 1) * USERS_PER_PAGE, workingSorted.length);
+            const usersOnPage = workingSorted.slice(startIndex, endIndex);
+
+            // Create embed for this page
+            const embed = new EmbedBuilder()
+                .setTitle(`${monthName} Challenge Leaderboard`)
+                .setColor('#FFD700')
+                .setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`)
+                .setFooter({ text: `Page ${page + 1}/${totalPages} • Use /help points for more information` })
+                .setTimestamp();
+
+            // Create base description for all pages
+            let description = `**Game:** [${gameInfo.title}](https://retroachievements.org/game/${currentChallenge.monthly_challange_gameid})\n` +
+                            `**Total Achievements:** ${currentChallenge.monthly_challange_game_total}\n` +
+                            `**Challenge Ends:** ${endDateFormatted}\n` +
+                            `**Time Remaining:** ${timeRemaining}\n\n` +
+                            `${AWARD_EMOJIS.MASTERY} Mastery (7pts) | ${AWARD_EMOJIS.BEATEN} Beaten (4pts) | ${AWARD_EMOJIS.PARTICIPATION} Part. (1pt)`;
+
+            // Add tiebreaker info if active
+            if (activeTiebreaker) {
+                description += `\n\n${TIEBREAKER_EMOJI} **Active Tiebreaker:** ${activeTiebreaker.gameTitle}\n` +
+                            `*Tiebreaker results are used to determine final ranking for tied users in top positions.*`;
+            }
+            
+            description += `\n\n*Note: Only achievements earned during ${monthName} **in Hardcore Mode** count toward challenge status.*`;
+            description += `\n⚠️ *Save states and rewind features are not allowed. Fast forward is permitted.*`;
+            
+            embed.setDescription(description);
+
+            // Format leaderboard text using pre-calculated displayRanks
+            let leaderboardText = '';
+            
+            for (const user of usersOnPage) {
+                // Use the pre-calculated displayRank
+                const rankEmoji = user.displayRank <= 3 ? RANK_EMOJIS[user.displayRank] : `#${user.displayRank}`;
+                
+                // Add the main user entry to leaderboard with link to profile
+                leaderboardText += `${rankEmoji} **[${user.username}](https://retroachievements.org/user/${user.username})** ${user.award}\n`;
+                
+                // Add the achievement stats
+                if (user.hasTiebreaker && user.tiebreakerScore) {
+                    // For users with tiebreaker scores, show both regular and tiebreaker stats
+                    leaderboardText += `${user.achieved}/${currentChallenge.monthly_challange_game_total} (${user.percentage}%)\n`;
+                    leaderboardText += `${TIEBREAKER_EMOJI} ${user.tiebreakerScore} in ${user.tiebreakerGame}\n\n`;
+                } else {
+                    // For users without tiebreaker scores, just show regular stats
+                    leaderboardText += `${user.achieved}/${currentChallenge.monthly_challange_game_total} (${user.percentage}%)\n\n`;
+                }
+            }
+
+            embed.addFields({
+                name: `Rankings (${workingSorted.length} participants)`,
+                value: leaderboardText || 'No rankings available.'
+            });
+
+            embeds.push(embed);
+        }
+
+        return embeds;
+    },
+
     // Method to handle assigning ranks with tiebreaker scores
     assignRanks(users, tiebreakerEntries, activeTiebreaker) {
         if (!users || users.length === 0) return;
@@ -1031,73 +1104,6 @@ export default {
                 users[idx].displayRank = startIdx + 1;
             }
         }
-    },
-
-    createPaginatedEmbeds(workingSorted, monthName, gameInfo, currentChallenge, endDateFormatted, timeRemaining, activeTiebreaker) {
-        const embeds = [];
-        const totalPages = Math.ceil(workingSorted.length / USERS_PER_PAGE);
-
-        for (let page = 0; page < totalPages; page++) {
-            // Get users for this page
-            const startIndex = page * USERS_PER_PAGE;
-            const endIndex = Math.min((page + 1) * USERS_PER_PAGE, workingSorted.length);
-            const usersOnPage = workingSorted.slice(startIndex, endIndex);
-
-            // Create embed for this page
-            const embed = new EmbedBuilder()
-                .setTitle(`${monthName} Challenge Leaderboard`)
-                .setColor('#FFD700')
-                .setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`)
-                .setFooter({ text: `Page ${page + 1}/${totalPages} • Use /help points for more information` })
-                .setTimestamp();
-
-            // Create base description for all pages
-            let description = `**Game:** [${gameInfo.title}](https://retroachievements.org/game/${currentChallenge.monthly_challange_gameid})\n` +
-                            `**Total Achievements:** ${currentChallenge.monthly_challange_game_total}\n` +
-                            `**Challenge Ends:** ${endDateFormatted}\n` +
-                            `**Time Remaining:** ${timeRemaining}\n\n` +
-                            `${AWARD_EMOJIS.MASTERY} Mastery (7pts) | ${AWARD_EMOJIS.BEATEN} Beaten (4pts) | ${AWARD_EMOJIS.PARTICIPATION} Part. (1pt)`;
-
-            // Add tiebreaker info if active
-            if (activeTiebreaker) {
-                description += `\n\n${TIEBREAKER_EMOJI} **Active Tiebreaker:** ${activeTiebreaker.gameTitle}\n` +
-                            `*Tiebreaker results are used to determine final ranking for tied users in top positions.*`;
-            }
-            
-            description += `\n\n*Note: Only achievements earned during ${monthName} count toward challenge status.*`;
-            
-            embed.setDescription(description);
-
-            // Format leaderboard text using pre-calculated displayRanks
-            let leaderboardText = '';
-            
-            for (const user of usersOnPage) {
-                // Use the pre-calculated displayRank
-                const rankEmoji = user.displayRank <= 3 ? RANK_EMOJIS[user.displayRank] : `#${user.displayRank}`;
-                
-                // Add the main user entry to leaderboard with link to profile
-                leaderboardText += `${rankEmoji} **[${user.username}](https://retroachievements.org/user/${user.username})** ${user.award}\n`;
-                
-                // Add the achievement stats
-                if (user.hasTiebreaker && user.tiebreakerScore) {
-                    // For users with tiebreaker scores, show both regular and tiebreaker stats
-                    leaderboardText += `${user.achieved}/${currentChallenge.monthly_challange_game_total} (${user.percentage}%)\n`;
-                    leaderboardText += `${TIEBREAKER_EMOJI} ${user.tiebreakerScore} in ${user.tiebreakerGame}\n\n`;
-                } else {
-                    // For users without tiebreaker scores, just show regular stats
-                    leaderboardText += `${user.achieved}/${currentChallenge.monthly_challange_game_total} (${user.percentage}%)\n\n`;
-                }
-            }
-
-            embed.addFields({
-                name: `Rankings (${workingSorted.length} participants)`,
-                value: leaderboardText || 'No rankings available.'
-            });
-
-            embeds.push(embed);
-        }
-
-        return embeds;
     },
 
     // Method to finalize the previous month's leaderboard - used by cron job, not user facing
