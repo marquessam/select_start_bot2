@@ -631,44 +631,59 @@ class AchievementFeedService {
             
             // Set color based on achievement type
             let color = '#4CAF50';  // Green for regular achievements
-            let emoji = "🎮";
+            let challengeText = "";
             
             if (achievementType === 'monthly') {
                 color = '#FFD700';  // Yellow for monthly
-                emoji = "🏆";
+                challengeText = "Monthly Challenge";
             } else if (achievementType === 'shadow') {
                 color = '#9B59B6';  // Purple for shadow
-                emoji = "👥";
+                challengeText = "Shadow Challenge";
             } else if (achievementType === 'award') {
                 color = '#3498DB';  // Blue for awards
-                emoji = AWARD_EMOJIS[achievement.Title.split(' ')[0]] || '🏅';
             }
             
-            // Create embed - simpler format
+            // Create embed with game icon and title at the top
             const embed = new EmbedBuilder()
                 .setColor(color)
                 .setTimestamp();
-
+            
+            // Set the game as author with icon
+            embed.setAuthor({
+                name: gameInfo?.title || 'Unknown Game',
+                iconURL: gameInfo?.imageIcon ? `https://retroachievements.org${gameInfo.imageIcon}` : null,
+                url: `https://retroachievements.org/game/${gameId}`
+            });
+            
+            // Set title to only show challenge type if applicable (no "Achievement Unlocked" text)
+            if (challengeText) {
+                embed.setTitle(challengeText);
+            }
+            
             // Get user's profile image URL for footer
             const profileImageUrl = await this.getUserProfileImageUrl(user.raUsername);
             
-            // Set title based on achievement type
-            let title = 'Achievement Unlocked!';
-            if (achievementType === 'monthly') {
-                title = 'Monthly Challenge Achievement Unlocked!';
-            } else if (achievementType === 'shadow') {
-                title = 'Shadow Challenge Achievement Unlocked!';
+            // Set thumbnail to achievement image if available
+            if (achievement.BadgeName) {
+                const badgeUrl = `https://media.retroachievements.org/Badge/${achievement.BadgeName}.png`;
+                embed.setThumbnail(badgeUrl);
             }
             
-            embed.setTitle(`${emoji} ${title}`);
-                
-            // Create game link and user link
-            const gameLink = `[${gameInfo?.title || 'Unknown Game'}](https://retroachievements.org/game/${gameId})`;
+            // Create user link
             const userLink = `[${user.raUsername}](https://retroachievements.org/user/${user.raUsername})`;
             
-            // Build description exactly as requested
-            let description = `${gameLink}\n`;
-            description += `${userLink} earned **${achievement.Title || 'Unknown Achievement'}**\n\n`;
+            // Build description
+            let description = `**${achievement.Title || 'Unknown Achievement'}**\n`;
+            
+            // Add console info if available
+            if (gameInfo?.consoleName) {
+                description += `${gameInfo.title} • ${gameInfo.consoleName}\n`;
+            }
+            
+            // Add points
+            if (achievement.Points) {
+                description += `Points: ${achievement.Points}\n`;
+            }
             
             // Add achievement description if available (in italics)
             if (achievement.Description) {
@@ -676,24 +691,10 @@ class AchievementFeedService {
             }
             
             embed.setDescription(description);
-            
-            // Set thumbnail to achievement image if available
-            if (achievement.BadgeName) {
-                const badgeUrl = `https://media.retroachievements.org/Badge/${achievement.BadgeName}.png`;
-                embed.setThumbnail(badgeUrl);
-            } else if (gameInfo?.imageIcon) {
-                const gameIconUrl = `https://retroachievements.org${gameInfo.imageIcon}`;
-                embed.setThumbnail(gameIconUrl);
-            }
 
-            // Add user icon, points and timestamp in footer
-            let footerText = '';
-            if (achievement.Points) {
-                footerText = `Points: ${achievement.Points}`;
-            }
-            
+            // Add user info at the bottom
             embed.setFooter({
-                text: footerText,
+                text: `Earned by ${user.raUsername}`,
                 iconURL: profileImageUrl
             });
 
@@ -709,7 +710,7 @@ class AchievementFeedService {
                 
                 // Try a plain text fallback
                 try {
-                    const fallbackText = `${emoji} **${user.raUsername}** earned "${achievement.Title || 'an achievement'}" in ${gameInfo?.title || 'a game'}`;
+                    const fallbackText = `**${user.raUsername}** earned "${achievement.Title || 'an achievement'}" in ${gameInfo?.title || 'a game'}`;
                     await channel.send(fallbackText);
                     console.log('Sent plain text fallback message');
                     return true;
@@ -737,48 +738,48 @@ class AchievementFeedService {
                 .setColor(this.getColorForAward(awardLevel, isShadow))
                 .setTimestamp();
 
+            // Set the game as author with icon
+            embed.setAuthor({
+                name: gameInfo?.title || 'Unknown Game',
+                iconURL: gameInfo?.imageIcon ? `https://retroachievements.org${gameInfo.imageIcon}` : null,
+                url: `https://retroachievements.org/game/${gameId}`
+            });
+            
+            // Set title to show challenge type with award
+            embed.setTitle(`${isShadow ? 'Shadow' : 'Monthly'} Challenge ${emoji} ${awardLevel}`);
+            
             // Get user's profile image URL
             const profileImageUrl = await this.getUserProfileImageUrl(user.raUsername);
-
-            // Set title for award
-            const title = `${emoji} ${isShadow ? 'Shadow' : 'Monthly'} Challenge Award!`;
-            embed.setTitle(title);
             
-            // Create game link and user link
-            const gameLink = `[${gameInfo?.title || 'Unknown Game'}](https://retroachievements.org/game/${gameId})`;
-            const userLink = `[${user.raUsername}](https://retroachievements.org/user/${user.raUsername})`;
-            
-            // Build description
-            let description = `${gameLink}\n`;
-            description += `${userLink} earned **${awardLevel}**\n\n`;
-            
-            // Add award explanation
-            let explanation = '';
-            switch (awardLevel) {
-                case 'MASTERY':
-                    explanation = `*All achievements completed!*`;
-                    break;
-                case 'BEATEN':
-                    explanation = `*Game beaten with all required achievements.*`;
-                    break;
-                case 'PARTICIPATION':
-                    explanation = `*Started participating in the challenge.*`;
-                    break;
-            }
-            
-            description += explanation;
-            embed.setDescription(description);
-            
-            // Set thumbnail to game image if available
-            if (gameInfo?.imageIcon) {
+            // Set thumbnail to award badge or emoji
+            if (gameInfo?.imageIcon && false) { // Disable this since we already use the game icon in the author field
                 embed.setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`);
             }
 
-            // Add footer with user icon and progress
-            const progressText = `Progress: ${achieved}/${total} (${Math.round(achieved/total*100)}%)`;
+            // Build description
+            let description = '';
             
+            // Add award explanation based on level
+            switch (awardLevel) {
+                case 'MASTERY':
+                    description += `*All achievements completed!*\n`;
+                    break;
+                case 'BEATEN':
+                    description += `*Game beaten with all required achievements.*\n`;
+                    break;
+                case 'PARTICIPATION':
+                    description += `*Started participating in the challenge.*\n`;
+                    break;
+            }
+            
+            // Add progress info
+            description += `Progress: ${achieved}/${total} (${Math.round(achieved/total*100)}%)`;
+            
+            embed.setDescription(description);
+
+            // Add user info at the bottom
             embed.setFooter({
-                text: progressText,
+                text: `Earned by ${user.raUsername}`,
                 iconURL: profileImageUrl
             });
 
