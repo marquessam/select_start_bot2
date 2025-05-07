@@ -626,6 +626,7 @@ class AchievementFeedService {
     }
 
 // Achievement announcement with proper logo URL
+// Achievement announcement with correct challenge labels and clickable game title
 async announceAchievement(channel, user, gameInfo, achievement, achievementType, gameId) {
     try {
         console.log(`Creating embed for achievement announcement: ${achievement.Title || 'Unknown Achievement'} (${achievementType})`);
@@ -646,33 +647,32 @@ async announceAchievement(channel, user, gameInfo, achievement, achievementType,
             .setColor(color)
             .setTimestamp();
         
-        // Set game name and platform as the title
+        // Set game name and platform as the title with clickable link to game page
         const platformText = gameInfo?.consoleName ? ` • ${gameInfo.consoleName}` : '';
         embed.setTitle(`${gameInfo?.title || 'Unknown Game'}${platformText}`);
+        embed.setURL(`https://retroachievements.org/game/${gameId}`);
         
-        // Using the raw GitHub URL for the logo (for monthly/shadow challenges)
-        const logoUrl = 'https://raw.githubusercontent.com/marquessam/select_start_bot2/3ba450708d484438ecb0a476782a1bd1b232f242/assets/logo_simple.png';
+        // Set the appropriate text as the author (top line)
+        let authorName = 'Achievement Unlocked';
+        if (achievementType === 'monthly') {
+            authorName = 'Monthly Challenge';
+        } else if (achievementType === 'shadow') {
+            authorName = 'Shadow Challenge';
+        }
         
-        // Set "Achievement Unlocked" as the author (top line)
+        // Set author with appropriate icon
         if (achievementType === 'monthly' || achievementType === 'shadow') {
-            // For monthly/shadow challenges, use our logo
+            // Use our logo for monthly/shadow challenges
             embed.setAuthor({
-                name: 'Achievement Unlocked',
-                iconURL: logoUrl
+                name: authorName,
+                iconURL: 'assets/logo_simple.png'
             });
         } else {
-            // For regular achievements, use game icon if available
-            if (gameInfo?.imageIcon) {
-                embed.setAuthor({
-                    name: 'Achievement Unlocked',
-                    iconURL: `https://retroachievements.org${gameInfo.imageIcon}`
-                });
-            } else {
-                // No icon available
-                embed.setAuthor({
-                    name: 'Achievement Unlocked'
-                });
-            }
+            // Use game icon for regular achievements
+            embed.setAuthor({
+                name: authorName,
+                iconURL: gameInfo?.imageIcon ? `https://retroachievements.org${gameInfo.imageIcon}` : null
+            });
         }
         
         // Set the thumbnail (right side) to ALWAYS be the achievement badge
@@ -737,7 +737,7 @@ async announceAchievement(channel, user, gameInfo, achievement, achievementType,
     }
 }
 
-// Award announcement with proper logo URL
+// Award announcement with clickable game title
 async announceGameAward(channel, user, gameInfo, awardLevel, achieved, total, isShadow, hasAllProgression, hasWinCondition, gameId) {
     try {
         console.log(`Creating embed for ${awardLevel} award announcement for ${user.raUsername}`);
@@ -750,18 +750,16 @@ async announceGameAward(channel, user, gameInfo, awardLevel, achieved, total, is
             .setColor(this.getColorForAward(awardLevel, isShadow))
             .setTimestamp();
 
-        // Set game name and platform as the title
+        // Set game name and platform as the title with clickable link to game page
         const platformText = gameInfo?.consoleName ? ` • ${gameInfo.consoleName}` : '';
         embed.setTitle(`${gameInfo?.title || 'Unknown Game'}${platformText}`);
+        embed.setURL(`https://retroachievements.org/game/${gameId}`);
         
-        // Using the raw GitHub URL for the logo
-        const logoUrl = 'https://raw.githubusercontent.com/marquessam/select_start_bot2/3ba450708d484438ecb0a476782a1bd1b232f242/assets/logo_simple.png';
-        
-        // Set challenge award type as the author (top line) with logo
+        // Set challenge award type as the author (top line)
         const challengeType = isShadow ? 'Shadow Challenge' : 'Monthly Challenge';
         embed.setAuthor({
             name: `${challengeType} Award`,
-            iconURL: logoUrl
+            iconURL: 'assets/logo_simple.png'
         });
         
         // Set thumbnail (right side) - use game icon for awards
