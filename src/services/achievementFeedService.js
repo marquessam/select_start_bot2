@@ -652,18 +652,27 @@ async announceAchievement(channel, user, gameInfo, achievement, achievementType,
         // Set title at the top: "Achievement Unlocked"
         embed.setTitle(`${emoji} Achievement Unlocked ${emoji}`);
         
-        // For monthly/shadow challenges, use the special logo
+        // Set the author icon (top left) - game icon or logo
         if (achievementType === 'monthly' || achievementType === 'shadow') {
-            // Use logo for the thumbnail if monthly/shadow challenge
-            embed.setThumbnail('assets/logo_simple.png');
-        } else if (achievement.BadgeName) {
-            // Use achievement badge for thumbnail if available
+            // Use our logo for monthly/shadow challenges
+            embed.setAuthor({
+                name: gameInfo?.title ? `${gameInfo.title} • ${gameInfo.consoleName || ''}` : (achievementType === 'monthly' ? 'Monthly Challenge' : 'Shadow Challenge'),
+                iconURL: 'assets/logo_simple.png',
+                url: `https://retroachievements.org/game/${gameId}`
+            });
+        } else {
+            // Use game icon for regular achievements
+            embed.setAuthor({
+                name: gameInfo?.title ? `${gameInfo.title} • ${gameInfo.consoleName || ''}` : 'Unknown Game',
+                iconURL: gameInfo?.imageIcon ? `https://retroachievements.org${gameInfo.imageIcon}` : null,
+                url: `https://retroachievements.org/game/${gameId}`
+            });
+        }
+        
+        // Set the thumbnail (right side) to ALWAYS be the achievement badge
+        if (achievement.BadgeName) {
             const badgeUrl = `https://media.retroachievements.org/Badge/${achievement.BadgeName}.png`;
             embed.setThumbnail(badgeUrl);
-        } else if (gameInfo?.imageIcon) {
-            // Fallback to game icon if no achievement badge
-            const gameIconUrl = `https://retroachievements.org${gameInfo.imageIcon}`;
-            embed.setThumbnail(gameIconUrl);
         }
         
         // Get user's profile image URL for footer
@@ -672,11 +681,8 @@ async announceAchievement(channel, user, gameInfo, achievement, achievementType,
         // Create user link
         const userLink = `[${user.raUsername}](https://retroachievements.org/user/${user.raUsername})`;
         
-        // Create game link
-        const gameLink = `[${gameInfo?.title || 'Unknown Game'} • ${gameInfo?.consoleName || ''}](https://retroachievements.org/game/${gameId})`;
-        
-        // Build description per format
-        let description = `${gameLink}\n`;
+        // Build description
+        let description = '';
         description += `${userLink} unlocked **${achievement.Title || 'Unknown Achievement'}**\n\n`;
         
         // Add achievement description if available (in italics)
@@ -724,6 +730,7 @@ async announceAchievement(channel, user, gameInfo, achievement, achievementType,
         return false;
     }
 }
+    
 async announceGameAward(channel, user, gameInfo, awardLevel, achieved, total, isShadow, hasAllProgression, hasWinCondition, gameId) {
     try {
         console.log(`Creating embed for ${awardLevel} award announcement for ${user.raUsername}`);
@@ -740,8 +747,21 @@ async announceGameAward(channel, user, gameInfo, awardLevel, achieved, total, is
         const challengeType = isShadow ? 'Shadow Challenge' : 'Monthly Challenge';
         embed.setTitle(`${emoji} ${challengeType} Award ${emoji}`);
         
-        // Use logo for the thumbnail
-        embed.setThumbnail('assets/logo_simple.png');
+        // Set author with simple logo (top left)
+        embed.setAuthor({
+            name: gameInfo?.title ? `${gameInfo.title} • ${gameInfo.consoleName || ''}` : challengeType,
+            iconURL: 'assets/logo_simple.png',
+            url: `https://retroachievements.org/game/${gameId}`
+        });
+        
+        // Set thumbnail (right side) - use award emoji as image
+        // For awards, we can use a badge that represents the award level
+        let badgeUrl = null;
+        if (gameInfo?.imageIcon) {
+            // Use the game icon as the thumbnail for awards
+            badgeUrl = `https://retroachievements.org${gameInfo.imageIcon}`;
+            embed.setThumbnail(badgeUrl);
+        }
         
         // Get user's profile image URL for footer
         const profileImageUrl = await this.getUserProfileImageUrl(user.raUsername);
@@ -749,11 +769,8 @@ async announceGameAward(channel, user, gameInfo, awardLevel, achieved, total, is
         // Create user link
         const userLink = `[${user.raUsername}](https://retroachievements.org/user/${user.raUsername})`;
         
-        // Create game link
-        const gameLink = `[${gameInfo?.title || 'Unknown Game'} • ${gameInfo?.consoleName || ''}](https://retroachievements.org/game/${gameId})`;
-        
-        // Build description per format
-        let description = `${gameLink}\n`;
+        // Build description
+        let description = '';
         description += `${userLink} earned **${awardLevel}**\n\n`;
         
         // Add award explanation based on level
@@ -806,6 +823,7 @@ async announceGameAward(channel, user, gameInfo, awardLevel, achieved, total, is
         return false;
     }
 }
+    
     getColorForAward(awardLevel, isShadow) {
         // Use different colors based on if it's a shadow or monthly challenge
         if (isShadow) {
