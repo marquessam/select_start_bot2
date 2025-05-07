@@ -221,69 +221,37 @@ export default {
     },
 
     // Create all the embed functions
-async createCommunityEmbed() {
-    return new EmbedBuilder()
-        .setTitle('Community Guidelines')
-        .setColor('#3498DB')
-        .setDescription('Rules and information for the Select Start Gaming Community')
-        .addFields(
-            {
-                name: 'General Conduct',
-                value: '1. Treat all members with respect\n' +
-                       '2. No harassment, discrimination, or hate speech\n' +
-                       '3. Keep discussions family-friendly\n' +
-                       '4. Follow channel topic guidelines\n' +
-                       '5. Listen to and respect admin/mod decisions'
-            },
-            {
-                name: 'Challenge Participation',
-                value: '1. No cheating or exploitation of games\n' +
-                       '2. Report technical issues to admins\n' +
-                       '3. Submit scores/achievements honestly\n' +
-                       '4. Help maintain a fair competition\n' +
-                       '5. Celebrate others\' achievements'
-            },
-            {
-                name: '⚠️ RetroAchievements Hardcore Mode Required',
-                value: 'For all challenges and competitions:\n' +
-                       '1. You **must** play in RetroAchievements Hardcore Mode\n' +
-                       '2. Save states and rewind features are **not allowed**\n' +
-                       '3. Fast forward is permitted\n' +
-                       '4. Only achievements earned in Hardcore Mode will count toward challenge standings'
-            },
-            {
-                name: 'Communication Channels',
-                value: '**#general-chat**\n' +
-                       '• General discussion and community chat\n\n' +
-                       '**#monthly-challenge**\n' +
-                       '• Discuss current challenges\n' +
-                       '• Share tips and strategies\n\n' +
-                       '**#shadow-game**\n' +
-                       '• Discuss the shadow game challenge/share clues\n\n' +
-                       '**#the-arcade**\n' +
-                       '• Discuss the arcade board challenges\n\n' +
-                       '**#off-topic**\n' +
-                       '• For all non gaming/specific topic discussion'
-            },
-            {
-                name: 'Registration & Participation',
-                value: 'To participate in challenges:\n' +
-                       '1. You must be registered by an admin using the `/register` command\n' +
-                       '2. Your RetroAchievements username must be linked to your Discord account\n' +
-                       '3. Only achievements earned during the challenge period count for scoring\n' +
-                       '4. Use `/profile` to track your progress and points'
-            },
-            {
-                name: 'Community Feedback',
-                value: 'We welcome your ideas to improve the community:\n' +
-                       '1. Use `/suggest` to submit ideas for arcade boards, racing challenges, or bot improvements\n' +
-                       '2. Provide constructive feedback in a respectful manner\n' +
-                       '3. Consider suggesting ideas that benefit the broader community'
-            }
-        )
-        .setFooter({ text: 'Press "Back to Menu" to return to the main menu' })
-        .setTimestamp();
-}
+    async createOverviewEmbed() {
+        return new EmbedBuilder()
+            .setTitle('Community Overview')
+            .setColor('#2ECC71')
+            .setDescription('Welcome to the Select Start Gaming Community! We focus on RetroAchievements challenges, competitions, and building a friendly retro gaming community.')
+            .addFields(
+                {
+                    name: '🎮 Monthly Challenges',
+                    value: 'Each month, we select a game chosen by community vote. Everyone competes to earn achievements in that game. Monthly prizes are awarded to the top 3 players. There are also hidden "shadow games" that add an extra challenge!'
+                },
+                {
+                    name: '🏆 Point System',
+                    value: 'You can earn points by participating in monthly challenges, discovering shadow games, racing competitions, and arcade leaderboards. Points accumulate throughout the year for annual prizes.'
+                },
+                {
+                    name: '🗳️ Game Nominations',
+                    value: 'Each month, you can nominate up to two games for the next challenge. In the last week of the month, 10 games are randomly selected from all nominations for community voting. A final community-wide vote is then held to determine next month\'s game.'
+                },
+                {
+                    name: '🏎️ Racing & Arcade',
+                    value: 'We have monthly racing challenges and year-round arcade leaderboards. Compete for the top positions to earn additional community points! Racing points are awarded monthly for each new track.'
+                },
+                {
+                    name: '🏅 Year-End Awards',
+                    value: 'On December 1st, yearly points are totaled and prizes are awarded to top performers across all categories.'
+                }
+            )
+            .setFooter({ text: 'Press "Back to Menu" to return to the main menu' })
+            .setTimestamp();
+    },
+
     async createCommandsEmbed() {
         return new EmbedBuilder()
             .setTitle('Available Commands')
@@ -370,6 +338,13 @@ async createCommunityEmbed() {
                                'Use `/challenge` to see the current challenge and `/leaderboard` to see the standings.'
                     },
                     {
+                        name: '⚠️ Hardcore Mode Required',
+                        value: '• All achievements must be earned in RetroAchievements Hardcore Mode\n' +
+                               '• Save states and rewind features are **not allowed**\n' +
+                               '• Fast forward is permitted\n' +
+                               '• Only achievements earned in Hardcore Mode will count toward standings'
+                    },
+                    {
                         name: '📊 Challenge Rules',
                         value: '• Achievements must be earned during the challenge month to count toward standings\n' +
                                '• The challenge begins on the 1st of each month and ends on the last day\n' +
@@ -404,6 +379,13 @@ async createCommunityEmbed() {
                                '**Monthly Prizes:**\n' +
                                '• Top 3 players receive special recognition and community points each month\n\n' +
                                'Use `/challenge` to see the current challenge and `/leaderboard` to see the standings.'
+                    },
+                    {
+                        name: '⚠️ Hardcore Mode Required',
+                        value: '• All achievements must be earned in RetroAchievements Hardcore Mode\n' +
+                               '• Save states and rewind features are **not allowed**\n' +
+                               '• Fast forward is permitted\n' +
+                               '• Only achievements earned in Hardcore Mode will count toward standings'
                     },
                     {
                         name: '📊 Challenge Rules',
@@ -462,6 +444,13 @@ async createCommunityEmbed() {
                            '• Beaten: 4 points total (1 for participation + 3 for completing all progression requirements)\n\n' +
                            'Shadow games add an element of mystery to each month\'s challenges! Note that shadow games ' +
                            'are ineligible for mastery awards - the maximum is "beaten" status (4 points total).'
+                },
+                {
+                    name: '⚠️ Hardcore Mode Required',
+                    value: '• All achievements must be earned in RetroAchievements Hardcore Mode\n' +
+                           '• Save states and rewind features are **not allowed**\n' +
+                           '• Fast forward is permitted\n' +
+                           '• Only achievements earned in Hardcore Mode will count'
                 },
                 {
                     name: '🔍 Guessing the Shadow Game',
@@ -528,6 +517,13 @@ async createCommunityEmbed() {
                            'are ineligible for mastery awards - the maximum is "beaten" status (4 points total).'
                 },
                 {
+                    name: '⚠️ Hardcore Mode Required',
+                    value: '• All achievements must be earned in RetroAchievements Hardcore Mode\n' +
+                           '• Save states and rewind features are **not allowed**\n' +
+                           '• Fast forward is permitted\n' +
+                           '• Only achievements earned in Hardcore Mode will count'
+                },
+                {
                     name: '🔍 Guessing the Shadow Game',
                     value: 'To guess the shadow game, use the `/shadowguess` command with the exact title of the game.\n\n' +
                            'If you guess correctly, the shadow game will be revealed for everyone. If your guess is incorrect, ' +
@@ -562,6 +558,13 @@ async createCommunityEmbed() {
                            '• 2nd Place: 2 points\n' +
                            '• 3rd Place: 1 point\n\n' +
                            'Use the `/arcade` command and select "Arcade Boards" to view all available leaderboards.'
+                },
+                {
+                    name: '⚠️ Hardcore Mode Required',
+                    value: '• All achievements and scores must be earned in RetroAchievements Hardcore Mode\n' +
+                           '• Save states and rewind features are **not allowed**\n' +
+                           '• Fast forward is permitted\n' +
+                           '• Only scores earned in Hardcore Mode will count'
                 },
                 {
                     name: '⚔️ Tiebreakers',
@@ -704,6 +707,14 @@ async createCommunityEmbed() {
                            '3. Submit scores/achievements honestly\n' +
                            '4. Help maintain a fair competition\n' +
                            '5. Celebrate others\' achievements'
+                },
+                {
+                    name: '⚠️ RetroAchievements Hardcore Mode Required',
+                    value: 'For all challenges and competitions:\n' +
+                           '1. You **must** play in RetroAchievements Hardcore Mode\n' +
+                           '2. Save states and rewind features are **not allowed**\n' +
+                           '3. Fast forward is permitted\n' +
+                           '4. Only achievements earned in Hardcore Mode will count toward challenge standings'
                 },
                 {
                     name: 'Communication Channels',
