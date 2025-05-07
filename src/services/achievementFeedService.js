@@ -629,106 +629,82 @@ class AchievementFeedService {
         try {
             console.log(`Creating embed for achievement announcement: ${achievement.Title || 'Unknown Achievement'} (${achievementType})`);
             
-            // Set color and title based on achievement type - UPDATED COLORS
+            // Set color based on achievement type
             let color = '#4CAF50';  // Green for regular achievements
-            let challengeTypeText = "Achievement";
             let emoji = "🎮";
             
             if (achievementType === 'monthly') {
                 color = '#FFD700';  // Yellow for monthly
-                challengeTypeText = "Monthly Challenge";
                 emoji = "🏆";
             } else if (achievementType === 'shadow') {
                 color = '#9B59B6';  // Purple for shadow
-                challengeTypeText = "Shadow Challenge";
                 emoji = "👥";
             } else if (achievementType === 'award') {
                 color = '#3498DB';  // Blue for awards
-                challengeTypeText = "Award";
                 emoji = AWARD_EMOJIS[achievement.Title.split(' ')[0]] || '🏅';
             }
             
-            // Create embed
+            // Create embed - simpler format
             const embed = new EmbedBuilder()
-                .setTitle(`${emoji} ${achievementType === 'award' ? 'Award Achieved!' : 'Achievement Unlocked!'}`)
                 .setColor(color)
                 .setTimestamp();
 
             // Get user's profile image URL
             const profileImageUrl = await this.getUserProfileImageUrl(user.raUsername);
 
-            // Use RetroAchievements username as the author
+            // Use RetroAchievements username as the author with link to profile
             embed.setAuthor({
                 name: user.raUsername,
                 iconURL: profileImageUrl,
                 url: `https://retroachievements.org/user/${user.raUsername}`
             });
 
-            // Set thumbnail to achievement image if available, otherwise use game image
+            // Set thumbnail to achievement image if available
             if (achievement.BadgeName) {
-                // Ensure badge URL is correctly formatted
                 const badgeUrl = `https://media.retroachievements.org/Badge/${achievement.BadgeName}.png`;
                 embed.setThumbnail(badgeUrl);
-                console.log(`Using badge thumbnail: ${badgeUrl}`);
             } else if (gameInfo?.imageIcon) {
                 const gameIconUrl = `https://retroachievements.org${gameInfo.imageIcon}`;
                 embed.setThumbnail(gameIconUrl);
-                console.log(`Using game icon thumbnail: ${gameIconUrl}`);
             }
 
-            // Build description
-            let description = '';
-            if (achievementType === 'monthly' || achievementType === 'shadow') {
-                description = `**${user.raUsername}** has earned a new achievement in ${achievementType === 'shadow' ? 'the shadow challenge' : 'this month\'s challenge'}!\n\n`;
-            } else if (achievementType === 'award') {
-                description = `**${user.raUsername}** has earned an award in ${gameInfo?.title || 'a game'}!\n\n`;
+            // Build simpler title and description
+            let title = '';
+            if (achievementType === 'monthly') {
+                title = `${emoji} Monthly Challenge`;
+            } else if (achievementType === 'shadow') {
+                title = `${emoji} Shadow Challenge`;
             } else {
-                description = `**${user.raUsername}** has earned a new achievement!\n\n`;
+                title = `${emoji} Achievement Unlocked!`;
             }
             
-            description += `**${achievement.Title || 'Unknown Achievement'}**\n`;
+            embed.setTitle(title);
             
-            if (achievement.Description) {
-                description += `*${achievement.Description}*\n`;
+            // Create link to game
+            const gameLink = `[${gameInfo?.title || 'Unknown Game'}](https://retroachievements.org/game/${gameId})`;
+            
+            // Format more like the original - achievement name as main focus
+            let description = `**${achievement.Title || 'Unknown Achievement'}**\n`;
+            
+            // Add game info as part of description
+            description += `${gameLink}`;
+            
+            // Add console if available (only for non-challenge achievements)
+            if (gameInfo?.consoleName && achievementType === 'regular') {
+                description += ` • ${gameInfo.consoleName}`;
             }
             
             // Add points if available
             if (achievement.Points) {
-                description += `\nPoints: **${achievement.Points}**`;
+                description += `\nPoints: ${achievement.Points}`;
+            }
+            
+            // Add achievement description if available
+            if (achievement.Description) {
+                description += `\n*${achievement.Description}*`;
             }
             
             embed.setDescription(description);
-
-            // Add game info
-            const fields = [
-                { name: 'Game', value: gameInfo?.title || 'Unknown Game', inline: true }
-            ];
-            
-            // Add console name if available (especially useful for regular games)
-            if (gameInfo?.consoleName) {
-                fields.push({
-                    name: 'Console',
-                    value: gameInfo.consoleName,
-                    inline: true
-                });
-            }
-            
-            // Only add challenge type field for challenge games
-            if (achievementType === 'monthly' || achievementType === 'shadow') {
-                fields.push({ 
-                    name: 'Challenge Type', 
-                    value: challengeTypeText, 
-                    inline: true 
-                });
-            }
-            
-            embed.addFields(fields);
-
-            // Add links
-            embed.addFields({
-                name: 'Links',
-                value: `[Game Page](https://retroachievements.org/game/${gameId}) | [User Profile](https://retroachievements.org/user/${user.raUsername})`
-            });
 
             console.log(`Sending achievement announcement to channel`);
             
@@ -762,16 +738,18 @@ class AchievementFeedService {
         try {
             console.log(`Creating embed for ${awardLevel} award announcement for ${user.raUsername}`);
             
-            // Create embed
+            // Get emoji for award level
+            const emoji = AWARD_EMOJIS[awardLevel] || '🏅';
+            
+            // Create embed - simpler format
             const embed = new EmbedBuilder()
-                .setTitle(`${AWARD_EMOJIS[awardLevel]} Challenge Complete!`)
                 .setColor(this.getColorForAward(awardLevel, isShadow))
                 .setTimestamp();
 
             // Get user's profile image URL
             const profileImageUrl = await this.getUserProfileImageUrl(user.raUsername);
 
-            // Use RetroAchievements username as the author
+            // Use RetroAchievements username as the author with link
             embed.setAuthor({
                 name: user.raUsername,
                 iconURL: profileImageUrl,
@@ -783,37 +761,32 @@ class AchievementFeedService {
                 embed.setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`);
             }
 
-            // Build description
-            let description = `**${user.raUsername}** has earned `;
+            // Create title based on challenge type
+            const title = `${emoji} ${isShadow ? 'Shadow' : 'Monthly'} Challenge Award!`;
+            embed.setTitle(title);
+            
+            // Create game link
+            const gameLink = `[${gameInfo?.title || 'Unknown Game'}](https://retroachievements.org/game/${gameId})`;
+            
+            // Build simpler description
+            let description = '';
             
             switch (awardLevel) {
                 case 'MASTERY':
-                    description += `**MASTERY** status in ${isShadow ? 'the shadow challenge' : 'this month\'s challenge'}!\n`;
-                    description += `They completed all achievements in the game!`;
+                    description = `**MASTERY** achieved in ${gameLink}!\n`;
+                    description += `All achievements completed (${achieved}/${total})`;
                     break;
                 case 'BEATEN':
-                    description += `**BEATEN** status in ${isShadow ? 'the shadow challenge' : 'this month\'s challenge'}!\n`;
-                    description += `They completed all progression achievements and ${hasWinCondition ? 'at least one win condition' : 'no win conditions were required'}!`;
+                    description = `**BEATEN** status in ${gameLink}!\n`;
+                    description += `Progress: ${achieved}/${total} (${Math.round(achieved/total*100)}%)`;
                     break;
                 case 'PARTICIPATION':
-                    description += `**PARTICIPATION** in ${isShadow ? 'the shadow challenge' : 'this month\'s challenge'}!`;
+                    description = `**PARTICIPATION** in ${gameLink}!\n`;
+                    description += `Progress: ${achieved}/${total} (${Math.round(achieved/total*100)}%)`;
                     break;
             }
 
             embed.setDescription(description);
-
-            // Add game info
-            embed.addFields(
-                { name: 'Game', value: gameInfo?.title || 'Unknown Game', inline: true },
-                { name: 'Progress', value: `${achieved}/${total} (${Math.round(achieved/total*100)}%)`, inline: true },
-                { name: 'Challenge Type', value: isShadow ? 'Shadow Challenge' : 'Monthly Challenge', inline: true }
-            );
-
-            // Add links
-            embed.addFields({
-                name: 'Links',
-                value: `[Game Page](https://retroachievements.org/game/${gameId}) | [User Profile](https://retroachievements.org/user/${user.raUsername})`
-            });
 
             console.log(`Sending award announcement to channel`);
             
@@ -827,7 +800,6 @@ class AchievementFeedService {
                 
                 // Try a plain text fallback
                 try {
-                    const emoji = AWARD_EMOJIS[awardLevel];
                     const fallbackText = `${emoji} **${user.raUsername}** has earned ${awardLevel} status in ${gameInfo?.title || 'a game'}!`;
                     await channel.send(fallbackText);
                     console.log('Sent plain text fallback message for award');
