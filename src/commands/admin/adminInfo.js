@@ -31,6 +31,11 @@ export default {
             subcommand
                 .setName('commands')
                 .setDescription('Display a shareable list of available commands')
+        )
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('rules')
+                .setDescription('Display shareable community rules and guidelines')
         ),
 
     async execute(interaction) {
@@ -44,60 +49,62 @@ export default {
             await this.handleOverview(interaction);
         } else if (subcommand === 'commands') {
             await this.handleCommands(interaction);
+        } else if (subcommand === 'rules') {
+            await this.handleRules(interaction);
         }
     },
 
-async handleArcadeBoards(interaction) {
-    await interaction.deferReply({ ephemeral: false }); // Not ephemeral so it can be seen by everyone
+    async handleArcadeBoards(interaction) {
+        await interaction.deferReply({ ephemeral: false }); // Not ephemeral so it can be seen by everyone
 
-    try {
-        // Get all arcade boards
-        const boards = await ArcadeBoard.find({ boardType: 'arcade' });
-        
-        if (boards.length === 0) {
-            return interaction.editReply('No arcade boards are currently configured.');
+        try {
+            // Get all arcade boards
+            const boards = await ArcadeBoard.find({ boardType: 'arcade' });
+            
+            if (boards.length === 0) {
+                return interaction.editReply('No arcade boards are currently configured.');
+            }
+            
+            // Sort boards alphabetically by game title
+            boards.sort((a, b) => a.gameTitle.localeCompare(b.gameTitle));
+            
+            const embed = new EmbedBuilder()
+                .setTitle('🎮 RetroAchievements Arcade Boards')
+                .setColor('#9B59B6') // Purple color
+                .setDescription(' ')
+                .setFooter({ text: 'Data provided by RetroAchievements.org' });
+            
+            // Add explanation of how arcade works
+            embed.addFields({
+                name: 'How Arcade Works',
+                value: 'Each month we add 1-2 arcade boards to our collection. You are only competing against other members of Select Start and must place in the top 999 of the global leaderboard to appear in our rankings.\n\n' +
+                      'Boards remain open until the end of the year and will be locked on December 1st. Those placing 1st, 2nd, and 3rd will receive 3, 2, and 1 points respectively.\n\n' + 
+                      'The arcade is a way for members to collect points without the pressure of a monthly deadline or if you aren\'t interested in the month\'s official challenges.'
+            });
+            
+            // Create a list of board titles with hyperlinks
+            let boardsList = '';
+            boards.forEach(board => {
+                const leaderboardUrl = `https://retroachievements.org/leaderboardinfo.php?i=${board.leaderboardId}`;
+                boardsList += `• [${board.gameTitle}](${leaderboardUrl})\n`;
+            });
+            
+            embed.addFields({ 
+                name: 'Available Boards', 
+                value: boardsList || 'No boards available.' 
+            });
+            
+            embed.addFields({ 
+                name: 'How to Participate', 
+                value: 'Use `/arcade` to view detailed leaderboards and track your progress.' 
+            });
+            
+            await interaction.editReply({ embeds: [embed] });
+        } catch (error) {
+            console.error('Error listing arcade boards:', error);
+            await interaction.editReply('An error occurred while retrieving arcade boards.');
         }
-        
-        // Sort boards alphabetically by game title
-        boards.sort((a, b) => a.gameTitle.localeCompare(b.gameTitle));
-        
-        const embed = new EmbedBuilder()
-            .setTitle('🎮 RetroAchievements Arcade Boards')
-            .setColor('#9B59B6') // Purple color
-            .setDescription(' ')
-            .setFooter({ text: 'Data provided by RetroAchievements.org' });
-        
-        // Add explanation of how arcade works
-        embed.addFields({
-            name: 'How Arcade Works',
-            value: 'Each month we add 1-2 arcade boards to our collection. You are only competing against other members of Select Start and must place in the top 999 of the global leaderboard to appear in our rankings.\n\n' +
-                   'Boards remain open until the end of the year and will be locked on December 1st. Those placing 1st, 2nd, and 3rd will receive 3, 2, and 1 points respectively.\n\n' + 
-                   'The arcade is a way for members to collect points without the pressure of a monthly deadline or if you aren\'t interested in the month\'s official challenges.'
-        });
-        
-        // Create a list of board titles with hyperlinks
-        let boardsList = '';
-        boards.forEach(board => {
-            const leaderboardUrl = `https://retroachievements.org/leaderboardinfo.php?i=${board.leaderboardId}`;
-            boardsList += `• [${board.gameTitle}](${leaderboardUrl})\n`;
-        });
-        
-        embed.addFields({ 
-            name: 'Available Boards', 
-            value: boardsList || 'No boards available.' 
-        });
-        
-        embed.addFields({ 
-            name: 'How to Participate', 
-            value: 'Use `/arcade` to view detailed leaderboards and track your progress.' 
-        });
-        
-        await interaction.editReply({ embeds: [embed] });
-    } catch (error) {
-        console.error('Error listing arcade boards:', error);
-        await interaction.editReply('An error occurred while retrieving arcade boards.');
-    }
-},
+    },
 
     async handleChallenges(interaction) {
         await interaction.deferReply({ ephemeral: false }); // Not ephemeral so it can be seen by everyone
@@ -206,45 +213,45 @@ async handleArcadeBoards(interaction) {
         }
     },
 
-async handleOverview(interaction) {
-    await interaction.deferReply({ ephemeral: false }); // Not ephemeral so it can be seen by everyone
+    async handleOverview(interaction) {
+        await interaction.deferReply({ ephemeral: false }); // Not ephemeral so it can be seen by everyone
 
-    try {
-        const embed = new EmbedBuilder()
-            .setTitle('Community Overview')
-            .setColor('#2ECC71')
-            .setDescription('Welcome to the Select Start Gaming Community! We focus on RetroAchievements challenges, competitions, and building a friendly retro gaming community.')
-            .addFields(
-                {
-                    name: '🎮 Monthly Challenges',
-                    value: 'Each month, we select a game chosen by community vote. Everyone competes to earn achievements in that game. Monthly prizes are awarded to the top 3 players. There are also hidden "shadow games" that add an extra challenge!'
-                },
-                {
-                    name: '🗳️ Game Nominations',
-                    value: 'Each month, you can nominate up to two games for the next challenge. In the last week of the month, 10 games are randomly selected from all nominations for community voting.'
-                },
-                {
-                    name: '🏎️ Racing & Arcade',
-                    value: 'We have monthly racing challenges and year-round arcade leaderboards. Compete for the top positions to earn additional community points! Racing points are awarded monthly for each new track. Arcade boards remain open until December 1st, providing a way to earn points without monthly deadlines.'
-                },
-                {
-                    name: '🏆 Point System',
-                    value: 'You can earn points by participating in monthly challenges, discovering shadow games, racing competitions, and arcade leaderboards. Points accumulate throughout the year for annual prizes.'
-                },
-                {
-                    name: '🏅 Year-End Awards',
-                    value: 'On December 1st, yearly points are totaled and prizes are awarded to top performers across all categories.'
-                }
-            )
-            .setFooter({ text: 'Select Start Gaming Community' })
-            .setTimestamp();
+        try {
+            const embed = new EmbedBuilder()
+                .setTitle('Community Overview')
+                .setColor('#2ECC71')
+                .setDescription('Welcome to the Select Start Gaming Community! We focus on RetroAchievements challenges, competitions, and building a friendly retro gaming community.')
+                .addFields(
+                    {
+                        name: '🎮 Monthly Challenges',
+                        value: 'Each month, we select a game chosen by community vote. Everyone competes to earn achievements in that game. Monthly prizes are awarded to the top 3 players. There are also hidden "shadow games" that add an extra challenge!'
+                    },
+                    {
+                        name: '🗳️ Game Nominations',
+                        value: 'Each month, you can nominate up to two games for the next challenge. In the last week of the month, 10 games are randomly selected from all nominations for community voting.'
+                    },
+                    {
+                        name: '🏎️ Racing & Arcade',
+                        value: 'We have monthly racing challenges and year-round arcade leaderboards. Compete for the top positions to earn additional community points! Racing points are awarded monthly for each new track. Arcade boards remain open until December 1st, providing a way to earn points without monthly deadlines.'
+                    },
+                    {
+                        name: '🏆 Point System',
+                        value: 'You can earn points by participating in monthly challenges, discovering shadow games, racing competitions, and arcade leaderboards. Points accumulate throughout the year for annual prizes.'
+                    },
+                    {
+                        name: '🏅 Year-End Awards',
+                        value: 'On December 1st, yearly points are totaled and prizes are awarded to top performers across all categories.'
+                    }
+                )
+                .setFooter({ text: 'Select Start Gaming Community' })
+                .setTimestamp();
 
-        await interaction.editReply({ embeds: [embed] });
-    } catch (error) {
-        console.error('Error showing overview:', error);
-        await interaction.editReply('An error occurred while creating the overview information.');
-    }
-},
+            await interaction.editReply({ embeds: [embed] });
+        } catch (error) {
+            console.error('Error showing overview:', error);
+            await interaction.editReply('An error occurred while creating the overview information.');
+        }
+    },
 
     async handleCommands(interaction) {
         await interaction.deferReply({ ephemeral: false }); // Not ephemeral so it can be seen by everyone
@@ -288,6 +295,65 @@ async handleOverview(interaction) {
         } catch (error) {
             console.error('Error showing commands:', error);
             await interaction.editReply('An error occurred while creating the commands information.');
+        }
+    },
+
+    async handleRules(interaction) {
+        await interaction.deferReply({ ephemeral: false }); // Not ephemeral so it can be seen by everyone
+
+        try {
+            const embed = new EmbedBuilder()
+                .setTitle('Community Rules & Guidelines')
+                .setColor('#3498DB')
+                .setDescription('These rules help ensure a fair competition and enjoyable experience for all members:')
+                .addFields(
+                    {
+                        name: '📜 General Community Rules',
+                        value: '• Treat all members with respect\n' +
+                               '• No harassment, discrimination, or hate speech\n' +
+                               '• Keep discussions family-friendly\n' +
+                               '• Follow channel topic guidelines\n' +
+                               '• Listen to and respect admin/mod decisions'
+                    },
+                    {
+                        name: '🎮 RetroAchievements Requirements',
+                        value: '• **Hardcore Mode is REQUIRED** for all challenges\n' +
+                               '• Save states and rewind features are **not allowed**\n' +
+                               '• Fast forward is permitted\n' +
+                               '• Only achievements earned in Hardcore Mode will count\n' +
+                               '• All RetroAchievements rules and guidelines must be followed'
+                    },
+                    {
+                        name: '🏆 Competition Guidelines',
+                        value: '• No cheating or exploitation of games\n' +
+                               '• Submit scores and achievements honestly\n' +
+                               '• Report technical issues to admins promptly\n' +
+                               '• Achievements must be earned during the challenge period\n' +
+                               '• One grace period on the last day of the previous month\n' +
+                               '• Help maintain a fair and supportive competitive environment'
+                    },
+                    {
+                        name: '📝 Registration Requirements',
+                        value: '• You must be registered by an admin using the `/register` command\n' +
+                               '• Your RetroAchievements username must be linked to your Discord account\n' +
+                               '• You must place in the top 999 of the global leaderboard to appear in arcade rankings'
+                    },
+                    {
+                        name: '💬 Communication Guidelines',
+                        value: '• Stay on topic in designated channels\n' +
+                               '• Use spoiler tags when discussing challenge solutions\n' +
+                               '• Share tips and strategies in a constructive manner\n' +
+                               '• Celebrate and encourage others\' achievements\n' +
+                               '• Direct feedback and suggestions through proper channels'
+                    }
+                )
+                .setFooter({ text: 'Select Start Gaming Community' })
+                .setTimestamp();
+
+            await interaction.editReply({ embeds: [embed] });
+        } catch (error) {
+            console.error('Error showing rules:', error);
+            await interaction.editReply('An error occurred while creating the rules information.');
         }
     }
 };
