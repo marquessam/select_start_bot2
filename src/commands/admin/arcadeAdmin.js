@@ -1,4 +1,4 @@
-import { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, ModalBuilder, TextInputBuilder, TextInputStyle } from 'discord.js';
+import { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle } from 'discord.js';
 import { ArcadeBoard } from '../../models/ArcadeBoard.js';
 import retroAPI from '../../services/retroAPI.js';
 import { config } from '../../config/config.js';
@@ -7,11 +7,216 @@ export default {
     data: new SlashCommandBuilder()
         .setName('arcadeadmin')
         .setDescription('Manage arcade leaderboards')
-        // No subcommands - just a single entry point
-        .addStringOption(option =>
-            option.setName('board_id')
-                .setDescription('For direct operations on a specific board (optional)')
-                .setRequired(false)),
+        .addSubcommandGroup(group =>
+            group
+                .setName('arcade')
+                .setDescription('Manage arcade boards')
+                .addSubcommand(subcommand =>
+                    subcommand
+                        .setName('list')
+                        .setDescription('List all arcade boards'))
+                .addSubcommand(subcommand =>
+                    subcommand
+                        .setName('add')
+                        .setDescription('Add a new arcade board')
+                        .addStringOption(option =>
+                            option.setName('board_id')
+                                .setDescription('Unique identifier for this board')
+                                .setRequired(true))
+                        .addIntegerOption(option =>
+                            option.setName('leaderboard_id')
+                                .setDescription('RetroAchievements leaderboard ID')
+                                .setRequired(true))
+                        .addIntegerOption(option =>
+                            option.setName('game_id')
+                                .setDescription('RetroAchievements game ID')
+                                .setRequired(true))
+                        .addStringOption(option =>
+                            option.setName('description')
+                                .setDescription('Description of the leaderboard')
+                                .setRequired(true)))
+                .addSubcommand(subcommand =>
+                    subcommand
+                        .setName('edit')
+                        .setDescription('Edit an existing arcade board')
+                        .addStringOption(option =>
+                            option.setName('board_id')
+                                .setDescription('ID of the board to edit')
+                                .setRequired(true))
+                        .addIntegerOption(option =>
+                            option.setName('leaderboard_id')
+                                .setDescription('New RetroAchievements leaderboard ID'))
+                        .addStringOption(option =>
+                            option.setName('description')
+                                .setDescription('New description of the leaderboard')))
+                .addSubcommand(subcommand =>
+                    subcommand
+                        .setName('remove')
+                        .setDescription('Remove an arcade board')
+                        .addStringOption(option =>
+                            option.setName('board_id')
+                                .setDescription('ID of the board to remove')
+                                .setRequired(true)))
+                .addSubcommand(subcommand =>
+                    subcommand
+                        .setName('announce')
+                        .setDescription('Announce an arcade board')
+                        .addStringOption(option =>
+                            option.setName('board_id')
+                                .setDescription('ID of the board to announce')
+                                .setRequired(true)))
+                .addSubcommand(subcommand =>
+                    subcommand
+                        .setName('award')
+                        .setDescription('Manually trigger the annual arcade points award process')
+                        .addIntegerOption(option =>
+                            option.setName('year')
+                                .setDescription('Year to award points for (defaults to current year)')
+                                .setRequired(false))))
+        
+        // Racing board management
+        .addSubcommandGroup(group =>
+            group
+                .setName('racing')
+                .setDescription('Manage racing challenges')
+                .addSubcommand(subcommand =>
+                    subcommand
+                        .setName('list')
+                        .setDescription('List all racing challenges'))
+                .addSubcommand(subcommand =>
+                    subcommand
+                        .setName('add')
+                        .setDescription('Set up a monthly racing challenge')
+                        .addIntegerOption(option =>
+                            option.setName('leaderboard_id')
+                                .setDescription('RetroAchievements leaderboard ID')
+                                .setRequired(true))
+                        .addIntegerOption(option =>
+                            option.setName('game_id')
+                                .setDescription('RetroAchievements game ID')
+                                .setRequired(true))
+                        .addStringOption(option =>
+                            option.setName('track_name')
+                                .setDescription('Name of the track (e.g., "Mario Circuit")')
+                                .setRequired(true))
+                        .addStringOption(option =>
+                            option.setName('description')
+                                .setDescription('Description of the racing challenge')
+                                .setRequired(true))
+                        .addIntegerOption(option =>
+                            option.setName('year')
+                                .setDescription('Year (defaults to current year)')
+                                .setMinValue(2000)
+                                .setMaxValue(2100))
+                        .addIntegerOption(option =>
+                            option.setName('month')
+                                .setDescription('Month (1-12, defaults to current month)')
+                                .setMinValue(1)
+                                .setMaxValue(12)))
+                .addSubcommand(subcommand =>
+                    subcommand
+                        .setName('edit')
+                        .setDescription('Edit an existing racing challenge')
+                        .addStringOption(option =>
+                            option.setName('board_id')
+                                .setDescription('ID of the racing board to edit')
+                                .setRequired(true))
+                        .addStringOption(option =>
+                            option.setName('track_name')
+                                .setDescription('New name of the track'))
+                        .addStringOption(option =>
+                            option.setName('description')
+                                .setDescription('New description of the racing challenge'))
+                        .addIntegerOption(option =>
+                            option.setName('leaderboard_id')
+                                .setDescription('New RetroAchievements leaderboard ID')))
+                .addSubcommand(subcommand =>
+                    subcommand
+                        .setName('remove')
+                        .setDescription('Remove a racing challenge')
+                        .addStringOption(option =>
+                            option.setName('identifier')
+                                .setDescription('Board ID or month (YYYY-MM or month name)')
+                                .setRequired(true)))
+                .addSubcommand(subcommand =>
+                    subcommand
+                        .setName('announce')
+                        .setDescription('Announce a racing challenge')
+                        .addStringOption(option =>
+                            option.setName('board_id')
+                                .setDescription('ID of the racing board to announce')
+                                .setRequired(true)))
+                .addSubcommand(subcommand =>
+                    subcommand
+                        .setName('award')
+                        .setDescription('Manually award points for completed racing challenge')
+                        .addStringOption(option =>
+                            option.setName('board_id')
+                                .setDescription('ID of the racing board')
+                                .setRequired(true))))
+        
+        // Tiebreaker board management
+        .addSubcommandGroup(group =>
+            group
+                .setName('tiebreaker')
+                .setDescription('Manage tiebreaker boards')
+                .addSubcommand(subcommand =>
+                    subcommand
+                        .setName('list')
+                        .setDescription('List all tiebreaker boards'))
+                .addSubcommand(subcommand =>
+                    subcommand
+                        .setName('add')
+                        .setDescription('Create a tiebreaker leaderboard')
+                        .addIntegerOption(option =>
+                            option.setName('leaderboard_id')
+                                .setDescription('RetroAchievements leaderboard ID')
+                                .setRequired(true))
+                        .addIntegerOption(option =>
+                            option.setName('game_id')
+                                .setDescription('RetroAchievements game ID')
+                                .setRequired(true))
+                        .addStringOption(option =>
+                            option.setName('description')
+                                .setDescription('Description of the tiebreaker')
+                                .setRequired(true))
+                        .addStringOption(option =>
+                            option.setName('end_date')
+                                .setDescription('End date (YYYY-MM-DD)')
+                                .setRequired(true)))
+                .addSubcommand(subcommand =>
+                    subcommand
+                        .setName('edit')
+                        .setDescription('Edit an existing tiebreaker board')
+                        .addStringOption(option =>
+                            option.setName('board_id')
+                                .setDescription('ID of the tiebreaker board to edit')
+                                .setRequired(true))
+                        .addIntegerOption(option =>
+                            option.setName('leaderboard_id')
+                                .setDescription('New RetroAchievements leaderboard ID'))
+                        .addStringOption(option =>
+                            option.setName('description')
+                                .setDescription('New description of the tiebreaker'))
+                        .addStringOption(option =>
+                            option.setName('end_date')
+                                .setDescription('New end date (YYYY-MM-DD)')))
+                .addSubcommand(subcommand =>
+                    subcommand
+                        .setName('remove')
+                        .setDescription('Remove a tiebreaker board')
+                        .addStringOption(option =>
+                            option.setName('board_id')
+                                .setDescription('ID of the tiebreaker board to remove')
+                                .setRequired(true)))
+                .addSubcommand(subcommand =>
+                    subcommand
+                        .setName('announce')
+                        .setDescription('Announce a tiebreaker board')
+                        .addStringOption(option =>
+                            option.setName('board_id')
+                                .setDescription('ID of the tiebreaker board to announce')
+                                .setRequired(true)))),
 
     async execute(interaction) {
         // Check if user has admin role
@@ -22,328 +227,110 @@ export default {
             });
         }
 
-        // Check if a board ID was directly provided
-        const boardId = interaction.options.getString('board_id');
-        
-        if (boardId) {
-            // If a board ID was provided, show the board actions menu
-            return this.showBoardActionsMenu(interaction, boardId);
-        } else {
-            // Otherwise, show the main menu
-            return this.showMainMenu(interaction);
-        }
-    },
+        await interaction.deferReply({ ephemeral: true });
 
-    async showMainMenu(interaction) {
-        // Create the main menu embed
-        const embed = new EmbedBuilder()
-            .setColor('#9B59B6')
-            .setTitle('Arcade Admin Panel')
-            .setDescription('Select the type of board you want to manage.')
-            .addFields(
-                { name: 'Arcade Boards', value: 'Standard arcade leaderboards' },
-                { name: 'Racing Challenges', value: 'Monthly racing competitions' },
-                { name: 'Tiebreakers', value: 'Special leaderboards for resolving ties' }
-            );
-
-        // Create the board type selection menu
-        const boardTypeRow = new ActionRowBuilder()
-            .addComponents(
-                new StringSelectMenuBuilder()
-                    .setCustomId('arcadeadmin_board_type')
-                    .setPlaceholder('Select board type...')
-                    .addOptions(
-                        new StringSelectMenuOptionBuilder()
-                            .setLabel('Arcade Boards')
-                            .setDescription('Manage standard arcade leaderboards')
-                            .setValue('arcade')
-                            .setEmoji('🎮'),
-                        new StringSelectMenuOptionBuilder()
-                            .setLabel('Racing Challenges')
-                            .setDescription('Manage monthly racing competitions')
-                            .setValue('racing')
-                            .setEmoji('🏎️'),
-                        new StringSelectMenuOptionBuilder()
-                            .setLabel('Tiebreakers')
-                            .setDescription('Manage tiebreaker boards')
-                            .setValue('tiebreaker')
-                            .setEmoji('⚔️')
-                    )
-            );
-
-        // Add a button to list current boards
-        const listBoardsRow = new ActionRowBuilder()
-            .addComponents(
-                new ButtonBuilder()
-                    .setCustomId('arcadeadmin_list_arcade')
-                    .setLabel('List Arcade Boards')
-                    .setStyle(ButtonStyle.Secondary)
-                    .setEmoji('🎮'),
-                new ButtonBuilder()
-                    .setCustomId('arcadeadmin_list_racing')
-                    .setLabel('List Racing Challenges')
-                    .setStyle(ButtonStyle.Secondary)
-                    .setEmoji('🏎️'),
-                new ButtonBuilder()
-                    .setCustomId('arcadeadmin_list_tiebreaker')
-                    .setLabel('List Tiebreakers')
-                    .setStyle(ButtonStyle.Secondary)
-                    .setEmoji('⚔️')
-            );
-
-        // Add a button for global actions
-        const globalActionsRow = new ActionRowBuilder()
-            .addComponents(
-                new ButtonBuilder()
-                    .setCustomId('arcadeadmin_award_arcade_points')
-                    .setLabel('Award Annual Arcade Points')
-                    .setStyle(ButtonStyle.Primary)
-                    .setEmoji('🏆')
-            );
-
-        await interaction.reply({
-            embeds: [embed],
-            components: [boardTypeRow, listBoardsRow, globalActionsRow],
-            ephemeral: true
-        });
-    },
-
-    async showBoardActionsMenu(interaction, boardId) {
         try {
-            // Find the board
-            const board = await ArcadeBoard.findOne({ boardId });
+            const group = interaction.options.getSubcommandGroup();
+            const subcommand = interaction.options.getSubcommand();
             
-            if (!board) {
-                return interaction.reply({
-                    content: `Board with ID "${boardId}" not found.`,
-                    ephemeral: true
-                });
-            }
-
-            // Create the board actions embed
-            const embed = new EmbedBuilder()
-                .setColor(this.getBoardTypeColor(board.boardType))
-                .setTitle(`${this.getBoardTypeEmoji(board.boardType)} ${board.gameTitle}`)
-                .setDescription(`Board ID: ${boardId}\nType: ${board.boardType}`)
-                .addFields(
-                    { name: 'Game', value: board.gameTitle },
-                    { name: 'Description', value: board.description }
-                );
-
-            if (board.trackName) {
-                embed.addFields({ name: 'Track', value: board.trackName });
-            }
-
-            if (board.startDate && board.endDate) {
-                embed.addFields({
-                    name: 'Period',
-                    value: `${board.startDate.toLocaleDateString()} to ${board.endDate.toLocaleDateString()}`
-                });
-            }
-
-            // Create the action buttons
-            const actionRow = new ActionRowBuilder()
-                .addComponents(
-                    new ButtonBuilder()
-                        .setCustomId(`arcadeadmin_edit_${board.boardType}_${boardId}`)
-                        .setLabel('Edit')
-                        .setStyle(ButtonStyle.Primary)
-                        .setEmoji('✏️'),
-                    new ButtonBuilder()
-                        .setCustomId(`arcadeadmin_announce_${board.boardType}_${boardId}`)
-                        .setLabel('Announce')
-                        .setStyle(ButtonStyle.Success)
-                        .setEmoji('📣'),
-                    new ButtonBuilder()
-                        .setCustomId(`arcadeadmin_remove_${board.boardType}_${boardId}`)
-                        .setLabel('Remove')
-                        .setStyle(ButtonStyle.Danger)
-                        .setEmoji('🗑️')
-                );
-
-            // Add specialized buttons based on board type
-            const specialActionRow = new ActionRowBuilder();
-            
-            if (board.boardType === 'racing' && !board.pointsAwarded) {
-                specialActionRow.addComponents(
-                    new ButtonBuilder()
-                        .setCustomId(`arcadeadmin_award_racing_${boardId}`)
-                        .setLabel('Award Points')
-                        .setStyle(ButtonStyle.Primary)
-                        .setEmoji('🏆')
-                );
-            }
-
-            // Add the view leaderboard button
-            specialActionRow.addComponents(
-                new ButtonBuilder()
-                    .setCustomId(`view_${board.boardType}_${boardId}`)
-                    .setLabel('View Leaderboard')
-                    .setStyle(ButtonStyle.Secondary)
-                    .setEmoji('📊')
-            );
-
-            const components = [actionRow];
-            if (specialActionRow.components.length > 0) {
-                components.push(specialActionRow);
-            }
-
-            await interaction.reply({
-                embeds: [embed],
-                components,
-                ephemeral: true
-            });
-        } catch (error) {
-            console.error('Error showing board actions menu:', error);
-            await interaction.reply({
-                content: 'An error occurred while retrieving the board information.',
-                ephemeral: true
-            });
-        }
-    },
-
-    async handleInteraction(interaction) {
-        if (!interaction.isButton() && !interaction.isStringSelectMenu()) {
-            return;
-        }
-
-        // Check if user has admin role
-        if (!interaction.member.roles.cache.has(config.bot.roles.admin)) {
-            return interaction.reply({
-                content: 'You do not have permission to use this command.',
-                ephemeral: true
-            });
-        }
-
-        const customId = interaction.customId;
-
-        // Handle main menu board type selection
-        if (customId === 'arcadeadmin_board_type') {
-            const boardType = interaction.values[0];
-            await this.showActionMenu(interaction, boardType);
-            return;
-        }
-
-        // Handle list boards buttons
-        if (customId.startsWith('arcadeadmin_list_')) {
-            const boardType = customId.split('_')[2];
-            await this.listBoards(interaction, boardType);
-            return;
-        }
-
-        // Handle award arcade points
-        if (customId === 'arcadeadmin_award_arcade_points') {
-            await this.confirmAwardArcadePoints(interaction);
-            return;
-        }
-
-        // Handle board-specific actions
-        if (customId.startsWith('arcadeadmin_')) {
-            const parts = customId.split('_');
-            const action = parts[1];
-            const boardType = parts[2];
-            const boardId = parts[3];
-
-            switch (action) {
-                case 'edit':
-                    await this.showEditForm(interaction, boardType, boardId);
+            switch(group) {
+                case 'arcade':
+                    await this.handleArcadeCommands(interaction, subcommand);
                     break;
-                case 'announce':
-                    await this.announceBoard(interaction, boardType, boardId);
+                case 'racing':
+                    await this.handleRacingCommands(interaction, subcommand);
                     break;
-                case 'remove':
-                    await this.confirmRemoveBoard(interaction, boardType, boardId);
-                    break;
-                case 'award':
-                    if (boardType === 'racing') {
-                        await this.awardRacingPoints(interaction, boardId);
-                    }
+                case 'tiebreaker':
+                    await this.handleTiebreakerCommands(interaction, subcommand);
                     break;
                 default:
-                    await interaction.reply({
-                        content: 'Unknown action.',
-                        ephemeral: true
-                    });
+                    await interaction.editReply('Invalid command group');
             }
+        } catch (error) {
+            console.error('Error executing arcade admin command:', error);
+            await interaction.editReply('An error occurred while processing your request.');
         }
     },
 
-    async showActionMenu(interaction, boardType) {
-        // Get the readable name for the board type
-        const boardTypeName = this.getBoardTypeName(boardType);
-        const emoji = this.getBoardTypeEmoji(boardType);
+    async handleArcadeCommands(interaction, subcommand) {
+        switch(subcommand) {
+            case 'list':
+                await this.listBoards(interaction, 'arcade');
+                break;
+            case 'add':
+                await this.addArcadeBoard(interaction);
+                break;
+            case 'edit':
+                await this.editArcadeBoard(interaction);
+                break;
+            case 'remove':
+                await this.removeArcadeBoard(interaction);
+                break;
+            case 'announce':
+                await this.announceBoard(interaction, 'arcade');
+                break;
+            case 'award':
+                await this.triggerArcadeAwards(interaction);
+                break;
+            default:
+                await interaction.editReply('Invalid arcade subcommand');
+        }
+    },
 
-        // Create the action menu embed
-        const embed = new EmbedBuilder()
-            .setColor(this.getBoardTypeColor(boardType))
-            .setTitle(`${emoji} ${boardTypeName} Management`)
-            .setDescription(`Select an action to perform for ${boardTypeName.toLowerCase()}.`);
+    async handleRacingCommands(interaction, subcommand) {
+        switch(subcommand) {
+            case 'list':
+                await this.listBoards(interaction, 'racing');
+                break;
+            case 'add':
+                await this.createRacingChallenge(interaction);
+                break;
+            case 'edit':
+                await this.editRacingBoard(interaction);
+                break;
+            case 'remove':
+                await this.removeRacingBoard(interaction);
+                break;
+            case 'announce':
+                await this.announceBoard(interaction, 'racing');
+                break;
+            case 'award':
+                await this.awardRacingPoints(interaction);
+                break;
+            default:
+                await interaction.editReply('Invalid racing subcommand');
+        }
+    },
 
-        // Create the action selection menu
-        const actionRow = new ActionRowBuilder()
-            .addComponents(
-                new StringSelectMenuBuilder()
-                    .setCustomId(`arcadeadmin_action_${boardType}`)
-                    .setPlaceholder('Select action...')
-                    .addOptions(
-                        new StringSelectMenuOptionBuilder()
-                            .setLabel('Add New')
-                            .setDescription(`Create a new ${boardTypeName.toLowerCase()}`)
-                            .setValue(`add_${boardType}`)
-                            .setEmoji('➕'),
-                        new StringSelectMenuOptionBuilder()
-                            .setLabel('List All')
-                            .setDescription(`Show all ${boardTypeName.toLowerCase()}`)
-                            .setValue(`list_${boardType}`)
-                            .setEmoji('📋')
-                    )
-            );
-
-        // Add back button
-        const backRow = new ActionRowBuilder()
-            .addComponents(
-                new ButtonBuilder()
-                    .setCustomId('arcadeadmin_back_to_main')
-                    .setLabel('Back to Main Menu')
-                    .setStyle(ButtonStyle.Secondary)
-                    .setEmoji('◀️')
-            );
-
-        await interaction.update({
-            embeds: [embed],
-            components: [actionRow, backRow]
-        });
+    async handleTiebreakerCommands(interaction, subcommand) {
+        switch(subcommand) {
+            case 'list':
+                await this.listBoards(interaction, 'tiebreaker');
+                break;
+            case 'add':
+                await this.createTiebreaker(interaction);
+                break;
+            case 'edit':
+                await this.editTiebreakerBoard(interaction);
+                break;
+            case 'remove':
+                await this.removeTiebreakerBoard(interaction);
+                break;
+            case 'announce':
+                await this.announceBoard(interaction, 'tiebreaker');
+                break;
+            default:
+                await interaction.editReply('Invalid tiebreaker subcommand');
+        }
     },
 
     async listBoards(interaction, boardType) {
         try {
-            await interaction.deferUpdate();
-
             // Find all boards of the specified type
             const boards = await ArcadeBoard.find({ boardType }).sort({ createdAt: -1 });
 
             if (boards.length === 0) {
-                // Create embed with no boards message
-                const embed = new EmbedBuilder()
-                    .setColor(this.getBoardTypeColor(boardType))
-                    .setTitle(`${this.getBoardTypeEmoji(boardType)} ${this.getBoardTypeName(boardType)} List`)
-                    .setDescription(`No ${boardType} boards found.`);
-
-                // Add back button
-                const backRow = new ActionRowBuilder()
-                    .addComponents(
-                        new ButtonBuilder()
-                            .setCustomId('arcadeadmin_back_to_main')
-                            .setLabel('Back to Main Menu')
-                            .setStyle(ButtonStyle.Secondary)
-                            .setEmoji('◀️')
-                    );
-
-                await interaction.editReply({
-                    embeds: [embed],
-                    components: [backRow]
-                });
-                return;
+                return interaction.editReply(`No ${boardType} boards found.`);
             }
 
             // Create embed with boards list
@@ -378,580 +365,415 @@ export default {
                 embed.setFooter({ text: `Showing 25/${boards.length} boards` });
             }
 
-            // Create select menu for boards
-            const selectRow = new ActionRowBuilder()
-                .addComponents(
-                    new StringSelectMenuBuilder()
-                        .setCustomId(`arcadeadmin_select_board_${boardType}`)
-                        .setPlaceholder('Select a board to manage...')
-                        .addOptions(
-                            boardsToShow.map(board => {
-                                let label = board.gameTitle;
-                                if (board.trackName && label.length + board.trackName.length + 3 <= 100) {
-                                    label += ` - ${board.trackName}`;
-                                }
-                                
-                                // Trim label if too long
-                                if (label.length > 100) {
-                                    label = label.substring(0, 97) + '...';
-                                }
-                                
-                                return new StringSelectMenuOptionBuilder()
-                                    .setLabel(label)
-                                    .setValue(board.boardId)
-                                    .setDescription(`ID: ${board.boardId}`);
-                            })
-                        )
-                );
-
-            // Add create new board button and back button
-            const actionRow = new ActionRowBuilder()
-                .addComponents(
-                    new ButtonBuilder()
-                        .setCustomId(`arcadeadmin_create_${boardType}`)
-                        .setLabel(`Create New ${this.getBoardTypeName(boardType)}`)
-                        .setStyle(ButtonStyle.Success)
-                        .setEmoji('➕'),
-                    new ButtonBuilder()
-                        .setCustomId('arcadeadmin_back_to_main')
-                        .setLabel('Back to Main Menu')
-                        .setStyle(ButtonStyle.Secondary)
-                        .setEmoji('◀️')
-                );
-
-            await interaction.editReply({
-                embeds: [embed],
-                components: [selectRow, actionRow]
-            });
+            return interaction.editReply({ embeds: [embed] });
         } catch (error) {
             console.error(`Error listing ${boardType} boards:`, error);
-            await interaction.editReply({
-                content: `An error occurred while listing ${boardType} boards.`,
-                components: []
-            });
+            return interaction.editReply(`An error occurred while listing ${boardType} boards.`);
         }
     },
 
-    async showAddForm(interaction, boardType) {
-        try {
-            // Create a modal for adding a new board
-            const modal = new ModalBuilder()
-                .setCustomId(`arcadeadmin_add_${boardType}_modal`)
-                .setTitle(`Add New ${this.getBoardTypeName(boardType)}`);
+    async addArcadeBoard(interaction) {
+        const boardId = interaction.options.getString('board_id');
+        const leaderboardId = interaction.options.getInteger('leaderboard_id');
+        const gameId = interaction.options.getInteger('game_id');
+        const description = interaction.options.getString('description');
 
-            // Add fields based on board type
-            const gameIdInput = new TextInputBuilder()
-                .setCustomId('game_id')
-                .setLabel('Game ID')
-                .setStyle(TextInputStyle.Short)
-                .setPlaceholder('RetroAchievements Game ID')
-                .setRequired(true);
-
-            const leaderboardIdInput = new TextInputBuilder()
-                .setCustomId('leaderboard_id')
-                .setLabel('Leaderboard ID')
-                .setStyle(TextInputStyle.Short)
-                .setPlaceholder('RetroAchievements Leaderboard ID')
-                .setRequired(true);
-
-            const descriptionInput = new TextInputBuilder()
-                .setCustomId('description')
-                .setLabel('Description')
-                .setStyle(TextInputStyle.Paragraph)
-                .setPlaceholder('Description of the board')
-                .setRequired(true);
-
-            // Common fields
-            const gameIdRow = new ActionRowBuilder().addComponents(gameIdInput);
-            const leaderboardIdRow = new ActionRowBuilder().addComponents(leaderboardIdInput);
-            const descriptionRow = new ActionRowBuilder().addComponents(descriptionInput);
-
-            modal.addComponents(gameIdRow, leaderboardIdRow, descriptionRow);
-
-            // Add board type specific fields
-            if (boardType === 'arcade') {
-                const boardIdInput = new TextInputBuilder()
-                    .setCustomId('board_id')
-                    .setLabel('Board ID')
-                    .setStyle(TextInputStyle.Short)
-                    .setPlaceholder('Unique identifier for this board')
-                    .setRequired(true);
-
-                const boardIdRow = new ActionRowBuilder().addComponents(boardIdInput);
-                modal.addComponents(boardIdRow);
-            } else if (boardType === 'racing') {
-                const trackNameInput = new TextInputBuilder()
-                    .setCustomId('track_name')
-                    .setLabel('Track Name')
-                    .setStyle(TextInputStyle.Short)
-                    .setPlaceholder('Name of the track (e.g., "Mario Circuit")')
-                    .setRequired(true);
-
-                const monthInput = new TextInputBuilder()
-                    .setCustomId('month_year')
-                    .setLabel('Month and Year (Optional)')
-                    .setStyle(TextInputStyle.Short)
-                    .setPlaceholder('YYYY-MM (defaults to current month)')
-                    .setRequired(false);
-
-                const trackNameRow = new ActionRowBuilder().addComponents(trackNameInput);
-                const monthRow = new ActionRowBuilder().addComponents(monthInput);
-                modal.addComponents(trackNameRow, monthRow);
-            } else if (boardType === 'tiebreaker') {
-                const endDateInput = new TextInputBuilder()
-                    .setCustomId('end_date')
-                    .setLabel('End Date')
-                    .setStyle(TextInputStyle.Short)
-                    .setPlaceholder('YYYY-MM-DD')
-                    .setRequired(true);
-
-                const endDateRow = new ActionRowBuilder().addComponents(endDateInput);
-                modal.addComponents(endDateRow);
-            }
-
-            // Show the modal
-            await interaction.showModal(modal);
-        } catch (error) {
-            console.error(`Error showing add form for ${boardType}:`, error);
-            await interaction.reply({
-                content: `An error occurred while preparing the form.`,
-                ephemeral: true
-            });
+        // Check if board ID already exists
+        const existingBoard = await ArcadeBoard.findOne({ boardId });
+        if (existingBoard) {
+            return interaction.editReply(`A board with ID "${boardId}" already exists.`);
         }
-    },
 
-    async handleAddFormSubmit(interaction, boardType) {
+        // Validate game exists
         try {
-            await interaction.deferReply({ ephemeral: true });
-
-            const gameId = parseInt(interaction.fields.getTextInputValue('game_id'));
-            const leaderboardId = parseInt(interaction.fields.getTextInputValue('leaderboard_id'));
-            const description = interaction.fields.getTextInputValue('description');
-
-            // Validate game exists
             const gameInfo = await retroAPI.getGameInfo(gameId);
             if (!gameInfo) {
                 return interaction.editReply('Game not found. Please check the game ID.');
             }
 
-            // Handle board type specific fields and create the board
-            if (boardType === 'arcade') {
-                const boardId = interaction.fields.getTextInputValue('board_id');
-
-                // Check if board ID already exists
-                const existingBoard = await ArcadeBoard.findOne({ boardId });
-                if (existingBoard) {
-                    return interaction.editReply(`A board with ID "${boardId}" already exists.`);
-                }
-
-                // Create new board
-                const newBoard = new ArcadeBoard({
-                    boardId,
-                    boardType: 'arcade',
-                    leaderboardId,
-                    gameId,
-                    gameTitle: gameInfo.title,
-                    consoleName: gameInfo.consoleName || 'Unknown',
-                    description
-                });
-
-                await newBoard.save();
-
-                // Create response embed
-                const embed = new EmbedBuilder()
-                    .setColor('#0099ff')
-                    .setTitle(`Arcade Board Created: ${gameInfo.title}`)
-                    .setDescription(
-                        `**Board ID:** ${boardId}\n` +
-                        `**Game:** ${gameInfo.title}\n` +
-                        `**Description:** ${description}`
-                    );
-
-                if (gameInfo.imageIcon) {
-                    embed.setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`);
-                }
-
-                // Add action buttons
-                const actionRow = new ActionRowBuilder()
-                    .addComponents(
-                        new ButtonBuilder()
-                            .setCustomId(`arcadeadmin_announce_arcade_${boardId}`)
-                            .setLabel('Announce to Server')
-                            .setStyle(ButtonStyle.Primary)
-                            .setEmoji('📣'),
-                        new ButtonBuilder()
-                            .setCustomId(`view_arcade_${boardId}`)
-                            .setLabel('View Leaderboard')
-                            .setStyle(ButtonStyle.Secondary)
-                            .setEmoji('📊')
-                    );
-
-                await interaction.editReply({
-                    embeds: [embed],
-                    components: [actionRow]
-                });
-            } else if (boardType === 'racing') {
-                const trackName = interaction.fields.getTextInputValue('track_name');
-                
-                // Parse month and year (optional)
-                let monthYear = interaction.fields.getTextInputValue('month_year');
-                let year, month;
-                
-                if (monthYear && /^\d{4}-\d{2}$/.test(monthYear)) {
-                    [year, month] = monthYear.split('-').map(Number);
-                } else {
-                    const now = new Date();
-                    year = now.getFullYear();
-                    month = now.getMonth() + 1;
-                    monthYear = `${year}-${month.toString().padStart(2, '0')}`;
-                }
-
-                // Check if a racing challenge already exists for this month
-                const existingChallenge = await ArcadeBoard.findOne({
-                    boardType: 'racing',
-                    monthKey: monthYear
-                });
-
-                if (existingChallenge) {
-                    return interaction.editReply(`A racing challenge already exists for ${monthYear}.`);
-                }
-
-                // Calculate start and end dates
-                const startDate = new Date(year, month - 1, 1);
-                const endDate = new Date(year, month, 0, 23, 59, 59);
-                
-                // Generate a unique board ID for racing
-                const boardId = `racing-${monthYear}`;
-
-                // Get the full game title and console name
-                const gameFull = `${gameInfo.title} (${gameInfo.consoleName})`;
-
-                // Create new racing board
-                const newBoard = new ArcadeBoard({
-                    boardId,
-                    boardType: 'racing',
-                    leaderboardId,
-                    gameId,
-                    gameTitle: gameFull,
-                    trackName,
-                    consoleName: gameInfo.consoleName || 'Unknown',
-                    description,
-                    startDate,
-                    endDate,
-                    monthKey: monthYear
-                });
-
-                await newBoard.save();
-
-                // Get month name for response
-                const monthName = startDate.toLocaleString('default', { month: 'long' });
-
-                // Create response embed
-                const embed = new EmbedBuilder()
-                    .setColor('#FF9900')
-                    .setTitle(`Racing Challenge Created: ${monthName} ${year}`)
-                    .setDescription(
-                        `**Game:** ${gameFull}\n` +
-                        `**Track:** ${trackName}\n` +
-                        `**Description:** ${description}\n\n` +
-                        `**Challenge Period:** ${startDate.toLocaleDateString()} to ${endDate.toLocaleDateString()}\n\n` +
-                        `The top 3 players at the end of the month will receive award points!`
-                    );
-
-                if (gameInfo.imageIcon) {
-                    embed.setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`);
-                }
-
-                // Add action buttons
-                const actionRow = new ActionRowBuilder()
-                    .addComponents(
-                        new ButtonBuilder()
-                            .setCustomId(`arcadeadmin_announce_racing_${boardId}`)
-                            .setLabel('Announce to Server')
-                            .setStyle(ButtonStyle.Primary)
-                            .setEmoji('📣'),
-                        new ButtonBuilder()
-                            .setCustomId(`view_racing_${boardId}`)
-                            .setLabel('View Leaderboard')
-                            .setStyle(ButtonStyle.Secondary)
-                            .setEmoji('📊')
-                    );
-
-                await interaction.editReply({
-                    embeds: [embed],
-                    components: [actionRow]
-                });
-            } else if (boardType === 'tiebreaker') {
-                const endDateStr = interaction.fields.getTextInputValue('end_date');
-                
-                // Parse end date
-                const endDate = new Date(endDateStr);
-                if (isNaN(endDate.getTime())) {
-                    return interaction.editReply('Invalid end date format. Please use YYYY-MM-DD.');
-                }
-
-                // Set end time to 23:59:59
-                endDate.setHours(23, 59, 59);
-
-                // Check if an active tiebreaker already exists
-                const now = new Date();
-                const activeTiebreaker = await ArcadeBoard.findOne({
-                    boardType: 'tiebreaker',
-                    startDate: { $lte: now },
-                    endDate: { $gte: now }
-                });
-
-                if (activeTiebreaker) {
-                    return interaction.editReply('An active tiebreaker already exists. Please end it before creating a new one.');
-                }
-
-                // Generate a unique board ID based on month and year
-                const monthYear = `${now.getFullYear()}-${(now.getMonth() + 1).toString().padStart(2, '0')}`;
-                const boardId = `tiebreaker-${monthYear}`;
-
-                // Create new tiebreaker board
-                const newBoard = new ArcadeBoard({
-                    boardId,
-                    boardType: 'tiebreaker',
-                    leaderboardId,
-                    gameId,
-                    gameTitle: gameInfo.title,
-                    consoleName: gameInfo.consoleName || 'Unknown',
-                    description,
-                    startDate: now,
-                    endDate,
-                    monthKey: monthYear
-                });
-
-                await newBoard.save();
-
-                // Get the month name
-                const monthName = now.toLocaleString('default', { month: 'long' });
-                const year = now.getFullYear();
-
-                // Create response embed
-                const embed = new EmbedBuilder()
-                    .setColor('#FF0000')
-                    .setTitle(`⚔️ Tiebreaker Created: ${monthName} ${year}`)
-                    .setDescription(
-                        `**Game:** ${gameInfo.title}\n` +
-                        `**Description:** ${description}\n\n` +
-                        `**Tiebreaker Period:** ${now.toLocaleDateString()} to ${endDate.toLocaleDateString()}\n\n` +
-                        `This tiebreaker will be used to resolve ties in the ${monthName} monthly challenge leaderboard.`
-                    );
-
-                if (gameInfo.imageIcon) {
-                    embed.setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`);
-                }
-
-                // Add action buttons
-                const actionRow = new ActionRowBuilder()
-                    .addComponents(
-                        new ButtonBuilder()
-                            .setCustomId(`arcadeadmin_announce_tiebreaker_${boardId}`)
-                            .setLabel('Announce to Server')
-                            .setStyle(ButtonStyle.Primary)
-                            .setEmoji('📣'),
-                        new ButtonBuilder()
-                            .setCustomId(`view_tiebreaker_${boardId}`)
-                            .setLabel('View Leaderboard')
-                            .setStyle(ButtonStyle.Secondary)
-                            .setEmoji('📊')
-                    );
-
-                await interaction.editReply({
-                    embeds: [embed],
-                    components: [actionRow]
-                });
-            }
-        } catch (error) {
-            console.error(`Error handling add form submit for ${boardType}:`, error);
-            await interaction.editReply('An error occurred while processing your request.');
-        }
-    },
-
-    async showEditForm(interaction, boardType, boardId) {
-        try {
-            // Find the board
-            const board = await ArcadeBoard.findOne({ 
+            // Create new board
+            const newBoard = new ArcadeBoard({
                 boardId,
-                boardType
+                boardType: 'arcade',
+                leaderboardId,
+                gameId,
+                gameTitle: gameInfo.title,
+                consoleName: gameInfo.consoleName || 'Unknown',
+                description
             });
 
-            if (!board) {
-                return interaction.reply({
-                    content: `${this.getBoardTypeName(boardType)} with ID "${boardId}" not found.`,
-                    ephemeral: true
-                });
-            }
+            await newBoard.save();
 
-            // Create a modal for editing the board
-            const modal = new ModalBuilder()
-                .setCustomId(`arcadeadmin_edit_${boardType}_${boardId}_modal`)
-                .setTitle(`Edit ${this.getBoardTypeName(boardType)}`);
-
-            // Add common fields
-            const leaderboardIdInput = new TextInputBuilder()
-                .setCustomId('leaderboard_id')
-                .setLabel('Leaderboard ID')
-                .setStyle(TextInputStyle.Short)
-                .setValue(board.leaderboardId.toString())
-                .setRequired(true);
-
-            const descriptionInput = new TextInputBuilder()
-                .setCustomId('description')
-                .setLabel('Description')
-                .setStyle(TextInputStyle.Paragraph)
-                .setValue(board.description)
-                .setRequired(true);
-
-            const leaderboardIdRow = new ActionRowBuilder().addComponents(leaderboardIdInput);
-            const descriptionRow = new ActionRowBuilder().addComponents(descriptionInput);
-
-            modal.addComponents(leaderboardIdRow, descriptionRow);
-
-            // Add board type specific fields
-            if (boardType === 'racing' && board.trackName) {
-                const trackNameInput = new TextInputBuilder()
-                    .setCustomId('track_name')
-                    .setLabel('Track Name')
-                    .setStyle(TextInputStyle.Short)
-                    .setValue(board.trackName)
-                    .setRequired(true);
-
-                const trackNameRow = new ActionRowBuilder().addComponents(trackNameInput);
-                modal.addComponents(trackNameRow);
-            } else if (boardType === 'tiebreaker' && board.endDate) {
-                const endDateInput = new TextInputBuilder()
-                    .setCustomId('end_date')
-                    .setLabel('End Date (YYYY-MM-DD)')
-                    .setStyle(TextInputStyle.Short)
-                    .setValue(board.endDate.toISOString().split('T')[0])
-                    .setRequired(true);
-
-                const endDateRow = new ActionRowBuilder().addComponents(endDateInput);
-                modal.addComponents(endDateRow);
-            }
-
-            // Show the modal
-            await interaction.showModal(modal);
-        } catch (error) {
-            console.error(`Error showing edit form for ${boardType}:`, error);
-            await interaction.reply({
-                content: `An error occurred while preparing the edit form.`,
-                ephemeral: true
-            });
-        }
-    },
-
-    async handleEditFormSubmit(interaction, boardType, boardId) {
-        try {
-            await interaction.deferReply({ ephemeral: true });
-
-            // Find the board
-            const board = await ArcadeBoard.findOne({ 
-                boardId,
-                boardType
-            });
-
-            if (!board) {
-                return interaction.editReply(`${this.getBoardTypeName(boardType)} with ID "${boardId}" not found.`);
-            }
-
-            // Update common fields
-            const newLeaderboardId = parseInt(interaction.fields.getTextInputValue('leaderboard_id'));
-            const newDescription = interaction.fields.getTextInputValue('description');
-
-            board.leaderboardId = newLeaderboardId;
-            board.description = newDescription;
-
-            // Update board type specific fields
-            if (boardType === 'racing') {
-                try {
-                    const newTrackName = interaction.fields.getTextInputValue('track_name');
-                    board.trackName = newTrackName;
-                } catch (e) {
-                    // Track name field might not be present
-                }
-            } else if (boardType === 'tiebreaker') {
-                try {
-                    const newEndDateStr = interaction.fields.getTextInputValue('end_date');
-                    const newEndDate = new Date(newEndDateStr);
-                    
-                    if (isNaN(newEndDate.getTime())) {
-                        return interaction.editReply('Invalid end date format. Please use YYYY-MM-DD.');
-                    }
-                    
-                    // Set end time to 23:59:59
-                    newEndDate.setHours(23, 59, 59);
-                    board.endDate = newEndDate;
-                } catch (e) {
-                    // End date field might not be present
-                }
-            }
-
-            await board.save();
-
-            // Create response embed
+            // Create an embed for the response
             const embed = new EmbedBuilder()
-                .setColor(this.getBoardTypeColor(boardType))
-                .setTitle(`${this.getBoardTypeEmoji(boardType)} ${this.getBoardTypeName(boardType)} Updated`)
+                .setColor('#0099ff')
+                .setTitle(`Arcade Board Created: ${gameInfo.title}`)
                 .setDescription(
-                    `Successfully updated ${boardType} board:\n\n` +
-                    `**Game:** ${board.gameTitle}\n` +
-                    `**Board ID:** ${boardId}`
+                    `**Board ID:** ${boardId}\n` +
+                    `**Game:** ${gameInfo.title}\n` +
+                    `**Description:** ${description}\n\n` +
+                    `You can announce this board with \`/arcadeadmin arcade announce board_id:${boardId}\``
                 );
 
-            // Add board type specific fields to embed
-            if (boardType === 'racing' && board.trackName) {
-                embed.addFields({ name: 'Track', value: board.trackName });
+            if (gameInfo.imageIcon) {
+                embed.setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`);
             }
             
-            if (board.startDate && board.endDate) {
-                embed.addFields({
-                    name: 'Period',
-                    value: `${board.startDate.toLocaleDateString()} to ${board.endDate.toLocaleDateString()}`
-                });
-            }
-
-            // Add action buttons
-            const actionRow = new ActionRowBuilder()
+            // Add announce button
+            const row = new ActionRowBuilder()
                 .addComponents(
                     new ButtonBuilder()
-                        .setCustomId(`arcadeadmin_announce_${boardType}_${boardId}`)
-                        .setLabel('Announce Update')
+                        .setCustomId(`announce_arcade_${boardId}`)
+                        .setLabel('Announce to Server')
                         .setStyle(ButtonStyle.Primary)
-                        .setEmoji('📣'),
-                    new ButtonBuilder()
-                        .setCustomId(`arcadeadmin_back_to_board_${boardId}`)
-                        .setLabel('Back to Board')
-                        .setStyle(ButtonStyle.Secondary)
-                        .setEmoji('◀️')
                 );
 
-            await interaction.editReply({
+            return interaction.editReply({
                 embeds: [embed],
-                components: [actionRow]
+                components: [row]
             });
         } catch (error) {
-            console.error(`Error handling edit form submit for ${boardType}:`, error);
-            await interaction.editReply('An error occurred while processing your request.');
+            console.error('Error adding arcade board:', error);
+            return interaction.editReply('An error occurred while adding the arcade board. Please try again.');
         }
     },
 
-    async confirmRemoveBoard(interaction, boardType, boardId) {
+    async editArcadeBoard(interaction) {
+        const boardId = interaction.options.getString('board_id');
+        const newLeaderboardId = interaction.options.getInteger('leaderboard_id');
+        const newDescription = interaction.options.getString('description');
+
+        // Find the board
+        const board = await ArcadeBoard.findOne({ 
+            boardId,
+            boardType: 'arcade'
+        });
+
+        if (!board) {
+            return interaction.editReply(`Arcade board with ID "${boardId}" not found.`);
+        }
+
+        // Check if any updates were provided
+        if (!newLeaderboardId && !newDescription) {
+            return interaction.editReply('Please provide at least one field to update.');
+        }
+
+        // Update the board
+        if (newLeaderboardId) {
+            board.leaderboardId = newLeaderboardId;
+        }
+        
+        if (newDescription) {
+            board.description = newDescription;
+        }
+
+        await board.save();
+
+        // Create response embed
+        const embed = new EmbedBuilder()
+            .setColor('#0099ff')
+            .setTitle(`Arcade Board Updated: ${board.gameTitle}`)
+            .setDescription(
+                `Successfully updated arcade board:\n\n` +
+                `**Board ID:** ${boardId}\n` +
+                `**Game:** ${board.gameTitle}`
+            );
+        
+        if (newDescription) {
+            embed.addFields({ name: 'New Description', value: newDescription });
+        }
+        
+        if (newLeaderboardId) {
+            embed.addFields({ name: 'New Leaderboard ID', value: newLeaderboardId.toString() });
+        }
+
+        // Add announce button
+        const row = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`announce_arcade_${boardId}`)
+                    .setLabel('Announce Update')
+                    .setStyle(ButtonStyle.Primary)
+            );
+
+        return interaction.editReply({
+            embeds: [embed],
+            components: [row]
+        });
+    },
+
+    async removeArcadeBoard(interaction) {
+        const boardId = interaction.options.getString('board_id');
+
+        // Find and remove the board
+        const board = await ArcadeBoard.findOne({ 
+            boardId,
+            boardType: 'arcade'
+        });
+        
+        if (!board) {
+            return interaction.editReply(`Arcade board with ID "${boardId}" not found.`);
+        }
+
+        // Create confirmation embed
+        const embed = new EmbedBuilder()
+            .setColor('#FF0000')
+            .setTitle(`⚠️ Confirm Removal`)
+            .setDescription(
+                `Are you sure you want to remove this arcade board?\n\n` +
+                `**Game:** ${board.gameTitle}\n` +
+                `**Board ID:** ${boardId}\n\n` +
+                `This action cannot be undone.`
+            );
+
+        // Add confirmation buttons
+        const row = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`remove_confirm_arcade_${boardId}`)
+                    .setLabel('Confirm Removal')
+                    .setStyle(ButtonStyle.Danger),
+                new ButtonBuilder()
+                    .setCustomId(`remove_cancel_arcade_${boardId}`)
+                    .setLabel('Cancel')
+                    .setStyle(ButtonStyle.Secondary)
+            );
+
+        return interaction.editReply({
+            embeds: [embed],
+            components: [row]
+        });
+    },
+
+    async createRacingChallenge(interaction) {
+        const leaderboardId = interaction.options.getInteger('leaderboard_id');
+        const gameId = interaction.options.getInteger('game_id');
+        const trackName = interaction.options.getString('track_name');
+        const description = interaction.options.getString('description');
+        
+        // Get year and month (defaults to current)
+        const now = new Date();
+        const year = interaction.options.getInteger('year') || now.getFullYear();
+        const month = interaction.options.getInteger('month') || (now.getMonth() + 1);
+
+        // Validate game exists
         try {
-            // Find the board
-            const board = await ArcadeBoard.findOne({ 
-                boardId,
-                boardType
+            const gameInfo = await retroAPI.getGameInfo(gameId);
+            if (!gameInfo) {
+                return interaction.editReply('Game not found. Please check the game ID.');
+            }
+
+            // Calculate start and end dates
+            // Start at beginning of specified month
+            const startDate = new Date(year, month - 1, 1);
+            
+            // End at the end of the specified month (23:59:59 on the last day)
+            const endDate = new Date(year, month, 0, 23, 59, 59);
+            
+            // Check if a racing challenge already exists for this month
+            const monthKey = `${year}-${month.toString().padStart(2, '0')}`;
+            const existingChallenge = await ArcadeBoard.findOne({
+                boardType: 'racing',
+                monthKey
             });
 
-            if (!board) {
-                return interaction.reply({
-                    content: `${this.getBoardTypeName(boardType)} with ID "${boardId}" not found.`,
-                    ephemeral: true
+            if (existingChallenge) {
+                return interaction.editReply(`A racing challenge already exists for ${monthKey}.`);
+            }
+
+            // Generate a unique board ID specifically for racing
+            // This format ensures no overlap with regular arcade boards
+            const boardId = `racing-${monthKey}`;
+
+            // Get the full game title and console name
+            const gameFull = `${gameInfo.title} (${gameInfo.consoleName})`;
+
+            // Create new racing board
+            const newBoard = new ArcadeBoard({
+                boardId,
+                boardType: 'racing',
+                leaderboardId,
+                gameId,
+                gameTitle: gameFull,
+                trackName,
+                consoleName: gameInfo.consoleName || 'Unknown',
+                description,
+                startDate,
+                endDate,
+                monthKey
+            });
+
+            await newBoard.save();
+
+            // Get month name for response
+            const monthName = startDate.toLocaleString('default', { month: 'long' });
+
+            // Create an embed for the response
+            const embed = new EmbedBuilder()
+                .setColor('#FF9900')
+                .setTitle(`Racing Challenge Created: ${monthName} ${year}`)
+                .setDescription(
+                    `**Game:** ${gameFull}\n` +
+                    `**Track:** ${trackName}\n` +
+                    `**Description:** ${description}\n\n` +
+                    `**Challenge Period:** ${startDate.toLocaleDateString()} to ${endDate.toLocaleDateString()}\n\n` +
+                    `The top 3 players at the end of the month will receive award points!`
+                );
+
+            if (gameInfo.imageIcon) {
+                embed.setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`);
+            }
+            
+            // Add announce button
+            const row = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId(`announce_racing_${boardId}`)
+                        .setLabel('Announce to Server')
+                        .setStyle(ButtonStyle.Primary)
+                );
+
+            return interaction.editReply({
+                embeds: [embed],
+                components: [row]
+            });
+        } catch (error) {
+            console.error('Error creating racing challenge:', error);
+            return interaction.editReply('An error occurred while creating the racing challenge. Please try again.');
+        }
+    },
+
+    async editRacingBoard(interaction) {
+        const boardId = interaction.options.getString('board_id');
+        const newTrackName = interaction.options.getString('track_name');
+        const newDescription = interaction.options.getString('description');
+        const newLeaderboardId = interaction.options.getInteger('leaderboard_id');
+
+        // Find the racing board
+        const board = await ArcadeBoard.findOne({ 
+            boardId,
+            boardType: 'racing'
+        });
+
+        if (!board) {
+            return interaction.editReply(`Racing board with ID "${boardId}" not found.`);
+        }
+
+        // Check if any updates were provided
+        if (!newTrackName && !newDescription && !newLeaderboardId) {
+            return interaction.editReply('Please provide at least one field to update.');
+        }
+
+        // Update the racing board
+        if (newTrackName) {
+            board.trackName = newTrackName;
+        }
+        
+        if (newDescription) {
+            board.description = newDescription;
+        }
+        
+        if (newLeaderboardId) {
+            board.leaderboardId = newLeaderboardId;
+        }
+
+        await board.save();
+
+        // Create response embed
+        const embed = new EmbedBuilder()
+            .setColor('#FF9900')
+            .setTitle(`Racing Challenge Updated: ${board.gameTitle}`)
+            .setDescription(
+                `Successfully updated racing board:\n\n` +
+                `**Board ID:** ${boardId}\n` +
+                `**Game:** ${board.gameTitle}`
+            );
+            
+        if (newTrackName) {
+            embed.addFields({ name: 'New Track Name', value: newTrackName });
+        }
+        
+        if (newDescription) {
+            embed.addFields({ name: 'New Description', value: newDescription });
+        }
+        
+        if (newLeaderboardId) {
+            embed.addFields({ name: 'New Leaderboard ID', value: newLeaderboardId.toString() });
+        }
+
+        // Add announce button
+        const row = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`announce_racing_${boardId}`)
+                    .setLabel('Announce Update')
+                    .setStyle(ButtonStyle.Primary)
+            );
+
+        return interaction.editReply({
+            embeds: [embed],
+            components: [row]
+        });
+    },
+
+    async removeRacingBoard(interaction) {
+        const identifier = interaction.options.getString('identifier');
+
+        try {
+            let board = null;
+
+            // For racing boards, the identifier could be a month name or YYYY-MM format
+            if (/^\d{4}-\d{2}$/.test(identifier)) {
+                // YYYY-MM format
+                board = await ArcadeBoard.findOne({
+                    boardType: 'racing',
+                    monthKey: identifier
                 });
+            } else if (identifier.startsWith('racing-')) {
+                // Direct board ID
+                board = await ArcadeBoard.findOne({
+                    boardId: identifier,
+                    boardType: 'racing'
+                });
+            } else {
+                // Try to parse as a month name
+                const monthNames = [
+                    'january', 'february', 'march', 'april', 'may', 'june',
+                    'july', 'august', 'september', 'october', 'november', 'december'
+                ];
+                
+                const monthIndex = monthNames.findIndex(m => 
+                    m.toLowerCase() === identifier.toLowerCase()
+                );
+                
+                if (monthIndex === -1) {
+                    return interaction.editReply(`Invalid identifier format. Please use a month name (e.g., "january"), YYYY-MM format (e.g., "2025-01"), or the full board ID.`);
+                }
+                
+                // Current year by default
+                const now = new Date();
+                const year = now.getFullYear();
+                
+                // Look for any racing board with this month and current year
+                const monthKey = `${year}-${(monthIndex + 1).toString().padStart(2, '0')}`;
+                
+                board = await ArcadeBoard.findOne({
+                    boardType: 'racing',
+                    monthKey: monthKey
+                });
+                
+                // If not found, check previous year
+                if (!board) {
+                    const prevYearMonthKey = `${year - 1}-${(monthIndex + 1).toString().padStart(2, '0')}`;
+                    board = await ArcadeBoard.findOne({
+                        boardType: 'racing',
+                        monthKey: prevYearMonthKey
+                    });
+                }
+            }
+
+            if (!board) {
+                return interaction.editReply(`Racing challenge with identifier "${identifier}" not found.`);
             }
 
             // Create confirmation embed
@@ -959,227 +781,256 @@ export default {
                 .setColor('#FF0000')
                 .setTitle(`⚠️ Confirm Removal`)
                 .setDescription(
-                    `Are you sure you want to remove the following ${boardType} board?\n\n` +
+                    `Are you sure you want to remove this racing challenge?\n\n` +
                     `**Game:** ${board.gameTitle}\n` +
-                    `**Board ID:** ${boardId}\n\n` +
+                    `**Track:** ${board.trackName}\n` +
+                    `**Board ID:** ${board.boardId}\n\n` +
                     `This action cannot be undone.`
                 );
 
             // Add confirmation buttons
-            const actionRow = new ActionRowBuilder()
+            const row = new ActionRowBuilder()
                 .addComponents(
                     new ButtonBuilder()
-                        .setCustomId(`arcadeadmin_remove_confirm_${boardType}_${boardId}`)
+                        .setCustomId(`remove_confirm_racing_${board.boardId}`)
                         .setLabel('Confirm Removal')
-                        .setStyle(ButtonStyle.Danger)
-                        .setEmoji('🗑️'),
+                        .setStyle(ButtonStyle.Danger),
                     new ButtonBuilder()
-                        .setCustomId(`arcadeadmin_back_to_board_${boardId}`)
+                        .setCustomId(`remove_cancel_racing_${board.boardId}`)
                         .setLabel('Cancel')
                         .setStyle(ButtonStyle.Secondary)
-                        .setEmoji('❌')
                 );
 
-            await interaction.reply({
+            return interaction.editReply({
                 embeds: [embed],
-                components: [actionRow],
-                ephemeral: true
+                components: [row]
             });
         } catch (error) {
-            console.error(`Error confirming remove for ${boardType}:`, error);
-            await interaction.reply({
-                content: 'An error occurred while processing your request.',
-                ephemeral: true
-            });
+            console.error('Error removing racing board:', error);
+            return interaction.editReply('An error occurred while removing the racing board. Please try again.');
         }
     },
 
-    async removeBoard(interaction, boardType, boardId) {
-        try {
-            // Find the board
-            const board = await ArcadeBoard.findOne({ 
-                boardId,
-                boardType
-            });
+    async createTiebreaker(interaction) {
+        const leaderboardId = interaction.options.getInteger('leaderboard_id');
+        const gameId = interaction.options.getInteger('game_id');
+        const description = interaction.options.getString('description');
+        const endDateStr = interaction.options.getString('end_date');
 
-            if (!board) {
-                return interaction.update({
-                    content: `${this.getBoardTypeName(boardType)} with ID "${boardId}" not found.`,
-                    embeds: [],
-                    components: []
-                });
+        try {
+            // Parse end date
+            const endDate = new Date(endDateStr);
+            if (isNaN(endDate.getTime())) {
+                return interaction.editReply('Invalid end date format. Please use YYYY-MM-DD.');
             }
 
-            const boardTitle = board.gameTitle + (board.trackName ? ` - ${board.trackName}` : '');
+            // Set end time to 23:59:59
+            endDate.setHours(23, 59, 59);
 
-            // Delete the board
-            await ArcadeBoard.deleteOne({ boardId, boardType });
+            // Validate game exists
+            const gameInfo = await retroAPI.getGameInfo(gameId);
+            if (!gameInfo) {
+                return interaction.editReply('Game not found. Please check the game ID.');
+            }
+
+            // Check if an active tiebreaker already exists
+            const now = new Date();
+            const activeTiebreaker = await ArcadeBoard.findOne({
+                boardType: 'tiebreaker',
+                startDate: { $lte: now },
+                endDate: { $gte: now }
+            });
+
+            if (activeTiebreaker) {
+                return interaction.editReply('An active tiebreaker already exists. Please end it before creating a new one.');
+            }
+
+            // Generate a unique board ID based on month and year
+            const monthYear = `${now.getFullYear()}-${(now.getMonth() + 1).toString().padStart(2, '0')}`;
+            const boardId = `tiebreaker-${monthYear}`;
+
+            // Create new tiebreaker board
+            const newBoard = new ArcadeBoard({
+                boardId,
+                boardType: 'tiebreaker',
+                leaderboardId,
+                gameId,
+                gameTitle: gameInfo.title,
+                consoleName: gameInfo.consoleName || 'Unknown',
+                description,
+                startDate: now,
+                endDate,
+                // Add monthKey for consistency with racing challenges
+                monthKey: monthYear
+            });
+
+            await newBoard.save();
+
+            // Get the month name
+            const monthName = now.toLocaleString('default', { month: 'long' });
+            const year = now.getFullYear();
 
             // Create response embed
             const embed = new EmbedBuilder()
-                .setColor('#00FF00')
-                .setTitle(`✅ ${this.getBoardTypeName(boardType)} Removed`)
+                .setColor('#FF0000')
+                .setTitle(`⚔️ Tiebreaker Created: ${monthName} ${year}`)
                 .setDescription(
-                    `Successfully removed ${boardType} board:\n\n` +
-                    `**${boardTitle}**`
+                    `**Game:** ${gameInfo.title}\n` +
+                    `**Description:** ${description}\n\n` +
+                    `**Tiebreaker Period:** ${now.toLocaleDateString()} to ${endDate.toLocaleDateString()}\n\n` +
+                    `This tiebreaker will be used to resolve ties in the ${monthName} monthly challenge leaderboard.`
                 );
 
-            // Add back to main menu button
-            const actionRow = new ActionRowBuilder()
+            if (gameInfo.imageIcon) {
+                embed.setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`);
+            }
+
+            // Add announce button
+            const row = new ActionRowBuilder()
                 .addComponents(
                     new ButtonBuilder()
-                        .setCustomId('arcadeadmin_back_to_main')
-                        .setLabel('Back to Main Menu')
-                        .setStyle(ButtonStyle.Secondary)
-                        .setEmoji('◀️')
+                        .setCustomId(`announce_tiebreaker_${boardId}`)
+                        .setLabel('Announce to Server')
+                        .setStyle(ButtonStyle.Primary)
                 );
 
-            await interaction.update({
+            return interaction.editReply({
                 embeds: [embed],
-                components: [actionRow]
+                components: [row]
             });
         } catch (error) {
-            console.error(`Error removing ${boardType}:`, error);
-            await interaction.update({
-                content: 'An error occurred while removing the board.',
-                embeds: [],
-                components: []
-            });
+            console.error('Error creating tiebreaker:', error);
+            return interaction.editReply('An error occurred while creating the tiebreaker. Please try again.');
         }
     },
 
-    async announceBoard(interaction, boardType, boardId) {
-        try {
-            await interaction.deferReply({ ephemeral: true });
+    async editTiebreakerBoard(interaction) {
+        const boardId = interaction.options.getString('board_id');
+        const newLeaderboardId = interaction.options.getInteger('leaderboard_id');
+        const newDescription = interaction.options.getString('description');
+        const newEndDateStr = interaction.options.getString('end_date');
 
-            // Find the board
-            const board = await ArcadeBoard.findOne({ 
-                boardId,
-                boardType
-            });
-            
-            if (!board) {
-                return interaction.editReply(`${this.getBoardTypeName(boardType)} with ID "${boardId}" not found.`);
-            }
+        // Find the tiebreaker board
+        const board = await ArcadeBoard.findOne({ 
+            boardId,
+            boardType: 'tiebreaker'
+        });
 
-            // Get the announcement and arcade channels
-            const announcementChannel = await this.getAnnouncementChannel(interaction.client);
-            const arcadeChannel = await this.getArcadeChannel(interaction.client);
-            
-            if (!announcementChannel) {
-                return interaction.editReply('Announcement channel not found.');
-            }
-            
-            if (!arcadeChannel) {
-                return interaction.editReply('Arcade channel not found.');
-            }
-            
-            // Different announcement based on board type
-            let embed;
-            
-            if (boardType === 'racing') {
-                // Get month name for racing challenge
-                const monthName = board.startDate.toLocaleString('default', { month: 'long' });
-                const year = board.startDate.getFullYear();
-                
-                embed = new EmbedBuilder()
-                    .setColor('#FF9900')
-                    .setTitle(`🏎️ New Racing Challenge: ${monthName} ${year}`)
-                    .setDescription(
-                        `A new monthly racing challenge has begun!\n\n` +
-                        `**Game:** ${board.gameTitle}\n` +
-                        `**Track:** ${board.trackName}\n` +
-                        `**Description:** ${board.description}\n\n` +
-                        `**Challenge Period:** ${board.startDate.toLocaleDateString()} to ${board.endDate.toLocaleDateString()}\n\n` +
-                        `Compete for the fastest time! The top 3 players will receive award points at the end of the month. Check it out with \`/arcade racing\`!`
-                    )
-                    .setTimestamp();
-                
-                // Get game info for thumbnail
-                const gameInfo = await retroAPI.getGameInfo(board.gameId);
-                if (gameInfo?.imageIcon) {
-                    embed.setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`);
-                }
-            } else if (boardType === 'arcade') {
-                // Get game info
-                const gameInfo = await retroAPI.getGameInfo(board.gameId);
-                
-                embed = new EmbedBuilder()
-                    .setColor('#0099ff')
-                    .setTitle(`🎮 New Arcade Board: ${board.gameTitle}`)
-                    .setDescription(
-                        `A new arcade leaderboard has been added!\n\n` +
-                        `**Game:** ${board.gameTitle}\n` +
-                        `**Description:** ${board.description}\n\n` +
-                        `Check it out with \`/arcade board id:${board.boardId}\``
-                    )
-                    .setTimestamp();
-                
-                if (gameInfo?.imageIcon) {
-                    embed.setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`);
-                }
-            } else if (boardType === 'tiebreaker') {
-                // Get month name for tiebreaker
-                const monthName = board.startDate.toLocaleString('default', { month: 'long' });
-                const year = board.startDate.getFullYear();
-                
-                embed = new EmbedBuilder()
-                    .setColor('#FF0000')
-                    .setTitle(`⚔️ Monthly Tiebreaker Challenge: ${monthName} ${year}`)
-                    .setDescription(
-                        `A tiebreaker challenge has been created for this month's competition!\n\n` +
-                        `**Game:** ${board.gameTitle}\n` +
-                        `**Description:** ${board.description}\n\n` +
-                        `**Tiebreaker Period:** ${board.startDate.toLocaleDateString()} to ${board.endDate.toLocaleDateString()}\n\n` +
-                        `This tiebreaker will be used to resolve ties in the ${monthName} monthly challenge leaderboard. Check it out with \`/arcade tiebreaker\`!`
-                    )
-                    .setTimestamp();
-                
-                // Get game info for thumbnail
-                const gameInfo = await retroAPI.getGameInfo(board.gameId);
-                if (gameInfo?.imageIcon) {
-                    embed.setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`);
-                }
-            } else {
-                return interaction.editReply(`Cannot announce board of type "${boardType}".`);
-            }
-            
-            // Send to both announcement and arcade channels
-            await announcementChannel.send({ embeds: [embed] });
-            await arcadeChannel.send({ embeds: [embed] });
-            
-            // Create response embed
-            const responseEmbed = new EmbedBuilder()
-                .setColor('#00FF00')
-                .setTitle('✅ Announcement Sent')
-                .setDescription(
-                    `Successfully announced ${boardType} board "${board.gameTitle}" in both the announcements and arcade channels!`
-                );
-
-            // Add back to board button
-            const actionRow = new ActionRowBuilder()
-                .addComponents(
-                    new ButtonBuilder()
-                        .setCustomId(`arcadeadmin_back_to_board_${boardId}`)
-                        .setLabel('Back to Board')
-                        .setStyle(ButtonStyle.Secondary)
-                        .setEmoji('◀️')
-                );
-
-            await interaction.editReply({
-                embeds: [responseEmbed],
-                components: [actionRow]
-            });
-        } catch (error) {
-            console.error(`Error announcing ${boardType}:`, error);
-            await interaction.editReply('An error occurred while announcing the board.');
+        if (!board) {
+            return interaction.editReply(`Tiebreaker board with ID "${boardId}" not found.`);
         }
+
+        // Check if any updates were provided
+        if (!newLeaderboardId && !newDescription && !newEndDateStr) {
+            return interaction.editReply('Please provide at least one field to update.');
+        }
+
+        // Update the tiebreaker board
+        if (newLeaderboardId) {
+            board.leaderboardId = newLeaderboardId;
+        }
+        
+        if (newDescription) {
+            board.description = newDescription;
+        }
+        
+        if (newEndDateStr) {
+            const newEndDate = new Date(newEndDateStr);
+            if (isNaN(newEndDate.getTime())) {
+                return interaction.editReply('Invalid end date format. Please use YYYY-MM-DD.');
+            }
+            
+            // Set end time to 23:59:59
+            newEndDate.setHours(23, 59, 59);
+            board.endDate = newEndDate;
+        }
+
+        await board.save();
+
+        // Create response embed
+        const embed = new EmbedBuilder()
+            .setColor('#FF0000')
+            .setTitle(`⚔️ Tiebreaker Updated: ${board.gameTitle}`)
+            .setDescription(
+                `Successfully updated tiebreaker board:\n\n` +
+                `**Board ID:** ${boardId}\n` +
+                `**Game:** ${board.gameTitle}`
+            );
+            
+        if (newDescription) {
+            embed.addFields({ name: 'New Description', value: newDescription });
+        }
+        
+        if (newLeaderboardId) {
+            embed.addFields({ name: 'New Leaderboard ID', value: newLeaderboardId.toString() });
+        }
+        
+        if (newEndDateStr) {
+            embed.addFields({ name: 'New End Date', value: newEndDateStr });
+        }
+
+        // Add announce button
+        const row = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`announce_tiebreaker_${boardId}`)
+                    .setLabel('Announce Update')
+                    .setStyle(ButtonStyle.Primary)
+            );
+
+        return interaction.editReply({
+            embeds: [embed],
+            components: [row]
+        });
     },
 
-    async awardRacingPoints(interaction, boardId) {
-        try {
-            await interaction.deferReply({ ephemeral: true });
+    async removeTiebreakerBoard(interaction) {
+        const boardId = interaction.options.getString('board_id');
 
+        // Find the tiebreaker board
+        const board = await ArcadeBoard.findOne({ 
+            boardId,
+            boardType: 'tiebreaker'
+        });
+
+        if (!board) {
+            return interaction.editReply(`Tiebreaker board with ID "${boardId}" not found.`);
+        }
+
+        // Create confirmation embed
+        const embed = new EmbedBuilder()
+            .setColor('#FF0000')
+            .setTitle(`⚠️ Confirm Removal`)
+            .setDescription(
+                `Are you sure you want to remove this tiebreaker board?\n\n` +
+                `**Game:** ${board.gameTitle}\n` +
+                `**Board ID:** ${boardId}\n\n` +
+                `This action cannot be undone.`
+            );
+
+        // Add confirmation buttons
+        const row = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`remove_confirm_tiebreaker_${boardId}`)
+                    .setLabel('Confirm Removal')
+                    .setStyle(ButtonStyle.Danger),
+                new ButtonBuilder()
+                    .setCustomId(`remove_cancel_tiebreaker_${boardId}`)
+                    .setLabel('Cancel')
+                    .setStyle(ButtonStyle.Secondary)
+            );
+
+        return interaction.editReply({
+            embeds: [embed],
+            components: [row]
+        });
+    },
+
+    async awardRacingPoints(interaction) {
+        const boardId = interaction.options.getString('board_id');
+
+        try {
             // Find the racing board
             const racingBoard = await ArcadeBoard.findOne({ 
                 boardId,
@@ -1199,6 +1050,59 @@ export default {
             const now = new Date();
             if (racingBoard.endDate > now) {
                 return interaction.editReply(`This racing challenge hasn't ended yet. It ends on ${racingBoard.endDate.toLocaleDateString()}.`);
+            }
+
+            // Create confirmation embed
+            const embed = new EmbedBuilder()
+                .setColor('#FF9900')
+                .setTitle(`🏆 Confirm Award Points`)
+                .setDescription(
+                    `Are you sure you want to award points for this racing challenge?\n\n` +
+                    `**Game:** ${racingBoard.gameTitle}\n` +
+                    `**Track:** ${racingBoard.trackName}\n\n` +
+                    `Points will be awarded to the top 3 players.`
+                );
+
+            // Add confirmation buttons
+            const row = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId(`award_confirm_racing_${boardId}`)
+                        .setLabel('Confirm Award')
+                        .setStyle(ButtonStyle.Primary),
+                    new ButtonBuilder()
+                        .setCustomId(`award_cancel_racing_${boardId}`)
+                        .setLabel('Cancel')
+                        .setStyle(ButtonStyle.Secondary)
+                );
+
+            return interaction.editReply({
+                embeds: [embed],
+                components: [row]
+            });
+        } catch (error) {
+            console.error('Error preparing to award racing points:', error);
+            return interaction.editReply('An error occurred while preparing to award points. Please try again.');
+        }
+    },
+
+    async processAwardRacingPoints(interaction, boardId) {
+        try {
+            await interaction.deferUpdate();
+
+            // Find the racing board
+            const racingBoard = await ArcadeBoard.findOne({ 
+                boardId,
+                boardType: 'racing'
+            });
+
+            if (!racingBoard) {
+                return interaction.editReply(`Racing board with ID "${boardId}" not found.`);
+            }
+
+            // Check if points have already been awarded
+            if (racingBoard.pointsAwarded) {
+                return interaction.editReply(`Points have already been awarded for this racing challenge.`);
             }
 
             // Fetch leaderboard entries
@@ -1294,102 +1198,67 @@ export default {
                 embed.addFields({ name: 'Results', value: resultsText });
             }
 
-            // Add action buttons
-            const actionRow = new ActionRowBuilder()
-                .addComponents(
-                    new ButtonBuilder()
-                        .setCustomId(`arcadeadmin_announce_results_${boardId}`)
-                        .setLabel('Announce Results')
-                        .setStyle(ButtonStyle.Primary)
-                        .setEmoji('📣'),
-                    new ButtonBuilder()
-                        .setCustomId(`arcadeadmin_back_to_board_${boardId}`)
-                        .setLabel('Back to Board')
-                        .setStyle(ButtonStyle.Secondary)
-                        .setEmoji('◀️')
-                );
-            
-            await interaction.editReply({
-                embeds: [embed],
-                components: [actionRow]
-            });
-        } catch (error) {
-            console.error('Error awarding racing points:', error);
-            await interaction.editReply('An error occurred while awarding points. Please try again.');
-        }
-    },
-
-    async confirmAwardArcadePoints(interaction) {
-        try {
-            // Get current year
-            const currentYear = new Date().getFullYear();
-            
-            // Create confirmation embed
-            const embed = new EmbedBuilder()
-                .setColor('#FF9900')
-                .setTitle(`🏆 Confirm Award Arcade Points`)
-                .setDescription(
-                    `This will trigger the annual arcade points award process for the current year (${currentYear}).\n\n` +
-                    `This action can take several minutes to complete.\n\n` +
-                    `Are you sure you want to proceed?`
-                );
-
-            // Create confirmation buttons
+            // Add announce results button
             const row = new ActionRowBuilder()
                 .addComponents(
                     new ButtonBuilder()
-                        .setCustomId(`arcadeadmin_award_arcade_confirm`)
-                        .setLabel('Confirm')
+                        .setCustomId(`announce_results_racing_${boardId}`)
+                        .setLabel('Announce Results')
                         .setStyle(ButtonStyle.Primary)
-                        .setEmoji('✅'),
-                    new ButtonBuilder()
-                        .setCustomId(`arcadeadmin_back_to_main`)
-                        .setLabel('Cancel')
-                        .setStyle(ButtonStyle.Secondary)
-                        .setEmoji('❌')
                 );
-
-            // Add year selection
-            const yearRow = new ActionRowBuilder()
-                .addComponents(
-                    new StringSelectMenuBuilder()
-                        .setCustomId('arcadeadmin_award_year_select')
-                        .setPlaceholder('Select year (default: current year)')
-                        .addOptions(
-                            new StringSelectMenuOptionBuilder()
-                                .setLabel(`${currentYear} (Current Year)`)
-                                .setValue(`${currentYear}`)
-                                .setDefault(true),
-                            new StringSelectMenuOptionBuilder()
-                                .setLabel(`${currentYear - 1}`)
-                                .setValue(`${currentYear - 1}`),
-                            new StringSelectMenuOptionBuilder()
-                                .setLabel(`${currentYear - 2}`)
-                                .setValue(`${currentYear - 2}`)
-                        )
-                );
-
-            await interaction.reply({
+            
+            return interaction.editReply({
                 embeds: [embed],
-                components: [row, yearRow],
-                ephemeral: true
+                components: [row]
             });
         } catch (error) {
-            console.error('Error confirming award arcade points:', error);
-            await interaction.reply({
-                content: 'An error occurred while preparing the confirmation.',
-                ephemeral: true
-            });
+            console.error('Error awarding racing points:', error);
+            return interaction.editReply('An error occurred while awarding points. Please try again.');
         }
     },
 
-    async triggerArcadeAwards(interaction, year = null) {
+    async triggerArcadeAwards(interaction) {
+        const year = interaction.options.getInteger('year');
+        
+        // Create confirmation embed
+        const currentYear = new Date().getFullYear();
+        const awardYear = year || currentYear;
+        
+        const embed = new EmbedBuilder()
+            .setColor('#FF9900')
+            .setTitle(`🏆 Confirm Award Arcade Points`)
+            .setDescription(
+                `This will trigger the annual arcade points award process for ${awardYear}.\n\n` +
+                `This action can take several minutes to complete.\n\n` +
+                `Are you sure you want to proceed?`
+            );
+
+        // Create confirmation buttons
+        const row = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`award_arcade_confirm_${awardYear}`)
+                    .setLabel('Confirm')
+                    .setStyle(ButtonStyle.Primary),
+                new ButtonBuilder()
+                    .setCustomId(`award_arcade_cancel`)
+                    .setLabel('Cancel')
+                    .setStyle(ButtonStyle.Secondary)
+            );
+
+        return interaction.editReply({
+            embeds: [embed],
+            components: [row]
+        });
+    },
+
+    async processArcadeAwards(interaction, year) {
         try {
             await interaction.deferUpdate();
             
             // Set waiting message
             await interaction.editReply({
-                content: `Triggering arcade awards process for ${year || 'current year'}... This may take a few minutes.`,
+                content: `Triggering arcade awards process for ${year}... This may take a few minutes.`,
                 embeds: [],
                 components: []
             });
@@ -1403,39 +1272,358 @@ export default {
             }
             
             // Run the arcade points award process
-            if (year) {
-                await arcadeService.awardArcadePoints(parseInt(year));
-            } else {
-                await arcadeService.awardArcadePoints();
-            }
+            await arcadeService.awardArcadePoints(parseInt(year));
             
             // Create response embed
             const embed = new EmbedBuilder()
                 .setColor('#00FF00')
                 .setTitle('✅ Arcade Awards Complete')
                 .setDescription(
-                    `Arcade awards process for ${year || 'the current year'} completed successfully!`
+                    `Arcade awards process for ${year} completed successfully!`
                 );
 
-            // Add back to main menu button
-            const actionRow = new ActionRowBuilder()
-                .addComponents(
-                    new ButtonBuilder()
-                        .setCustomId('arcadeadmin_back_to_main')
-                        .setLabel('Back to Main Menu')
-                        .setStyle(ButtonStyle.Secondary)
-                        .setEmoji('◀️')
-                );
-
-            await interaction.editReply({
+            return interaction.editReply({
                 content: null,
                 embeds: [embed],
-                components: [actionRow]
+                components: []
             });
         } catch (error) {
             console.error('Error triggering arcade awards:', error);
-            await interaction.editReply({
+            return interaction.editReply({
                 content: 'An error occurred while processing arcade awards. Check the logs for details.',
+                embeds: [],
+                components: []
+            });
+        }
+    },
+
+    async announceBoard(interaction, boardType, isButton = false) {
+        let boardId;
+        
+        if (isButton) {
+            boardId = interaction.customId.split('_')[2];
+            await interaction.deferUpdate();
+        } else {
+            boardId = interaction.options.getString('board_id');
+        }
+
+        try {
+            // Find the board
+            const board = await ArcadeBoard.findOne({ 
+                boardId,
+                boardType
+            });
+            
+            if (!board) {
+                const response = `${this.getBoardTypeName(boardType)} with ID "${boardId}" not found.`;
+                return isButton ? interaction.editReply(response) : interaction.editReply(response);
+            }
+
+            // Get the announcement and arcade channels
+            const announcementChannel = await this.getAnnouncementChannel(interaction.client);
+            const arcadeChannel = await this.getArcadeChannel(interaction.client);
+            
+            if (!announcementChannel) {
+                const response = 'Announcement channel not found.';
+                return isButton ? interaction.editReply(response) : interaction.editReply(response);
+            }
+            
+            if (!arcadeChannel) {
+                const response = 'Arcade channel not found.';
+                return isButton ? interaction.editReply(response) : interaction.editReply(response);
+            }
+            
+            // Different announcement based on board type
+            let embed;
+            
+            if (boardType === 'racing') {
+                // Get month name for racing challenge
+                const monthName = board.startDate.toLocaleString('default', { month: 'long' });
+                const year = board.startDate.getFullYear();
+                
+                embed = new EmbedBuilder()
+                    .setColor('#FF9900')
+                    .setTitle(`🏎️ New Racing Challenge: ${monthName} ${year}`)
+                    .setDescription(
+                        `A new monthly racing challenge has begun!\n\n` +
+                        `**Game:** ${board.gameTitle}\n` +
+                        `**Track:** ${board.trackName}\n` +
+                        `**Description:** ${board.description}\n\n` +
+                        `**Challenge Period:** ${board.startDate.toLocaleDateString()} to ${board.endDate.toLocaleDateString()}\n\n` +
+                        `Compete for the fastest time! The top 3 players will receive award points at the end of the month. Check it out with \`/arcade racing\`!`
+                    )
+                    .setTimestamp();
+                
+                // Get game info for thumbnail
+                const gameInfo = await retroAPI.getGameInfo(board.gameId);
+                if (gameInfo?.imageIcon) {
+                    embed.setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`);
+                }
+            } else if (boardType === 'arcade') {
+                // Get game info
+                const gameInfo = await retroAPI.getGameInfo(board.gameId);
+                
+                embed = new EmbedBuilder()
+                    .setColor('#0099ff')
+                    .setTitle(`🎮 New Arcade Board: ${board.gameTitle}`)
+                    .setDescription(
+                        `A new arcade leaderboard has been added!\n\n` +
+                        `**Game:** ${board.gameTitle}\n` +
+                        `**Description:** ${board.description}\n\n` +
+                        `Check it out with \`/arcade board id:${board.boardId}\``
+                    )
+                    .setTimestamp();
+                
+                if (gameInfo?.imageIcon) {
+                    embed.setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`);
+                }
+            } else if (boardType === 'tiebreaker') {
+                // Get month name for tiebreaker
+                const monthName = board.startDate.toLocaleString('default', { month: 'long' });
+                const year = board.startDate.getFullYear();
+                
+                embed = new EmbedBuilder()
+                    .setColor('#FF0000')
+                    .setTitle(`⚔️ Monthly Tiebreaker Challenge: ${monthName} ${year}`)
+                    .setDescription(
+                        `A tiebreaker challenge has been created for this month's competition!\n\n` +
+                        `**Game:** ${board.gameTitle}\n` +
+                        `**Description:** ${board.description}\n\n` +
+                        `**Tiebreaker Period:** ${board.startDate.toLocaleDateString()} to ${board.endDate.toLocaleDateString()}\n\n` +
+                        `This tiebreaker will be used to resolve ties in the ${monthName} monthly challenge leaderboard. Check it out with \`/arcade tiebreaker\`!`
+                    )
+                    .setTimestamp();
+                
+                // Get game info for thumbnail
+                const gameInfo = await retroAPI.getGameInfo(board.gameId);
+                if (gameInfo?.imageIcon) {
+                    embed.setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`);
+                }
+            } else {
+                const response = `Cannot announce board of type "${boardType}".`;
+                return isButton ? interaction.editReply(response) : interaction.editReply(response);
+            }
+            
+            // Send to both announcement and arcade channels
+            await announcementChannel.send({ embeds: [embed] });
+            await arcadeChannel.send({ embeds: [embed] });
+            
+            // Create response embed
+            const responseEmbed = new EmbedBuilder()
+                .setColor('#00FF00')
+                .setTitle('✅ Announcement Sent')
+                .setDescription(
+                    `Successfully announced ${boardType} board "${board.gameTitle}" in both the announcements and arcade channels!`
+                );
+
+            if (isButton) {
+                return interaction.editReply({
+                    embeds: [responseEmbed],
+                    components: []
+                });
+            } else {
+                return interaction.editReply({
+                    embeds: [responseEmbed]
+                });
+            }
+        } catch (error) {
+            console.error(`Error announcing ${boardType}:`, error);
+            const response = 'An error occurred while announcing the board.';
+            return isButton ? interaction.editReply(response) : interaction.editReply(response);
+        }
+    },
+
+    async announceRacingResults(interaction, boardId) {
+        try {
+            await interaction.deferUpdate();
+
+            // Find the racing board
+            const board = await ArcadeBoard.findOne({ 
+                boardId,
+                boardType: 'racing'
+            });
+
+            if (!board) {
+                return interaction.editReply(`Racing board with ID "${boardId}" not found.`);
+            }
+
+            if (!board.pointsAwarded || !board.results || board.results.length === 0) {
+                return interaction.editReply('This racing challenge has no awarded results to announce.');
+            }
+
+            // Get the announcement and arcade channels
+            const announcementChannel = await this.getAnnouncementChannel(interaction.client);
+            const arcadeChannel = await this.getArcadeChannel(interaction.client);
+            
+            if (!announcementChannel || !arcadeChannel) {
+                return interaction.editReply('Could not find the required channels.');
+            }
+
+            // Create results announcement embed
+            const monthName = board.startDate.toLocaleString('default', { month: 'long' });
+            const year = board.startDate.getFullYear();
+            
+            const embed = new EmbedBuilder()
+                .setColor('#00FF00')
+                .setTitle(`🏆 Racing Challenge Results: ${monthName} ${year}`)
+                .setDescription(
+                    `The results are in for the ${monthName} ${year} racing challenge!\n\n` +
+                    `**Game:** ${board.gameTitle}\n` +
+                    `**Track:** ${board.trackName}`
+                );
+
+            // Add results to embed
+            let resultsText = '';
+            board.results.forEach(result => {
+                const emoji = result.rank === 1 ? '🥇' : (result.rank === 2 ? '🥈' : '🥉');
+                resultsText += `${emoji} **${result.username}** (${result.time}): ${result.points} point${result.points !== 1 ? 's' : ''}\n`;
+            });
+            
+            if (resultsText) {
+                embed.addFields({ name: 'Results', value: resultsText });
+            }
+
+            // Send announcements
+            await announcementChannel.send({ embeds: [embed] });
+            await arcadeChannel.send({ embeds: [embed] });
+
+            // Create response embed
+            const responseEmbed = new EmbedBuilder()
+                .setColor('#00FF00')
+                .setTitle('✅ Results Announced')
+                .setDescription(
+                    `Successfully announced the racing results in both the announcements and arcade channels!`
+                );
+
+            return interaction.editReply({
+                embeds: [responseEmbed],
+                components: []
+            });
+        } catch (error) {
+            console.error('Error announcing racing results:', error);
+            return interaction.editReply('An error occurred while announcing the results.');
+        }
+    },
+
+    async handleButtonInteraction(interaction) {
+        try {
+            const customId = interaction.customId;
+            
+            // Parse the button ID to get the action, type, and board ID
+            const parts = customId.split('_');
+            const action = parts[0];
+            const boardType = parts[1];
+            const boardId = parts[2];
+
+            // Handle different button actions
+            switch (action) {
+                case 'announce':
+                    await this.announceBoard(interaction, boardType, true);
+                    break;
+                case 'announce':
+                    if (boardType === 'results' && parts[1] === 'racing') {
+                        await this.announceRacingResults(interaction, boardId);
+                    } else {
+                        await this.announceBoard(interaction, boardType, true);
+                    }
+                    break;
+                case 'remove':
+                    if (parts[1] === 'confirm') {
+                        await this.processRemoveBoard(interaction, parts[2], parts[3]);
+                    } else if (parts[1] === 'cancel') {
+                        await interaction.update({
+                            content: 'Removal cancelled.',
+                            embeds: [],
+                            components: []
+                        });
+                    }
+                    break;
+                case 'award':
+                    if (parts[1] === 'confirm') {
+                        if (parts[2] === 'racing') {
+                            await this.processAwardRacingPoints(interaction, parts[3]);
+                        } else if (parts[2] === 'arcade') {
+                            await this.processArcadeAwards(interaction, parts[3]);
+                        }
+                    } else if (parts[1] === 'cancel') {
+                        await interaction.update({
+                            content: 'Award process cancelled.',
+                            embeds: [],
+                            components: []
+                        });
+                    } else if (parts[1] === 'arcade') {
+                        if (parts[2] === 'confirm') {
+                            await this.processArcadeAwards(interaction, parts[3]);
+                        } else if (parts[2] === 'cancel') {
+                            await interaction.update({
+                                content: 'Award process cancelled.',
+                                embeds: [],
+                                components: []
+                            });
+                        }
+                    }
+                    break;
+                default:
+                    await interaction.reply({
+                        content: 'Unknown button action.',
+                        ephemeral: true
+                    });
+            }
+        } catch (error) {
+            console.error('Error handling button interaction:', error);
+            try {
+                if (interaction.deferred) {
+                    await interaction.editReply('An error occurred while processing your request.');
+                } else {
+                    await interaction.reply({
+                        content: 'An error occurred while processing your request.',
+                        ephemeral: true
+                    });
+                }
+            } catch (replyError) {
+                console.error('Error sending error response:', replyError);
+            }
+        }
+    },
+
+    async processRemoveBoard(interaction, boardType, boardId) {
+        try {
+            // Find the board
+            const board = await ArcadeBoard.findOne({ 
+                boardId,
+                boardType
+            });
+
+            if (!board) {
+                return interaction.update({
+                    content: `${this.getBoardTypeName(boardType)} with ID "${boardId}" not found.`,
+                    embeds: [],
+                    components: []
+                });
+            }
+
+            const boardTitle = board.gameTitle + (board.trackName ? ` - ${board.trackName}` : '');
+
+            // Delete the board
+            await ArcadeBoard.deleteOne({ boardId, boardType });
+
+            // Create response embed
+            const embed = new EmbedBuilder()
+                .setColor('#00FF00')
+                .setTitle(`✅ ${this.getBoardTypeName(boardType)} Removed`)
+                .setDescription(
+                    `Successfully removed ${boardType} board:\n\n` +
+                    `**${boardTitle}**`
+                );
+
+            await interaction.update({
+                embeds: [embed],
+                components: []
+            });
+        } catch (error) {
+            console.error(`Error removing ${boardType}:`, error);
+            await interaction.update({
+                content: 'An error occurred while removing the board.',
                 embeds: [],
                 components: []
             });
