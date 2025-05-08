@@ -9,10 +9,20 @@ dotenv.config();
 // Get nominations channel ID from .env
 const NOMINATIONS_CHANNEL_ID = process.env.NOMINATIONS_CHANNEL;
 
+// Maximum nominations per user
+const MAX_NOMINATIONS = 2;
+
+// Ineligible consoles
+const INELIGIBLE_CONSOLES = ['PlayStation 2', 'GameCube'];
+
 export default {
     data: new SlashCommandBuilder()
-        .setName('nominations')
-        .setDescription('Show all current nominations for the next monthly challenge'),
+        .setName('nominate')
+        .setDescription('Nominate a game for the next monthly challenge')
+        .addIntegerOption(option =>
+            option.setName('gameid')
+            .setDescription('RetroAchievements Game ID (found in the URL)')
+            .setRequired(true)),
 
     async execute(interaction) {
         // Check if command is used in the correct channel
@@ -25,112 +35,84 @@ export default {
             return;
         }
 
-        // Command used in correct channel - defer reply without ephemeral flag
         await interaction.deferReply({ ephemeral: false });
 
         try {
-            // Get all users
-            const users = await User.find({});
+            const gameId = interaction.options.getInteger('gameid');
+            const discordId = interaction.user.id;
 
-            // Get all current nominations
-            let allNominations = [];
-            for (const user of users) {
-                const nominations = user.getCurrentNominations();
-                allNominations.push(...nominations.map(nom => ({
-                    gameId: nom.gameId,
-                    nominatedBy: user.raUsername,
-                    nominatedAt: nom.nominatedAt
-                })));
-            }
-
-            if (allNominations.length === 0) {
-                return interaction.editReply('No games have been nominated for next month yet.');
-            }
-
-            // Count nominations per game
-            const nominationCounts = {};
-            allNominations.forEach(nom => {
-                if (!nominationCounts[nom.gameId]) {
-                    nominationCounts[nom.gameId] = {
-                        count: 0,
-                        nominatedBy: []
-                    };
-                }
-                nominationCounts[nom.gameId].count++;
-                nominationCounts[nom.gameId].nominatedBy.push(nom.nominatedBy);
-            });
-
-            // Get unique game IDs
-            const uniqueGameIds = [...new Set(allNominations.map(nom => nom.gameId))];
-
-            // Get game info for all nominated games
-            const gameDetailsPromises = uniqueGameIds.map(async (gameId) => {
-                const gameInfo = await retroAPI.getGameInfo(gameId);
-                const gameAchievementCount = await retroAPI.getGameAchievementCount(gameId);
-                return {
-                    id: gameId,
-                    title: gameInfo.title,
-                    console: gameInfo.consoleName,
-                    achievements: gameAchievementCount,
-                    nominations: nominationCounts[gameId]
-                };
-            });
-
-            const gameDetails = await Promise.all(gameDetailsPromises);
-
-            // Group games by console
-            const gamesByConsole = {};
-            gameDetails.forEach(game => {
-                if (!gamesByConsole[game.console]) {
-                    gamesByConsole[game.console] = [];
-                }
-                gamesByConsole[game.console].push(game);
-            });
-
-            // Sort consoles alphabetically
-            const sortedConsoles = Object.keys(gamesByConsole).sort();
-
-            // Sort games alphabetically within each console
-            sortedConsoles.forEach(console => {
-                gamesByConsole[console].sort((a, b) => a.title.localeCompare(b.title));
-            });
-
-            // Create embed
-            const embed = new EmbedBuilder()
-                .setTitle('🎮 Current Nominations')
-                .setDescription(`Games nominated for next month's challenge:`)
-                .setColor('#00BFFF')
-                .setTimestamp();
-
-            // Add fields for each console and its games
-            for (const console of sortedConsoles) {
-                const consoleGames = gamesByConsole[console];
-                let gamesText = '';
-                
-                for (const game of consoleGames) {
-                    const nominationInfo = game.nominations;
-                    gamesText += `**${game.title}** (${nominationInfo.count} nomination${nominationInfo.count > 1 ? 's' : ''})\n` +
-                                `Achievements: ${game.achievements}\n` +
-                                `Nominated by: ${nominationInfo.nominatedBy.join(', ')}\n` +
-                                `[View Game](https://retroachievements.org/game/${game.id})\n\n`;
-                }
-                
-                embed.addFields({
-                    name: `▫️ ${console}`,
-                    value: gamesText
+            // Get the user
+            const user = await User.findOne({ discordId });
+            if (!user) {
+                return interaction.editReply({
+                    content: 'You need to be registered to nominate games. Please use the `/register` command first.',
+                    ephemeral: true
                 });
             }
 
-            // Add footer with total count
-            embed.setFooter({ 
-                text: `Total nominations: ${allNominations.length} | Unique games: ${uniqueGameIds.length}`
-            });
+            // Check if game exists in RetroAchievements
+            let gameInfo;
+            try {
+                gameInfo = await retroAPI.getGameInfo(gameId);
+                if (!gameInfo || !gameInfo.title) {
+                    throw new Error('Invalid game info');
+                }
+            } catch (error) {
+                return interaction.editReply('Game not found. Please check the Game ID and try again.');
+            }
 
+            // Check if the console is eligible
+            if (INELIGIBLE_CONSOLES.includes(gameInfo.consoleName)) {
+                return interaction.editReply(`Games for ${gameInfo.consoleName} are not eligible for nomination. Please nominate a game from a different console.`);
+            }
+
+            // Get current nominations for the user
+            const currentNominations = user.getCurrentNominations();
+            
+            // Check if user already nominated this game
+            const existingNomination = currentNominations.find(nom => nom.gameId === gameId);
+            if (existingNomination) {
+                return interaction.editReply(`You've already nominated "${gameInfo.title}" for next month's challenge.`);
+            }
+            
+            // Check if user has reached max nominations
+            if (currentNominations.length >= MAX_NOMINATIONS) {
+                return interaction.editReply(
+                    `You've already used all ${MAX_NOMINATIONS} of your nominations for next month. ` +
+                    `Please ask an admin to use the \`/clearnominations\` command if you want to reset your nominations.`
+                );
+            }
+            
+            // Get achievement count for the game
+            const achievementCount = await retroAPI.getGameAchievementCount(gameId);
+            
+            // Add the nomination
+            user.nominate(gameId);
+            await user.save();
+            
+            // Create embed for confirmation
+            const embed = new EmbedBuilder()
+                .setTitle('Game Nomination')
+                .setDescription(`${interaction.user.username} has nominated a game for next month's challenge:`)
+                .setColor('#00FF00')
+                .addFields(
+                    { name: 'Game', value: gameInfo.title },
+                    { name: 'Console', value: gameInfo.consoleName },
+                    { name: 'Achievements', value: achievementCount.toString() },
+                    { 
+                        name: 'Nominations Remaining', 
+                        value: `${MAX_NOMINATIONS - (currentNominations.length + 1)}/${MAX_NOMINATIONS}` 
+                    }
+                )
+                .setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`)
+                .setURL(`https://retroachievements.org/game/${gameId}`)
+                .setTimestamp();
+            
             return interaction.editReply({ embeds: [embed] });
 
         } catch (error) {
-            console.error('Error displaying nominations:', error);
-            return interaction.editReply('An error occurred while fetching nominations. Please try again.');
+            console.error('Error nominating game:', error);
+            return interaction.editReply('An error occurred while processing your nomination. Please try again.');
         }
     }
 };
