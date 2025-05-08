@@ -33,7 +33,38 @@ export default {
             const existingUser = await User.findOne({
                 $or: [
                     { discordId: discordUser.id },
-                    { raUsername: { $regex: new RegExp(`^${raUsername}, 'i') } }
+                    { raUsername: { $regex: new RegExp(`^${raUsername}import { 
+    SlashCommandBuilder, 
+    EmbedBuilder,
+    ActionRowBuilder,
+    ButtonBuilder,
+    ButtonStyle,
+    ComponentType
+} from 'discord.js';
+import { User } from '../../models/User.js';
+import retroAPI from '../../services/retroAPI.js';
+import { config } from '../../config/config.js';
+
+// Member role ID
+const MEMBER_ROLE_ID = '1316292690870014002';
+
+export default {
+    data: new SlashCommandBuilder()
+        .setName('register')
+        .setDescription('Register yourself for RetroAchievements challenges')
+        .addStringOption(option =>
+            option.setName('ra_username')
+            .setDescription('Your RetroAchievements username')
+            .setRequired(true)),
+
+    async execute(interaction) {
+        await interaction.deferReply({ ephemeral: true });
+
+        try {
+            const discordUser = interaction.user;
+            const raUsername = interaction.options.getString('ra_username');
+
+, 'i') } }
                 ]
             });
 
