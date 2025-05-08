@@ -4,6 +4,7 @@ import {
     ActionRowBuilder, 
     ButtonBuilder, 
     ButtonStyle,
+    StringSelectMenuBuilder,
     ComponentType
 } from 'discord.js';
 import { Challenge } from '../../models/Challenge.js';
@@ -18,7 +19,7 @@ export default {
         await interaction.deferReply({ ephemeral: true });
 
         try {
-            // Start with the main help menu
+            // Display the main help menu with dropdown navigation
             await this.displayMainHelp(interaction);
         } catch (error) {
             console.error('Help Command Error:', error);
@@ -33,82 +34,89 @@ export default {
             .setColor('#3498DB')
             .addFields({
                 name: 'Available Help Topics',
-                value: '🔍 **Overview** - Community overview and how things work\n' +
-                      '🤖 **Commands** - List of available bot commands\n' +
-                      '🎮 **Challenges** - About monthly challenges and awards\n' +
-                      '👥 **Shadow Games** - About shadow game challenges\n' +
-                      '🏎️ **Arcade** - About arcade and racing leaderboards\n' +
-                      '🏆 **Points** - How points are earned and awarded\n' +
-                      '🗳️ **Nominations** - How game nominations work\n' +
-                      '📋 **Community Rules** - Community rules and guidelines'
+                value: 'Use the dropdown menu below to explore different topics:'
             })
-            .setFooter({ text: 'Select Start Gaming Community • Press a button below to view a topic' })
+            .setFooter({ text: 'Select Start Gaming Community • Select a topic from the dropdown' })
             .setTimestamp();
 
-        // Create two rows of buttons (4 buttons per row)
-        const row1 = new ActionRowBuilder()
+        // Create a dropdown menu for topic selection
+        const row = new ActionRowBuilder()
             .addComponents(
-                new ButtonBuilder()
-                    .setCustomId('overview')
-                    .setLabel('Overview')
-                    .setStyle(ButtonStyle.Primary)
-                    .setEmoji('🔍'),
-                new ButtonBuilder()
-                    .setCustomId('commands')
-                    .setLabel('Commands')
-                    .setStyle(ButtonStyle.Primary)
-                    .setEmoji('🤖'),
-                new ButtonBuilder()
-                    .setCustomId('challenges')
-                    .setLabel('Challenges')
-                    .setStyle(ButtonStyle.Primary)
-                    .setEmoji('🎮'),
-                new ButtonBuilder()
-                    .setCustomId('shadow')
-                    .setLabel('Shadow Games')
-                    .setStyle(ButtonStyle.Primary)
-                    .setEmoji('👥')
+                new StringSelectMenuBuilder()
+                    .setCustomId('helpTopics')
+                    .setPlaceholder('Select a topic')
+                    .addOptions([
+                        {
+                            label: 'Overview',
+                            description: 'Community overview and how things work',
+                            value: 'overview',
+                            emoji: '🔍'
+                        },
+                        {
+                            label: 'Commands',
+                            description: 'List of available bot commands',
+                            value: 'commands',
+                            emoji: '🤖'
+                        },
+                        {
+                            label: 'Challenges',
+                            description: 'About monthly challenges and awards',
+                            value: 'challenges',
+                            emoji: '🎮'
+                        },
+                        {
+                            label: 'Shadow Games',
+                            description: 'About shadow game challenges',
+                            value: 'shadow',
+                            emoji: '👥'
+                        },
+                        {
+                            label: 'Arcade',
+                            description: 'About arcade and racing leaderboards',
+                            value: 'arcade',
+                            emoji: '🏎️'
+                        },
+                        {
+                            label: 'Points',
+                            description: 'How points are earned and awarded',
+                            value: 'points',
+                            emoji: '🏆'
+                        },
+                        {
+                            label: 'Nominations',
+                            description: 'How game nominations work',
+                            value: 'nominations',
+                            emoji: '🗳️'
+                        },
+                        {
+                            label: 'Rules',
+                            description: 'Brief community rules and guidelines',
+                            value: 'rules',
+                            emoji: '📋'
+                        }
+                    ])
             );
 
-        const row2 = new ActionRowBuilder()
-            .addComponents(
-                new ButtonBuilder()
-                    .setCustomId('arcade')
-                    .setLabel('Arcade')
-                    .setStyle(ButtonStyle.Primary)
-                    .setEmoji('🏎️'),
-                new ButtonBuilder()
-                    .setCustomId('points')
-                    .setLabel('Points')
-                    .setStyle(ButtonStyle.Primary)
-                    .setEmoji('🏆'),
-                new ButtonBuilder()
-                    .setCustomId('nominations')
-                    .setLabel('Nominations')
-                    .setStyle(ButtonStyle.Primary)
-                    .setEmoji('🗳️'),
-                new ButtonBuilder()
-                    .setCustomId('community')
-                    .setLabel('Community Rules')
-                    .setStyle(ButtonStyle.Primary)
-                    .setEmoji('📋')
-            );
-
-        // Send the initial message with buttons
+        // Send the initial message with dropdown menu
         const message = await interaction.editReply({
             embeds: [embed],
-            components: [row1, row2]
+            components: [row]
+        });
+
+        // Create collector for dropdown interactions
+        const collector = message.createMessageComponentCollector({
+            componentType: ComponentType.StringSelect,
+            time: 600000 // Time limit: 10 minutes
         });
 
         // Create collector for button interactions
-        const collector = message.createMessageComponentCollector({
+        const buttonCollector = message.createMessageComponentCollector({
             componentType: ComponentType.Button,
             time: 600000 // Time limit: 10 minutes
         });
 
-        // Handle button clicks
+        // Handle dropdown selection
         collector.on('collect', async (i) => {
-            // We need to defer the update to avoid interaction timeouts
             await i.deferUpdate();
 
             // Generate back button
@@ -121,8 +129,8 @@ export default {
                         .setEmoji('↩️')
                 );
 
-            // Handle different button clicks
-            switch (i.customId) {
+            // Handle different topic selections
+            switch (i.values[0]) {
                 case 'overview':
                     const overviewEmbed = await this.createOverviewEmbed();
                     await i.editReply({ embeds: [overviewEmbed], components: [backRow] });
@@ -165,10 +173,29 @@ export default {
                         );
                     await i.editReply({ embeds: [nominationsEmbed], components: [nominationsRow] });
                     break;
-                case 'community':
-                    const communityEmbed = await this.createCommunityEmbed();
-                    await i.editReply({ embeds: [communityEmbed], components: [backRow] });
+                case 'rules':
+                    const rulesEmbed = await this.createRulesEmbed();
+                    await i.editReply({ embeds: [rulesEmbed], components: [backRow] });
                     break;
+            }
+        });
+
+        // Handle button clicks
+        buttonCollector.on('collect', async (i) => {
+            await i.deferUpdate();
+
+            // Generate back button
+            const backRow = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('back')
+                        .setLabel('Back to Menu')
+                        .setStyle(ButtonStyle.Secondary)
+                        .setEmoji('↩️')
+                );
+
+            // Handle different button clicks
+            switch (i.customId) {
                 case 'platforms':
                     const platformsEmbed = await this.createPlatformsEmbed();
                     // Create a row with a back to nominations button
@@ -182,45 +209,63 @@ export default {
                         );
                     await i.editReply({ embeds: [platformsEmbed], components: [platformsBackRow] });
                     break;
+                case 'nominations':
+                    const nominationsEmbed = await this.createNominationsEmbed();
+                    // Create a row with platforms and back buttons
+                    const nominationsRow = new ActionRowBuilder()
+                        .addComponents(
+                            new ButtonBuilder()
+                                .setCustomId('platforms')
+                                .setLabel('Supported Platforms')
+                                .setStyle(ButtonStyle.Primary)
+                                .setEmoji('📋'),
+                            new ButtonBuilder()
+                                .setCustomId('back')
+                                .setLabel('Back to Menu')
+                                .setStyle(ButtonStyle.Secondary)
+                                .setEmoji('↩️')
+                        );
+                    await i.editReply({ embeds: [nominationsEmbed], components: [nominationsRow] });
+                    break;
                 case 'back':
                     // Return to main menu
-                    await i.editReply({ embeds: [embed], components: [row1, row2] });
+                    await i.editReply({ 
+                        embeds: [embed], 
+                        components: [row] 
+                    });
                     break;
             }
         });
 
         // When the collector expires
         collector.on('end', async () => {
+            if (!buttonCollector.ended) buttonCollector.stop();
+        });
+
+        buttonCollector.on('end', async () => {
             try {
-                // Disable all buttons when time expires
-                const disabledRow1 = new ActionRowBuilder()
+                // Disable the select menu when time expires
+                const disabledRow = new ActionRowBuilder()
                     .addComponents(
-                        row1.components[0].setDisabled(true),
-                        row1.components[1].setDisabled(true),
-                        row1.components[2].setDisabled(true),
-                        row1.components[3].setDisabled(true)
+                        new StringSelectMenuBuilder()
+                            .setCustomId('helpTopics')
+                            .setPlaceholder('Help session expired')
+                            .setDisabled(true)
+                            .addOptions([{ label: 'Expired', value: 'expired' }])
                     );
 
-                const disabledRow2 = new ActionRowBuilder()
-                    .addComponents(
-                        row2.components[0].setDisabled(true),
-                        row2.components[1].setDisabled(true),
-                        row2.components[2].setDisabled(true),
-                        row2.components[3].setDisabled(true)
-                    );
-
-                // Update with disabled buttons
+                // Update with disabled menu
                 await interaction.editReply({
                     embeds: [embed.setFooter({ text: 'Select Start Gaming Community • Help session expired' })],
-                    components: [disabledRow1, disabledRow2]
+                    components: [disabledRow]
                 });
             } catch (error) {
-                console.error('Error disabling buttons:', error);
+                console.error('Error disabling menu:', error);
             }
         });
     },
 
-    // Create all the embed functions
+    // Create all the embed functions with streamlined content
     async createOverviewEmbed() {
         return new EmbedBuilder()
             .setTitle('Community Overview')
@@ -229,19 +274,19 @@ export default {
             .addFields(
                 {
                     name: '🎮 Monthly Challenges',
-                    value: 'Each month, we select a game chosen by community vote. Everyone competes to earn achievements in that game. Monthly prizes are awarded to the top 3 players. There are also hidden "shadow games" that add an extra challenge!'
+                    value: 'Each month features a game chosen by community vote. Everyone competes to earn achievements, with monthly prizes for the top performers. Shadow games provide an extra challenge!'
                 },
                 {
                     name: '🏆 Point System',
-                    value: 'You can earn points by participating in monthly challenges, discovering shadow games, racing competitions, and arcade leaderboards. Points accumulate throughout the year for annual prizes.'
+                    value: 'Earn points through monthly challenges, shadow games, racing competitions, and arcade leaderboards. Points accumulate throughout the year for annual prizes.'
                 },
                 {
                     name: '🗳️ Game Nominations',
-                    value: 'Each month, you can nominate up to two games for the next challenge. In the last week of the month, 10 games are randomly selected from all nominations for community voting. A final community-wide vote is then held to determine next month\'s game.'
+                    value: 'Nominate up to two games monthly. In the final week, 10 games are randomly selected for community voting to determine next month\'s challenge.'
                 },
                 {
                     name: '🏎️ Racing & Arcade',
-                    value: 'We have monthly racing challenges and year-round arcade leaderboards. Compete for the top positions to earn additional community points! Racing points are awarded monthly for each new track.'
+                    value: 'Compete in monthly racing challenges and year-round arcade leaderboards to earn additional community points.'
                 },
                 {
                     name: '🏅 Year-End Awards',
@@ -259,30 +304,28 @@ export default {
             .setDescription('Here are the commands you can use in the Select Start community:')
             .addFields(
                 {
-                    name: '📋 Community Information',
-                    value: '• `/help` - Display this help information with interactive buttons'
+                    name: '📋 Information',
+                    value: '• `/help` - Display this help information\n' + 
+                           '• `/rules` - View detailed community rules and guidelines'
                 },
                 {
                     name: '🏆 Challenges & Leaderboards',
-                    value: '• `/challenge` - Show the current monthly, shadow, and racing challenges\n' +
-                           '• `/leaderboard` - Display the current monthly challenge leaderboard\n' +
-                           '• `/yearlyboard` - Display the yearly points leaderboard\n' +
-                           '• `/profile [username]` - Show your or someone else\'s profile and achievements\n' +
-                           '• `/shadowguess` - Try to guess the hidden shadow game'
+                    value: '• `/challenge` - View current monthly, shadow, and racing challenges\n' +
+                           '• `/leaderboard` - See the monthly challenge leaderboard\n' +
+                           '• `/yearlyboard` - Check the yearly points leaderboard\n' +
+                           '• `/profile [username]` - View profile and achievements\n' +
+                           '• `/shadowguess` - Try to unlock the hidden shadow game'
                 },
                 {
                     name: '🗳️ Nominations & Suggestions',
-                    value: '• `/nominate` - Nominate a game for the next monthly challenge\n' +
-                           '• `/nominations` - Show all current nominations for the next month\n' +
-                           '• `/suggest` - Submit ideas for arcade boards, racing tracks, bot improvements, or other suggestions\n' +
-                           '• `/vote` - Cast your vote for the next monthly challenge (when voting is active)'
+                    value: '• `/nominate` - Suggest a game for the next monthly challenge\n' +
+                           '• `/nominations` - View all current nominations\n' +
+                           '• `/suggest` - Submit ideas for arcade boards, racing tracks, etc.\n' +
+                           '• `/vote` - Cast your vote for the next monthly challenge (when active)'
                 },
                 {
                     name: '🏎️ Arcade & Racing',
-                    value: '• `/arcade` - Interactive menu for arcade boards and racing challenges\n' +
-                           '  - View all arcade leaderboards\n' +
-                           '  - Check current and past racing challenges\n' +
-                           '  - See active tiebreaker competitions'
+                    value: '• `/arcade` - Interactive menu for arcade boards and racing challenges'
                 }
             )
             .setFooter({ text: 'Press "Back to Menu" to return to the main menu' })
@@ -290,13 +333,11 @@ export default {
     },
 
     async createChallengesEmbed() {
-        // Try to get current challenge information for the most relevant data
         try {
             // Get current date for finding current challenge
             const now = new Date();
             const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
             const nextMonthStart = new Date(now.getFullYear(), now.getMonth() + 1, 1);
-            const lastDayOfMonth = new Date(nextMonthStart - 86400000).toISOString().split('T')[0];
 
             // Get current challenge
             const currentChallenge = await Challenge.findOne({
@@ -305,9 +346,6 @@ export default {
                     $lt: nextMonthStart
                 }
             });
-
-            // Get month name
-            const monthName = now.toLocaleString('default', { month: 'long' });
 
             let progressionInfo = '';
             let winInfo = '';
@@ -324,41 +362,31 @@ export default {
             return new EmbedBuilder()
                 .setTitle('Monthly Challenges')
                 .setColor('#9B59B6')
-                .setDescription('Our community revolves around monthly challenge games chosen by community vote:')
+                .setDescription('Our community revolves around monthly challenge games chosen by community vote.')
                 .addFields(
                     {
-                        name: '🎮 Monthly Challenges',
-                        value: 'Each month, we select a game based on community votes. Everyone competes to earn achievements in that game throughout the month.\n\n' +
-                               '**Points Available (Cumulative):**\n' +
+                        name: '🎮 Points System',
+                        value: '**Points (Cumulative):**\n' +
                                '• Participation: 1 point (earn any achievement)\n' +
-                               '• Beaten: 4 points total (1 for participation + 3 for completing' + (progressionInfo ? ` ${progressionInfo}${winInfo}` : ' all progression achievements') + ')\n' +
-                               '• Mastery: 7 points total (1 for participation + 3 for beaten + 3 for 100% completing all achievements)\n\n' +
+                               '• Beaten: 4 points total (includes participation + completion points)\n' +
+                               '• Mastery: 7 points total (includes beaten + mastery points)\n\n' +
                                '**Monthly Prizes:**\n' +
-                               '• Top 3 players receive special recognition and community points each month\n\n' +
-                               'Use `/challenge` to see the current challenge and `/leaderboard` to see the standings.'
+                               'Top 3 players receive recognition and community points'
                     },
                     {
-                        name: '⚠️ Hardcore Mode Required',
-                        value: '• All achievements must be earned in RetroAchievements Hardcore Mode\n' +
-                               '• Save states and rewind features are **not allowed**\n' +
-                               '• Fast forward is permitted\n' +
-                               '• Only achievements earned in Hardcore Mode will count toward standings'
-                    },
-                    {
-                        name: '📊 Challenge Rules',
-                        value: '• Achievements must be earned during the challenge month to count toward standings\n' +
-                               '• The challenge begins on the 1st of each month and ends on the last day\n' +
-                               '• A grace period exists for the last day of the previous month\n' +
-                               '• Use `/profile` to see your current progress and achievement history\n' +
-                               '• All RetroAchievements rules must be followed (no cheating or exploits)\n' +
-                               '• In case of ties at the top of the leaderboard, tiebreakers may be used'
+                        name: '⚠️ Key Requirements',
+                        value: '• **HARDCORE MODE REQUIRED** - No save states or rewind\n' +
+                               '• Fast forward is allowed\n' +
+                               '• Must earn achievements during the challenge month\n' +
+                               '• One grace period on the last day of previous month\n\n' +
+                               'Use `/challenge` to see current challenges and `/leaderboard` for standings'
                     },
                     {
                         name: '⚔️ Tiebreakers',
-                        value: 'When users are tied in the monthly challenge standings, a tiebreaker game may be created to determine final rankings. Only tied users can participate in these special competitions. Tiebreakers are typically used for resolving ties in the top 3 positions.'
+                        value: 'When users tie in the monthly standings, tiebreaker competitions may be created to determine final rankings.'
                     }
                 )
-                .setFooter({ text: 'Press "Back to Menu" to return to the main menu' })
+                .setFooter({ text: 'For detailed rules, use the /rules command' })
                 .setTimestamp();
         } catch (error) {
             console.error('Error getting challenge info:', error);
@@ -367,41 +395,31 @@ export default {
             return new EmbedBuilder()
                 .setTitle('Monthly Challenges')
                 .setColor('#9B59B6')
-                .setDescription('Our community revolves around monthly challenge games chosen by community vote:')
+                .setDescription('Our community revolves around monthly challenge games chosen by community vote.')
                 .addFields(
                     {
-                        name: '🎮 Monthly Challenges',
-                        value: 'Each month, we select a game based on community votes. Everyone competes to earn achievements in that game throughout the month.\n\n' +
-                               '**Points Available (Cumulative):**\n' +
+                        name: '🎮 Points System',
+                        value: '**Points (Cumulative):**\n' +
                                '• Participation: 1 point (earn any achievement)\n' +
-                               '• Beaten: 4 points total (1 for participation + 3 for completing all progression achievements)\n' +
-                               '• Mastery: 7 points total (1 for participation + 3 for beaten + 3 for 100% completing all achievements)\n\n' +
+                               '• Beaten: 4 points total (includes participation + completion points)\n' +
+                               '• Mastery: 7 points total (includes beaten + mastery points)\n\n' +
                                '**Monthly Prizes:**\n' +
-                               '• Top 3 players receive special recognition and community points each month\n\n' +
-                               'Use `/challenge` to see the current challenge and `/leaderboard` to see the standings.'
+                               'Top 3 players receive recognition and community points'
                     },
                     {
-                        name: '⚠️ Hardcore Mode Required',
-                        value: '• All achievements must be earned in RetroAchievements Hardcore Mode\n' +
-                               '• Save states and rewind features are **not allowed**\n' +
-                               '• Fast forward is permitted\n' +
-                               '• Only achievements earned in Hardcore Mode will count toward standings'
-                    },
-                    {
-                        name: '📊 Challenge Rules',
-                        value: '• Achievements must be earned during the challenge month to count toward standings\n' +
-                               '• The challenge begins on the 1st of each month and ends on the last day\n' +
-                               '• A grace period exists for the last day of the previous month\n' +
-                               '• Use `/profile` to see your current progress and achievement history\n' +
-                               '• All RetroAchievements rules must be followed (no cheating or exploits)\n' +
-                               '• In case of ties at the top of the leaderboard, tiebreakers may be used'
+                        name: '⚠️ Key Requirements',
+                        value: '• **HARDCORE MODE REQUIRED** - No save states or rewind\n' +
+                               '• Fast forward is allowed\n' +
+                               '• Must earn achievements during the challenge month\n' +
+                               '• One grace period on the last day of previous month\n\n' +
+                               'Use `/challenge` to see current challenges and `/leaderboard` for standings'
                     },
                     {
                         name: '⚔️ Tiebreakers',
-                        value: 'When users are tied in the monthly challenge standings, a tiebreaker game may be created to determine final rankings. Only tied users can participate in these special competitions. Tiebreakers are typically used for resolving ties in the top 3 positions.'
+                        value: 'When users tie in the monthly standings, tiebreaker competitions may be created to determine final rankings.'
                     }
                 )
-                .setFooter({ text: 'Press "Back to Menu" to return to the main menu' })
+                .setFooter({ text: 'For detailed rules, use the /rules command' })
                 .setTimestamp();
         }
     },
@@ -424,42 +442,28 @@ export default {
             const embed = new EmbedBuilder()
                 .setTitle('Shadow Game Challenge')
                 .setColor('#9B59B6')
-                .setDescription(
-                    'The shadow game is a special monthly bonus challenge hidden within our community. ' +
-                    'Once discovered, it becomes available to all members as an additional way to earn ' +
-                    'points alongside the main monthly challenge.'
-                )
+                .setDescription('Shadow games are hidden monthly bonus challenges that unlock additional ways to earn points.')
                 .addFields({
                     name: 'How It Works',
-                    value: '1. A shadow game is hidden each month\n' +
-                           '2. Members can try to guess it using `/shadowguess`\n' +
-                           '3. Once revealed, all members can participate for additional points\n' +
-                           '4. Use the `/challenge` command to see if it has been revealed\n' +
-                           '5. Past month shadow games are automatically revealed'
+                    value: '• A shadow game is hidden each month\n' +
+                           '• Try to guess it using `/shadowguess`\n' +
+                           '• Once revealed, everyone can participate\n' +
+                           '• Past month shadow games are automatically revealed'
                 },
                 {
-                    name: '👥 Shadow Game Points (Cumulative)',
-                    value: '**Points Available:**\n' +
-                           '• Participation: 1 point (earn any achievement)\n' +
-                           '• Beaten: 4 points total (1 for participation + 3 for completing all progression requirements)\n\n' +
-                           'Shadow games add an element of mystery to each month\'s challenges! Note that shadow games ' +
-                           'are ineligible for mastery awards - the maximum is "beaten" status (4 points total).'
-                },
-                {
-                    name: '⚠️ Hardcore Mode Required',
-                    value: '• All achievements must be earned in RetroAchievements Hardcore Mode\n' +
-                           '• Save states and rewind features are **not allowed**\n' +
-                           '• Fast forward is permitted\n' +
-                           '• Only achievements earned in Hardcore Mode will count'
+                    name: '👥 Points System',
+                    value: '**Points (Cumulative):**\n' +
+                           '• Participation: 1 point (any achievement)\n' +
+                           '• Beaten: 4 points total (includes participation points)\n\n' +
+                           'Shadow games are capped at "Beaten" status (4 points maximum)'
                 },
                 {
                     name: '🔍 Guessing the Shadow Game',
-                    value: 'To guess the shadow game, use the `/shadowguess` command with the exact title of the game.\n\n' +
-                           'If you guess correctly, the shadow game will be revealed for everyone. If your guess is incorrect, ' +
-                           'you\'ll be notified but can keep trying. There is no limit to guesses or penalty for wrong guesses.\n\n' +
-                           'Hint: Shadow games are often thematically related to the main monthly challenge!'
+                    value: 'Use `/shadowguess` with the exact game title\n\n' +
+                           'Correct guesses reveal the game for everyone. No penalties for wrong guesses.\n\n' +
+                           'Hint: Shadow games often relate thematically to the monthly challenge!'
                 })
-                .setFooter({ text: 'Press "Back to Menu" to return to the main menu' })
+                .setFooter({ text: 'For detailed rules, use the /rules command' })
                 .setTimestamp();
 
             if (currentChallenge && currentChallenge.shadow_challange_gameid && currentChallenge.shadow_challange_revealed) {
@@ -473,11 +477,9 @@ export default {
                 embed.addFields({
                     name: 'Current Challenge',
                     value: `**Game:** ${shadowGameInfo.title} (${shadowGameInfo.consoleName})\n\n` +
-                           '**Available Points (Cumulative):**\n' +
-                           `• **Participation:** 1 point\n` +
-                           `• **Beaten:** 4 points total (1 for participation + 3 for completing all ${progressionCount} progression achievements` +
-                           (winCount > 0 ? ` and at least one win achievement` : '') + `)\n\n` +
-                           'This challenge can be completed alongside the monthly challenge.'
+                           '**Beaten Requirements:**\n' +
+                           `• Complete all ${progressionCount} progression achievements` +
+                           (winCount > 0 ? `\n• Earn at least one win achievement` : '')
                 });
                 
                 embed.setURL(`https://retroachievements.org/game/${currentChallenge.shadow_challange_gameid}`);
@@ -495,42 +497,28 @@ export default {
             return new EmbedBuilder()
                 .setTitle('Shadow Game Challenge')
                 .setColor('#9B59B6')
-                .setDescription(
-                    'The shadow game is a special monthly bonus challenge hidden within our community. ' +
-                    'Once discovered, it becomes available to all members as an additional way to earn ' +
-                    'points alongside the main monthly challenge.'
-                )
+                .setDescription('Shadow games are hidden monthly bonus challenges that unlock additional ways to earn points.')
                 .addFields({
                     name: 'How It Works',
-                    value: '1. A shadow game is hidden each month\n' +
-                           '2. Members can try to guess it using `/shadowguess`\n' +
-                           '3. Once revealed, all members can participate for additional points\n' +
-                           '4. Use the `/challenge` command to see if it has been revealed\n' +
-                           '5. Past month shadow games are automatically revealed'
+                    value: '• A shadow game is hidden each month\n' +
+                           '• Try to guess it using `/shadowguess`\n' +
+                           '• Once revealed, everyone can participate\n' +
+                           '• Past month shadow games are automatically revealed'
                 },
                 {
-                    name: '👥 Shadow Game Points (Cumulative)',
-                    value: '**Points Available:**\n' +
-                           '• Participation: 1 point (earn any achievement)\n' +
-                           '• Beaten: 4 points total (1 for participation + 3 for completing all progression requirements)\n\n' +
-                           'Shadow games add an element of mystery to each month\'s challenges! Note that shadow games ' +
-                           'are ineligible for mastery awards - the maximum is "beaten" status (4 points total).'
-                },
-                {
-                    name: '⚠️ Hardcore Mode Required',
-                    value: '• All achievements must be earned in RetroAchievements Hardcore Mode\n' +
-                           '• Save states and rewind features are **not allowed**\n' +
-                           '• Fast forward is permitted\n' +
-                           '• Only achievements earned in Hardcore Mode will count'
+                    name: '👥 Points System',
+                    value: '**Points (Cumulative):**\n' +
+                           '• Participation: 1 point (any achievement)\n' +
+                           '• Beaten: 4 points total (includes participation points)\n\n' +
+                           'Shadow games are capped at "Beaten" status (4 points maximum)'
                 },
                 {
                     name: '🔍 Guessing the Shadow Game',
-                    value: 'To guess the shadow game, use the `/shadowguess` command with the exact title of the game.\n\n' +
-                           'If you guess correctly, the shadow game will be revealed for everyone. If your guess is incorrect, ' +
-                           'you\'ll be notified but can keep trying. There is no limit to guesses or penalty for wrong guesses.\n\n' +
-                           'Hint: The game to find each shadow games is often thematically related to the main monthly challenge!'
+                    value: 'Use `/shadowguess` with the exact game title\n\n' +
+                           'Correct guesses reveal the game for everyone. No penalties for wrong guesses.\n\n' +
+                           'Hint: Shadow games often relate thematically to the monthly challenge!'
                 })
-                .setFooter({ text: 'Press "Back to Menu" to return to the main menu' })
+                .setFooter({ text: 'For detailed rules, use the /rules command' })
                 .setTimestamp();
         }
     },
@@ -539,54 +527,39 @@ export default {
         return new EmbedBuilder()
             .setTitle('Arcade & Racing Challenges')
             .setColor('#F39C12')
-            .setDescription('In addition to monthly challenges, we have special competitions with their own point systems:')
+            .setDescription('Compete in special competitions alongside monthly challenges for additional points:')
             .addFields(
                 {
-                    name: '🏎️ Monthly Racing Challenges',
-                    value: 'Each month features a racing game time trial. Compete to achieve the fastest time!\n\n' +
-                           '**Points Awarded Monthly:**\n' +
+                    name: '🏎️ Monthly Racing',
+                    value: '**Points:**\n' +
                            '• 1st Place: 3 points\n' +
                            '• 2nd Place: 2 points\n' +
                            '• 3rd Place: 1 point\n\n' +
-                           'Use the `/arcade` command and select "Racing" to view current and past racing challenges. Racing challenges typically run for one calendar month.'
+                           'Each month features a racing time trial. Points awarded monthly at end of challenge.'
                 },
                 {
                     name: '🎮 Arcade Leaderboards',
-                    value: 'We maintain year-round arcade leaderboards for various games. Compete to reach the top positions!\n\n' +
-                           'On December 1st each year, the top performers on each arcade board are awarded points:\n' +
+                    value: '**Points (awarded December 1st):**\n' +
                            '• 1st Place: 3 points\n' +
                            '• 2nd Place: 2 points\n' +
                            '• 3rd Place: 1 point\n\n' +
-                           'Use the `/arcade` command and select "Arcade Boards" to view all available leaderboards.'
-                },
-                {
-                    name: '⚠️ Hardcore Mode Required',
-                    value: '• All achievements and scores must be earned in RetroAchievements Hardcore Mode\n' +
-                           '• Save states and rewind features are **not allowed**\n' +
-                           '• Fast forward is permitted\n' +
-                           '• Only scores earned in Hardcore Mode will count'
-                },
-                {
-                    name: '⚔️ Tiebreakers',
-                    value: 'In case of ties in monthly challenges, special tiebreaker boards may be created to determine the final rankings.\n\n' +
-                           'Tiebreakers are used to resolve ties in the monthly challenge standings. If a tiebreaker is active, it will appear in the Arcade menu.\n\n' +
-                           'Only tied participants can compete in the tiebreaker. Results from tiebreakers help determine final rankings and point awards.'
+                           'Year-round arcade leaderboards remain open until December 1st.'
                 },
                 {
                     name: '📊 Using the Arcade Menu',
-                    value: 'The `/arcade` command provides an interactive menu to explore all arcade features:\n\n' +
-                           '• View all arcade boards or select a specific board\n' +
-                           '• See the current racing challenge\n' +
+                    value: 'The `/arcade` command provides an interactive menu to:\n' +
+                           '• View all arcade boards\n' +
+                           '• See current racing challenge\n' +
                            '• Browse past racing challenges\n' +
                            '• Check active tiebreakers\n\n' +
-                           'All arcade leaderboards are limited to users ranked #999 or lower in the global RetroAchievements leaderboards.'
+                           'You must place in the top 999 of the global leaderboard to appear in arcade rankings.'
                 },
                 {
-                    name: '💡 Suggesting New Boards',
-                    value: 'Have a game or track you want to see added to our arcade or racing challenges? Use the `/suggest` command to submit your ideas! You\'ll need both the Game ID and Leaderboard ID from RetroAchievements.'
+                    name: '💡 Suggest New Boards',
+                    value: 'Have a game or track to add? Use `/suggest` to submit your ideas.'
                 }
             )
-            .setFooter({ text: 'Press "Back to Menu" to return to the main menu' })
+            .setFooter({ text: 'For detailed rules, use the /rules command' })
             .setTimestamp();
     },
 
@@ -597,47 +570,42 @@ export default {
             .setDescription('Points are awarded across different activities and tracked throughout the year:')
             .addFields(
                 {
-                    name: '🎮 Monthly Challenge Points (Cumulative)',
-                    value: '• Participation: 1 point (earn any achievement)\n' +
-                           '• Beaten: 4 points total (1 for participation + 3 for completing all progression requirements)\n' +
-                           '• Mastery: 7 points total (1 for participation + 3 for beaten + 3 for 100% completing all achievements)\n\n' +
-                           '**Monthly Prizes:**\n' +
-                           '• Top 3 players each month receive special recognition and prizes'
+                    name: '🎮 Monthly Challenge',
+                    value: '**Points (Cumulative):**\n' +
+                           '• Participation: 1 point\n' +
+                           '• Beaten: 4 points total\n' +
+                           '• Mastery: 7 points total'
                 },
                 {
-                    name: '👥 Shadow Challenge Points (Cumulative)',
-                    value: '• Participation: 1 point (earn any achievement)\n' +
-                           '• Beaten: 4 points total (1 for participation + 3 for completing all progression requirements)\n\n' +
-                           'Note: Shadow games are capped at "Beaten" status (4 points maximum)'
+                    name: '👥 Shadow Challenge',
+                    value: '**Points (Cumulative):**\n' +
+                           '• Participation: 1 point\n' +
+                           '• Beaten: 4 points total\n\n' +
+                           'Shadow games are capped at "Beaten" status (4 points maximum)'
                 },
                 {
-                    name: '🏎️ Racing Challenge Points (Awarded Monthly)',
-                    value: '• 1st Place: 3 points\n' +
+                    name: '🏎️ Racing Challenge',
+                    value: '**Points (Awarded Monthly):**\n' +
+                           '• 1st Place: 3 points\n' +
                            '• 2nd Place: 2 points\n' +
-                           '• 3rd Place: 1 point\n\n' +
-                           'Racing points are awarded at the end of each month\'s challenge.'
+                           '• 3rd Place: 1 point'
                 },
                 {
-                    name: '🎮 Arcade Leaderboard Points',
-                    value: 'Awarded annually on December 1st:\n' +
+                    name: '🎮 Arcade Leaderboard',
+                    value: '**Points (Awarded December 1st):**\n' +
                            '• 1st Place: 3 points\n' +
                            '• 2nd Place: 2 points\n' +
                            '• 3rd Place: 1 point\n\n' +
-                           'Points are awarded for each arcade board, so you can earn points from multiple boards.'
+                           'Points awarded for each arcade board separately.'
                 },
                 {
-                    name: '🏅 Community Awards',
-                    value: 'Special community awards may be given by admins for notable achievements or contributions. These typically range from 1-3 points per award.'
-                },
-                {
-                    name: '📊 Leaderboards & Records',
-                    value: '• `/leaderboard` - View the current monthly challenge standings\n' +
-                           '• `/yearlyboard` - See the cumulative points leaderboard for the year\n' +
-                           '• `/profile` - Check your personal achievements and points\n\n' +
-                           'On December 1st, all points are totaled and prizes are awarded to the top performers across all categories.'
+                    name: '📊 Tracking Progress',
+                    value: '• `/leaderboard` - Monthly challenge standings\n' +
+                           '• `/yearlyboard` - Annual points leaderboard\n' +
+                           '• `/profile` - Personal achievements and points'
                 }
             )
-            .setFooter({ text: 'Press "Back to Menu" to return to the main menu' })
+            .setFooter({ text: 'For detailed points breakdown, use the /rules command' })
             .setTimestamp();
     },
 
@@ -648,102 +616,65 @@ export default {
             .setDescription('Our monthly challenges are determined through a community nomination and voting process:')
             .addFields(
                 {
-                    name: '🗳️ Nomination Process',
-                    value: '1. Each member can nominate up to **2 games per month**\n' +
-                           '2. Use the `/nominate gameid:X` command with the RetroAchievements game ID\n' +
-                           '3. Game IDs can be found in the RetroAchievements URL, e.g.:\n' +
-                           '   `https://retroachievements.org/game/1` → Game ID is `1`\n' +
-                           '4. Use `/nominations` to view all current nominations'
+                    name: '🗳️ How to Nominate',
+                    value: '• Each member can nominate up to **2 games per month**\n' +
+                           '• Use `/nominate gameid:X` with the RetroAchievements game ID\n' +
+                           '• Find Game IDs in RetroAchievements URLs: `retroachievements.org/game/1` → ID is `1`\n' +
+                           '• View all nominations with `/nominations`'
                 },
                 {
                     name: '🗳️ Voting Process',
-                    value: '1. During the last week of each month, **10 games are randomly selected** from all nominations\n' +
-                           '2. A voting poll is created in the designated channel\n' +
-                           '3. Community members can vote for up to 2 games\n' +
-                           '4. The game with the most votes becomes the next monthly challenge'
+                    value: '• Last week of month: **10 games randomly selected** from nominations\n' +
+                           '• Community members vote for up to 2 games\n' +
+                           '• Game with most votes becomes next monthly challenge'
                 },
                 {
                     name: '📋 Nomination Guidelines',
-                    value: 'When nominating games, consider:\n' +
-                           '• **Accessibility**: Choose games available on common platforms\n' +
-                           '• **Achievement Balance**: Games with a good mix of easy to challenging achievements\n' +
-                           '• **Completion Time**: Ideally games that can be completed within a month\n' +
-                           '• **Variety**: Different genres or consoles from recent challenges\n' +
-                           '• **Platform Eligibility**: PlayStation 2 and GameCube games are **not eligible** for nomination'
+                    value: 'Consider these factors when nominating:\n' +
+                           '• **Accessibility**: Games available on common platforms\n' +
+                           '• **Balance**: Mix of easy to challenging achievements\n' +
+                           '• **Completion Time**: Games beatable within a month\n' +
+                           '• **PS2 and GameCube games are NOT eligible**'
                 },
                 {
-                    name: '💡 Other Suggestions',
-                    value: 'Want to suggest other improvements to the community?\n' +
-                           '• Use `/suggest` to recommend arcade boards, racing challenges, bot features, or other ideas\n' +
-                           '• View existing suggestions to see what others have proposed'
-                },
-                {
-                    name: 'Need to Change Your Nomination?',
-                    value: 'If you want to change your nomination, ask an admin to use the `/clearnominations` command to reset your nominations'
+                    name: '💡 Need to Change Your Nomination?',
+                    value: 'Ask an admin to use `/clearnominations` to reset your nominations'
                 }
             )
-            .setFooter({ text: 'Press "Supported Platforms" to see eligible platforms or "Back to Menu" to return to the main menu' })
+            .setFooter({ text: 'Press "Supported Platforms" to see eligible platforms or "Back to Menu" to return' })
             .setTimestamp();
     },
     
-    async createCommunityEmbed() {
+    async createRulesEmbed() {
         return new EmbedBuilder()
-            .setTitle('Community Guidelines')
+            .setTitle('Community Rules')
             .setColor('#3498DB')
-            .setDescription('Rules and information for the Select Start Gaming Community')
+            .setDescription('Key rules for the Select Start Gaming Community:')
             .addFields(
                 {
-                    name: 'General Conduct',
-                    value: '1. Treat all members with respect\n' +
-                           '2. No harassment, discrimination, or hate speech\n' +
-                           '3. Keep discussions family-friendly\n' +
-                           '4. Follow channel topic guidelines\n' +
-                           '5. Listen to and respect admin/mod decisions'
+                    name: '👤 Conduct',
+                    value: '• Treat all members with respect\n' +
+                           '• No harassment or hate speech\n' +
+                           '• Keep discussions family-friendly\n' +
+                           '• Follow channel topic guidelines'
                 },
                 {
-                    name: 'Challenge Participation',
-                    value: '1. No cheating or exploitation of games\n' +
-                           '2. Report technical issues to admins\n' +
-                           '3. Submit scores/achievements honestly\n' +
-                           '4. Help maintain a fair competition\n' +
-                           '5. Celebrate others\' achievements'
+                    name: '🎮 Achievement Requirements',
+                    value: '• **HARDCORE MODE REQUIRED** for all challenges\n' +
+                           '• No save states or rewind features\n' +
+                           '• Fast forward is permitted\n' +
+                           '• Submit achievements honestly\n' +
+                           '• Follow all RetroAchievements rules'
                 },
                 {
-                    name: '⚠️ RetroAchievements Hardcore Mode Required',
-                    value: 'For all challenges and competitions:\n' +
-                           '1. You **must** play in RetroAchievements Hardcore Mode\n' +
-                           '2. Save states and rewind features are **not allowed**\n' +
-                           '3. Fast forward is permitted\n' +
-                           '4. Only achievements earned in Hardcore Mode will count toward challenge standings'
+                    name: '📝 Registration',
+                    value: '• You must be registered by an admin using `/register`\n' +
+                           '• RetroAchievements username must be linked to Discord\n' +
+                           '• Place in top 999 of global leaderboard for arcade rankings'
                 },
                 {
-                    name: 'Communication Channels',
-                    value: '**#general-chat**\n' +
-                           '• General discussion and community chat\n\n' +
-                           '**#monthly-challenge**\n' +
-                           '• Discuss current challenges\n' +
-                           '• Share tips and strategies\n\n' +
-                           '**#shadow-game**\n' +
-                           '• Discuss the shadow game challenge/share clues\n\n' +
-                           '**#the-arcade**\n' +
-                           '• Discuss the arcade board challenges\n\n' +
-                           '**#off-topic**\n' +
-                           '• For all non gaming/specific topic discussion'
-                },
-                {
-                    name: 'Registration & Participation',
-                    value: 'To participate in challenges:\n' +
-                           '1. You must be registered by an admin using the `/register` command\n' +
-                           '2. Your RetroAchievements username must be linked to your Discord account\n' +
-                           '3. Only achievements earned during the challenge period count for scoring\n' +
-                           '4. Use `/profile` to track your progress and points'
-                },
-                {
-                    name: 'Community Feedback',
-                    value: 'We welcome your ideas to improve the community:\n' +
-                           '1. Use `/suggest` to submit ideas for arcade boards, racing challenges, or bot improvements\n' +
-                           '2. Provide constructive feedback in a respectful manner\n' +
-                           '3. Consider suggesting ideas that benefit the broader community'
+                    name: '📜 Detailed Rules',
+                    value: 'For a complete explanation of all community rules and guidelines, use the `/rules` command'
                 }
             )
             .setFooter({ text: 'Press "Back to Menu" to return to the main menu' })
@@ -755,11 +686,11 @@ export default {
         return new EmbedBuilder()
             .setTitle('Supported RetroAchievements Platforms')
             .setColor('#3498DB')
-            .setDescription('Here are all the platforms currently supported by RetroAchievements. Note that PlayStation 2 and GameCube games are not eligible for nomination in our monthly challenges.')
+            .setDescription('Platforms supported by RetroAchievements for monthly challenges:')
             .addFields(
                 {
                     name: 'Nintendo',
-                    value: '• Game Boy\n• Game Boy Color\n• Game Boy Advance\n• NES/Famicom\n• SNES/Super Famicom\n• Nintendo 64\n• Virtual Boy\n• Pokémon Mini'
+                    value: '• Game Boy/Color/Advance\n• NES/Famicom\n• SNES/Super Famicom\n• Nintendo 64\n• Virtual Boy\n• Pokémon Mini'
                 },
                 {
                     name: 'Sega',
@@ -770,24 +701,12 @@ export default {
                     value: '• PlayStation\n• PlayStation Portable'
                 },
                 {
-                    name: 'Atari',
-                    value: '• Atari 2600\n• Atari 7800\n• Atari Jaguar\n• Atari Jaguar CD\n• Atari Lynx'
+                    name: 'Other Notable Systems',
+                    value: '• Atari (2600, 7800, Jaguar, Lynx)\n• TurboGrafx-16/PC Engine\n• Neo Geo/Pocket\n• 3DO\n• ColecoVision\n• MSX\n• Vectrex\n• WonderSwan'
                 },
                 {
-                    name: 'NEC',
-                    value: '• PC Engine/TurboGrafx-16\n• PC Engine CD/TurboGrafx-CD\n• PC-8000/8800\n• PC-FX'
-                },
-                {
-                    name: 'SNK',
-                    value: '• Neo Geo CD\n• Neo Geo Pocket'
-                },
-                {
-                    name: 'Others',
-                    value: '• 3DO Interactive Multiplayer\n• Amstrad CPC\n• Apple II\n• Arcade\n• Arcadia 2001\n• Arduboy\n• ColecoVision\n• Elektor TV Games Computer\n• Fairchild Channel F\n• Intellivision\n• Interton VC 4000\n• Magnavox Odyssey 2\n• Mega Duck\n• MSX\n• Standalone\n• Uzebox\n• Vectrex\n• WASM-4\n• Watara Supervision\n• WonderSwan'
-                },
-                {
-                    name: 'Not Eligible for Nomination',
-                    value: '• PlayStation 2\n• GameCube (These platforms are not currently eligible for our monthly challenges)'
+                    name: 'Not Eligible',
+                    value: '• PlayStation 2\n• GameCube'
                 }
             )
             .setFooter({ text: 'Press "Back to Nominations" to return to the nominations menu' })
