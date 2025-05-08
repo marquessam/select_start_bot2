@@ -4,8 +4,7 @@ import {
     ActionRowBuilder,
     ButtonBuilder,
     ButtonStyle,
-    ComponentType,
-    PermissionFlagsBits
+    ComponentType
 } from 'discord.js';
 import { User } from '../../models/User.js';
 import retroAPI from '../../services/retroAPI.js';
@@ -17,49 +16,44 @@ const MEMBER_ROLE_ID = '1316292690870014002';
 export default {
     data: new SlashCommandBuilder()
         .setName('register')
-        .setDescription('Register a new user for challenges')
-        .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild) // Admin command
-        .addUserOption(option =>
-            option.setName('discord_user')
-            .setDescription('The Discord username or ID (can be for users not on server)')
-            .setRequired(true))
+        .setDescription('Register yourself for RetroAchievements challenges')
         .addStringOption(option =>
             option.setName('ra_username')
-            .setDescription('The RetroAchievements username')
+            .setDescription('Your RetroAchievements username')
             .setRequired(true)),
 
     async execute(interaction) {
-        await interaction.deferReply();
+        await interaction.deferReply({ ephemeral: true });
 
         try {
-            const discordUser = interaction.options.getUser('discord_user');
+            const discordUser = interaction.user;
             const raUsername = interaction.options.getString('ra_username');
 
             // Check if user already exists
             const existingUser = await User.findOne({
                 $or: [
                     { discordId: discordUser.id },
-                    { raUsername: { $regex: new RegExp(`^${raUsername}$`, 'i') } }
+                    { raUsername: { $regex: new RegExp(`^${raUsername}, 'i') } }
                 ]
             });
 
             if (existingUser) {
                 return interaction.editReply(
-                    'This user is already registered. ' +
-                    `${existingUser.discordId === discordUser.id ? 'Discord ID' : 'RA username'} is already in use.`
+                    'You are already registered. ' +
+                    `${existingUser.discordId === discordUser.id ? 'Your Discord ID' : 'This RA username'} is already in use.`
                 );
             }
 
             // Validate RA username exists
             const isValidUser = await retroAPI.validateUser(raUsername);
             if (!isValidUser) {
-                return interaction.editReply('Invalid RetroAchievements username. Please check the username and try again.');
+                return interaction.editReply('Invalid RetroAchievements username. Please check your username and try again.');
             }
 
             // Create guidelines confirmation embed
             const guidelinesEmbed = new EmbedBuilder()
                 .setTitle('Community Guidelines Confirmation')
-                .setDescription(`Please confirm that ${discordUser.tag} understands and agrees to the following community guidelines:`)
+                .setDescription(`Please confirm that you understand and agree to the following community guidelines:`)
                 .setColor('#3498DB')
                 .addFields(
                     {
@@ -96,7 +90,7 @@ export default {
 
             // Send embed with buttons
             const confirmationMessage = await interaction.editReply({
-                content: `Registration for ${discordUser.tag} (${raUsername}) requires confirmation:`,
+                content: `Please confirm your registration with RetroAchievements username: **${raUsername}**`,
                 embeds: [guidelinesEmbed],
                 components: [row]
             });
@@ -112,7 +106,7 @@ export default {
                 // Only allow the original interaction user to confirm
                 if (i.user.id !== interaction.user.id) {
                     await i.reply({ 
-                        content: 'Only the admin who initiated this registration can confirm it.',
+                        content: 'Only the user who initiated this registration can confirm it.',
                         ephemeral: true 
                     });
                     return;
@@ -155,12 +149,12 @@ export default {
 
                     // Update message with registration confirmation
                     await i.editReply({
-                        content: `✅ Successfully registered user!\n` +
-                               `Discord: ${discordUser.tag}\n` +
-                               `RA Username: ${raUsername}\n` +
+                        content: `✅ Registration successful!\n` +
+                               `Your RetroAchievements account **${raUsername}** has been linked to your Discord account.\n` +
                                `RA Profile: https://retroachievements.org/user/${raUsername}\n` +
                                `Total Points: ${raUserInfo.points}\n` +
-                               `Total Games: ${raUserInfo.totalGames}`,
+                               `Total Games: ${raUserInfo.totalGames}\n\n` +
+                               `You've been assigned the Member role and can now participate in challenges!`,
                         embeds: [],
                         components: [disabledRow]
                     });
@@ -178,7 +172,7 @@ export default {
 
                     // Update message with cancellation confirmation
                     await i.editReply({
-                        content: `❌ Registration cancelled for ${discordUser.tag} (${raUsername}).`,
+                        content: `❌ Registration cancelled.`,
                         embeds: [],
                         components: [disabledRow]
                     });
@@ -202,7 +196,7 @@ export default {
                         );
 
                     await interaction.editReply({
-                        content: `⏱️ Registration timed out for ${discordUser.tag} (${raUsername}). Please try again.`,
+                        content: `⏱️ Registration timed out. Please try again if you still want to register.`,
                         embeds: [],
                         components: [timeoutRow]
                     });
