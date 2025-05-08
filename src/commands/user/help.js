@@ -377,13 +377,12 @@ export default {
                         name: '⚠️ Key Requirements',
                         value: '• **HARDCORE MODE REQUIRED** - No save states or rewind\n' +
                                '• Fast forward is allowed\n' +
-                               '• Must earn achievements during the challenge month\n' +
-                               '• One grace period on the last day of previous month\n\n' +
+                               '• Must earn achievements during the challenge month\n\n' +
                                'Use `/challenge` to see current challenges and `/leaderboard` for standings'
                     },
                     {
                         name: '⚔️ Tiebreakers',
-                        value: 'When users tie in the monthly standings, tiebreaker competitions may be created to determine final rankings.'
+                        value: 'When users tie in the monthly standings, tiebreaker competitions will typically be created. Anyone can participate in tiebreakers, but only scores from tied users will count toward final rankings. Tiebreakers usually end with the monthly challenge but may be extended in special circumstances.'
                     }
                 )
                 .setFooter({ text: 'For detailed rules, use the /rules command' })
@@ -461,7 +460,7 @@ export default {
                     name: '🔍 Guessing the Shadow Game',
                     value: 'Use `/shadowguess` with the exact game title\n\n' +
                            'Correct guesses reveal the game for everyone. No penalties for wrong guesses.\n\n' +
-                           'Hint: Shadow games often relate thematically to the monthly challenge!'
+                           'Hint: While shadow games may be thematically related to the monthly challenge, they typically offer different gameplay experiences (different genre, length, or tone)!'
                 })
                 .setFooter({ text: 'For detailed rules, use the /rules command' })
                 .setTimestamp();
