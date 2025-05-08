@@ -66,24 +66,8 @@ export default {
                 return interaction.editReply(`Games for ${gameInfo.consoleName} are not eligible for nomination. Please nominate a game from a different console.`);
             }
 
-            // Helper function to get current month's nominations since we can't use the method
-            function getCurrentNominations(user) {
-                if (!user.nominations || !Array.isArray(user.nominations)) {
-                    return [];
-                }
-                
-                const now = new Date();
-                const currentMonth = now.getMonth();
-                const currentYear = now.getFullYear();
-                
-                return user.nominations.filter(nom => {
-                    const nomDate = new Date(nom.nominatedAt);
-                    return nomDate.getMonth() === currentMonth && nomDate.getFullYear() === currentYear;
-                });
-            }
-            
             // Get current nominations for the user
-            const currentNominations = getCurrentNominations(user);
+            const currentNominations = user.getCurrentNominations();
             
             // Check if user already nominated this game
             const existingNomination = currentNominations.find(nom => nom.gameId === gameId);
