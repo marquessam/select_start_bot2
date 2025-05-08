@@ -7,15 +7,15 @@ const MEMBER_ROLE_ID = '1316292690870014002';
 
 export default {
     data: new SlashCommandBuilder()
-        .setName('clearuser')
-        .setDescription('Completely clear a user to allow re-registration')
+        .setName('removeuser')
+        .setDescription('Completely remove a user to allow re-registration')
         .addStringOption(option =>
             option.setName('ra_username')
-            .setDescription('The RetroAchievements username to clear')
+            .setDescription('The RetroAchievements username to remove')
             .setRequired(true))
         .addUserOption(option =>
             option.setName('discord_user')
-            .setDescription('The Discord user to clear (optional)')
+            .setDescription('The Discord user to remove (optional)')
             .setRequired(false)),
 
     async execute(interaction) {
@@ -55,8 +55,8 @@ export default {
                 return interaction.editReply('No users found matching the provided criteria.');
             }
             
-            // Keep track of cleared users for reporting
-            const clearedUsers = [];
+            // Keep track of removed users for reporting
+            const removedUsers = [];
             
             // Process each matching user
             for (const user of users) {
@@ -86,7 +86,7 @@ export default {
                     console.error('Error fetching Discord user:', fetchError);
                 }
                 
-                clearedUsers.push({
+                removedUsers.push({
                     raUsername: user.raUsername,
                     discordInfo
                 });
@@ -96,9 +96,9 @@ export default {
             }
             
             // Generate response message
-            let responseContent = `${clearedUsers.length} user(s) cleared successfully:\n\n`;
+            let responseContent = `${removedUsers.length} user(s) removed successfully:\n\n`;
             
-            clearedUsers.forEach((user, index) => {
+            removedUsers.forEach((user, index) => {
                 responseContent += `${index + 1}. RA Username: ${user.raUsername}\n   Discord: ${user.discordInfo}\n\n`;
             });
             
@@ -109,8 +109,8 @@ export default {
             });
 
         } catch (error) {
-            console.error('Error clearing user:', error);
-            return interaction.editReply('An error occurred while clearing the user data. Please try again.');
+            console.error('Error removing user:', error);
+            return interaction.editReply('An error occurred while removing the user data. Please try again.');
         }
     }
 };
