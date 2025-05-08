@@ -340,7 +340,6 @@ export default {
                 {
                     name: '📆 Time Restrictions',
                     value: '• **Monthly Challenge Timeframe** - From 12:00 AM on the 1st day to 11:59 PM on the last day of the month\n' +
-                           '• **Grace Period** - Previous day grace period for the monthly challenge only applies to the last day of the previous month\n' +
                            '• **Racing Challenge Duration** - As specified in the challenge announcement, typically one calendar month\n' +
                            '• **Arcade Boards** - Open year-round until December 1st when points are calculated\n' +
                            '• **Tiebreakers** - Special tiebreaker challenges have their own specified timeframes'
@@ -356,10 +355,10 @@ export default {
                 {
                     name: '⚖️ Tie Resolution',
                     value: '• **Identical Mastery** - When users reach identical mastery status in monthly challenges\n' +
-                           '• **Tiebreaker Events** - Special tiebreaker competitions may be created\n' +
-                           '• **Participation Requirement** - Only tied users can participate in tiebreakers\n' +
+                           '• **Tiebreaker Events** - Special tiebreaker competitions will typically be created\n' +
+                           '• **Participation** - Anyone can participate in tiebreakers, but only tied users\' scores count toward final rankings\n' +
                            '• **Tiebreaker Format** - Usually involves a time-limited competition on a separate game\n' +
-                           '• **Admins\' Decision** - In some cases, ties may be resolved by admin decision based on achievement timestamps'
+                           '• **Timeline** - Usually ends with the monthly challenge but may be extended in special circumstances (e.g., a tie within a tie)'
                 },
                 {
                     name: '🚫 Disqualification',
@@ -574,7 +573,7 @@ export default {
                     name: '🧩 Shadow Game Concept',
                     value: '• **Definition** - A hidden game challenge that runs alongside the monthly challenge\n' +
                            '• **Purpose** - Adds mystery and variety to the monthly competitions\n' +
-                           '• **Theme Connection** - Often thematically related to the main monthly challenge\n' +
+                           '• **Game Style** - While thematically connected to the main challenge, shadow games typically offer different gameplay experiences (different genre, length, or tone)\n' +
                            '• **Discovery Mechanic** - Must be correctly guessed by a community member to be revealed\n' +
                            '• **Automatic Reveal** - Past month shadow games are automatically revealed'
                 },
@@ -583,7 +582,7 @@ export default {
                     value: '• **Command Usage** - Use `/shadowguess` with the exact title of the game\n' +
                            '• **Guess Format** - Submit the exact game title as it appears on RetroAchievements\n' +
                            '• **Guess Limit** - No limit to the number of guesses\n' +
-                           '• **Guess Privacy** - All guesses are private (only visible to you)\n' +
+                           '• **Guess Visibility** - All guesses are visible to everyone in the channel\n' +
                            '• **Successful Guess** - Correct guesses reveal the game for everyone\n' +
                            '• **Hint System** - Occasional hints may be shared by admins in the #shadow-game channel'
                 },
@@ -759,11 +758,10 @@ export default {
                 },
                 {
                     name: '🏅 Community Awards',
-                    value: '**SPECIAL RECOGNITION POINTS:**\n' +
-                           '• **Discovery Award** - 1 point (First to correctly guess the shadow game)\n' +
-                           '• **Community Contribution** - 1-3 points (Exceptional contributions to the community)\n' +
-                           '• **Special Event Winner** - 1-3 points (Winners of special events and contests)\n' +
-                           '• **Seasonal Champion** - 1-3 points (Outstanding performance across multiple months)\n\n' +
+                    value: '**SPECIAL RECOGNITION:**\n' +
+                           '• **Community Contribution** - Exceptional contributions to the community\n' +
+                           '• **Special Event Winner** - Winners of special events and contests\n' +
+                           '• **Seasonal Champion** - Outstanding performance across multiple months\n\n' +
                            'These awards are given at the discretion of the admin team for notable achievements and contributions.'
                 },
                 {
@@ -777,14 +775,15 @@ export default {
                 },
                 {
                     name: '🏆 Annual Awards',
-                    value: '**DECEMBER 1ST AWARDS:**\n' +
+                    value: '**DECEMBER 1ST AWARDS (TBD):**\n' +
+                           'Annual awards may include categories such as:\n' +
                            '• **Grand Champion** - Highest overall point earner for the year\n' +
                            '• **Monthly Master** - Most monthly challenge points\n' +
                            '• **Shadow Seeker** - Most shadow game points\n' +
                            '• **Racing Champion** - Most racing challenge points\n' +
                            '• **Arcade Legend** - Most arcade board points\n' +
-                           '• **Community Star** - Most community contribution points\n\n' +
-                           'Special prizes and recognition are awarded in each category. All points reset after the December awards.'
+                           '• **Community Star** - Community contributions\n\n' +
+                           'Specific award categories and prizes will be determined closer to the event. All points reset after the December awards.'
                 }
             )
             .setFooter({ text: 'Select Start Gaming Community • Updated Rules' })
