@@ -66,8 +66,24 @@ export default {
                 return interaction.editReply(`Games for ${gameInfo.consoleName} are not eligible for nomination. Please nominate a game from a different console.`);
             }
 
+            // Helper function to get current month's nominations since we can't use the method
+            function getCurrentNominations(user) {
+                if (!user.nominations || !Array.isArray(user.nominations)) {
+                    return [];
+                }
+                
+                const now = new Date();
+                const currentMonth = now.getMonth();
+                const currentYear = now.getFullYear();
+                
+                return user.nominations.filter(nom => {
+                    const nomDate = new Date(nom.nominatedAt);
+                    return nomDate.getMonth() === currentMonth && nomDate.getFullYear() === currentYear;
+                });
+            }
+            
             // Get current nominations for the user
-            const currentNominations = user.getCurrentNominations();
+            const currentNominations = getCurrentNominations(user);
             
             // Check if user already nominated this game
             const existingNomination = currentNominations.find(nom => nom.gameId === gameId);
@@ -87,7 +103,20 @@ export default {
             const achievementCount = await retroAPI.getGameAchievementCount(gameId);
             
             // Add the nomination
-            user.nominate(gameId);
+            // Since user.nominate() doesn't exist, we'll implement the nomination logic here
+            const now = new Date();
+            
+            // Check if nominations array exists, if not, initialize it
+            if (!user.nominations) {
+                user.nominations = [];
+            }
+            
+            // Add new nomination with current date
+            user.nominations.push({
+                gameId: gameId,
+                nominatedAt: now
+            });
+            
             await user.save();
             
             // Create embed for confirmation
