@@ -686,11 +686,11 @@ export default {
         return new EmbedBuilder()
             .setTitle('Supported RetroAchievements Platforms')
             .setColor('#3498DB')
-            .setDescription('Platforms supported by RetroAchievements for monthly challenges:')
+            .setDescription('Complete list of platforms supported by RetroAchievements. Note that PlayStation 2 and GameCube games are not eligible for nomination in our monthly challenges.')
             .addFields(
                 {
                     name: 'Nintendo',
-                    value: '• Game Boy/Color/Advance\n• NES/Famicom\n• SNES/Super Famicom\n• Nintendo 64\n• Virtual Boy\n• Pokémon Mini'
+                    value: '• Game Boy\n• Game Boy Color\n• Game Boy Advance\n• NES/Famicom\n• SNES/Super Famicom\n• Nintendo 64\n• Nintendo DS\n• Nintendo DSi\n• Pokémon Mini\n• Virtual Boy'
                 },
                 {
                     name: 'Sega',
@@ -701,11 +701,23 @@ export default {
                     value: '• PlayStation\n• PlayStation Portable'
                 },
                 {
-                    name: 'Other Notable Systems',
-                    value: '• Atari (2600, 7800, Jaguar, Lynx)\n• TurboGrafx-16/PC Engine\n• Neo Geo/Pocket\n• 3DO\n• ColecoVision\n• MSX\n• Vectrex\n• WonderSwan'
+                    name: 'Atari',
+                    value: '• Atari 2600\n• Atari 7800\n• Atari Jaguar\n• Atari Jaguar CD\n• Atari Lynx'
                 },
                 {
-                    name: 'Not Eligible',
+                    name: 'NEC',
+                    value: '• PC Engine/TurboGrafx-16\n• PC Engine CD/TurboGrafx-CD\n• PC-8000/8800\n• PC-FX'
+                },
+                {
+                    name: 'SNK',
+                    value: '• Neo Geo CD\n• Neo Geo Pocket'
+                },
+                {
+                    name: 'Others',
+                    value: '• 3DO Interactive Multiplayer\n• Amstrad CPC\n• Apple II\n• Arcade\n• Arcadia 2001\n• Arduboy\n• ColecoVision\n• Elektor TV Games Computer\n• Fairchild Channel F\n• Intellivision\n• Interton VC 4000\n• Magnavox Odyssey 2\n• Mega Duck\n• MSX\n• Standalone\n• Uzebox\n• Vectrex\n• WASM-4\n• Watara Supervision\n• WonderSwan'
+                },
+                {
+                    name: 'Not Eligible for Nomination',
                     value: '• PlayStation 2\n• GameCube'
                 }
             )
