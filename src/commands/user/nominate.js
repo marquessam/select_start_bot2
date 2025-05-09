@@ -86,7 +86,7 @@ export default {
             // Get achievement count for the game
             const achievementCount = await retroAPI.getGameAchievementCount(gameId);
             
-            // Add the nomination
+            // Add the nomination with all required fields
             // Since user.nominate() doesn't exist, we'll implement the nomination logic here
             const now = new Date();
             
@@ -95,18 +95,20 @@ export default {
                 user.nominations = [];
             }
             
-            // Add new nomination with current date
+            // Add new nomination with current date AND game information
             user.nominations.push({
                 gameId: gameId,
+                gameTitle: gameInfo.title,
+                consoleName: gameInfo.consoleName,
                 nominatedAt: now
             });
             
             await user.save();
             
-            // Create embed for confirmation
+            // Create embed for confirmation - using RA username instead of Discord username
             const embed = new EmbedBuilder()
                 .setTitle('Game Nomination')
-                .setDescription(`${interaction.user.username} has nominated a game for next month's challenge:`)
+                .setDescription(`${user.raUsername} has nominated a game for next month's challenge:`)
                 .setColor('#00FF00')
                 .addFields(
                     { name: 'Game', value: gameInfo.title },
