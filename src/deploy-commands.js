@@ -17,7 +17,10 @@ for (const file of adminCommandFiles) {
     const filePath = join(adminCommandsPath, file);
     const command = await import(`file://${filePath}`);
     if ('data' in command.default && 'execute' in command.default) {
-        commands.push(command.default.data.toJSON());
+        // Set default permissions to Administrator (0) for all admin commands
+        const commandData = command.default.data.toJSON();
+        commandData.default_member_permissions = '0';
+        commands.push(commandData);
     }
 }
 
