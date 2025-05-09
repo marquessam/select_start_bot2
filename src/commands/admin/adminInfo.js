@@ -1,62 +1,171 @@
 import { 
     SlashCommandBuilder, 
     EmbedBuilder,
+    ActionRowBuilder,
+    StringSelectMenuBuilder,
+    ComponentType,
     PermissionFlagsBits
 } from 'discord.js';
 import { ArcadeBoard } from '../../models/ArcadeBoard.js';
 import { Challenge } from '../../models/Challenge.js';
 import retroAPI from '../../services/retroAPI.js';
+import { config } from '../../config/config.js';
 
 export default {
     data: new SlashCommandBuilder()
         .setName('admininfo')
-        .setDescription('Admin commands to display shareable information')
-        .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('arcade')
-                .setDescription('Display a shareable list of all arcade boards')
-        )
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('challenges')
-                .setDescription('Display a shareable list of current challenges')
-        )
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('overview')
-                .setDescription('Display a shareable community overview')
-        )
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('commands')
-                .setDescription('Display a shareable list of available commands')
-        )
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('rules')
-                .setDescription('Display shareable community rules and guidelines')
-        ),
+        .setDescription('Display shareable information about the community')
+        .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
 
     async execute(interaction) {
-        const subcommand = interaction.options.getSubcommand();
-        
-        if (subcommand === 'arcade') {
-            await this.handleArcadeBoards(interaction);
-        } else if (subcommand === 'challenges') {
-            await this.handleChallenges(interaction);
-        } else if (subcommand === 'overview') {
-            await this.handleOverview(interaction);
-        } else if (subcommand === 'commands') {
-            await this.handleCommands(interaction);
-        } else if (subcommand === 'rules') {
-            await this.handleRules(interaction);
+        // Check if user has admin role
+        if (!interaction.member.roles.cache.has(config.bot.roles.admin)) {
+            return interaction.reply({
+                content: 'You do not have permission to use this command.',
+                ephemeral: true
+            });
         }
+
+        // Create the selection menu embed
+        const menuEmbed = new EmbedBuilder()
+            .setColor('#3498DB')
+            .setTitle('Information Selection')
+            .setDescription('Select the type of information you want to display to the community:')
+            .addFields(
+                { 
+                    name: 'Available Information', 
+                    value: '• **Arcade Boards** - List of all arcade boards\n' +
+                           '• **Challenges** - Current monthly and shadow challenges\n' +
+                           '• **Overview** - Community overview and description\n' +
+                           '• **Commands** - List of available commands for users\n' +
+                           '• **Rules** - Community rules and guidelines'
+                }
+            )
+            .setFooter({ text: 'Select an option from the dropdown menu below' })
+            .setTimestamp();
+
+        // Create the dropdown menu
+        const actionRow = new ActionRowBuilder()
+            .addComponents(
+                new StringSelectMenuBuilder()
+                    .setCustomId('info_selection')
+                    .setPlaceholder('Select information type')
+                    .addOptions([
+                        {
+                            label: 'Arcade Boards',
+                            description: 'Display a list of all arcade boards',
+                            value: 'arcade',
+                            emoji: '🎮'
+                        },
+                        {
+                            label: 'Challenges',
+                            description: 'Display current monthly and shadow challenges',
+                            value: 'challenges',
+                            emoji: '🏆'
+                        },
+                        {
+                            label: 'Community Overview',
+                            description: 'Display general community information',
+                            value: 'overview',
+                            emoji: 'ℹ️'
+                        },
+                        {
+                            label: 'Available Commands',
+                            description: 'Display list of available commands',
+                            value: 'commands',
+                            emoji: '📋'
+                        },
+                        {
+                            label: 'Rules & Guidelines',
+                            description: 'Display community rules and guidelines',
+                            value: 'rules',
+                            emoji: '📜'
+                        }
+                    ])
+            );
+
+        // Send the initial menu - ephemeral so only admin sees the menu
+        const message = await interaction.reply({
+            embeds: [menuEmbed],
+            components: [actionRow],
+            ephemeral: true
+        });
+
+        // Set up collector for menu interactions
+        const collector = message.createMessageComponentCollector({
+            componentType: ComponentType.StringSelect,
+            time: 300000 // 5 minutes timeout
+        });
+
+        collector.on('collect', async i => {
+            if (i.user.id === interaction.user.id) {
+                try {
+                    // Defer update to indicate we're processing
+                    await i.deferUpdate();
+                    
+                    // Get selected value
+                    const selectedValue = i.values[0];
+                    
+                    // Generate a non-ephemeral response based on selection that everyone can see
+                    switch(selectedValue) {
+                        case 'arcade':
+                            await this.handleArcadeBoards(i);
+                            break;
+                        case 'challenges':
+                            await this.handleChallenges(i);
+                            break;
+                        case 'overview':
+                            await this.handleOverview(i);
+                            break;
+                        case 'commands':
+                            await this.handleCommands(i);
+                            break;
+                        case 'rules':
+                            await this.handleRules(i);
+                            break;
+                        default:
+                            await i.editReply('Invalid selection. Please try again.');
+                    }
+                    
+                    // Stop the collector after handling selection
+                    collector.stop();
+                } catch (error) {
+                    console.error('Error handling info selection:', error);
+                    await i.editReply('An error occurred while processing your selection. Please try again.');
+                }
+            } else {
+                await i.reply({ 
+                    content: 'This menu is not for you. Please use the `/admininfo` command to start your own session.',
+                    ephemeral: true 
+                });
+            }
+        });
+
+        // Handle collector end event
+        collector.on('end', async (collected, reason) => {
+            if (reason === 'time' && collected.size === 0) {
+                // Only update if it was a timeout and no selections were made
+                try {
+                    const disabledRow = new ActionRowBuilder()
+                        .addComponents(
+                            StringSelectMenuBuilder.from(actionRow.components[0]).setDisabled(true)
+                        );
+                    
+                    await interaction.editReply({
+                        embeds: [menuEmbed.setFooter({ text: 'This menu has expired. Please run /admininfo again.' })],
+                        components: [disabledRow]
+                    });
+                } catch (error) {
+                    console.error('Error disabling menu:', error);
+                }
+            }
+        });
     },
 
+    /**
+     * Handle arcade boards information display
+     */
     async handleArcadeBoards(interaction) {
-        await interaction.deferReply({ ephemeral: false }); // Not ephemeral so it can be seen by everyone
-
         try {
             // Get all arcade boards
             const boards = await ArcadeBoard.find({ boardType: 'arcade' });
@@ -99,16 +208,25 @@ export default {
                 value: 'Use `/arcade` to view detailed leaderboards and track your progress.' 
             });
             
-            await interaction.editReply({ embeds: [embed] });
+            // Send a public (non-ephemeral) message visible to everyone
+            await interaction.followUp({ embeds: [embed], ephemeral: false });
+            
+            // Confirm to admin that info was posted
+            await interaction.editReply({ 
+                content: 'Arcade boards information has been posted successfully.',
+                embeds: [],
+                components: []
+            });
         } catch (error) {
             console.error('Error listing arcade boards:', error);
             await interaction.editReply('An error occurred while retrieving arcade boards.');
         }
     },
 
+    /**
+     * Handle challenges information display
+     */
     async handleChallenges(interaction) {
-        await interaction.deferReply({ ephemeral: false }); // Not ephemeral so it can be seen by everyone
-
         try {
             const now = new Date();
             const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -163,7 +281,7 @@ export default {
 
             // Shadow Challenge
             if (currentChallenge && currentChallenge.shadow_challange_gameid && 
-                (currentChallenge.shadow_challange_revealed || isPastChallenge(currentChallenge.date))) {
+                (currentChallenge.shadow_challange_revealed || this.isPastChallenge(currentChallenge.date))) {
                 const shadowGameInfo = await retroAPI.getGameInfo(currentChallenge.shadow_challange_gameid);
                 const shadowUrl = `https://retroachievements.org/game/${currentChallenge.shadow_challange_gameid}`;
                 
@@ -206,16 +324,25 @@ export default {
                 });
             }
 
-            await interaction.editReply({ embeds: [embed] });
+            // Send a public (non-ephemeral) message visible to everyone
+            await interaction.followUp({ embeds: [embed], ephemeral: false });
+            
+            // Confirm to admin that info was posted
+            await interaction.editReply({ 
+                content: 'Current challenges information has been posted successfully.',
+                embeds: [],
+                components: []
+            });
         } catch (error) {
             console.error('Error retrieving challenges:', error);
             await interaction.editReply('An error occurred while retrieving challenge information.');
         }
     },
 
+    /**
+     * Handle community overview information display
+     */
     async handleOverview(interaction) {
-        await interaction.deferReply({ ephemeral: false }); // Not ephemeral so it can be seen by everyone
-
         try {
             const embed = new EmbedBuilder()
                 .setTitle('Community Overview')
@@ -246,16 +373,25 @@ export default {
                 .setFooter({ text: 'Select Start Gaming Community' })
                 .setTimestamp();
 
-            await interaction.editReply({ embeds: [embed] });
+            // Send a public (non-ephemeral) message visible to everyone
+            await interaction.followUp({ embeds: [embed], ephemeral: false });
+            
+            // Confirm to admin that info was posted
+            await interaction.editReply({ 
+                content: 'Community overview has been posted successfully.',
+                embeds: [],
+                components: []
+            });
         } catch (error) {
             console.error('Error showing overview:', error);
             await interaction.editReply('An error occurred while creating the overview information.');
         }
     },
 
+    /**
+     * Handle commands information display
+     */
     async handleCommands(interaction) {
-        await interaction.deferReply({ ephemeral: false }); // Not ephemeral so it can be seen by everyone
-
         try {
             const embed = new EmbedBuilder()
                 .setTitle('Available Commands')
@@ -291,16 +427,25 @@ export default {
                 .setFooter({ text: 'Select Start Gaming Community' })
                 .setTimestamp();
 
-            await interaction.editReply({ embeds: [embed] });
+            // Send a public (non-ephemeral) message visible to everyone
+            await interaction.followUp({ embeds: [embed], ephemeral: false });
+            
+            // Confirm to admin that info was posted
+            await interaction.editReply({ 
+                content: 'Commands information has been posted successfully.',
+                embeds: [],
+                components: []
+            });
         } catch (error) {
             console.error('Error showing commands:', error);
             await interaction.editReply('An error occurred while creating the commands information.');
         }
     },
 
+    /**
+     * Handle rules information display
+     */
     async handleRules(interaction) {
-        await interaction.deferReply({ ephemeral: false }); // Not ephemeral so it can be seen by everyone
-
         try {
             const embed = new EmbedBuilder()
                 .setTitle('Community Rules & Guidelines')
@@ -350,19 +495,27 @@ export default {
                 .setFooter({ text: 'Select Start Gaming Community' })
                 .setTimestamp();
 
-            await interaction.editReply({ embeds: [embed] });
+            // Send a public (non-ephemeral) message visible to everyone
+            await interaction.followUp({ embeds: [embed], ephemeral: false });
+            
+            // Confirm to admin that info was posted
+            await interaction.editReply({ 
+                content: 'Rules information has been posted successfully.',
+                embeds: [],
+                components: []
+            });
         } catch (error) {
             console.error('Error showing rules:', error);
             await interaction.editReply('An error occurred while creating the rules information.');
         }
+    },
+
+    // Helper function to check if a challenge is from a past month
+    isPastChallenge(challengeDate) {
+        const now = new Date();
+        // Challenge is in the past if it's from a previous month or previous year
+        return (challengeDate.getFullYear() < now.getFullYear()) ||
+               (challengeDate.getFullYear() === now.getFullYear() && 
+                challengeDate.getMonth() < now.getMonth());
     }
 };
-
-// Helper function to check if a challenge is from a past month
-function isPastChallenge(challengeDate) {
-    const now = new Date();
-    // Challenge is in the past if it's from a previous month or previous year
-    return (challengeDate.getFullYear() < now.getFullYear()) ||
-           (challengeDate.getFullYear() === now.getFullYear() && 
-            challengeDate.getMonth() < now.getMonth());
-}
