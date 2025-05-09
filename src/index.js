@@ -56,7 +56,7 @@ const loadCommands = async () => {
     }
 };
 
-// Handle interactions
+// Handle slash command interactions
 client.on(Events.InteractionCreate, async interaction => {
     if (!interaction.isChatInputCommand()) return;
 
@@ -76,6 +76,84 @@ client.on(Events.InteractionCreate, async interaction => {
             await interaction.followUp(errorMessage);
         } else {
             await interaction.reply(errorMessage);
+        }
+    }
+});
+
+// Handle button interactions
+client.on(Events.InteractionCreate, async interaction => {
+    if (!interaction.isButton()) return;
+    
+    try {
+        // Extract the command name from the customId (assuming format: commandName_action_etc)
+        const commandName = interaction.customId.split('_')[0];
+        const command = client.commands.get(commandName);
+        
+        if (command && typeof command.handleButtonInteraction === 'function') {
+            await command.handleButtonInteraction(interaction);
+        }
+    } catch (error) {
+        console.error('Error handling button interaction:', error);
+        try {
+            if (interaction.replied || interaction.deferred) {
+                await interaction.followUp({ content: 'There was an error processing this button.', ephemeral: true });
+            } else {
+                await interaction.reply({ content: 'There was an error processing this button.', ephemeral: true });
+            }
+        } catch (replyError) {
+            console.error('Error sending error response:', replyError);
+        }
+    }
+});
+
+// Handle select menu interactions
+client.on(Events.InteractionCreate, async interaction => {
+    if (!interaction.isStringSelectMenu()) return;
+    
+    try {
+        // Extract the command name from the customId (assuming format: commandName_action_etc)
+        const commandName = interaction.customId.split('_')[0];
+        const command = client.commands.get(commandName);
+        
+        if (command && typeof command.handleSelectMenuInteraction === 'function') {
+            await command.handleSelectMenuInteraction(interaction);
+        }
+    } catch (error) {
+        console.error('Error handling select menu interaction:', error);
+        try {
+            if (interaction.replied || interaction.deferred) {
+                await interaction.followUp({ content: 'There was an error processing this selection.', ephemeral: true });
+            } else {
+                await interaction.reply({ content: 'There was an error processing this selection.', ephemeral: true });
+            }
+        } catch (replyError) {
+            console.error('Error sending error response:', replyError);
+        }
+    }
+});
+
+// Handle modal submit interactions
+client.on(Events.InteractionCreate, async interaction => {
+    if (!interaction.isModalSubmit()) return;
+    
+    try {
+        // Extract the command name from the customId (assuming format: commandName_action_etc)
+        const commandName = interaction.customId.split('_')[0];
+        const command = client.commands.get(commandName);
+        
+        if (command && typeof command.handleModalSubmit === 'function') {
+            await command.handleModalSubmit(interaction);
+        }
+    } catch (error) {
+        console.error('Error handling modal submission:', error);
+        try {
+            if (interaction.replied || interaction.deferred) {
+                await interaction.followUp({ content: 'There was an error processing your submission.', ephemeral: true });
+            } else {
+                await interaction.reply({ content: 'There was an error processing your submission.', ephemeral: true });
+            }
+        } catch (replyError) {
+            console.error('Error sending error response:', replyError);
         }
     }
 });
