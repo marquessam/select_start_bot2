@@ -6,7 +6,7 @@ import { config } from '../../config/config.js';
 
 export default {
     data: new SlashCommandBuilder()
-        .setName('arcadeadmin')
+        .setName('adminarcade')
         .setDescription('Manage arcade leaderboards')
         .setDefaultMemberPermissions('0') // Only visible to users with Administrator permission
         .addSubcommand(subcommand =>
