@@ -92,7 +92,7 @@ export default {
         const actionRow = new ActionRowBuilder()
             .addComponents(
                 new StringSelectMenuBuilder()
-                    .setCustomId('arcadeadmin_action')
+                    .setCustomId('adminarcade_action')
                     .setPlaceholder('Select an action')
                     .addOptions([
                         {
@@ -169,7 +169,7 @@ export default {
     async handleSelectMenuInteraction(interaction) {
         const customId = interaction.customId;
         
-        if (customId === 'arcadeadmin_action') {
+        if (customId === 'adminarcade_action') {
             const action = interaction.values[0];
             
             // Handle different actions from main menu
@@ -211,35 +211,35 @@ export default {
                     });
             }
         } 
-        else if (customId === 'arcadeadmin_announce_type') {
+        else if (customId === 'adminarcade_announce_type') {
             await this.handleAnnounceTypeSelect(interaction);
         }
-        else if (customId.startsWith('arcadeadmin_announce_board_')) {
+        else if (customId.startsWith('adminarcade_announce_board_')) {
             const boardType = customId.split('_').pop();
             const boardId = interaction.values[0];
             await this.announceBoard(interaction, boardType, boardId, true);
         }
-        else if (customId.startsWith('arcadeadmin_arcade_edit')) {
+        else if (customId.startsWith('adminarcade_arcade_edit')) {
             const boardId = interaction.values[0];
             await this.showEditArcadeModal(interaction, boardId);
         }
-        else if (customId.startsWith('arcadeadmin_racing_edit')) {
+        else if (customId.startsWith('adminarcade_racing_edit')) {
             const boardId = interaction.values[0];
             await this.showEditRacingModal(interaction, boardId);
         }
-        else if (customId.startsWith('arcadeadmin_tiebreaker_edit')) {
+        else if (customId.startsWith('adminarcade_tiebreaker_edit')) {
             const boardId = interaction.values[0];
             await this.showEditTiebreakerModal(interaction, boardId);
         }
-        else if (customId.startsWith('arcadeadmin_arcade_remove')) {
+        else if (customId.startsWith('adminarcade_arcade_remove')) {
             const boardId = interaction.values[0];
             await this.confirmRemoveBoard(interaction, 'arcade', boardId);
         }
-        else if (customId.startsWith('arcadeadmin_racing_remove')) {
+        else if (customId.startsWith('adminarcade_racing_remove')) {
             const boardId = interaction.values[0];
             await this.confirmRemoveBoard(interaction, 'racing', boardId);
         }
-        else if (customId.startsWith('arcadeadmin_tiebreaker_remove')) {
+        else if (customId.startsWith('adminarcade_tiebreaker_remove')) {
             const boardId = interaction.values[0];
             await this.confirmRemoveBoard(interaction, 'tiebreaker', boardId);
         }
@@ -249,24 +249,24 @@ export default {
     async handleModalSubmit(interaction) {
         const customId = interaction.customId;
         
-        if (customId === 'arcadeadmin_create_arcade_modal') {
+        if (customId === 'adminarcade_create_arcade_modal') {
             await this.handleCreateArcadeModal(interaction);
         }
-        else if (customId === 'arcadeadmin_create_racing_modal') {
+        else if (customId === 'adminarcade_create_racing_modal') {
             await this.handleCreateRacingModal(interaction);
         }
-        else if (customId === 'arcadeadmin_create_tiebreaker_modal') {
+        else if (customId === 'adminarcade_create_tiebreaker_modal') {
             await this.handleCreateTiebreakerModal(interaction);
         }
-        else if (customId.startsWith('arcadeadmin_edit_arcade_modal_')) {
+        else if (customId.startsWith('adminarcade_edit_arcade_modal_')) {
             const boardId = customId.split('_').pop();
             await this.handleEditArcadeModal(interaction, boardId);
         }
-        else if (customId.startsWith('arcadeadmin_edit_racing_modal_')) {
+        else if (customId.startsWith('adminarcade_edit_racing_modal_')) {
             const boardId = customId.split('_').pop();
             await this.handleEditRacingModal(interaction, boardId);
         }
-        else if (customId.startsWith('arcadeadmin_edit_tiebreaker_modal_')) {
+        else if (customId.startsWith('adminarcade_edit_tiebreaker_modal_')) {
             const boardId = customId.split('_').pop();
             await this.handleEditTiebreakerModal(interaction, boardId);
         }
@@ -276,38 +276,38 @@ export default {
     async handleButtonInteraction(interaction) {
         const customId = interaction.customId;
         
-        if (customId.startsWith('arcadeadmin_announce_')) {
+        if (customId.startsWith('adminarcade_announce_')) {
             const parts = customId.split('_');
             const boardType = parts[2];
             const boardId = parts[3];
             await this.announceBoard(interaction, boardType, boardId, true);
         }
-        else if (customId.startsWith('arcadeadmin_announce_results_racing_')) {
+        else if (customId.startsWith('adminarcade_announce_results_racing_')) {
             const boardId = customId.split('_').pop();
             await this.announceRacingResults(interaction, boardId);
         }
-        else if (customId.startsWith('arcadeadmin_remove_confirm_')) {
+        else if (customId.startsWith('adminarcade_remove_confirm_')) {
             const parts = customId.split('_');
             const boardType = parts[3];
             const boardId = parts[4];
             await this.processRemoveBoard(interaction, boardType, boardId);
         }
-        else if (customId.startsWith('arcadeadmin_remove_cancel_')) {
+        else if (customId.startsWith('adminarcade_remove_cancel_')) {
             await interaction.update({
                 content: 'Removal cancelled.',
                 embeds: [],
                 components: []
             });
         }
-        else if (customId.startsWith('arcadeadmin_award_confirm_racing_')) {
+        else if (customId.startsWith('adminarcade_award_confirm_racing_')) {
             const boardId = customId.split('_').pop();
             await this.processAwardRacingPoints(interaction, boardId);
         }
-        else if (customId.startsWith('arcadeadmin_award_arcade_confirm_')) {
+        else if (customId.startsWith('adminarcade_award_arcade_confirm_')) {
             const year = customId.split('_').pop();
             await this.processArcadeAwards(interaction, year);
         }
-        else if (customId === 'arcadeadmin_award_arcade_cancel' || customId === 'arcadeadmin_award_cancel_racing') {
+        else if (customId === 'adminarcade_award_arcade_cancel' || customId === 'adminarcade_award_cancel_racing') {
             await interaction.update({
                 content: 'Award process cancelled.',
                 embeds: [],
@@ -319,7 +319,7 @@ export default {
     // Show a modal for creating an arcade board
     async showCreateArcadeModal(interaction) {
         const modal = new ModalBuilder()
-            .setCustomId('arcadeadmin_create_arcade_modal')
+            .setCustomId('adminarcade_create_arcade_modal')
             .setTitle('Create Arcade Board');
 
         // Add input fields
@@ -362,7 +362,7 @@ export default {
     // Show a modal for creating a racing challenge
     async showCreateRacingModal(interaction) {
         const modal = new ModalBuilder()
-            .setCustomId('arcadeadmin_create_racing_modal')
+            .setCustomId('adminarcade_create_racing_modal')
             .setTitle('Create Racing Challenge');
 
         // Add input fields
@@ -413,7 +413,7 @@ export default {
     // Show a modal for creating a tiebreaker
     async showCreateTiebreakerModal(interaction) {
         const modal = new ModalBuilder()
-            .setCustomId('arcadeadmin_create_tiebreaker_modal')
+            .setCustomId('adminarcade_create_tiebreaker_modal')
             .setTitle('Create Tiebreaker Board');
 
         // Add input fields
@@ -482,7 +482,7 @@ export default {
             const selectRow = new ActionRowBuilder()
                 .addComponents(
                     new StringSelectMenuBuilder()
-                        .setCustomId(`arcadeadmin_${boardType}_${action}`)
+                        .setCustomId(`adminarcade_${boardType}_${action}`)
                         .setPlaceholder(`Select a ${boardType} board`)
                         .addOptions(boardOptions)
                 );
@@ -507,7 +507,7 @@ export default {
             const typeRow = new ActionRowBuilder()
                 .addComponents(
                     new StringSelectMenuBuilder()
-                        .setCustomId('arcadeadmin_announce_type')
+                        .setCustomId('adminarcade_announce_type')
                         .setPlaceholder('Select board type')
                         .addOptions([
                             {
@@ -593,7 +593,7 @@ export default {
             const row = new ActionRowBuilder()
                 .addComponents(
                     new ButtonBuilder()
-                        .setCustomId(`arcadeadmin_announce_arcade_${boardId}`)
+                        .setCustomId(`adminarcade_announce_arcade_${boardId}`)
                         .setLabel('Announce to Server')
                         .setStyle(ButtonStyle.Primary)
                 );
@@ -704,7 +704,7 @@ export default {
             const row = new ActionRowBuilder()
                 .addComponents(
                     new ButtonBuilder()
-                        .setCustomId(`arcadeadmin_announce_racing_${boardId}`)
+                        .setCustomId(`adminarcade_announce_racing_${boardId}`)
                         .setLabel('Announce to Server')
                         .setStyle(ButtonStyle.Primary)
                 );
@@ -799,7 +799,7 @@ export default {
             const row = new ActionRowBuilder()
                 .addComponents(
                     new ButtonBuilder()
-                        .setCustomId(`arcadeadmin_announce_tiebreaker_${boardId}`)
+                        .setCustomId(`adminarcade_announce_tiebreaker_${boardId}`)
                         .setLabel('Announce to Server')
                         .setStyle(ButtonStyle.Primary)
                 );
@@ -832,7 +832,7 @@ export default {
 
             // Create edit modal
             const modal = new ModalBuilder()
-                .setCustomId(`arcadeadmin_edit_arcade_modal_${boardId}`)
+                .setCustomId(`adminarcade_edit_arcade_modal_${boardId}`)
                 .setTitle('Edit Arcade Board');
 
             // Add input fields with current values
@@ -885,7 +885,7 @@ export default {
 
             // Create edit modal
             const modal = new ModalBuilder()
-                .setCustomId(`arcadeadmin_edit_racing_modal_${boardId}`)
+                .setCustomId(`adminarcade_edit_racing_modal_${boardId}`)
                 .setTitle('Edit Racing Challenge');
 
             // Add input fields with current values
@@ -950,7 +950,7 @@ export default {
 
             // Create edit modal
             const modal = new ModalBuilder()
-                .setCustomId(`arcadeadmin_edit_tiebreaker_modal_${boardId}`)
+                .setCustomId(`adminarcade_edit_tiebreaker_modal_${boardId}`)
                 .setTitle('Edit Tiebreaker Board');
 
             // Add input fields with current values
@@ -1034,7 +1034,7 @@ export default {
             const row = new ActionRowBuilder()
                 .addComponents(
                     new ButtonBuilder()
-                        .setCustomId(`arcadeadmin_announce_arcade_${boardId}`)
+                        .setCustomId(`adminarcade_announce_arcade_${boardId}`)
                         .setLabel('Announce Update')
                         .setStyle(ButtonStyle.Primary)
                 );
@@ -1093,7 +1093,7 @@ export default {
             const row = new ActionRowBuilder()
                 .addComponents(
                     new ButtonBuilder()
-                        .setCustomId(`arcadeadmin_announce_racing_${boardId}`)
+                        .setCustomId(`adminarcade_announce_racing_${boardId}`)
                         .setLabel('Announce Update')
                         .setStyle(ButtonStyle.Primary)
                 );
@@ -1161,7 +1161,7 @@ export default {
             const row = new ActionRowBuilder()
                 .addComponents(
                     new ButtonBuilder()
-                        .setCustomId(`arcadeadmin_announce_tiebreaker_${boardId}`)
+                        .setCustomId(`adminarcade_announce_tiebreaker_${boardId}`)
                         .setLabel('Announce Update')
                         .setStyle(ButtonStyle.Primary)
                 );
@@ -1211,11 +1211,11 @@ export default {
             const row = new ActionRowBuilder()
                 .addComponents(
                     new ButtonBuilder()
-                        .setCustomId(`arcadeadmin_remove_confirm_${boardType}_${boardId}`)
+                        .setCustomId(`adminarcade_remove_confirm_${boardType}_${boardId}`)
                         .setLabel('Confirm Removal')
                         .setStyle(ButtonStyle.Danger),
                     new ButtonBuilder()
-                        .setCustomId(`arcadeadmin_remove_cancel_${boardType}_${boardId}`)
+                        .setCustomId(`adminarcade_remove_cancel_${boardType}_${boardId}`)
                         .setLabel('Cancel')
                         .setStyle(ButtonStyle.Secondary)
                 );
@@ -1304,7 +1304,7 @@ export default {
             const selectRow = new ActionRowBuilder()
                 .addComponents(
                     new StringSelectMenuBuilder()
-                        .setCustomId(`arcadeadmin_announce_board_${boardType}`)
+                        .setCustomId(`adminarcade_announce_board_${boardType}`)
                         .setPlaceholder(`Select a ${boardType} board`)
                         .addOptions(boardOptions)
                 );
@@ -1408,11 +1408,11 @@ export default {
             const row = new ActionRowBuilder()
                 .addComponents(
                     new ButtonBuilder()
-                        .setCustomId(`arcadeadmin_award_confirm_racing_${boardId}`)
+                        .setCustomId(`adminarcade_award_confirm_racing_${boardId}`)
                         .setLabel('Confirm Award')
                         .setStyle(ButtonStyle.Primary),
                     new ButtonBuilder()
-                        .setCustomId(`arcadeadmin_award_cancel_racing`)
+                        .setCustomId(`adminarcade_award_cancel_racing`)
                         .setLabel('Cancel')
                         .setStyle(ButtonStyle.Secondary)
                 );
@@ -1544,7 +1544,7 @@ export default {
             const row = new ActionRowBuilder()
                 .addComponents(
                     new ButtonBuilder()
-                        .setCustomId(`arcadeadmin_announce_results_racing_${boardId}`)
+                        .setCustomId(`adminarcade_announce_results_racing_${boardId}`)
                         .setLabel('Announce Results')
                         .setStyle(ButtonStyle.Primary)
                 );
@@ -1584,11 +1584,11 @@ export default {
         const row = new ActionRowBuilder()
             .addComponents(
                 new ButtonBuilder()
-                    .setCustomId(`arcadeadmin_award_arcade_confirm_${year}`)
+                    .setCustomId(`adminarcade_award_arcade_confirm_${year}`)
                     .setLabel('Confirm')
                     .setStyle(ButtonStyle.Primary),
                 new ButtonBuilder()
-                    .setCustomId(`arcadeadmin_award_arcade_cancel`)
+                    .setCustomId(`adminarcade_award_arcade_cancel`)
                     .setLabel('Cancel')
                     .setStyle(ButtonStyle.Secondary)
             );
