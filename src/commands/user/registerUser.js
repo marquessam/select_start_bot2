@@ -12,6 +12,8 @@ import { config } from '../../config/config.js';
 
 // Member role ID
 const MEMBER_ROLE_ID = '1316292690870014002';
+// Registration channel ID
+const REGISTRATION_CHANNEL_ID = '1302430855330795531';
 
 export default {
     data: new SlashCommandBuilder()
@@ -23,7 +25,16 @@ export default {
             .setRequired(true)),
 
     async execute(interaction) {
-        await interaction.deferReply({ ephemeral: true });
+        // Check if command is used in the correct channel
+        if (interaction.channelId !== REGISTRATION_CHANNEL_ID) {
+            return interaction.reply({ 
+                content: `This command can only be used in <#${REGISTRATION_CHANNEL_ID}>. Please head there to register!`, 
+                ephemeral: true 
+            });
+        }
+
+        // If in the correct channel, proceed with non-ephemeral reply
+        await interaction.deferReply({ ephemeral: false });
 
         try {
             const discordUser = interaction.user;
