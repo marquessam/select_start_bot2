@@ -10,6 +10,7 @@ import achievementFeedService from './services/achievementFeedService.js';
 import monthlyTasksService from './services/monthlyTasksService.js';
 import arcadeService from './services/arcadeService.js';
 import leaderboardFeedService from './services/leaderboardFeedService.js';
+import arcadeAlertService from './services/arcadeAlertService.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -177,6 +178,7 @@ client.once(Events.ClientReady, async () => {
         monthlyTasksService.setClient(client);
         arcadeService.setClient(client);
         leaderboardFeedService.setClient(client);
+        arcadeAlertService.setClient(client);
 
         // Schedule stats updates every 30 minutes
         cron.schedule('*/30 * * * *', () => {
@@ -208,6 +210,22 @@ client.once(Events.ClientReady, async () => {
             console.log('Running scheduled arcade service...');
             arcadeService.start().catch(error => {
                 console.error('Error in scheduled arcade service:', error);
+            });
+        });
+
+        // Schedule leaderboard feed updates every 15 minutes
+        cron.schedule('*/15 * * * *', () => {
+            console.log('Running leaderboard feed update...');
+            leaderboardFeedService.updateLeaderboard().catch(error => {
+                console.error('Error in leaderboard feed update:', error);
+            });
+        });
+
+        // Schedule arcade alert checks every hour
+        cron.schedule('0 * * * *', () => { // Runs at the start of every hour
+            console.log('Running arcade alerts check...');
+            arcadeAlertService.checkForRankChanges(true).catch(error => {
+                console.error('Error in arcade alerts check:', error);
             });
         });
 
@@ -246,14 +264,6 @@ client.once(Events.ClientReady, async () => {
             } catch (error) {
                 console.error('Error in leaderboard finalization:', error);
             }
-        });
-
-        // Schedule leaderboard feed updates every 15 minutes
-        cron.schedule('*/15 * * * *', () => {
-            console.log('Running leaderboard feed update...');
-            leaderboardFeedService.updateLeaderboard().catch(error => {
-                console.error('Error in leaderboard feed update:', error);
-            });
         });
 
         // Check if we need to finalize the previous month's leaderboard on startup
@@ -332,6 +342,9 @@ client.once(Events.ClientReady, async () => {
         
         // Start the leaderboard feed service
         await leaderboardFeedService.start();
+        
+        // Start the arcade alert service
+        await arcadeAlertService.start();
 
         console.log('Bot is ready!');
     } catch (error) {
