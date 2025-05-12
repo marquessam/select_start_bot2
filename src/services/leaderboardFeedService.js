@@ -22,6 +22,7 @@ const RANK_EMOJIS = {
 };
 
 const TIEBREAKER_EMOJI = '⚔️'; // Emoji to indicate tiebreaker status
+const USERS_PER_EMBED = 10; // Number of users to display per embed
 
 // Role IDs for top positions (set these to match your server's role IDs)
 const TOP_POSITION_ROLES = {
@@ -36,11 +37,11 @@ const ENABLE_ROLE_NOTIFICATIONS = false;
 class LeaderboardFeedService {
     constructor() {
         this.client = null;
-        this.lastMessageId = null;
+        this.lastMessageIds = []; // Store all message IDs for updating
         this.channelId = config.discord.leaderboardFeedChannelId || '1371350718505811989'; // Use provided channel ID as fallback
-        this.alertsChannelId = config.discord.rankAlertsChannelId;  // Channel for rank change alerts
+        this.alertsChannelId = config.discord.rankAlertsChannelId || this.channelId;  // Channel for rank change alerts
         this.updateInterval = null;
-        this.previousTopRanks = new Map(); // Store previous top 3 positions for detecting changes
+        this.previousTopRanks = new Map(); // Store previous top positions for detecting changes
     }
 
     setClient(client) {
@@ -89,9 +90,9 @@ class LeaderboardFeedService {
                 return;
             }
             
-            // Generate leaderboard embed
-            const { embeds, sortedUsers } = await this.generateLeaderboardEmbeds();
-            if (!embeds || embeds.length === 0 || !sortedUsers) {
+            // Generate leaderboard embeds
+            const { headerEmbed, participantEmbeds, sortedUsers } = await this.generateLeaderboardEmbeds();
+            if (!headerEmbed || !participantEmbeds || participantEmbeds.length === 0 || !sortedUsers) {
                 console.error('Failed to generate leaderboard embeds');
                 return;
             }
@@ -110,31 +111,89 @@ class LeaderboardFeedService {
                 hour12: true
             });
             
-            const content = `**Current Challenge Leaderboard** (Last updated: ${timestamp})`;
+            const headerContent = `**Monthly Challenge Leaderboard** (Last updated: ${timestamp})`;
 
-            if (this.lastMessageId) {
+            // Calculate how many messages we need (1 for header + enough for all participant embeds)
+            const totalMessagesNeeded = 1 + participantEmbeds.length;
+
+            // Check if we need to update or create new messages
+            if (this.lastMessageIds.length === totalMessagesNeeded) {
+                // Update existing messages
                 try {
-                    // Try to edit the existing message
-                    const message = await channel.messages.fetch(this.lastMessageId);
-                    await message.edit({ content, embeds: [embeds[0]] });
-                    console.log(`Leaderboard message updated (ID: ${this.lastMessageId})`);
+                    // Update header message
+                    const headerMessage = await channel.messages.fetch(this.lastMessageIds[0]);
+                    await headerMessage.edit({ content: headerContent, embeds: [headerEmbed] });
+                    console.log(`Header message updated (ID: ${this.lastMessageIds[0]})`);
+                    
+                    // Update participant messages
+                    for (let i = 0; i < participantEmbeds.length; i++) {
+                        const messageId = this.lastMessageIds[i + 1];
+                        const message = await channel.messages.fetch(messageId);
+                        await message.edit({ content: '', embeds: [participantEmbeds[i]] });
+                        console.log(`Participant message ${i+1} updated (ID: ${messageId})`);
+                    }
                 } catch (editError) {
-                    console.log(`Could not edit leaderboard message: ${editError.message}`);
-                    console.log('Posting new leaderboard message...');
-                    // If editing fails, post a new message
-                    this.lastMessageId = null;
+                    console.log(`Could not edit leaderboard messages: ${editError.message}`);
+                    console.log('Recreating all leaderboard messages...');
+                    // If editing fails, recreate all messages
+                    this.lastMessageIds = [];
                 }
-            }
+            } 
             
-            if (!this.lastMessageId) {
-                // Post a new message
-                const message = await channel.send({ content, embeds: [embeds[0]] });
-                this.lastMessageId = message.id;
-                console.log(`New leaderboard message posted (ID: ${message.id})`);
+            // If message count doesn't match or we failed to edit, recreate all messages
+            if (this.lastMessageIds.length !== totalMessagesNeeded) {
+                // Delete any existing messages first
+                await this.deleteExistingMessages(channel);
+                
+                // Create new messages
+                this.lastMessageIds = [];
+                
+                // Create header message
+                const headerMessage = await channel.send({ content: headerContent, embeds: [headerEmbed] });
+                this.lastMessageIds.push(headerMessage.id);
+                console.log(`New header message posted (ID: ${headerMessage.id})`);
+                
+                // Create participant messages
+                for (const embed of participantEmbeds) {
+                    const message = await channel.send({ content: '', embeds: [embed] });
+                    this.lastMessageIds.push(message.id);
+                    console.log(`New participant message posted (ID: ${message.id})`);
+                }
+                
+                // Try to pin the header message (unpinning old ones if needed)
+                try {
+                    const pinnedMessages = await channel.messages.fetchPinned();
+                    if (pinnedMessages.size >= 50) {
+                        // Unpin oldest if limit reached
+                        const oldestPinned = pinnedMessages.last();
+                        await oldestPinned.unpin();
+                    }
+                    await headerMessage.pin();
+                    console.log(`Pinned header message (ID: ${headerMessage.id})`);
+                } catch (pinError) {
+                    console.error(`Error pinning message: ${pinError.message}`);
+                }
             }
         } catch (error) {
             console.error('Error updating leaderboard:', error);
         }
+    }
+
+    // Delete all existing leaderboard messages in the channel
+    async deleteExistingMessages(channel) {
+        if (this.lastMessageIds.length === 0) return;
+        
+        for (const messageId of this.lastMessageIds) {
+            try {
+                const message = await channel.messages.fetch(messageId);
+                await message.delete();
+                console.log(`Deleted message ID: ${messageId}`);
+            } catch (error) {
+                console.log(`Could not delete message ${messageId}: ${error.message}`);
+            }
+        }
+        
+        this.lastMessageIds = [];
     }
 
     async getLeaderboardChannel() {
@@ -246,7 +305,7 @@ class LeaderboardFeedService {
 
             if (!currentChallenge) {
                 console.log('No active challenge found for the current month.');
-                return { embeds: null, sortedUsers: null };
+                return { headerEmbed: null, participantEmbeds: null, sortedUsers: null };
             }
 
             // Get game info - use stored metadata if available
@@ -464,53 +523,94 @@ class LeaderboardFeedService {
             // Use Discord's relative time format
             const timeRemaining = `<t:${endDateTimestamp}:R>`;
 
+            // Create the header embed
+            const headerEmbed = new EmbedBuilder()
+                .setTitle(`${monthName} Challenge Leaderboard`)
+                .setColor('#FFD700')
+                .setThumbnail(`https://retroachievements.org${gameImageUrl}`);
+
+            // Add game details to description
+            let description = `**Game:** [${gameTitle}](https://retroachievements.org/game/${currentChallenge.monthly_challange_gameid})\n` +
+                            `**Total Achievements:** ${currentChallenge.monthly_challange_game_total}\n` +
+                            `**Challenge Ends:** ${endDateFormatted}\n` +
+                            `**Time Remaining:** ${timeRemaining}\n\n` +
+                            `${AWARD_EMOJIS.MASTERY} Mastery (7pts) | ${AWARD_EMOJIS.BEATEN} Beaten (4pts) | ${AWARD_EMOJIS.PARTICIPATION} Part. (1pt)`;
+
+            // Add tiebreaker info if active
+            if (activeTiebreaker) {
+                description += `\n\n${TIEBREAKER_EMOJI} **Active Tiebreaker:** ${activeTiebreaker.gameTitle}\n` +
+                            `*Tiebreaker results are used to determine final ranking for tied users in top positions.*`;
+            }
+            
+            description += `\n\n*Note: Only achievements earned during ${monthName} **in Hardcore Mode** count toward challenge status.*`;
+            description += `\n⚠️ *Save states and rewind features are not allowed. Fast forward is permitted.*`;
+            
+            headerEmbed.setDescription(description);
+
             if (workingSorted.length === 0) {
-                const embed = new EmbedBuilder()
-                    .setTitle(`${monthName} Challenge Leaderboard`)
-                    .setColor('#FFD700')
-                    .setThumbnail(`https://retroachievements.org${gameImageUrl}`);
-
-                // Add game details to description
-                let description = `**Game:** [${gameTitle}](https://retroachievements.org/game/${currentChallenge.monthly_challange_gameid})\n` +
-                                `**Total Achievements:** ${currentChallenge.monthly_challange_game_total}\n` +
-                                `**Challenge Ends:** ${endDateFormatted}\n` +
-                                `**Time Remaining:** ${timeRemaining}\n\n` +
-                                `${AWARD_EMOJIS.MASTERY} Mastery (7pts) | ${AWARD_EMOJIS.BEATEN} Beaten (4pts) | ${AWARD_EMOJIS.PARTICIPATION} Part. (1pt)`;
-
-                // Add tiebreaker info if active
-                if (activeTiebreaker) {
-                    description += `\n\n${TIEBREAKER_EMOJI} **Active Tiebreaker:** ${activeTiebreaker.gameTitle}\n` +
-                                `*Tiebreaker results are used to determine final ranking for tied users in top positions.*`;
-                }
-                
-                description += `\n\n*Note: Only achievements earned during ${monthName} **in Hardcore Mode** count toward challenge status.*`;
-                description += `\n⚠️ *Save states and rewind features are not allowed. Fast forward is permitted.*`;
-                
-                embed.setDescription(description);
-
-                embed.addFields({
+                headerEmbed.addFields({
                     name: 'No Participants',
                     value: 'No one has earned achievements in this challenge this month yet!'
                 });
                 
-                return { embeds: [embed], sortedUsers: [] };
+                return { headerEmbed, participantEmbeds: [], sortedUsers: [] };
             }
 
-            // Create embeds for the leaderboard
-            const embeds = this.createPaginatedEmbeds(
-                workingSorted,
-                monthName,
-                gameInfo,
-                currentChallenge,
-                endDateFormatted,
-                timeRemaining,
-                activeTiebreaker
-            );
+            // Create participant embeds (one for each group of USERS_PER_EMBED users)
+            const participantEmbeds = [];
+            const totalPages = Math.ceil(workingSorted.length / USERS_PER_EMBED);
+            
+            for (let page = 0; page < totalPages; page++) {
+                // Get users for this page
+                const startIndex = page * USERS_PER_EMBED;
+                const endIndex = Math.min((page + 1) * USERS_PER_EMBED, workingSorted.length);
+                const usersOnPage = workingSorted.slice(startIndex, endIndex);
+                
+                // Create embed for this page
+                const participantEmbed = new EmbedBuilder()
+                    .setColor('#FFD700')
+                    .setFooter({ 
+                        text: `Group ${page + 1}/${totalPages} • Use /help points for more information`, 
+                        iconURL: `https://retroachievements.org${gameImageUrl}`
+                    });
+                
+                // Format leaderboard text for this page
+                let leaderboardText = '';
+                
+                for (const user of usersOnPage) {
+                    // Use the pre-calculated displayRank
+                    const rankEmoji = user.displayRank <= 3 ? RANK_EMOJIS[user.displayRank] : `#${user.displayRank}`;
+                    
+                    // Add the main user entry to leaderboard with link to profile
+                    leaderboardText += `${rankEmoji} **[${user.username}](https://retroachievements.org/user/${user.username})** ${user.award}\n`;
+                    
+                    // Add the achievement stats
+                    if (user.hasTiebreaker && user.tiebreakerScore) {
+                        // For users with tiebreaker scores, show both regular and tiebreaker stats
+                        leaderboardText += `${user.achieved}/${currentChallenge.monthly_challange_game_total} (${user.percentage}%)\n`;
+                        leaderboardText += `${TIEBREAKER_EMOJI} ${user.tiebreakerScore} in ${user.tiebreakerGame}\n\n`;
+                    } else {
+                        // For users without tiebreaker scores, just show regular stats
+                        leaderboardText += `${user.achieved}/${currentChallenge.monthly_challange_game_total} (${user.percentage}%)\n\n`;
+                    }
+                }
+                
+                const startRank = startIndex + 1;
+                const endRank = endIndex;
+                const rankRange = startRank === endRank ? `#${startRank}` : `#${startRank}-${endRank}`;
+                
+                participantEmbed.addFields({
+                    name: `Rankings ${rankRange} (${workingSorted.length} total participants)`,
+                    value: leaderboardText || 'No rankings available.'
+                });
+                
+                participantEmbeds.push(participantEmbed);
+            }
 
-            return { embeds, sortedUsers: workingSorted };
+            return { headerEmbed, participantEmbeds, sortedUsers: workingSorted };
         } catch (error) {
             console.error('Error generating leaderboard embeds:', error);
-            return { embeds: null, sortedUsers: null };
+            return { headerEmbed: null, participantEmbeds: null, sortedUsers: null };
         }
     }
 
@@ -820,75 +920,6 @@ class LeaderboardFeedService {
                 users[idx].displayRank = startIdx + 1;
             }
         }
-    }
-    
-    // Create embedded messages for the leaderboard (copied from leaderboard.js with minimal changes)
-    createPaginatedEmbeds(workingSorted, monthName, gameInfo, currentChallenge, endDateFormatted, timeRemaining, activeTiebreaker) {
-        const embeds = [];
-        const totalPages = Math.ceil(workingSorted.length / 10); // Show 10 users per page
-    
-        for (let page = 0; page < totalPages; page++) {
-            // Get users for this page
-            const startIndex = page * 10;
-            const endIndex = Math.min((page + 1) * 10, workingSorted.length);
-            const usersOnPage = workingSorted.slice(startIndex, endIndex);
-    
-            // Create embed for this page
-            const embed = new EmbedBuilder()
-                .setTitle(`${monthName} Challenge Leaderboard`)
-                .setColor('#FFD700')
-                .setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`)
-                .setFooter({ text: `Page ${page + 1}/${totalPages} • Use /help points for more information` })
-                .setTimestamp();
-    
-            // Create base description for all pages
-            let description = `**Game:** [${gameInfo.title}](https://retroachievements.org/game/${currentChallenge.monthly_challange_gameid})\n` +
-                            `**Total Achievements:** ${currentChallenge.monthly_challange_game_total}\n` +
-                            `**Challenge Ends:** ${endDateFormatted}\n` +
-                            `**Time Remaining:** ${timeRemaining}\n\n` +
-                            `${AWARD_EMOJIS.MASTERY} Mastery (7pts) | ${AWARD_EMOJIS.BEATEN} Beaten (4pts) | ${AWARD_EMOJIS.PARTICIPATION} Part. (1pt)`;
-    
-            // Add tiebreaker info if active
-            if (activeTiebreaker) {
-                description += `\n\n${TIEBREAKER_EMOJI} **Active Tiebreaker:** ${activeTiebreaker.gameTitle}\n` +
-                            `*Tiebreaker results are used to determine final ranking for tied users in top positions.*`;
-            }
-            
-            description += `\n\n*Note: Only achievements earned during ${monthName} **in Hardcore Mode** count toward challenge status.*`;
-            description += `\n⚠️ *Save states and rewind features are not allowed. Fast forward is permitted.*`;
-            
-            embed.setDescription(description);
-    
-            // Format leaderboard text using pre-calculated displayRanks
-            let leaderboardText = '';
-            
-            for (const user of usersOnPage) {
-                // Use the pre-calculated displayRank
-                const rankEmoji = user.displayRank <= 3 ? RANK_EMOJIS[user.displayRank] : `#${user.displayRank}`;
-                
-                // Add the main user entry to leaderboard with link to profile
-                leaderboardText += `${rankEmoji} **[${user.username}](https://retroachievements.org/user/${user.username})** ${user.award}\n`;
-                
-                // Add the achievement stats
-                if (user.hasTiebreaker && user.tiebreakerScore) {
-                    // For users with tiebreaker scores, show both regular and tiebreaker stats
-                    leaderboardText += `${user.achieved}/${currentChallenge.monthly_challange_game_total} (${user.percentage}%)\n`;
-                    leaderboardText += `${TIEBREAKER_EMOJI} ${user.tiebreakerScore} in ${user.tiebreakerGame}\n\n`;
-                } else {
-                    // For users without tiebreaker scores, just show regular stats
-                    leaderboardText += `${user.achieved}/${currentChallenge.monthly_challange_game_total} (${user.percentage}%)\n\n`;
-                }
-            }
-    
-            embed.addFields({
-                name: `Rankings (${workingSorted.length} participants)`,
-                value: leaderboardText || 'No rankings available.'
-            });
-    
-            embeds.push(embed);
-        }
-    
-        return embeds;
     }
 }
 
