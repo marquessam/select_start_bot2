@@ -21,7 +21,8 @@ export const config = {
         votingChannelId: process.env.VOTING_CHANNEL,
         registrationChannelId: process.env.REGISTRATION_CHANNEL,
         registrationMonitorChannelId: process.env.REGISTRATION_MONITOR_CHANNEL,
-        shadowGameChannelId: process.env.SHADOW_GAME_CHANNEL
+        shadowGameChannelId: process.env.SHADOW_GAME_CHANNEL,
+        leaderboardFeedChannelId: process.env.LEADERBOARD_FEED_CHANNEL || '1371350718505811989'
     },
     
     // RetroAchievements API Configuration
@@ -65,7 +66,8 @@ export function validateConfig() {
         'VOTING_CHANNEL',
         'REGISTRATION_CHANNEL',
         'REGISTRATION_MONITOR_CHANNEL',
-        'SHADOW_GAME_CHANNEL'
+        'SHADOW_GAME_CHANNEL',
+        'LEADERBOARD_FEED_CHANNEL'
     ];
 
     const missing = required.filter(key => !process.env[key]);
