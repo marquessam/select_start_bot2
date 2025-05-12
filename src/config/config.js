@@ -24,7 +24,8 @@ export const config = {
         shadowGameChannelId: process.env.SHADOW_GAME_CHANNEL,
         leaderboardFeedChannelId: process.env.LEADERBOARD_FEED_CHANNEL || '1371350718505811989',
         rankAlertsChannelId: process.env.RANK_ALERTS_CHANNEL || '1371350718505811989',
-        arcadeAlertsChannelId: process.env.ARCADE_ALERTS_CHANNEL || '1300941091335438471'
+        arcadeAlertsChannelId: process.env.ARCADE_ALERTS_CHANNEL || '1300941091335438471',
+        arcadeFeedChannelId: process.env.ARCADE_FEED_CHANNEL || '1371363491130114098'
     },
     
     // RetroAchievements API Configuration
@@ -71,7 +72,8 @@ export function validateConfig() {
         'SHADOW_GAME_CHANNEL',
         'LEADERBOARD_FEED_CHANNEL',
         'RANK_ALERTS_CHANNEL',
-        'ARCADE_ALERTS_CHANNEL'
+        'ARCADE_ALERTS_CHANNEL',
+        'ARCADE_FEED_CHANNEL'
     ];
 
     const missing = required.filter(key => !process.env[key]);
