@@ -24,16 +24,6 @@ const RANK_EMOJIS = {
 const TIEBREAKER_EMOJI = '⚔️'; // Emoji to indicate tiebreaker status
 const USERS_PER_EMBED = 10; // Number of users to display per embed
 
-// Role IDs for top positions (set these to match your server's role IDs)
-const TOP_POSITION_ROLES = {
-    1: null, // Monthly Champion role ID (set this to your actual role ID)
-    2: null, // Runner-Up role ID (set this to your actual role ID)
-    3: null  // Bronze Champion role ID (set this to your actual role ID)
-};
-
-// Whether to enable role-based notifications (set to false if you don't want to use roles)
-const ENABLE_ROLE_NOTIFICATIONS = false;
-
 class LeaderboardFeedService {
     constructor() {
         this.client = null;
@@ -58,6 +48,9 @@ class LeaderboardFeedService {
         try {
             console.log('Starting leaderboard feed service...');
             
+            // Clear the channel first
+            await this.clearChannel();
+            
             // Initial update
             await this.updateLeaderboard();
             
@@ -79,6 +72,58 @@ class LeaderboardFeedService {
             clearInterval(this.updateInterval);
             this.updateInterval = null;
             console.log('Leaderboard feed service stopped.');
+        }
+    }
+
+    async clearChannel() {
+        try {
+            const channel = await this.getLeaderboardChannel();
+            if (!channel) {
+                console.error('Leaderboard feed channel not found or inaccessible');
+                return;
+            }
+            
+            console.log(`Clearing all messages in leaderboard feed channel (ID: ${this.channelId})...`);
+            
+            // Fetch messages in batches (Discord API limitation)
+            let messagesDeleted = 0;
+            let messages;
+            
+            do {
+                messages = await channel.messages.fetch({ limit: 100 });
+                if (messages.size > 0) {
+                    // Use bulk delete for messages less than 14 days old
+                    try {
+                        await channel.bulkDelete(messages);
+                        messagesDeleted += messages.size;
+                        console.log(`Bulk deleted ${messages.size} messages`);
+                    } catch (bulkError) {
+                        // If bulk delete fails (messages older than 14 days), delete one by one
+                        console.log(`Bulk delete failed, falling back to individual deletion: ${bulkError.message}`);
+                        for (const [id, message] of messages) {
+                            try {
+                                await message.delete();
+                                messagesDeleted++;
+                            } catch (deleteError) {
+                                console.error(`Error deleting message ${id}:`, deleteError.message);
+                            }
+                            
+                            // Add a small delay to avoid rate limits
+                            await new Promise(resolve => setTimeout(resolve, 500));
+                        }
+                    }
+                }
+            } while (messages.size >= 100); // Keep fetching until no more messages
+            
+            console.log(`Cleared ${messagesDeleted} messages from leaderboard feed channel`);
+            
+            // Reset state since we've cleared the channel
+            this.lastMessageIds = [];
+            
+            return true;
+        } catch (error) {
+            console.error('Error clearing leaderboard channel:', error);
+            return false;
         }
     }
 
@@ -672,11 +717,6 @@ class LeaderboardFeedService {
             // Send notifications for any detected changes
             if (alerts.length > 0) {
                 await this.sendRankChangeAlerts(alerts);
-                
-                // Also update roles if enabled
-                if (ENABLE_ROLE_NOTIFICATIONS) {
-                    await this.updateTopPositionRoles(currentRanks);
-                }
             }
 
             // Store current ranks for next comparison
@@ -738,61 +778,6 @@ class LeaderboardFeedService {
             } catch (error) {
                 console.error('Error sending rank change alert:', error);
             }
-        }
-    }
-
-    // Update roles for top 3 positions
-    async updateTopPositionRoles(currentRanks) {
-        if (!ENABLE_ROLE_NOTIFICATIONS) return;
-        
-        try {
-            // Skip if any role ID is null
-            if (!TOP_POSITION_ROLES[1] || !TOP_POSITION_ROLES[2] || !TOP_POSITION_ROLES[3]) {
-                console.log('Top position roles not configured, skipping role updates');
-                return;
-            }
-
-            const guildId = config.discord.guildId;
-            const guild = await this.client.guilds.fetch(guildId);
-            if (!guild) return;
-            
-            // Get role objects
-            const roles = {
-                1: await guild.roles.fetch(TOP_POSITION_ROLES[1]),
-                2: await guild.roles.fetch(TOP_POSITION_ROLES[2]),
-                3: await guild.roles.fetch(TOP_POSITION_ROLES[3])
-            };
-            
-            // Remove all top position roles from all members first
-            const membersWithRoles = await guild.members.fetch();
-            for (const [memberId, member] of membersWithRoles) {
-                let hasAnyTopRole = false;
-                for (const rank of [1, 2, 3]) {
-                    if (roles[rank] && member.roles.cache.has(roles[rank].id)) {
-                        hasAnyTopRole = true;
-                        await member.roles.remove(roles[rank]);
-                        console.log(`Removed rank ${rank} role from user ${member.user.tag}`);
-                    }
-                }
-            }
-            
-            // Assign roles to current top 3
-            for (const user of currentRanks) {
-                if (user.displayRank > 3) continue; // Only top 3
-                if (!user.discordId) continue; // Skip if no Discord ID
-                
-                try {
-                    const member = await guild.members.fetch(user.discordId);
-                    if (member && roles[user.displayRank]) {
-                        await member.roles.add(roles[user.displayRank]);
-                        console.log(`Assigned rank ${user.displayRank} role to user ${member.user.tag}`);
-                    }
-                } catch (memberError) {
-                    console.error(`Failed to get/update member ${user.username}:`, memberError);
-                }
-            }
-        } catch (error) {
-            console.error('Error updating top position roles:', error);
         }
     }
 
