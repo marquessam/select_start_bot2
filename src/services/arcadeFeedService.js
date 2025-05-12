@@ -250,16 +250,28 @@ class ArcadeFeedService {
                 registeredUsers.set(user.raUsername.toLowerCase(), user.raUsername);
             }
             
-            // Fetch leaderboard entries from RetroAchievements
+            // Fetch multiple batches of leaderboard entries
             const batch1 = await retroAPI.getLeaderboardEntriesDirect(board.leaderboardId, 0, 500);
+            const batch2 = await retroAPI.getLeaderboardEntriesDirect(board.leaderboardId, 500, 500);
             
-            // Process the entries
+            // Combine the batches
             let rawEntries = [];
+            
+            // Process first batch
             if (batch1) {
                 if (Array.isArray(batch1)) {
                     rawEntries = [...rawEntries, ...batch1];
                 } else if (batch1.Results && Array.isArray(batch1.Results)) {
                     rawEntries = [...rawEntries, ...batch1.Results];
+                }
+            }
+            
+            // Process second batch
+            if (batch2) {
+                if (Array.isArray(batch2)) {
+                    rawEntries = [...rawEntries, ...batch2];
+                } else if (batch2.Results && Array.isArray(batch2.Results)) {
+                    rawEntries = [...rawEntries, ...batch2.Results];
                 }
             }
             
@@ -375,16 +387,28 @@ class ArcadeFeedService {
                 registeredUsers.set(user.raUsername.toLowerCase(), user.raUsername);
             }
             
-            // Fetch leaderboard entries from RetroAchievements
+            // Fetch multiple batches of leaderboard entries
             const batch1 = await retroAPI.getLeaderboardEntriesDirect(racingBoard.leaderboardId, 0, 500);
+            const batch2 = await retroAPI.getLeaderboardEntriesDirect(racingBoard.leaderboardId, 500, 500);
             
-            // Process the entries
+            // Combine the batches
             let rawEntries = [];
+            
+            // Process first batch
             if (batch1) {
                 if (Array.isArray(batch1)) {
                     rawEntries = [...rawEntries, ...batch1];
                 } else if (batch1.Results && Array.isArray(batch1.Results)) {
                     rawEntries = [...rawEntries, ...batch1.Results];
+                }
+            }
+            
+            // Process second batch
+            if (batch2) {
+                if (Array.isArray(batch2)) {
+                    rawEntries = [...rawEntries, ...batch2];
+                } else if (batch2.Results && Array.isArray(batch2.Results)) {
+                    rawEntries = [...rawEntries, ...batch2.Results];
                 }
             }
             
