@@ -1,540 +1,610 @@
-// src/services/arcadeFeedService.js
-import { EmbedBuilder } from 'discord.js';
-import { User } from '../models/User.js';
 import { ArcadeBoard } from '../models/ArcadeBoard.js';
+import { User } from '../models/User.js';
 import retroAPI from './retroAPI.js';
+import { EmbedBuilder } from 'discord.js';
 import { config } from '../config/config.js';
 
-const UPDATE_INTERVAL = 60 * 60 * 1000; // Update every hour (60 minutes * 60 seconds * 1000 ms)
-
-class ArcadeFeedService {
+class ArcadeService {
     constructor() {
         this.client = null;
-        this.channelId = config.discord.arcadeFeedChannelId || '1371363491130114098'; // Use provided channel ID
-        this.updateInterval = null;
-        this.lastMessageIds = new Map(); // Map of boardId -> messageId
-        this.headerMessageId = null; // ID of the header message
     }
 
     setClient(client) {
         this.client = client;
-        console.log('Discord client set for arcade feed service');
     }
 
     async start() {
         if (!this.client) {
-            console.error('Discord client not set for arcade feed service');
+            console.error('Discord client not set for arcade service');
             return;
         }
 
         try {
-            console.log('Starting arcade feed service...');
+            // Check if there are completed racing challenges that need points awarded
+            await this.checkCompletedRacingChallenges();
             
-            // Clear the channel first
-            await this.clearChannel();
+            // Check if any tiebreakers have ended
+            await this.checkCompletedTiebreakers();
             
-            // Initial update
-            await this.updateArcadeFeed();
-            
-            // Set up recurring updates
-            this.updateInterval = setInterval(() => {
-                this.updateArcadeFeed().catch(error => {
-                    console.error('Error updating arcade feed:', error);
-                });
-            }, UPDATE_INTERVAL);
-            
-            console.log(`Arcade feed service started. Updates will occur every ${UPDATE_INTERVAL / 60000} minutes.`);
-        } catch (error) {
-            console.error('Error starting arcade feed service:', error);
-        }
-    }
-
-    stop() {
-        if (this.updateInterval) {
-            clearInterval(this.updateInterval);
-            this.updateInterval = null;
-            console.log('Arcade feed service stopped.');
-        }
-    }
-
-    async clearChannel() {
-        try {
-            const channel = await this.getArcadeChannel();
-            if (!channel) {
-                console.error('Arcade feed channel not found or inaccessible');
-                return;
-            }
-            
-            console.log(`Clearing all messages in arcade feed channel (ID: ${this.channelId})...`);
-            
-            // Fetch messages in batches (Discord API limitation)
-            let messagesDeleted = 0;
-            let messages;
-            
-            do {
-                messages = await channel.messages.fetch({ limit: 100 });
-                if (messages.size > 0) {
-                    // Use bulk delete for messages less than 14 days old
-                    try {
-                        await channel.bulkDelete(messages);
-                        messagesDeleted += messages.size;
-                        console.log(`Bulk deleted ${messages.size} messages`);
-                    } catch (bulkError) {
-                        // If bulk delete fails (messages older than 14 days), delete one by one
-                        console.log(`Bulk delete failed, falling back to individual deletion: ${bulkError.message}`);
-                        for (const [id, message] of messages) {
-                            try {
-                                await message.delete();
-                                messagesDeleted++;
-                            } catch (deleteError) {
-                                console.error(`Error deleting message ${id}:`, deleteError.message);
-                            }
-                            
-                            // Add a small delay to avoid rate limits
-                            await new Promise(resolve => setTimeout(resolve, 500));
-                        }
-                    }
-                }
-            } while (messages.size >= 100); // Keep fetching until no more messages
-            
-            console.log(`Cleared ${messagesDeleted} messages from arcade feed channel`);
-            
-            // Reset state since we've cleared the channel
-            this.lastMessageIds.clear();
-            this.headerMessageId = null;
-            
-            return true;
-        } catch (error) {
-            console.error('Error clearing arcade channel:', error);
-            return false;
-        }
-    }
-
-    async getArcadeChannel() {
-        if (!this.client) {
-            console.error('Discord client not set');
-            return null;
-        }
-
-        try {
-            // Get the guild
-            const guildId = config.discord.guildId;
-            const guild = await this.client.guilds.fetch(guildId);
-            
-            if (!guild) {
-                console.error(`Guild not found: ${guildId}`);
-                return null;
-            }
-
-            // Get the channel
-            const channel = await guild.channels.fetch(this.channelId);
-            
-            if (!channel) {
-                console.error(`Channel not found: ${this.channelId}`);
-                return null;
-            }
-            
-            return channel;
-        } catch (error) {
-            console.error('Error getting arcade channel:', error);
-            return null;
-        }
-    }
-
-    async updateArcadeFeed() {
-        try {
-            const channel = await this.getArcadeChannel();
-            if (!channel) {
-                console.error('Arcade feed channel not found or inaccessible');
-                return;
-            }
-            
-            // Format current time for the header message
-            const timestamp = new Date().toLocaleString('en-US', {
-                month: 'short',
-                day: 'numeric',
-                hour: 'numeric',
-                minute: '2-digit',
-                hour12: true
-            });
-            
-            // Create or update header message
-            await this.updateHeaderMessage(channel, timestamp);
-            
-            // Get all arcade boards
-            const arcadeBoards = await ArcadeBoard.find({ boardType: 'arcade' })
-                .sort({ gameTitle: 1 }); // Sort alphabetically by game title
-            
-            // Get current active racing board
+            // Check if it's December 1st to award arcade points
             const now = new Date();
-            const racingBoard = await ArcadeBoard.findOne({
-                boardType: 'racing',
-                startDate: { $lte: now },
-                endDate: { $gte: now }
-            });
-            
-            // Update current racing challenge (if any)
-            if (racingBoard) {
-                await this.updateRacingBoardEmbed(channel, racingBoard);
+            if (now.getMonth() === 11 && now.getDate() === 1) { // December is month 11 (0-indexed)
+                await this.awardArcadePoints();
             }
-            
-            // Update arcade board embeds
-            for (const board of arcadeBoards) {
-                await this.updateArcadeBoardEmbed(channel, board);
-                
-                // Add a small delay between boards to avoid rate limits
-                await new Promise(resolve => setTimeout(resolve, 1000));
-            }
-            
-            console.log(`Updated arcade feed with ${arcadeBoards.length} boards and ${racingBoard ? '1' : '0'} racing challenges`);
         } catch (error) {
-            console.error('Error updating arcade feed:', error);
+            console.error('Error in arcade service:', error);
         }
     }
-    
-    async updateHeaderMessage(channel, timestamp) {
-        // Create header content
-        const headerContent = `# 🎮 Arcade Leaderboards (Last updated: ${timestamp})\n` + 
-                             `All active arcade boards and the current racing challenge are shown below.\n` +
-                             `Leaderboards update hourly. Top 3 finishers in arcade boards earn points at the end of the year!`;
+
+    async checkCompletedRacingChallenges() {
+        try {
+            const now = new Date();
+            
+            // Find racing challenges that have ended but haven't had points awarded yet
+            const completedChallenges = await ArcadeBoard.find({
+                boardType: 'racing',
+                endDate: { $lt: now },
+                pointsAwarded: false
+            });
+            
+            if (completedChallenges.length === 0) {
+                return;
+            }
+            
+            console.log(`Found ${completedChallenges.length} completed racing challenges to process`);
+            
+            for (const challenge of completedChallenges) {
+                await this.awardRacingPoints(challenge);
+            }
+        } catch (error) {
+            console.error('Error checking completed racing challenges:', error);
+        }
+    }
+
+    async awardRacingPoints(racingBoard) {
+        try {
+            console.log(`Processing racing challenge: ${racingBoard.boardId}`);
+            
+            // Fetch leaderboard entries
+            const allEntries = await this.fetchLeaderboardEntries(racingBoard.leaderboardId);
+            if (!allEntries || allEntries.length === 0) {
+                console.log('No leaderboard entries found');
+                return;
+            }
+            
+            // Get all registered users
+            const users = await User.find({});
+            
+            // Create mapping of RA usernames (lowercase) to canonical usernames
+            const registeredUsers = new Map();
+            for (const user of users) {
+                registeredUsers.set(user.raUsername.toLowerCase(), user);
+            }
+            
+            // Filter entries to only show registered users
+            const filteredEntries = allEntries.filter(entry => {
+                if (!entry.User) return false;
+                const username = entry.User.toLowerCase().trim();
+                return username && registeredUsers.has(username);
+            });
+
+            if (filteredEntries.length === 0) {
+                console.log('No registered users found in the leaderboard');
+                racingBoard.pointsAwarded = true;
+                await racingBoard.save();
+                return;
+            }
+
+            // Track awarded points and results
+            const results = [];
+            
+            // Award points to the top 3 finishers
+            const pointsDistribution = [3, 2, 1]; // 1st, 2nd, 3rd place
+            
+            for (let i = 0; i < Math.min(3, filteredEntries.length); i++) {
+                const entry = filteredEntries[i];
+                const pointsToAward = pointsDistribution[i];
+                const userObj = registeredUsers.get(entry.User.toLowerCase());
+                
+                if (userObj) {
+                    // Add community award
+                    const monthName = racingBoard.startDate.toLocaleString('default', { month: 'long' });
+                    const year = racingBoard.startDate.getFullYear();
+                    const placement = i === 0 ? '1st' : (i === 1 ? '2nd' : '3rd');
+                    
+                    const awardTitle = `${placement} Place in ${monthName} ${year} Racing: ${racingBoard.gameTitle}`;
+                    
+                    userObj.communityAwards.push({
+                        title: awardTitle,
+                        points: pointsToAward,
+                        awardedAt: new Date(),
+                        awardedBy: 'Arcade System'
+                    });
+                    
+                    await userObj.save();
+                    
+                    // Record result
+                    results.push({
+                        username: entry.User,
+                        rank: i + 1,
+                        time: entry.TrackTime,
+                        points: pointsToAward
+                    });
+                }
+            }
+            
+            // Update the racing board to mark points as awarded and store results
+            racingBoard.pointsAwarded = true;
+            racingBoard.results = results;
+            await racingBoard.save();
+            
+            // Announce results
+            await this.announceRacingResults(racingBoard, results);
+            
+            console.log(`Successfully awarded points for racing challenge ${racingBoard.boardId}`);
+        } catch (error) {
+            console.error('Error awarding racing points:', error);
+        }
+    }
+
+    async checkCompletedTiebreakers() {
+        try {
+            const now = new Date();
+            
+            // Find tiebreakers that have ended
+            const completedTiebreakers = await ArcadeBoard.find({
+                boardType: 'tiebreaker',
+                endDate: { $lt: now },
+                pointsAwarded: false
+            });
+            
+            if (completedTiebreakers.length === 0) {
+                return;
+            }
+            
+            console.log(`Found ${completedTiebreakers.length} completed tiebreakers to process`);
+            
+            for (const tiebreaker of completedTiebreakers) {
+                await this.processTiebreakerResults(tiebreaker);
+            }
+        } catch (error) {
+            console.error('Error checking completed tiebreakers:', error);
+        }
+    }
+
+    async processTiebreakerResults(tiebreaker) {
+        try {
+            console.log(`Processing tiebreaker: ${tiebreaker.boardId}`);
+            
+            // Fetch leaderboard entries
+            const allEntries = await this.fetchLeaderboardEntries(tiebreaker.leaderboardId);
+            if (!allEntries || allEntries.length === 0) {
+                console.log('No leaderboard entries found');
+                return;
+            }
+            
+            // Get usernames of tied users
+            const tiedUsernames = tiebreaker.tiedUsers.map(username => username.toLowerCase());
+            
+            // Filter entries to only show tied users
+            const filteredEntries = allEntries.filter(entry => 
+                entry.User && tiedUsernames.includes(entry.User.toLowerCase())
+            );
+
+            if (filteredEntries.length === 0) {
+                console.log('No tied users found in the leaderboard');
+                tiebreaker.pointsAwarded = true;
+                await tiebreaker.save();
+                return;
+            }
+
+            // Sort entries by score
+            filteredEntries.sort((a, b) => {
+                // For racing games, lower times are better
+                // This is a simplified comparison, may need adjustment based on actual time format
+                return a.TrackTime.localeCompare(b.TrackTime);
+            });
+            
+            // Get the winner (first place)
+            const winner = filteredEntries[0];
+            
+            // Mark tiebreaker as completed
+            tiebreaker.pointsAwarded = true;
+            tiebreaker.results = filteredEntries.map((entry, index) => ({
+                username: entry.User,
+                rank: index + 1,
+                time: entry.TrackTime,
+                points: 0 // No points awarded for tiebreakers
+            }));
+            
+            await tiebreaker.save();
+            
+            // Announce results
+            await this.announceTiebreakerResults(tiebreaker, filteredEntries);
+            
+            console.log(`Successfully processed tiebreaker ${tiebreaker.boardId}`);
+        } catch (error) {
+            console.error('Error processing tiebreaker results:', error);
+        }
+    }
+
+    async fetchLeaderboardEntries(leaderboardId) {
+        try {
+            // First batch of entries (top 500)
+            const firstBatch = await retroAPI.getLeaderboardEntries(leaderboardId, 0, 500);
+            
+            // Second batch of entries (next 500)
+            const secondBatch = await retroAPI.getLeaderboardEntries(leaderboardId, 500, 500);
+            
+            // Combine entries
+            return [...firstBatch, ...secondBatch];
+        } catch (error) {
+            console.error('Error fetching leaderboard entries:', error);
+            throw error;
+        }
+    }
+
+    async announceRacingResults(racingBoard, results) {
+        if (!this.client) return;
         
         try {
-            if (this.headerMessageId) {
-                // Try to update existing header
-                const headerMessage = await channel.messages.fetch(this.headerMessageId);
-                await headerMessage.edit({ content: headerContent });
-                console.log(`Updated arcade feed header message (ID: ${this.headerMessageId})`);
-            } else {
-                // Create new header message
-                const message = await channel.send({ content: headerContent });
-                this.headerMessageId = message.id;
-                console.log(`Created new arcade feed header message (ID: ${message.id})`);
-                
-                // Try to pin the header message
-                try {
-                    const pinnedMessages = await channel.messages.fetchPinned();
-                    if (pinnedMessages.size >= 50) {
-                        // Unpin oldest if limit reached
-                        const oldestPinned = pinnedMessages.last();
-                        await oldestPinned.unpin();
-                    }
-                    await message.pin();
-                    console.log(`Pinned arcade feed header message (ID: ${message.id})`);
-                } catch (pinError) {
-                    console.error(`Error pinning message: ${pinError.message}`);
-                }
-            }
-        } catch (error) {
-            console.error('Error updating arcade feed header:', error);
-            // If updating fails, try to create a new header
-            if (error.message.includes('Unknown Message')) {
-                try {
-                    const message = await channel.send({ content: headerContent });
-                    this.headerMessageId = message.id;
-                    console.log(`Created new arcade feed header message after error (ID: ${message.id})`);
-                } catch (sendError) {
-                    console.error('Error creating new header after previous error:', sendError);
-                }
-            }
-        }
-    }
-
-    async updateArcadeBoardEmbed(channel, board) {
-        try {
-            // Get all registered users
-            const users = await User.find({});
-            
-            // Create mapping of RA usernames (lowercase) to canonical usernames
-            const registeredUsers = new Map();
-            for (const user of users) {
-                registeredUsers.set(user.raUsername.toLowerCase(), user.raUsername);
+            // Get the announcement channel
+            const channel = await this.getAnnouncementChannel();
+            if (!channel) {
+                console.error('Announcement channel not found');
+                return;
             }
             
-            // Fetch multiple batches of leaderboard entries
-            const batch1 = await retroAPI.getLeaderboardEntriesDirect(board.leaderboardId, 0, 500);
-            const batch2 = await retroAPI.getLeaderboardEntriesDirect(board.leaderboardId, 500, 500);
+            // Create embed
+            const monthName = racingBoard.startDate.toLocaleString('default', { month: 'long' });
+            const year = racingBoard.startDate.getFullYear();
             
-            // Combine the batches
-            let rawEntries = [];
-            
-            // Process first batch
-            if (batch1) {
-                if (Array.isArray(batch1)) {
-                    rawEntries = [...rawEntries, ...batch1];
-                } else if (batch1.Results && Array.isArray(batch1.Results)) {
-                    rawEntries = [...rawEntries, ...batch1.Results];
-                }
-            }
-            
-            // Process second batch
-            if (batch2) {
-                if (Array.isArray(batch2)) {
-                    rawEntries = [...rawEntries, ...batch2];
-                } else if (batch2.Results && Array.isArray(batch2.Results)) {
-                    rawEntries = [...rawEntries, ...batch2.Results];
-                }
-            }
-            
-            const leaderboardEntries = rawEntries.map(entry => {
-                const user = entry.User || entry.user || '';
-                const score = entry.Score || entry.score || entry.Value || entry.value || 0;
-                const formattedScore = entry.FormattedScore || entry.formattedScore || entry.ScoreFormatted || score.toString();
-                const rank = entry.Rank || entry.rank || 0;
-                
-                return {
-                    apiRank: parseInt(rank, 10),
-                    username: user.trim(),
-                    score: formattedScore.toString().trim() || score.toString()
-                };
-            });
-            
-            // Filter entries to only show registered users
-            const filteredEntries = leaderboardEntries.filter(entry => {
-                if (!entry.username) return false;
-                const username = entry.username.toLowerCase().trim();
-                return username && registeredUsers.has(username);
-            });
-            
-            // Sort by API rank to ensure correct ordering
-            filteredEntries.sort((a, b) => a.apiRank - b.apiRank);
-            
-            // Create clickable link to RetroAchievements leaderboard
-            const leaderboardUrl = `https://retroachievements.org/leaderboardinfo.php?i=${board.leaderboardId}`;
-            
-            // Build the leaderboard embed
             const embed = new EmbedBuilder()
-                .setColor('#9B59B6') // Purple color
-                .setTitle(`🎮 ${board.gameTitle}`)
-                .setURL(leaderboardUrl)
-                .setDescription(`${board.description || 'Arcade Leaderboard'}\n\n*Note: Only users ranked 999 or lower in the global leaderboard are shown.*`)
-                .setFooter({ text: `Board ID: ${board.boardId} • Data from RetroAchievements.org` });
+                .setTitle(`🏎️ ${monthName} ${year} Racing Challenge Results`)
+                .setColor('#FF9900')
+                .setDescription(`**${racingBoard.gameTitle}**\n*${racingBoard.description}*`)
+                .setTimestamp();
             
-            // Get game info for thumbnail
-            try {
-                const gameInfo = await retroAPI.getGameInfo(board.gameId);
-                if (gameInfo?.imageIcon) {
-                    embed.setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`);
-                }
-            } catch (error) {
-                console.error(`Error fetching game info for board ${board.boardId}:`, error);
-                // Continue without the thumbnail
-            }
-            
-            // Create leaderboard field
-            if (filteredEntries.length > 0) {
-                // Display top 10 entries or fewer if not enough
-                const displayEntries = filteredEntries.slice(0, 10);
-                let leaderboardText = '';
-                
-                displayEntries.forEach((entry, index) => {
-                    const displayRank = index + 1;
-                    const medalEmoji = displayRank === 1 ? '🥇' : (displayRank === 2 ? '🥈' : (displayRank === 3 ? '🥉' : `${displayRank}.`));
-                    leaderboardText += `${medalEmoji} **${entry.username}**: ${entry.score} (Global Rank: #${entry.apiRank})\n`;
-                });
-                
-                embed.addFields({ name: `Top ${displayEntries.length} Players`, value: leaderboardText });
-                
-                // Add total participants count
-                embed.addFields({ 
-                    name: 'Participants', 
-                    value: `${filteredEntries.length} registered members on this leaderboard`
-                });
-            } else {
-                embed.addFields({ name: 'No Players', value: 'No registered users have scores on this leaderboard yet.' });
-            }
-            
-            // Send or update the message
-            const boardId = board.boardId;
-            try {
-                if (this.lastMessageIds.has(boardId)) {
-                    // Try to update existing message
-                    const messageId = this.lastMessageIds.get(boardId);
-                    const message = await channel.messages.fetch(messageId);
-                    await message.edit({ embeds: [embed] });
-                    console.log(`Updated arcade board embed for ${board.gameTitle} (ID: ${messageId})`);
-                } else {
-                    // Create new message
-                    const message = await channel.send({ embeds: [embed] });
-                    this.lastMessageIds.set(boardId, message.id);
-                    console.log(`Created new arcade board embed for ${board.gameTitle} (ID: ${message.id})`);
-                }
-            } catch (error) {
-                console.error(`Error updating arcade board embed for ${board.gameTitle}:`, error);
-                // If updating fails, try to create a new message
-                if (error.message.includes('Unknown Message')) {
-                    try {
-                        const message = await channel.send({ embeds: [embed] });
-                        this.lastMessageIds.set(boardId, message.id);
-                        console.log(`Created new arcade board embed after error for ${board.gameTitle} (ID: ${message.id})`);
-                    } catch (sendError) {
-                        console.error(`Error creating new message after previous error for ${board.gameTitle}:`, sendError);
-                    }
-                }
-            }
-        } catch (error) {
-            console.error(`Error creating arcade board embed for ${board.gameTitle}:`, error);
-        }
-    }
-
-    async updateRacingBoardEmbed(channel, racingBoard) {
-        try {
-            // Get all registered users
-            const users = await User.find({});
-            
-            // Create mapping of RA usernames (lowercase) to canonical usernames
-            const registeredUsers = new Map();
-            for (const user of users) {
-                registeredUsers.set(user.raUsername.toLowerCase(), user.raUsername);
-            }
-            
-            // Fetch multiple batches of leaderboard entries
-            const batch1 = await retroAPI.getLeaderboardEntriesDirect(racingBoard.leaderboardId, 0, 500);
-            const batch2 = await retroAPI.getLeaderboardEntriesDirect(racingBoard.leaderboardId, 500, 500);
-            
-            // Combine the batches
-            let rawEntries = [];
-            
-            // Process first batch
-            if (batch1) {
-                if (Array.isArray(batch1)) {
-                    rawEntries = [...rawEntries, ...batch1];
-                } else if (batch1.Results && Array.isArray(batch1.Results)) {
-                    rawEntries = [...rawEntries, ...batch1.Results];
-                }
-            }
-            
-            // Process second batch
-            if (batch2) {
-                if (Array.isArray(batch2)) {
-                    rawEntries = [...rawEntries, ...batch2];
-                } else if (batch2.Results && Array.isArray(batch2.Results)) {
-                    rawEntries = [...rawEntries, ...batch2.Results];
-                }
-            }
-            
-            const leaderboardEntries = rawEntries.map(entry => {
-                const user = entry.User || entry.user || '';
-                const score = entry.Score || entry.score || entry.Value || entry.value || 0;
-                const formattedScore = entry.FormattedScore || entry.formattedScore || entry.ScoreFormatted || score.toString();
-                const rank = entry.Rank || entry.rank || 0;
-                
-                return {
-                    apiRank: parseInt(rank, 10),
-                    username: user.trim(),
-                    score: formattedScore.toString().trim() || score.toString()
-                };
-            });
-            
-            // Filter entries to only show registered users
-            const filteredEntries = leaderboardEntries.filter(entry => {
-                if (!entry.username) return false;
-                const username = entry.username.toLowerCase().trim();
-                return username && registeredUsers.has(username);
-            });
-            
-            // Sort by API rank to ensure correct ordering
-            filteredEntries.sort((a, b) => a.apiRank - b.apiRank);
-            
-            // Create clickable link to RetroAchievements leaderboard
-            const leaderboardUrl = `https://retroachievements.org/leaderboardinfo.php?i=${racingBoard.leaderboardId}`;
-            
-            // Get current date for display
-            const now = new Date();
-            
-            // Get the month name for display
-            const raceDate = new Date(racingBoard.startDate);
-            const monthName = raceDate.toLocaleString('default', { month: 'long' });
-            const year = raceDate.getFullYear();
-            
-            // Generate full title with track name
-            const trackDisplay = racingBoard.trackName 
-                ? ` - ${racingBoard.trackName}`
-                : '';
-                
-            const gameDisplay = `${racingBoard.gameTitle}${trackDisplay}`;
-            
-            // Calculate end date timestamp
-            const endTimestamp = Math.floor(racingBoard.endDate.getTime() / 1000);
-            
-            // Build the leaderboard embed
-            const embed = new EmbedBuilder()
-                .setColor('#FF5722') // Orange color to distinguish from arcade boards
-                .setTitle(`🏎️ ${monthName} ${year} Racing Challenge`)
-                .setURL(leaderboardUrl)
-                .setDescription(`**${gameDisplay}**\n${racingBoard.description || ''}\n\n` +
-                               `⏱️ **Active Challenge**\nEnds <t:${endTimestamp}:F> (<t:${endTimestamp}:R>)\n\n` +
-                               `Top 3 players at the end of the month will receive award points (3/2/1)!\n\n` +
-                               `*Note: Only users ranked 999 or lower in the global leaderboard are shown.*`)
-                .setFooter({ text: `Data from RetroAchievements.org` });
-            
-            // Get game info for thumbnail
+            // Add game thumbnail if available
             try {
                 const gameInfo = await retroAPI.getGameInfo(racingBoard.gameId);
                 if (gameInfo?.imageIcon) {
                     embed.setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`);
                 }
             } catch (error) {
-                console.error(`Error fetching game info for racing ${racingBoard.gameTitle}:`, error);
+                console.error('Error fetching game info for thumbnail:', error);
                 // Continue without the thumbnail
             }
             
-            // Create leaderboard field
-            if (filteredEntries.length > 0) {
-                // Display top 10 entries
-                const displayEntries = filteredEntries.slice(0, 10);
-                let leaderboardText = '';
-                
-                displayEntries.forEach((entry, index) => {
-                    const displayRank = index + 1;
-                    const medalEmoji = displayRank === 1 ? '🥇' : (displayRank === 2 ? '🥈' : (displayRank === 3 ? '🥉' : `${displayRank}.`));
-                    leaderboardText += `${medalEmoji} **${entry.username}**: ${entry.score}\n`;
-                });
-                
-                embed.addFields({ name: 'Current Standings', value: leaderboardText });
-                
-                // Add total participants count
-                embed.addFields({ 
-                    name: 'Participants', 
-                    value: `${filteredEntries.length} registered members participating in this racing challenge`
+            // Add results field
+            let resultsText = '';
+            
+            if (results.length > 0) {
+                results.forEach(result => {
+                    const medalEmoji = result.rank === 1 ? '🥇' : (result.rank === 2 ? '🥈' : (result.rank === 3 ? '🥉' : `${result.rank}.`));
+                    resultsText += `${medalEmoji} **${result.username}**: ${result.time} (${result.points} point${result.points !== 1 ? 's' : ''})\n`;
                 });
             } else {
-                embed.addFields({ name: 'No Participants', value: 'No registered users have posted times for this racing challenge yet.' });
+                resultsText = 'No eligible participants found.';
             }
             
-            // Send or update the message
-            const boardId = `racing_${racingBoard.boardId}`;
+            embed.addFields({ name: 'Final Standings', value: resultsText });
+            
+            // Send the announcement
+            await channel.send({ embeds: [embed] });
+            
+        } catch (error) {
+            console.error('Error announcing racing results:', error);
+        }
+    }
+
+    async announceTiebreakerResults(tiebreaker, results) {
+        if (!this.client) return;
+        
+        try {
+            // Get the announcement channel
+            const channel = await this.getAnnouncementChannel();
+            if (!channel) {
+                console.error('Announcement channel not found');
+                return;
+            }
+            
+            // Create embed
+            const embed = new EmbedBuilder()
+                .setTitle(`⚔️ Tiebreaker Challenge Results`)
+                .setColor('#FF0000')
+                .setDescription(`**${tiebreaker.gameTitle}**\n*${tiebreaker.description}*`)
+                .setTimestamp();
+            
+            // Add game thumbnail if available
             try {
-                if (this.lastMessageIds.has(boardId)) {
-                    // Try to update existing message
-                    const messageId = this.lastMessageIds.get(boardId);
-                    const message = await channel.messages.fetch(messageId);
-                    await message.edit({ embeds: [embed] });
-                    console.log(`Updated racing challenge embed for ${racingBoard.gameTitle} (ID: ${messageId})`);
-                } else {
-                    // Create new message
-                    const message = await channel.send({ embeds: [embed] });
-                    this.lastMessageIds.set(boardId, message.id);
-                    console.log(`Created new racing challenge embed for ${racingBoard.gameTitle} (ID: ${message.id})`);
+                const gameInfo = await retroAPI.getGameInfo(tiebreaker.gameId);
+                if (gameInfo?.imageIcon) {
+                    embed.setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`);
                 }
             } catch (error) {
-                console.error(`Error updating racing challenge embed for ${racingBoard.gameTitle}:`, error);
-                // If updating fails, try to create a new message
-                if (error.message.includes('Unknown Message')) {
-                    try {
-                        const message = await channel.send({ embeds: [embed] });
-                        this.lastMessageIds.set(boardId, message.id);
-                        console.log(`Created new racing challenge embed after error for ${racingBoard.gameTitle} (ID: ${message.id})`);
-                    } catch (sendError) {
-                        console.error(`Error creating new message after previous error for ${racingBoard.gameTitle}:`, sendError);
+                console.error('Error fetching game info for thumbnail:', error);
+                // Continue without the thumbnail
+            }
+            
+            // Add participants field
+            embed.addFields({ 
+                name: 'Participants', 
+                value: tiebreaker.tiedUsers.length > 0 ? tiebreaker.tiedUsers.join(', ') : 'No participants' 
+            });
+            
+            // Add results field
+            let resultsText = '';
+            
+            if (results.length > 0) {
+                results.forEach((result, index) => {
+                    const medalEmoji = index === 0 ? '🥇' : (index === 1 ? '🥈' : (index === 2 ? '🥉' : `${index + 1}.`));
+                    resultsText += `${medalEmoji} **${result.User}**: ${result.TrackTime}\n`;
+                });
+                
+                // Announce the winner
+                resultsText += `\n🏆 **${results[0].User}** has won the tiebreaker!`;
+            } else {
+                resultsText = 'No participants competed in the tiebreaker.';
+            }
+            
+            embed.addFields({ name: 'Final Standings', value: resultsText });
+            
+            // Send the announcement
+            await channel.send({ embeds: [embed] });
+            
+        } catch (error) {
+            console.error('Error announcing tiebreaker results:', error);
+        }
+    }
+
+    async getAnnouncementChannel() {
+        if (!this.client) return null;
+
+        try {
+            // Get the guild
+            const guild = await this.client.guilds.fetch(config.discord.guildId);
+            if (!guild) {
+                console.error('Guild not found');
+                return null;
+            }
+
+            // Get the announcement channel
+            return await guild.channels.fetch(config.discord.announcementChannelId);
+        } catch (error) {
+            console.error('Error getting announcement channel:', error);
+            return null;
+        }
+    }
+
+    async announceNewRacingChallenge(racingBoard) {
+        if (!this.client) return;
+        
+        try {
+            // Get the announcement channel
+            const channel = await this.getAnnouncementChannel();
+            if (!channel) {
+                console.error('Announcement channel not found');
+                return;
+            }
+            
+            // Create embed
+            const monthName = racingBoard.startDate.toLocaleString('default', { month: 'long' });
+            const year = racingBoard.startDate.getFullYear();
+            
+            const embed = new EmbedBuilder()
+                .setTitle(`🏎️ New Racing Challenge for ${monthName} ${year}`)
+                .setColor('#FF9900')
+                .setDescription(
+                    `A new monthly racing challenge has begun!\n\n` +
+                    `**Game:** ${racingBoard.gameTitle}\n` +
+                    `**Description:** ${racingBoard.description}\n\n` +
+                    `Challenge ends: <t:${Math.floor(racingBoard.endDate.getTime() / 1000)}:f>\n\n` +
+                    `The top 3 players at the end of the month will receive award points: 3 points for 1st place, 2 points for 2nd place, and 1 point for 3rd place.`
+                )
+                .setTimestamp();
+            
+            // Add game thumbnail if available
+            try {
+                const gameInfo = await retroAPI.getGameInfo(racingBoard.gameId);
+                if (gameInfo?.imageIcon) {
+                    embed.setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`);
+                }
+            } catch (error) {
+                console.error('Error fetching game info for thumbnail:', error);
+                // Continue without the thumbnail
+            }
+            
+            // Send the announcement
+            await channel.send({ embeds: [embed] });
+            
+        } catch (error) {
+            console.error('Error announcing new racing challenge:', error);
+        }
+    }
+    
+    /**
+     * Award points for arcade boards on December 1st
+     * This happens once a year for all arcade boards
+     */
+    async awardArcadePoints() {
+        console.log('Running annual arcade points awards (December 1st)');
+        
+        try {
+            // Get all arcade boards (not racing or tiebreaker)
+            const arcadeBoards = await ArcadeBoard.find({
+                boardType: 'arcade'
+            });
+            
+            if (arcadeBoards.length === 0) {
+                console.log('No arcade boards found');
+                return;
+            }
+            
+            console.log(`Found ${arcadeBoards.length} arcade boards to process`);
+            
+            // Get all registered users
+            const users = await User.find({ isActive: true });
+            
+            // Create mapping of RA usernames (lowercase) to user objects
+            const registeredUsers = new Map();
+            for (const user of users) {
+                registeredUsers.set(user.raUsername.toLowerCase(), user);
+            }
+            
+            // Track all results for the announcement
+            const allResults = [];
+            
+            // Process each arcade board
+            for (const board of arcadeBoards) {
+                console.log(`Processing arcade board: ${board.boardId} - ${board.gameTitle}`);
+                
+                // Fetch leaderboard entries
+                const allEntries = await this.fetchLeaderboardEntries(board.leaderboardId);
+                if (!allEntries || allEntries.length === 0) {
+                    console.log(`No leaderboard entries found for ${board.boardId}`);
+                    continue;
+                }
+                
+                // Filter entries to only show registered users
+                const filteredEntries = allEntries.filter(entry => 
+                    entry.User && registeredUsers.has(entry.User.toLowerCase())
+                );
+                
+                if (filteredEntries.length === 0) {
+                    console.log(`No registered users found in the leaderboard for ${board.boardId}`);
+                    continue;
+                }
+                
+                // Get the top 3 entries
+                const topEntries = filteredEntries.slice(0, 3);
+                
+                // Award points (3/2/1) to the top 3
+                const boardResults = [];
+                const pointsDistribution = [3, 2, 1]; // 1st, 2nd, 3rd place
+                
+                for (let i = 0; i < Math.min(3, topEntries.length); i++) {
+                    const entry = topEntries[i];
+                    const pointsToAward = pointsDistribution[i];
+                    const userObj = registeredUsers.get(entry.User.toLowerCase());
+                    
+                    if (userObj) {
+                        // Get the current year
+                        const currentYear = new Date().getFullYear();
+                        
+                        // Add community award
+                        const placement = i === 0 ? '1st' : (i === 1 ? '2nd' : '3rd');
+                        const awardTitle = `${placement} Place in ${currentYear} Arcade: ${board.gameTitle}`;
+                        
+                        userObj.communityAwards.push({
+                            title: awardTitle,
+                            points: pointsToAward,
+                            awardedAt: new Date(),
+                            awardedBy: 'Arcade System'
+                        });
+                        
+                        await userObj.save();
+                        
+                        // Record result
+                        boardResults.push({
+                            username: entry.User,
+                            rank: i + 1,
+                            score: entry.TrackTime,
+                            points: pointsToAward
+                        });
                     }
                 }
+                
+                // Add to overall results if any points were awarded
+                if (boardResults.length > 0) {
+                    allResults.push({
+                        board,
+                        results: boardResults
+                    });
+                }
+            }
+            
+            // Announce the results
+            await this.announceArcadeResults(allResults);
+            
+            console.log('Finished processing arcade boards');
+        } catch (error) {
+            console.error('Error awarding arcade points:', error);
+        }
+    }
+    
+    /**
+     * Announce the results of the annual arcade points
+     */
+    async announceArcadeResults(allResults) {
+        if (!this.client || allResults.length === 0) return;
+        
+        try {
+            // Get the announcement channel
+            const channel = await this.getAnnouncementChannel();
+            if (!channel) {
+                console.error('Announcement channel not found');
+                return;
+            }
+            
+            // Get the current year
+            const currentYear = new Date().getFullYear();
+            
+            // Create main embed
+            const mainEmbed = new EmbedBuilder()
+                .setTitle(`🎮 ${currentYear} Arcade Results`)
+                .setColor('#0099ff')
+                .setDescription(
+                    `The annual arcade leaderboard results are in!\n\n` +
+                    `The top players in each arcade category have been awarded points:\n` +
+                    `- 1st Place: 3 points\n` +
+                    `- 2nd Place: 2 points\n` +
+                    `- 3rd Place: 1 point\n\n` +
+                    `Check out the results for each arcade board below.`
+                )
+                .setTimestamp();
+            
+            // Send the main announcement
+            await channel.send({ embeds: [mainEmbed] });
+            
+            // Create separate embeds for each board with results
+            for (const { board, results } of allResults) {
+                const boardEmbed = new EmbedBuilder()
+                    .setTitle(`${board.gameTitle}`)
+                    .setColor('#00BFFF')
+                    .setDescription(`*${board.description}*\n\n**Top Players:**`);
+                
+                // Add results to the embed
+                let resultsText = '';
+                for (const result of results) {
+                    const medalEmoji = result.rank === 1 ? '🥇' : (result.rank === 2 ? '🥈' : '🥉');
+                    resultsText += `${medalEmoji} **${result.username}**: ${result.score} (${result.points} point${result.points !== 1 ? 's' : ''})\n`;
+                }
+                
+                boardEmbed.addFields({ name: 'Results', value: resultsText });
+                
+                // Add game thumbnail if available
+                try {
+                    const gameInfo = await retroAPI.getGameInfo(board.gameId);
+                    if (gameInfo?.imageIcon) {
+                        boardEmbed.setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`);
+                    }
+                } catch (error) {
+                    // Continue without the thumbnail
+                }
+                
+                // Send each board's results
+                await channel.send({ embeds: [boardEmbed] });
+                
+                // Add a small delay between messages to avoid rate limits
+                await new Promise(resolve => setTimeout(resolve, 1000));
             }
         } catch (error) {
-            console.error(`Error creating racing challenge embed for ${racingBoard.gameTitle}:`, error);
+            console.error('Error announcing arcade results:', error);
         }
     }
 }
 
 // Create singleton instance
-const arcadeFeedService = new ArcadeFeedService();
-export default arcadeFeedService;
+const arcadeService = new ArcadeService();
+export default arcadeService;
