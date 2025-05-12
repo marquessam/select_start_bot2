@@ -14,6 +14,7 @@ class ArcadeFeedService {
         this.updateInterval = null;
         this.lastMessageIds = new Map(); // Map of boardId -> messageId
         this.headerMessageId = null; // ID of the header message
+        this.summaryMessageId = null; // ID of the summary message
     }
 
     setClient(client) {
@@ -102,6 +103,7 @@ class ArcadeFeedService {
             // Reset state since we've cleared the channel
             this.lastMessageIds.clear();
             this.headerMessageId = null;
+            this.summaryMessageId = null;
             
             return true;
         } catch (error) {
@@ -173,18 +175,30 @@ class ArcadeFeedService {
                 endDate: { $gte: now }
             });
             
+            // Collection to track top 3 users for the arcade summary
+            const arcadeTopUsersData = [];
+            
             // Update current racing challenge (if any)
             if (racingBoard) {
                 await this.updateRacingBoardEmbed(channel, racingBoard);
             }
             
-            // Update arcade board embeds
+            // Update arcade board embeds and collect data for the summary
             for (const board of arcadeBoards) {
-                await this.updateArcadeBoardEmbed(channel, board);
+                const boardTopUsers = await this.updateArcadeBoardEmbed(channel, board);
+                if (boardTopUsers && boardTopUsers.length > 0) {
+                    arcadeTopUsersData.push({
+                        boardName: board.gameTitle,
+                        topUsers: boardTopUsers
+                    });
+                }
                 
                 // Add a small delay between boards to avoid rate limits
                 await new Promise(resolve => setTimeout(resolve, 1000));
             }
+            
+            // Update the arcade summary embed with just arcade board data
+            await this.updateArcadeSummaryEmbed(channel, arcadeTopUsersData, timestamp);
             
             console.log(`Updated arcade feed with ${arcadeBoards.length} boards and ${racingBoard ? '1' : '0'} racing challenges`);
         } catch (error) {
@@ -320,6 +334,9 @@ class ArcadeFeedService {
                 // Continue without the thumbnail
             }
             
+            // Get top 3 users for summary tracking
+            const topUsers = [];
+            
             // Create leaderboard field
             if (filteredEntries.length > 0) {
                 // Display top 10 entries or fewer if not enough
@@ -330,6 +347,17 @@ class ArcadeFeedService {
                     const displayRank = index + 1;
                     const medalEmoji = displayRank === 1 ? '🥇' : (displayRank === 2 ? '🥈' : (displayRank === 3 ? '🥉' : `${displayRank}.`));
                     leaderboardText += `${medalEmoji} **${entry.username}**: ${entry.score} (Global Rank: #${entry.apiRank})\n`;
+                    
+                    // Track top 3 users for the summary
+                    if (displayRank <= 3) {
+                        topUsers.push({
+                            username: entry.username,
+                            position: displayRank,
+                            score: entry.score,
+                            apiRank: entry.apiRank,
+                            points: displayRank === 1 ? 3 : (displayRank === 2 ? 2 : 1) // 1st=3pts, 2nd=2pts, 3rd=1pt
+                        });
+                    }
                 });
                 
                 embed.addFields({ name: `Top ${displayEntries.length} Players`, value: leaderboardText });
@@ -371,8 +399,12 @@ class ArcadeFeedService {
                     }
                 }
             }
+            
+            // Return the top users for the summary
+            return topUsers;
         } catch (error) {
             console.error(`Error creating arcade board embed for ${board.gameTitle}:`, error);
+            return [];
         }
     }
 
@@ -531,6 +563,113 @@ class ArcadeFeedService {
             }
         } catch (error) {
             console.error(`Error creating racing challenge embed for ${racingBoard.gameTitle}:`, error);
+        }
+    }
+    
+    async updateArcadeSummaryEmbed(channel, arcadeTopUsersData, timestamp) {
+        try {
+            // Process the top users data to build point totals
+            const userPoints = new Map(); // username -> { points, boards: [{boardName, position, points}] }
+            
+            // Collect data from all arcade boards
+            arcadeTopUsersData.forEach(boardData => {
+                const { boardName, topUsers } = boardData;
+                
+                topUsers.forEach(user => {
+                    const { username, position, points } = user;
+                    
+                    // Add to user's total points
+                    if (!userPoints.has(username)) {
+                        userPoints.set(username, { 
+                            totalPoints: 0, 
+                            boards: [] 
+                        });
+                    }
+                    
+                    const userData = userPoints.get(username);
+                    userData.totalPoints += points;
+                    userData.boards.push({
+                        boardName,
+                        position,
+                        points
+                    });
+                });
+            });
+            
+            // Sort users by total points (descending)
+            const sortedUsers = Array.from(userPoints.entries())
+                .sort((a, b) => b[1].totalPoints - a[1].totalPoints)
+                .map(([username, data]) => ({ username, ...data }));
+            
+            // Create the summary embed
+            const summaryEmbed = new EmbedBuilder()
+                .setColor('#FFD700') // Gold color
+                .setTitle('🏆 Arcade Points Summary')
+                .setDescription(
+                    `**Projected year-end arcade points for top-ranked users**\n\n` +
+                    `*These are theoretical points based on current standings. Final arcade points will be awarded in December.*\n\n` +
+                    `Points scale: 🥇 1st Place = 3 points | 🥈 2nd Place = 2 points | 🥉 3rd Place = 1 point\n\n` +
+                    `Last updated: ${timestamp}`
+                )
+                .setFooter({ text: 'Points are only for arcade boards and will be awarded at year end. Racing points are awarded monthly and not included here.' });
+            
+            // Create the standings field
+            if (sortedUsers.length > 0) {
+                let standingsText = '';
+                
+                // Add each user with their points breakdown
+                sortedUsers.forEach((user, index) => {
+                    const rankEmoji = index === 0 ? '🥇' : (index === 1 ? '🥈' : (index === 2 ? '🥉' : `${index + 1}.`));
+                    standingsText += `${rankEmoji} **${user.username}**: ${user.totalPoints} points\n`;
+                    
+                    // Add details about which boards the user is placed in
+                    user.boards.forEach(board => {
+                        const positionEmoji = board.position === 1 ? '🥇' : (board.position === 2 ? '🥈' : '🥉');
+                        standingsText += `   • ${positionEmoji} ${board.boardName} (${board.points} pts)\n`;
+                    });
+                    
+                    standingsText += '\n';
+                });
+                
+                summaryEmbed.addFields({ 
+                    name: 'Current Standings', 
+                    value: standingsText || 'No users have ranking points yet.' 
+                });
+            } else {
+                summaryEmbed.addFields({ 
+                    name: 'No Standings', 
+                    value: 'No users have ranking points yet.' 
+                });
+            }
+            
+            // Send or update the message
+            try {
+                if (this.summaryMessageId) {
+                    // Try to update existing message
+                    const message = await channel.messages.fetch(this.summaryMessageId);
+                    await message.edit({ embeds: [summaryEmbed] });
+                    console.log(`Updated arcade points summary embed (ID: ${this.summaryMessageId})`);
+                } else {
+                    // Create new message
+                    const message = await channel.send({ embeds: [summaryEmbed] });
+                    this.summaryMessageId = message.id;
+                    console.log(`Created new arcade points summary embed (ID: ${message.id})`);
+                }
+            } catch (error) {
+                console.error('Error updating arcade points summary embed:', error);
+                // If updating fails, try to create a new message
+                if (error.message.includes('Unknown Message')) {
+                    try {
+                        const message = await channel.send({ embeds: [summaryEmbed] });
+                        this.summaryMessageId = message.id;
+                        console.log(`Created new arcade points summary embed after error (ID: ${message.id})`);
+                    } catch (sendError) {
+                        console.error('Error creating new summary embed after previous error:', sendError);
+                    }
+                }
+            }
+        } catch (error) {
+            console.error('Error creating arcade points summary embed:', error);
         }
     }
 }
