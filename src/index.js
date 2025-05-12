@@ -9,6 +9,7 @@ import statsUpdateService from './services/statsUpdateService.js';
 import achievementFeedService from './services/achievementFeedService.js';
 import monthlyTasksService from './services/monthlyTasksService.js';
 import arcadeService from './services/arcadeService.js';
+import leaderboardFeedService from './services/leaderboardFeedService.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -175,6 +176,7 @@ client.once(Events.ClientReady, async () => {
         achievementFeedService.setClient(client);
         monthlyTasksService.setClient(client);
         arcadeService.setClient(client);
+        leaderboardFeedService.setClient(client);
 
         // Schedule stats updates every 30 minutes
         cron.schedule('*/30 * * * *', () => {
@@ -244,6 +246,14 @@ client.once(Events.ClientReady, async () => {
             } catch (error) {
                 console.error('Error in leaderboard finalization:', error);
             }
+        });
+
+        // Schedule leaderboard feed updates every 15 minutes
+        cron.schedule('*/15 * * * *', () => {
+            console.log('Running leaderboard feed update...');
+            leaderboardFeedService.updateLeaderboard().catch(error => {
+                console.error('Error in leaderboard feed update:', error);
+            });
         });
 
         // Check if we need to finalize the previous month's leaderboard on startup
@@ -319,6 +329,9 @@ client.once(Events.ClientReady, async () => {
         
         // Run initial arcade service check
         await arcadeService.start();
+        
+        // Start the leaderboard feed service
+        await leaderboardFeedService.start();
 
         console.log('Bot is ready!');
     } catch (error) {
