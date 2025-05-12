@@ -11,6 +11,7 @@ import monthlyTasksService from './services/monthlyTasksService.js';
 import arcadeService from './services/arcadeService.js';
 import leaderboardFeedService from './services/leaderboardFeedService.js';
 import arcadeAlertService from './services/arcadeAlertService.js';
+import arcadeFeedService from './services/arcadeFeedService.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -179,6 +180,7 @@ client.once(Events.ClientReady, async () => {
         arcadeService.setClient(client);
         leaderboardFeedService.setClient(client);
         arcadeAlertService.setClient(client);
+        arcadeFeedService.setClient(client);
 
         // Schedule stats updates every 30 minutes
         cron.schedule('*/30 * * * *', () => {
@@ -226,6 +228,14 @@ client.once(Events.ClientReady, async () => {
             console.log('Running arcade alerts check...');
             arcadeAlertService.checkForRankChanges(true).catch(error => {
                 console.error('Error in arcade alerts check:', error);
+            });
+        });
+
+        // Schedule arcade feed updates every hour
+        cron.schedule('10 * * * *', () => { // Runs at 10 minutes past every hour
+            console.log('Running arcade feed update...');
+            arcadeFeedService.updateArcadeFeed().catch(error => {
+                console.error('Error in arcade feed update:', error);
             });
         });
 
@@ -345,6 +355,9 @@ client.once(Events.ClientReady, async () => {
         
         // Start the arcade alert service
         await arcadeAlertService.start();
+        
+        // Start the arcade feed service
+        await arcadeFeedService.start();
 
         console.log('Bot is ready!');
     } catch (error) {
