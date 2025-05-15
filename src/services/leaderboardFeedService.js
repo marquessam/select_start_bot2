@@ -147,19 +147,30 @@ class LeaderboardFeedService {
                 await this.checkForRankChanges(sortedUsers);
             }
 
-            // Format current time for the message
-            const timestamp = new Date().toLocaleString('en-US', {
-                month: 'short',
-                day: 'numeric',
-                hour: 'numeric',
-                minute: '2-digit',
-                hour12: true
-            });
+            // Get current Unix timestamp for Discord formatting
+            const unixTimestamp = Math.floor(Date.now() / 1000);
             
-            const headerContent = `**Monthly Challenge Leaderboard** (Last updated: ${timestamp})`;
+            const headerContent = `**Monthly Challenge Leaderboard** • <t:${unixTimestamp}:f> • Updates every 15 minutes`;
 
             // Calculate how many messages we need (1 for header + enough for all participant embeds)
             const totalMessagesNeeded = 1 + participantEmbeds.length;
+
+            // Add update frequency to the footer of the first and last participant embeds
+            if (participantEmbeds.length > 0) {
+                // First embed
+                participantEmbeds[0].setFooter({
+                    text: `Group 1/${participantEmbeds.length} • Updates every 15 minutes • Use /help points for more information`,
+                    iconURL: headerEmbed.data.thumbnail?.url || null
+                });
+                
+                // Last embed (if different from first)
+                if (participantEmbeds.length > 1) {
+                    participantEmbeds[participantEmbeds.length - 1].setFooter({
+                        text: `Group ${participantEmbeds.length}/${participantEmbeds.length} • Updates every 15 minutes • Use /help points for more information`,
+                        iconURL: headerEmbed.data.thumbnail?.url || null
+                    });
+                }
+            }
 
             // Check if we need to update or create new messages
             if (this.lastMessageIds.length === totalMessagesNeeded) {
@@ -568,17 +579,21 @@ class LeaderboardFeedService {
             // Use Discord's relative time format
             const timeRemaining = `<t:${endDateTimestamp}:R>`;
 
+            // Get current Unix timestamp for Discord formatting
+            const updateTimestamp = Math.floor(Date.now() / 1000);
+
             // Create the header embed
             const headerEmbed = new EmbedBuilder()
                 .setTitle(`${monthName} Challenge Leaderboard`)
                 .setColor('#FFD700')
                 .setThumbnail(`https://retroachievements.org${gameImageUrl}`);
 
-            // Add game details to description
+            // Add game details to description with update frequency
             let description = `**Game:** [${gameTitle}](https://retroachievements.org/game/${currentChallenge.monthly_challange_gameid})\n` +
                             `**Total Achievements:** ${currentChallenge.monthly_challange_game_total}\n` +
                             `**Challenge Ends:** ${endDateFormatted}\n` +
-                            `**Time Remaining:** ${timeRemaining}\n\n` +
+                            `**Time Remaining:** ${timeRemaining}\n` +
+                            `**Last Updated:** <t:${updateTimestamp}:f>\n\n` +
                             `${AWARD_EMOJIS.MASTERY} Mastery (7pts) | ${AWARD_EMOJIS.BEATEN} Beaten (4pts) | ${AWARD_EMOJIS.PARTICIPATION} Part. (1pt)`;
 
             // Add tiebreaker info if active
