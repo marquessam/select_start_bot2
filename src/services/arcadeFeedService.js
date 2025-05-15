@@ -207,10 +207,14 @@ class ArcadeFeedService {
     }
     
     async updateHeaderMessage(channel, timestamp) {
-        // Create header content
-        const headerContent = `# 🎮 Arcade Leaderboards (Last updated: ${timestamp})\n` + 
-                             `All active arcade boards and the current racing challenge are shown below.\n` +
-                             `Leaderboards update hourly. Top 3 finishers in arcade boards earn points at the end of the year!`;
+        // Get current Unix timestamp for Discord formatting
+        const unixTimestamp = Math.floor(Date.now() / 1000);
+        
+        // Create header content with cleaner formatting and update frequency note
+        const headerContent = `# 🕹️ Arcade Leaderboards \n` + 
+                             `All active arcade games and the current racing challenge are shown below.\n` +
+                             `**Last Updated:** <t:${unixTimestamp}:f> | **Updates:** Every hour\n` +
+                             `Top 3 finishers in arcade boards earn points (3/2/1) at the end of the year!`;
         
         try {
             if (this.headerMessageId) {
@@ -318,7 +322,7 @@ class ArcadeFeedService {
             // Build the leaderboard embed
             const embed = new EmbedBuilder()
                 .setColor('#9B59B6') // Purple color
-                .setTitle(`🎮 ${board.gameTitle}`)
+                .setTitle(`🕹️ ${board.gameTitle}`)
                 .setURL(leaderboardUrl)
                 .setDescription(`${board.description || 'Arcade Leaderboard'}\n\n*Note: Only users ranked 999 or lower in the global leaderboard are shown.*`)
                 .setFooter({ text: `Board ID: ${board.boardId} • Data from RetroAchievements.org` });
@@ -592,6 +596,9 @@ class ArcadeFeedService {
                 .sort((a, b) => b[1] - a[1])
                 .map(([username, points]) => ({ username, points }));
             
+            // Get current Unix timestamp for Discord formatting
+            const unixTimestamp = Math.floor(Date.now() / 1000);
+            
             // Create the summary embed
             const summaryEmbed = new EmbedBuilder()
                 .setColor('#FFD700') // Gold color
@@ -600,7 +607,7 @@ class ArcadeFeedService {
                     `**Projected year-end arcade points for top-ranked users**\n\n` +
                     `*These are theoretical points based on current standings. Final arcade points will be awarded in December.*\n\n` +
                     `Points scale: 🥇 1st Place = 3 points | 🥈 2nd Place = 2 points | 🥉 3rd Place = 1 point\n\n` +
-                    `Last updated: ${timestamp}`
+                    `**Last Updated:** <t:${unixTimestamp}:f> | **Updates:** Every hour`
                 )
                 .setFooter({ text: 'Points are only for arcade boards and will be awarded at year end. Racing points are awarded monthly and not included here.' });
             
