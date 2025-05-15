@@ -1,3 +1,4 @@
+// src/config/config.js
 import dotenv from 'dotenv';
 dotenv.config();
 
@@ -25,7 +26,8 @@ export const config = {
         leaderboardFeedChannelId: process.env.LEADERBOARD_FEED_CHANNEL || '1371350718505811989',
         rankAlertsChannelId: process.env.RANK_ALERTS_CHANNEL || '1371350718505811989',
         arcadeAlertsChannelId: process.env.ARCADE_ALERTS_CHANNEL || '1300941091335438471',
-        arcadeFeedChannelId: process.env.ARCADE_FEED_CHANNEL || '1371363491130114098'
+        arcadeFeedChannelId: process.env.ARCADE_FEED_CHANNEL || '1371363491130114098',
+        adminLogChannelId: process.env.ADMIN_LOG_CHANNEL || '1304814893857374270' // Using the specific admin log channel ID
     },
     
     // RetroAchievements API Configuration
@@ -73,7 +75,8 @@ export function validateConfig() {
         'LEADERBOARD_FEED_CHANNEL',
         'RANK_ALERTS_CHANNEL',
         'ARCADE_ALERTS_CHANNEL',
-        'ARCADE_FEED_CHANNEL'
+        'ARCADE_FEED_CHANNEL',
+        'ADMIN_LOG_CHANNEL'
     ];
 
     const missing = required.filter(key => !process.env[key]);
