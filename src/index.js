@@ -1,3 +1,4 @@
+// src/index.js
 import { Client, Collection, Events, GatewayIntentBits } from 'discord.js';
 import { config, validateConfig } from './config/config.js';
 import { connectDB } from './models/index.js';
@@ -12,6 +13,7 @@ import arcadeService from './services/arcadeService.js';
 import leaderboardFeedService from './services/leaderboardFeedService.js';
 import arcadeAlertService from './services/arcadeAlertService.js';
 import arcadeFeedService from './services/arcadeFeedService.js';
+import membershipCheckService from './services/membershipCheckService.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -181,6 +183,7 @@ client.once(Events.ClientReady, async () => {
         leaderboardFeedService.setClient(client);
         arcadeAlertService.setClient(client);
         arcadeFeedService.setClient(client);
+        membershipCheckService.setClient(client);
 
         // Schedule stats updates every 30 minutes
         cron.schedule('*/30 * * * *', () => {
@@ -236,6 +239,14 @@ client.once(Events.ClientReady, async () => {
             console.log('Running arcade feed update...');
             arcadeFeedService.updateArcadeFeed().catch(error => {
                 console.error('Error in arcade feed update:', error);
+            });
+        });
+
+        // Schedule membership check daily at 3:00 AM
+        cron.schedule('0 3 * * *', () => {
+            console.log('Running scheduled membership check...');
+            membershipCheckService.checkMemberships().catch(error => {
+                console.error('Error in scheduled membership check:', error);
             });
         });
 
@@ -358,6 +369,9 @@ client.once(Events.ClientReady, async () => {
         
         // Start the arcade feed service
         await arcadeFeedService.start();
+        
+        // Start the membership check service
+        await membershipCheckService.start();
 
         console.log('Bot is ready!');
     } catch (error) {
