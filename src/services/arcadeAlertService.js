@@ -1,4 +1,5 @@
 // src/services/arcadeAlertService.js
+import { EmbedBuilder } from 'discord.js';
 import { User } from '../models/User.js';
 import { ArcadeBoard } from '../models/ArcadeBoard.js';
 import retroAPI from './retroAPI.js';
@@ -312,116 +313,119 @@ class ArcadeAlertService {
     }
 
     // Send alerts for rank changes
- async sendRankChangeAlerts(alertsChannel, alerts) {
-    if (!alertsChannel) {
-        console.log('No alerts channel configured, skipping arcade rank change notifications');
-        return;
-    }
-
-    // Group alerts by boardId
-    const boardAlerts = new Map();
-    
-    for (const alert of alerts) {
-        if (!boardAlerts.has(alert.boardId)) {
-            boardAlerts.set(alert.boardId, []);
+    async sendRankChangeAlerts(alertsChannel, alerts) {
+        if (!alertsChannel) {
+            console.log('No alerts channel configured, skipping arcade rank change notifications');
+            return;
         }
-        boardAlerts.get(alert.boardId).push(alert);
-    }
-    
-    // Process each board's alerts
-    for (const [boardId, boardAlertsList] of boardAlerts.entries()) {
-        try {
-            // Get the first alert to extract board info
-            const firstAlert = boardAlertsList[0];
-            const boardName = firstAlert.boardName;
-            
-            // Get board details
-            const board = await ArcadeBoard.findOne({ boardId: boardId });
-            if (!board) {
-                console.warn(`Board not found for boardId ${boardId}`);
-                continue;
+
+        // Group alerts by boardId
+        const boardAlerts = new Map();
+        
+        for (const alert of alerts) {
+            if (!boardAlerts.has(alert.boardId)) {
+                boardAlerts.set(alert.boardId, []);
             }
-            
-            // Get game info for thumbnail
-            let thumbnailUrl = null;
+            boardAlerts.get(alert.boardId).push(alert);
+        }
+        
+        // Process each board's alerts
+        for (const [boardId, boardAlertsList] of boardAlerts.entries()) {
             try {
-                const gameInfo = await retroAPI.getGameInfo(board.gameId);
-                if (gameInfo?.imageIcon) {
-                    thumbnailUrl = `https://retroachievements.org${gameInfo.imageIcon}`;
-                }
-            } catch (error) {
-                console.error('Error fetching game info for embed thumbnail:', error);
-                // Continue without the thumbnail
-            }
-            
-            // Create embed for this board
-            const embed = new EmbedBuilder()
-                .setColor('#9B59B6') // Purple color
-                .setTitle(`🕹️ Arcade Update: ${boardName}`)
-                .setDescription(`The leaderboard for **${boardName}** has been updated!`)
-                .setTimestamp()
-                .setFooter({ text: 'Select Start Arcade System' });
+                // Get the first alert to extract board info
+                const firstAlert = boardAlertsList[0];
+                const boardName = firstAlert.boardName;
                 
-            if (thumbnailUrl) {
-                embed.setThumbnail(thumbnailUrl);
-            }
-            
-            // Create fields for different types of updates
-            const usersOvertaken = boardAlertsList.filter(alert => alert.type === 'overtaken');
-            const usersDropped = boardAlertsList.filter(alert => alert.type === 'dropped');
-            const usersOutOfTop3 = boardAlertsList.filter(alert => alert.type === 'out_of_top3');
-            const usersEnteredTop3 = boardAlertsList.filter(alert => alert.type === 'entered_top3');
-            
-            // Add a leaderboard URL
-            const leaderboardUrl = `https://retroachievements.org/leaderboardinfo.php?i=${board.leaderboardId}`;
-            embed.setURL(leaderboardUrl);
-            
-            // Add field for each update type (only if there are any alerts of that type)
-            if (usersOvertaken.length > 0) {
-                let overtakenText = '';
-                for (const alert of usersOvertaken) {
-                    const prevRankEmoji = MEDAL_EMOJIS[alert.prevRank] || `#${alert.prevRank}`;
-                    const newRankEmoji = MEDAL_EMOJIS[alert.newRank] || `#${alert.newRank}`;
-                    overtakenText += `<@${alert.user.discordId}>: ${prevRankEmoji} → ${newRankEmoji} (passed by ${alert.passer.username} with ${alert.passer.score})\n`;
+                // Get board details
+                const board = await ArcadeBoard.findOne({ boardId: boardId });
+                if (!board) {
+                    console.warn(`Board not found for boardId ${boardId}`);
+                    continue;
                 }
-                embed.addFields({ name: '📉 Rank Decreased', value: overtakenText });
-            }
-            
-            if (usersOutOfTop3.length > 0) {
-                let outOfTop3Text = '';
-                for (const alert of usersOutOfTop3) {
-                    const prevRankEmoji = MEDAL_EMOJIS[alert.prevRank] || `#${alert.prevRank}`;
-                    outOfTop3Text += `<@${alert.user.discordId}>: ${prevRankEmoji} → #${alert.newRank}\n`;
+                
+                // Get game info for thumbnail
+                let thumbnailUrl = null;
+                try {
+                    const gameInfo = await retroAPI.getGameInfo(board.gameId);
+                    if (gameInfo?.imageIcon) {
+                        thumbnailUrl = `https://retroachievements.org${gameInfo.imageIcon}`;
+                    }
+                } catch (error) {
+                    console.error('Error fetching game info for embed thumbnail:', error);
+                    // Continue without the thumbnail
                 }
-                embed.addFields({ name: '🏅 Fell Out of Top 3', value: outOfTop3Text });
-            }
-            
-            if (usersDropped.length > 0) {
-                let droppedText = '';
-                for (const alert of usersDropped) {
-                    const droppedRankEmoji = MEDAL_EMOJIS[alert.prevRank] || `#${alert.prevRank}`;
-                    droppedText += `<@${alert.user.discordId}>: ${droppedRankEmoji} → no longer on board (was ${alert.prevScore})\n`;
+                
+                // Get current Unix timestamp for Discord formatting
+                const unixTimestamp = Math.floor(Date.now() / 1000);
+                
+                // Create embed for this board
+                const embed = new EmbedBuilder()
+                    .setColor('#9B59B6') // Purple color
+                    .setTitle(`🕹️ Arcade Update: ${boardName}`)
+                    .setDescription(`The leaderboard for **${boardName}** has been updated!\n**Time:** <t:${unixTimestamp}:f>`)
+                    .setTimestamp()
+                    .setFooter({ text: 'Select Start Arcade System • Rankings update hourly' });
+                    
+                if (thumbnailUrl) {
+                    embed.setThumbnail(thumbnailUrl);
                 }
-                embed.addFields({ name: '❌ Dropped from Board', value: droppedText });
-            }
-            
-            if (usersEnteredTop3.length > 0) {
-                let enteredTop3Text = '';
-                for (const alert of usersEnteredTop3) {
-                    const newRankEmoji = MEDAL_EMOJIS[alert.newRank] || `#${alert.newRank}`;
-                    enteredTop3Text += `<@${alert.user.discordId}>: ${newRankEmoji} with score ${alert.score}\n`;
+                
+                // Create fields for different types of updates
+                const usersOvertaken = boardAlertsList.filter(alert => alert.type === 'overtaken');
+                const usersDropped = boardAlertsList.filter(alert => alert.type === 'dropped');
+                const usersOutOfTop3 = boardAlertsList.filter(alert => alert.type === 'out_of_top3');
+                const usersEnteredTop3 = boardAlertsList.filter(alert => alert.type === 'entered_top3');
+                
+                // Add a leaderboard URL
+                const leaderboardUrl = `https://retroachievements.org/leaderboardinfo.php?i=${board.leaderboardId}`;
+                embed.setURL(leaderboardUrl);
+                
+                // Add field for each update type (only if there are any alerts of that type)
+                if (usersOvertaken.length > 0) {
+                    let overtakenText = '';
+                    for (const alert of usersOvertaken) {
+                        const prevRankEmoji = MEDAL_EMOJIS[alert.prevRank] || `#${alert.prevRank}`;
+                        const newRankEmoji = MEDAL_EMOJIS[alert.newRank] || `#${alert.newRank}`;
+                        overtakenText += `<@${alert.user.discordId}>: ${prevRankEmoji} → ${newRankEmoji} (passed by ${alert.passer.username} with ${alert.passer.score})\n`;
+                    }
+                    embed.addFields({ name: '📉 Rank Decreased', value: overtakenText });
                 }
-                embed.addFields({ name: '🏆 Entered Top 3', value: enteredTop3Text });
-            }
-            
-            // Send the consolidated embed for this board
-            await alertsChannel.send({ embeds: [embed] });
-            console.log(`Sent consolidated arcade rank change alert for board: ${boardName}`);
-            
-            // Add a delay between sending embeds for different boards
-            await new Promise(resolve => setTimeout(resolve, 1000));
-        } catch (error) {
-            console.error(`Error sending arcade rank change alert for board ${boardId}:`, error);
+                
+                if (usersOutOfTop3.length > 0) {
+                    let outOfTop3Text = '';
+                    for (const alert of usersOutOfTop3) {
+                        const prevRankEmoji = MEDAL_EMOJIS[alert.prevRank] || `#${alert.prevRank}`;
+                        outOfTop3Text += `<@${alert.user.discordId}>: ${prevRankEmoji} → #${alert.newRank}\n`;
+                    }
+                    embed.addFields({ name: '🏅 Fell Out of Top 3', value: outOfTop3Text });
+                }
+                
+                if (usersDropped.length > 0) {
+                    let droppedText = '';
+                    for (const alert of usersDropped) {
+                        const droppedRankEmoji = MEDAL_EMOJIS[alert.prevRank] || `#${alert.prevRank}`;
+                        droppedText += `<@${alert.user.discordId}>: ${droppedRankEmoji} → no longer on board (was ${alert.prevScore})\n`;
+                    }
+                    embed.addFields({ name: '❌ Dropped from Board', value: droppedText });
+                }
+                
+                if (usersEnteredTop3.length > 0) {
+                    let enteredTop3Text = '';
+                    for (const alert of usersEnteredTop3) {
+                        const newRankEmoji = MEDAL_EMOJIS[alert.newRank] || `#${alert.newRank}`;
+                        enteredTop3Text += `<@${alert.user.discordId}>: ${newRankEmoji} with score ${alert.score}\n`;
+                    }
+                    embed.addFields({ name: '🏆 Entered Top 3', value: enteredTop3Text });
+                }
+                
+                // Send the consolidated embed for this board
+                await alertsChannel.send({ embeds: [embed] });
+                console.log(`Sent consolidated arcade rank change alert for board: ${boardName}`);
+                
+                // Add a delay between sending embeds for different boards
+                await new Promise(resolve => setTimeout(resolve, 1000));
+            } catch (error) {
+                console.error(`Error sending arcade rank change alert for board ${boardId}:`, error);
             }
         }
     }
