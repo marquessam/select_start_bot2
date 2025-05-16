@@ -3,6 +3,7 @@ import { User } from '../../models/User.js';
 import { Poll } from '../../models/Poll.js';
 import retroAPI from '../../services/retroAPI.js';
 import { config } from '../../config/config.js';
+import monthlyTasksService from '../../services/monthlyTasksService.js';
 
 export default {
     data: new SlashCommandBuilder()
@@ -26,6 +27,11 @@ export default {
             subcommand
                 .setName('cancel')
                 .setDescription('Cancel the current voting poll without announcing results')
+        )
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('end')
+                .setDescription('End the current voting poll and announce results')
         ),
 
     async execute(interaction) {
@@ -45,6 +51,9 @@ export default {
                 break;
             case 'cancel':
                 await this.handleCancelVoting(interaction);
+                break;
+            case 'end':
+                await this.handleEndVoting(interaction);
                 break;
             default:
                 await interaction.reply({
@@ -108,7 +117,7 @@ export default {
             // Get all users
             const users = await User.find({});
 
-            // Get all current nominations with duplicates maintained
+            // Get all current nominations with duplicates maintained for weighted selection
             let allNominations = [];
             for (const user of users) {
                 const nominations = user.getCurrentNominations();
@@ -124,7 +133,6 @@ export default {
             }
 
             // Create a weighted pool based on nomination count
-            // This gives games with more nominations better odds of selection
             const nominationCounts = {};
             const weightedPool = [];
 
@@ -214,6 +222,7 @@ export default {
                 channelId: channel.id,
                 resultsChannelId: resultsChannel.id, // Store results channel ID
                 selectedGames: selectedGames,
+                startDate: new Date(),
                 endDate: endDate
             });
 
@@ -236,11 +245,9 @@ export default {
                     const jobName = `end-poll-${poll._id}`;
                     const job = schedule.default.scheduleJob(jobName, jobDate, async function() {
                         try {
-                            // We'll manually handle this by retrieving the poll ID from the database
-                            console.log(`Scheduled job for poll ${poll._id} triggered`);
-                            
-                            // Logic will be handled by a manual process instead
-                            // Just log that it was triggered
+                            console.log(`Scheduled job for poll ${poll._id} triggered, ending the vote automatically`);
+                            // Use the monthly tasks service to end the vote
+                            await monthlyTasksService.countAndAnnounceVotes();
                         } catch (error) {
                             console.error('Error in scheduled job for ending voting:', error);
                         }
@@ -260,12 +267,60 @@ export default {
             return interaction.editReply(
                 `Voting poll has been created! The poll will be active until ${endDate.toLocaleDateString()}. ` +
                 `Results will be announced in ${resultsChannel} when voting ends.` +
-                (poll.scheduledJobName ? '' : ' Note: Automatic ending is not available, manual end required.')
+                (poll.scheduledJobName ? ' The poll will end automatically on the scheduled date.' : ' Note: Automatic ending is not available, manual end required.')
             );
 
         } catch (error) {
             console.error('Error starting voting:', error);
             return interaction.editReply('An error occurred while starting the voting process. Please try again.');
+        }
+    },
+
+    /**
+     * Handle ending a voting poll manually
+     */
+    async handleEndVoting(interaction) {
+        await interaction.deferReply();
+
+        try {
+            // Find the active poll
+            const activePoll = await Poll.findActivePoll();
+            if (!activePoll) {
+                return interaction.editReply('There is no active voting poll to end.');
+            }
+
+            // Cancel the scheduled job if it exists
+            if (activePoll.scheduledJobName) {
+                try {
+                    // Dynamically import node-schedule only if needed
+                    const schedule = await import('node-schedule').catch(() => {
+                        console.warn('node-schedule package not available, cannot cancel scheduled job');
+                        return { scheduledJobs: {} };
+                    });
+                    
+                    const job = schedule.scheduledJobs?.[activePoll.scheduledJobName];
+                    if (job) {
+                        job.cancel();
+                        console.log(`Canceled scheduled job: ${activePoll.scheduledJobName}`);
+                    }
+                } catch (scheduleError) {
+                    console.error('Error canceling scheduled job:', scheduleError);
+                    // Continue with poll ending even if job cancellation fails
+                }
+            }
+
+            // Use the monthly tasks service to end the vote
+            const winner = await monthlyTasksService.countAndAnnounceVotes();
+            
+            if (winner) {
+                return interaction.editReply(`Voting poll has been ended successfully. "${winner.title}" won with ${winner.votes} votes!`);
+            } else {
+                return interaction.editReply('Voting poll has been ended, but there was an issue determining the winner. Check the results channel for details.');
+            }
+
+        } catch (error) {
+            console.error('Error ending voting:', error);
+            return interaction.editReply('An error occurred while ending the voting process. Please try again.');
         }
     },
 
