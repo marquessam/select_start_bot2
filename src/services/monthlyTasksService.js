@@ -1,6 +1,6 @@
 import { User } from '../models/User.js';
 import { Challenge } from '../models/Challenge.js';
-import { Poll } from '../models/Poll.js'; // New import
+import { Poll } from '../models/Poll.js';
 import retroAPI from './retroAPI.js';
 import { EmbedBuilder } from 'discord.js';
 import { config } from '../config/config.js';
@@ -69,45 +69,108 @@ class MonthlyTasksService {
             // Get all users
             const users = await User.find({});
 
-            // Get all current nominations
+            // Get all current nominations with duplicates maintained for weighted selection
             let allNominations = [];
             for (const user of users) {
                 const nominations = user.getCurrentNominations();
-                allNominations.push(...nominations.map(nom => nom.gameId));
+                allNominations.push(...nominations.map(nom => ({
+                    gameId: nom.gameId,
+                    title: nom.gameTitle,
+                    consoleName: nom.consoleName
+                })));
             }
-
-            // Remove duplicates
-            allNominations = [...new Set(allNominations)];
 
             if (allNominations.length === 0) {
                 console.log('No games have been nominated for next month.');
                 return;
             }
 
-            // Randomly select 10 games (or less if there aren't enough nominations)
-            const selectedCount = Math.min(10, allNominations.length);
-            const selectedGames = [];
-            while (selectedGames.length < selectedCount) {
-                const randomIndex = Math.floor(Math.random() * allNominations.length);
-                const gameId = allNominations[randomIndex];
-                if (!selectedGames.includes(gameId)) {
-                    selectedGames.push(gameId);
+            // Create a weighted pool based on nomination count
+            // This gives games with more nominations better odds of selection
+            const nominationCounts = {};
+            const weightedPool = [];
+
+            // Count nominations per game and build a weighted selection pool
+            allNominations.forEach(nomination => {
+                if (!nominationCounts[nomination.gameId]) {
+                    nominationCounts[nomination.gameId] = {
+                        count: 0,
+                        game: nomination
+                    };
                 }
+                nominationCounts[nomination.gameId].count++;
+            });
+
+            // Log the nomination counts for debugging
+            console.log('Nomination counts:');
+            Object.entries(nominationCounts).forEach(([gameId, data]) => {
+                console.log(`Game ID ${gameId}: ${data.game.title} - ${data.count} nominations`);
+            });
+
+            // Create the weighted pool - each game appears once per nomination
+            Object.values(nominationCounts).forEach(entry => {
+                // Add the game to the pool once for each nomination it received
+                for (let i = 0; i < entry.count; i++) {
+                    weightedPool.push(entry.game);
+                }
+            });
+
+            // Randomly select 10 games (or less if there aren't enough unique games)
+            const selectedCount = Math.min(10, Object.keys(nominationCounts).length);
+            const selectedGames = [];
+            const selectedGameIds = new Set();
+
+            console.log(`Selecting ${selectedCount} games from a pool of ${weightedPool.length} entries (${Object.keys(nominationCounts).length} unique games)`);
+
+            // Keep selecting until we have the required number of unique games
+            while (selectedGames.length < selectedCount && weightedPool.length > 0) {
+                // Select a random game from the weighted pool
+                const randomIndex = Math.floor(Math.random() * weightedPool.length);
+                const selectedNomination = weightedPool[randomIndex];
+                
+                // If this game hasn't been selected yet, add it to our results
+                if (!selectedGameIds.has(selectedNomination.gameId)) {
+                    selectedGameIds.add(selectedNomination.gameId);
+                    
+                    // Get extended game info to get the image icon
+                    try {
+                        const gameInfo = await retroAPI.getGameInfoExtended(selectedNomination.gameId);
+                        selectedGames.push({
+                            gameId: selectedNomination.gameId,
+                            title: selectedNomination.title,
+                            consoleName: selectedNomination.consoleName,
+                            imageIcon: gameInfo.imageIcon || null
+                        });
+                        console.log(`Selected: ${selectedNomination.title}`);
+                    } catch (error) {
+                        console.error(`Error getting extended game info for ${selectedNomination.title}:`, error);
+                        // Add without the image if we can't get extended info
+                        selectedGames.push({
+                            gameId: selectedNomination.gameId,
+                            title: selectedNomination.title,
+                            consoleName: selectedNomination.consoleName,
+                            imageIcon: null
+                        });
+                    }
+                }
+                
+                // Remove this entry from the weighted pool to avoid re-selection
+                weightedPool.splice(randomIndex, 1);
             }
 
-            // Get game info for all selected games
-            const gameInfoPromises = selectedGames.map(gameId => retroAPI.getGameInfoExtended(gameId));
-            const games = await Promise.all(gameInfoPromises);
+            // Calculate end date (7 days from now)
+            const endDate = new Date();
+            endDate.setDate(endDate.getDate() + 7);
 
             // Create embed for the poll
             const embed = new EmbedBuilder()
                 .setTitle('🎮 Vote for Next Month\'s Challenge!')
                 .setDescription('React with the corresponding number to vote for a game. You can vote for up to two games!\n\n' +
-                    games.map((game, index) => 
-                        `${index + 1} **[${game.title}](https://retroachievements.org/game/${game.id})**`
+                    selectedGames.map((game, index) => 
+                        `${index + 1}️⃣ **[${game.title}](https://retroachievements.org/game/${game.gameId})** (${game.consoleName})`
                     ).join('\n\n'))
                 .setColor('#FF69B4')
-                .setFooter({ text: 'Voting ends in 7 days' });
+                .setFooter({ text: `Voting ends ${endDate.toLocaleDateString()}` });
 
             // Get the voting channel
             const votingChannel = await this.getVotingChannel();
@@ -125,17 +188,14 @@ class MonthlyTasksService {
                 await pollMessage.react(numberEmojis[i]);
             }
 
-            // Calculate end date (7 days from now)
-            const endDate = new Date();
-            endDate.setDate(endDate.getDate() + 7);
-
             // Store poll information in database
             const pollData = {
                 messageId: pollMessage.id,
                 channelId: votingChannel.id,
-                selectedGames: games.map((game, index) => ({
-                    gameId: selectedGames[index],
+                selectedGames: selectedGames.map(game => ({
+                    gameId: game.gameId,
                     title: game.title,
+                    consoleName: game.consoleName,
                     imageIcon: game.imageIcon
                 })),
                 endDate: endDate,
@@ -144,6 +204,9 @@ class MonthlyTasksService {
 
             const poll = new Poll(pollData);
             await poll.save();
+
+            // Announce the poll in the announcement channel
+            await this.announceVotingStarted(votingChannel, endDate);
 
             console.log('Voting poll created successfully and stored in database');
             
@@ -188,7 +251,8 @@ class MonthlyTasksService {
                         
                         results.push({
                             gameId: game.gameId,
-                            gameTitle: game.title,
+                            title: game.title,
+                            consoleName: game.consoleName,
                             imageIcon: game.imageIcon,
                             votes: count,
                             index: i
@@ -198,46 +262,85 @@ class MonthlyTasksService {
                     // Sort by vote count (highest first)
                     results.sort((a, b) => b.votes - a.votes);
                     
-                    // Get the winner
+                    // Check for ties at the top position
                     const winner = results[0];
+                    const tiedWinners = results.filter(result => result.votes === winner.votes);
+                    
+                    let winnerMessage;
+                    let selectedWinner;
+                    
+                    if (tiedWinners.length > 1) {
+                        console.log(`There was a ${tiedWinners.length}-way tie! Randomly selecting winner...`);
+                        // Randomly select one of the tied games
+                        const randomIndex = Math.floor(Math.random() * tiedWinners.length);
+                        selectedWinner = tiedWinners[randomIndex];
+                        
+                        winnerMessage = 
+                            `There was a ${tiedWinners.length}-way tie between:\n` +
+                            tiedWinners.map(game => `**${game.title}** (${game.votes} votes)`).join('\n') +
+                            `\n\nAfter a random tiebreaker, **${selectedWinner.title}** has been selected as our winner!`;
+                    } else {
+                        selectedWinner = winner;
+                        winnerMessage = `**${selectedWinner.title}** won with ${selectedWinner.votes} votes!`;
+                    }
                     
                     // Create announcement embed
                     const announcementEmbed = new EmbedBuilder()
                         .setTitle('🎮 Monthly Challenge Voting Results')
                         .setColor('#FF69B4')
                         .setDescription(`The voting has ended for the next monthly challenge!\n\n` +
-                            `**Winner:** [${winner.gameTitle}](https://retroachievements.org/game/${winner.gameId}) with ${winner.votes} votes!\n\n` +
+                            `${winnerMessage}\n\n` +
                             `This game will be our next monthly challenge. The admin team will set up the challenge soon.`)
                         .setTimestamp();
                     
-                    // Add top 3 results
+                    // Add top results
                     let resultsText = '';
-                    for (let i = 0; i < Math.min(3, results.length); i++) {
+                    for (let i = 0; i < Math.min(5, results.length); i++) {
                         const result = results[i];
-                        const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : '🥉';
-                        resultsText += `${medal} **[${result.gameTitle}](https://retroachievements.org/game/${result.gameId})** - ${result.votes} votes\n`;
+                        const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i+1}.`;
+                        resultsText += `${medal} **[${result.title}](https://retroachievements.org/game/${result.gameId})** - ${result.votes} votes\n`;
                     }
                     
-                    if (results.length > 3) {
-                        resultsText += '\n*All other games received fewer votes.*';
+                    if (results.length > 5) {
+                        resultsText += '\n*Other games received fewer votes.*';
                     }
                     
-                    announcementEmbed.addFields({ name: 'Top Results', value: resultsText });
+                    announcementEmbed.addFields({ name: 'Results', value: resultsText });
                     
                     // Add game icon if available
-                    if (winner.imageIcon) {
-                        announcementEmbed.setThumbnail(`https://retroachievements.org${winner.imageIcon}`);
+                    if (selectedWinner.imageIcon) {
+                        announcementEmbed.setThumbnail(`https://retroachievements.org${selectedWinner.imageIcon}`);
                     }
                     
                     // Get the announcements channel
-                    const announcementChannel = await this.client.channels.fetch('1360409399264416025');
-                    await announcementChannel.send({ embeds: [announcementEmbed] });
+                    const announcementChannel = await this.getAnnouncementChannel();
+                    if (announcementChannel) {
+                        await announcementChannel.send({ embeds: [announcementEmbed] });
+                    } else {
+                        console.error('Announcement channel not found');
+                    }
+                    
+                    // Update the original poll message to show it's ended
+                    const updatedEmbed = new EmbedBuilder()
+                        .setTitle('🎮 Monthly Challenge Voting (ENDED)')
+                        .setDescription(
+                            `Voting for this month's challenge has ended!\n\n` +
+                            `${winnerMessage}\n\n` +
+                            `Check out the announcements channel for full voting results.`
+                        )
+                        .setColor('#808080') // Gray to indicate it's over
+                        .setFooter({ text: 'Voting has ended' });
+                    
+                    await pollMessage.edit({ embeds: [updatedEmbed] });
                     
                     // Mark poll as processed
                     poll.isProcessed = true;
+                    poll.winnerId = selectedWinner.gameId;
                     await poll.save();
                     
-                    console.log(`Voting results announced: ${winner.gameTitle} won with ${winner.votes} votes`);
+                    console.log(`Voting results announced: ${selectedWinner.title} won with ${selectedWinner.votes} votes`);
+                    
+                    return selectedWinner; // Return the winner for any calling functions
                 } catch (pollError) {
                     console.error(`Error processing poll ${poll._id}:`, pollError);
                 }
@@ -268,6 +371,33 @@ class MonthlyTasksService {
             
         } catch (error) {
             console.error('Error announcing nominations clear:', error);
+        }
+    }
+
+    async announceVotingStarted(votingChannel, endDate) {
+        try {
+            // Get the announcement channel
+            const announcementChannel = await this.getAnnouncementChannel();
+            if (!announcementChannel) {
+                console.error('Announcement channel not found');
+                return;
+            }
+
+            // Create embed
+            const embed = new EmbedBuilder()
+                .setTitle('🎮 Monthly Challenge Voting Has Started!')
+                .setDescription(
+                    `The voting for next month's challenge game has begun! Head over to <#${votingChannel.id}> to see the nominees and cast your votes!\n\n` +
+                    `Voting ends <t:${Math.floor(endDate.getTime() / 1000)}:R>`
+                )
+                .setColor('#FF69B4')
+                .setTimestamp();
+
+            // Send the announcement
+            await announcementChannel.send({ embeds: [embed] });
+            
+        } catch (error) {
+            console.error('Error announcing voting started:', error);
         }
     }
 
