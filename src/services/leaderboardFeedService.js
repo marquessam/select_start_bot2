@@ -764,7 +764,7 @@ class LeaderboardFeedService {
         return null;
     }
 
-    // Send alerts for rank changes
+    // Send alerts for rank changes - STREAMLINED VERSION
     async sendRankChangeAlerts(alerts) {
         const alertsChannel = await this.getAlertsChannel();
         if (!alertsChannel) {
@@ -772,28 +772,83 @@ class LeaderboardFeedService {
             return;
         }
 
+        // Get current challenge game info for embedding
+        const now = new Date();
+        const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+        const nextMonthStart = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+        const currentChallenge = await Challenge.findOne({
+            date: {
+                $gte: currentMonthStart,
+                $lt: nextMonthStart
+            }
+        });
+
+        if (!currentChallenge) {
+            console.log('No active challenge found for the current month.');
+            return;
+        }
+
+        // Create an embed for all alerts
+        const monthName = now.toLocaleString('default', { month: 'long' });
+        const unixTimestamp = Math.floor(Date.now() / 1000);
+        
+        const embed = new EmbedBuilder()
+            .setColor('#FFD700') // Gold color
+            .setTitle(`${monthName} Challenge Update!`)
+            .setDescription(`The leaderboard for the monthly challenge has been updated!\n**Time:** <t:${unixTimestamp}:f>`)
+            .setTimestamp()
+            .setFooter({ text: 'Data provided by RetroAchievements • Rankings update every 15 minutes' });
+
+        if (currentChallenge.monthly_game_icon_url) {
+            embed.setThumbnail(`https://retroachievements.org${currentChallenge.monthly_game_icon_url}`);
+        }
+
+        // Format position changes
+        let positionMessages = [];
         for (const alert of alerts) {
-            try {
-                let message = '';
-                
-                if (alert.type === 'overtake') {
-                    // User passed another user
-                    const rankEmoji = RANK_EMOJIS[alert.newRank] || `#${alert.newRank}`;
-                    message = `🔄 <@${alert.user.discordId}> has passed **${alert.passedUser.username}** and is now in ${rankEmoji} place!`;
-                } else if (alert.type === 'newEntry') {
-                    // User entered top 3
-                    const rankEmoji = RANK_EMOJIS[alert.newRank] || `#${alert.newRank}`;
-                    message = `🆕 <@${alert.user.discordId}> has entered the top 3 and is now in ${rankEmoji} place!`;
-                }
-                
-                if (message) {
-                    await alertsChannel.send(message);
-                    console.log(`Sent rank change alert: ${message}`);
-                }
-            } catch (error) {
-                console.error('Error sending rank change alert:', error);
+            let message = '';
+            
+            if (alert.type === 'overtake') {
+                // User passed another user
+                const rankEmoji = RANK_EMOJIS[alert.newRank] || `#${alert.newRank}`;
+                message = `**@${alert.user.username}** is now in ${rankEmoji} place!`;
+            } else if (alert.type === 'newEntry') {
+                // User entered top 3
+                const rankEmoji = RANK_EMOJIS[alert.newRank] || `#${alert.newRank}`;
+                message = `**@${alert.user.username}** is now in ${rankEmoji} place!`;
+            }
+            
+            if (message && !positionMessages.includes(message)) {
+                positionMessages.push(message);
             }
         }
+
+        // Add position changes if any exist
+        if (positionMessages.length > 0) {
+            embed.addFields({ 
+                name: 'Position Changes', 
+                value: positionMessages.join('\n') 
+            });
+        }
+
+        // Get current top standings
+        const { sortedUsers } = await this.generateLeaderboardEmbeds();
+        if (sortedUsers && sortedUsers.length > 0) {
+            // Get top 5
+            const topFive = sortedUsers.slice(0, 5);
+            
+            let currentStandingsText = '';
+            topFive.forEach(user => {
+                const rankEmoji = RANK_EMOJIS[user.displayRank] || `#${user.displayRank}`;
+                currentStandingsText += `${rankEmoji} **@${user.username}**: ${user.achieved}/${currentChallenge.monthly_challange_game_total} achievements (${user.percentage}%)\n`;
+            });
+            
+            embed.addFields({ name: 'Current Top 5', value: currentStandingsText });
+        }
+
+        // Send the embed
+        await alertsChannel.send({ embeds: [embed] });
+        console.log(`Sent streamlined leaderboard alert with ${positionMessages.length} position changes`);
     }
 
     // Code to assign ranks (copied from leaderboard.js with minimal changes)
