@@ -108,7 +108,7 @@ export default {
             // Get all users
             const users = await User.find({});
 
-            // Get all current nominations
+            // Get all current nominations with duplicates maintained
             let allNominations = [];
             for (const user of users) {
                 const nominations = user.getCurrentNominations();
@@ -119,47 +119,72 @@ export default {
                 })));
             }
 
-            // Remove duplicates by gameId
-            const uniqueNominations = Array.from(
-                new Map(allNominations.map(item => [item.gameId, item])).values()
-            );
-
-            if (uniqueNominations.length === 0) {
+            if (allNominations.length === 0) {
                 return interaction.editReply('No games have been nominated for next month.');
             }
 
-            // Randomly select 10 games (or less if there aren't enough nominations)
-            const selectedCount = Math.min(10, uniqueNominations.length);
+            // Create a weighted pool based on nomination count
+            // This gives games with more nominations better odds of selection
+            const nominationCounts = {};
+            const weightedPool = [];
+
+            // Count nominations per game and build a weighted selection pool
+            allNominations.forEach(nomination => {
+                if (!nominationCounts[nomination.gameId]) {
+                    nominationCounts[nomination.gameId] = {
+                        count: 0,
+                        game: nomination
+                    };
+                }
+                nominationCounts[nomination.gameId].count++;
+            });
+
+            // Create the weighted pool - each game appears once per nomination
+            Object.values(nominationCounts).forEach(entry => {
+                // Add the game to the pool once for each nomination it received
+                for (let i = 0; i < entry.count; i++) {
+                    weightedPool.push(entry.game);
+                }
+            });
+
+            // Randomly select 10 games (or less if there aren't enough unique games)
+            const selectedCount = Math.min(10, Object.keys(nominationCounts).length);
             const selectedGames = [];
-            const selectedIndices = new Set();
-            
-            while (selectedGames.length < selectedCount) {
-                const randomIndex = Math.floor(Math.random() * uniqueNominations.length);
+            const selectedGameIds = new Set();
+
+            // Keep selecting until we have the required number of unique games
+            while (selectedGames.length < selectedCount && weightedPool.length > 0) {
+                // Select a random game from the weighted pool
+                const randomIndex = Math.floor(Math.random() * weightedPool.length);
+                const selectedNomination = weightedPool[randomIndex];
                 
-                if (!selectedIndices.has(randomIndex)) {
-                    selectedIndices.add(randomIndex);
-                    const game = uniqueNominations[randomIndex];
+                // If this game hasn't been selected yet, add it to our results
+                if (!selectedGameIds.has(selectedNomination.gameId)) {
+                    selectedGameIds.add(selectedNomination.gameId);
                     
                     // Get extended game info to get the image icon
                     try {
-                        const gameInfo = await retroAPI.getGameInfoExtended(game.gameId);
+                        const gameInfo = await retroAPI.getGameInfoExtended(selectedNomination.gameId);
                         selectedGames.push({
-                            gameId: game.gameId,
-                            title: game.title,
-                            consoleName: game.consoleName,
+                            gameId: selectedNomination.gameId,
+                            title: selectedNomination.title,
+                            consoleName: selectedNomination.consoleName,
                             imageIcon: gameInfo.imageIcon || null
                         });
                     } catch (error) {
-                        console.error(`Error getting extended game info for ${game.title}:`, error);
+                        console.error(`Error getting extended game info for ${selectedNomination.title}:`, error);
                         // Add without the image if we can't get extended info
                         selectedGames.push({
-                            gameId: game.gameId,
-                            title: game.title,
-                            consoleName: game.consoleName,
+                            gameId: selectedNomination.gameId,
+                            title: selectedNomination.title,
+                            consoleName: selectedNomination.consoleName,
                             imageIcon: null
                         });
                     }
                 }
+                
+                // Remove this entry from the weighted pool to avoid re-selection
+                weightedPool.splice(randomIndex, 1);
             }
 
             // Create embed for the poll announcement
