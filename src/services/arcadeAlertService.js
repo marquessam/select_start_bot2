@@ -312,7 +312,7 @@ class ArcadeAlertService {
         }
     }
 
-    // Send alerts for rank changes
+    // Send alerts for rank changes - STREAMLINED VERSION
     async sendRankChangeAlerts(alertsChannel, alerts) {
         if (!alertsChannel) {
             console.log('No alerts channel configured, skipping arcade rank change notifications');
@@ -361,7 +361,7 @@ class ArcadeAlertService {
                 // Create leaderboard URL for the title link
                 const leaderboardUrl = `https://retroachievements.org/leaderboardinfo.php?i=${board.leaderboardId}`;
                 
-                // Create embed for this board with more prominant header
+                // Create embed with streamlined format
                 const embed = new EmbedBuilder()
                     .setColor('#9B59B6') // Purple color
                     .setTitle(`🕹️ Arcade Alert!`)
@@ -374,48 +374,37 @@ class ArcadeAlertService {
                     embed.setThumbnail(thumbnailUrl);
                 }
                 
-                // Create a flag to track if we've found any notable changes
-                let hasNotableChanges = false;
+                // Create simple position change messages
+                let positionMessages = [];
                 
-                // Filter alerts by type
-                const usersEnteredTop3 = boardAlertsList.filter(alert => alert.type === 'entered_top3');
-                const usersOvertaken = boardAlertsList.filter(alert => alert.type === 'overtaken');
-                const usersOutOfTop3 = boardAlertsList.filter(alert => alert.type === 'out_of_top3');
-                const usersDropped = boardAlertsList.filter(alert => alert.type === 'dropped');
-                
-                // First, check for position changes WITHIN the top 3
-                // These are most significant even if nobody new entered
-                const top3PositionChanges = usersOvertaken.filter(alert => alert.prevRank <= 3 && alert.newRank <= 3);
-                
-                if (top3PositionChanges.length > 0) {
-                    hasNotableChanges = true;
-                    let positionChangesText = '';
+                // Process various types of alerts to create simple messages
+                for (const alert of boardAlertsList) {
+                    let message = '';
                     
-                    // Sort by previous rank to show higher ranking changes first
-                    top3PositionChanges.sort((a, b) => a.prevRank - b.prevRank);
-                    
-                    for (const alert of top3PositionChanges) {
-                        const prevRankEmoji = MEDAL_EMOJIS[alert.prevRank] || `#${alert.prevRank}`;
-                        const newRankEmoji = MEDAL_EMOJIS[alert.newRank] || `#${alert.newRank}`;
-                        positionChangesText += `**@${alert.user.username}**: ${prevRankEmoji} → ${newRankEmoji} (passed by **@${alert.passer.username}** with ${alert.passer.score})\n`;
+                    if (alert.type === 'overtaken' && alert.passer) {
+                        // Someone passed another user
+                        const rankEmoji = MEDAL_EMOJIS[alert.prevRank] || `#${alert.prevRank}`;
+                        message = `**@${alert.passer.username}** is now in ${rankEmoji} place!`;
+                    } else if (alert.type === 'entered_top3') {
+                        // User entered top 3
+                        const rankEmoji = MEDAL_EMOJIS[alert.newRank] || `#${alert.newRank}`;
+                        message = `**@${alert.user.username}** is now in ${rankEmoji} place!`;
                     }
                     
-                    embed.addFields({ name: '🔄 Top 3 Position Changes', value: positionChangesText });
-                }
-                
-                // Second, highlight users who entered top 3 - also very important
-                if (usersEnteredTop3.length > 0) {
-                    hasNotableChanges = true;
-                    let enteredTop3Text = '';
-                    for (const alert of usersEnteredTop3) {
-                        const newRankEmoji = MEDAL_EMOJIS[alert.newRank] || `#${alert.newRank}`;
-                        enteredTop3Text += `**@${alert.user.username}**: ${newRankEmoji} with score ${alert.score}\n`;
+                    if (message && !positionMessages.includes(message)) {
+                        positionMessages.push(message);
                     }
-                    embed.addFields({ name: '🏆 Entered Top 3', value: enteredTop3Text });
                 }
                 
-                // Now get the current top 3 standings
-                // We need to fetch the current leaderboard for this
+                // Add position changes if any exist
+                if (positionMessages.length > 0) {
+                    embed.addFields({ 
+                        name: 'Position Changes', 
+                        value: positionMessages.join('\n') 
+                    });
+                }
+                
+                // Now get the current top 5 standings (increased from top 3)
                 try {
                     const currentStandings = await this.getArcadeBoardStandings(board, await this.getRegisteredUsers());
                     
@@ -429,55 +418,32 @@ class ArcadeAlertService {
                             }))
                             .sort((a, b) => a.rank - b.rank);
                         
-                        // Get top 3 (or fewer if not enough entries)
-                        const topThree = standingsArray.filter(entry => entry.rank <= 3);
+                        // Get top 5 (increased from 3)
+                        const topFive = standingsArray.filter(entry => entry.rank <= 5);
                         
-                        if (topThree.length > 0) {
+                        if (topFive.length > 0) {
                             let currentStandingsText = '';
-                            topThree.forEach(entry => {
+                            topFive.forEach(entry => {
                                 const rankEmoji = MEDAL_EMOJIS[entry.rank] || `#${entry.rank}`;
                                 currentStandingsText += `${rankEmoji} **@${entry.username}**: ${entry.score}\n`;
                             });
                             
-                            embed.addFields({ name: 'Current Top 3', value: currentStandingsText });
+                            embed.addFields({ name: 'Current Top 5', value: currentStandingsText });
                         }
                     }
                 } catch (error) {
                     console.error(`Error fetching current standings for ${boardName}:`, error);
-                    // Continue without current standings
                 }
                 
-                // After showing current standings, mention users who fell out of top 3
-                if (usersOutOfTop3.length > 0) {
-                    hasNotableChanges = true;
-                    let outOfTop3Text = '';
-                    for (const alert of usersOutOfTop3) {
-                        const prevRankEmoji = MEDAL_EMOJIS[alert.prevRank] || `#${alert.prevRank}`;
-                        outOfTop3Text += `**@${alert.user.username}**: ${prevRankEmoji} → #${alert.newRank}\n`;
-                    }
-                    embed.addFields({ name: '🏅 Fell Out of Top 3', value: outOfTop3Text });
-                }
-                
-                // Finally, mention users who were completely dropped from the board
-                if (usersDropped.length > 0) {
-                    hasNotableChanges = true;
-                    let droppedText = '';
-                    for (const alert of usersDropped) {
-                        const droppedRankEmoji = MEDAL_EMOJIS[alert.prevRank] || `#${alert.prevRank}`;
-                        droppedText += `**@${alert.user.username}**: ${droppedRankEmoji} → no longer on board (was ${alert.prevScore})\n`;
-                    }
-                    embed.addFields({ name: '❌ Dropped from Board', value: droppedText });
-                }
-                
-                // Only send if there are notable changes or entries in the top 3
-                if (hasNotableChanges) {
-                    // Send the consolidated embed for this board
+                // Send the embed if there are position changes
+                if (positionMessages.length > 0) {
                     await alertsChannel.send({ embeds: [embed] });
-                    console.log(`Sent consolidated arcade rank change alert for board: ${boardName}`);
+                    console.log(`Sent streamlined arcade alert for board: ${boardName}`);
                 }
                 
                 // Add a delay between sending embeds for different boards
                 await new Promise(resolve => setTimeout(resolve, 1000));
+                
             } catch (error) {
                 console.error(`Error sending arcade rank change alert for board ${boardId}:`, error);
             }
