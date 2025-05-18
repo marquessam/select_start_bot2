@@ -72,6 +72,19 @@ export default {
                     option.setName('ra_username')
                     .setDescription('The RetroAchievements username')
                     .setRequired(true))
+        )
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('setgp')
+                .setDescription('Set a user\'s GP balance')
+                .addStringOption(option =>
+                    option.setName('ra_username')
+                    .setDescription('The RetroAchievements username')
+                    .setRequired(true))
+                .addIntegerOption(option =>
+                    option.setName('amount')
+                    .setDescription('The amount of GP to set')
+                    .setRequired(true))
         ),
 
     async execute(interaction) {
@@ -100,6 +113,9 @@ export default {
                 break;
             case 'clearnominations':
                 await this.handleClearNominations(interaction);
+                break;
+            case 'setgp':
+                await this.handleSetGP(interaction);
                 break;
             default:
                 await interaction.reply({
@@ -489,6 +505,75 @@ export default {
         } catch (error) {
             console.error('Error clearing nominations:', error);
             return interaction.editReply('An error occurred while clearing nominations. Please try again.');
+        }
+    },
+
+    /**
+     * Handle setting a user's GP balance
+     */
+    async handleSetGP(interaction) {
+        await interaction.deferReply();
+
+        try {
+            const raUsername = interaction.options.getString('ra_username');
+            const amount = interaction.options.getInteger('amount');
+
+            // Find the user
+            const user = await User.findOne({
+                raUsername: { $regex: new RegExp(`^${raUsername}$`, 'i') }
+            });
+
+            if (!user) {
+                return interaction.editReply('User not found. Please check the username.');
+            }
+
+            // Get previous GP amount for the log
+            const previousGP = user.gp || 0;
+
+            // Set the GP amount
+            user.gp = amount;
+            await user.save();
+
+            // Create an embed with details
+            const embed = new EmbedBuilder()
+                .setTitle('GP Balance Updated')
+                .setColor('#00FF00')
+                .setDescription(`Successfully updated GP balance for **${user.raUsername}**`)
+                .addFields(
+                    { name: 'Previous Balance', value: `${previousGP.toLocaleString()} GP`, inline: true },
+                    { name: 'New Balance', value: `${amount.toLocaleString()} GP`, inline: true },
+                    { name: 'Change', value: `${(amount - previousGP).toLocaleString()} GP`, inline: true }
+                )
+                .setTimestamp();
+
+            // Log this action to admin log
+            try {
+                const adminLogChannel = await interaction.client.channels.fetch(config.discord.adminLogChannelId);
+                if (adminLogChannel) {
+                    const logEmbed = new EmbedBuilder()
+                        .setTitle('Admin Action: GP Balance Modified')
+                        .setColor('#FFA500')
+                        .setDescription(`An admin has modified a user's GP balance.`)
+                        .addFields(
+                            { name: 'User', value: user.raUsername, inline: true },
+                            { name: 'Admin', value: interaction.user.tag, inline: true },
+                            { name: 'Previous Balance', value: `${previousGP.toLocaleString()} GP`, inline: true },
+                            { name: 'New Balance', value: `${amount.toLocaleString()} GP`, inline: true },
+                            { name: 'Change', value: `${(amount - previousGP).toLocaleString()} GP`, inline: true }
+                        )
+                        .setTimestamp();
+                    
+                    await adminLogChannel.send({ embeds: [logEmbed] });
+                }
+            } catch (logError) {
+                console.error('Error logging GP adjustment:', logError);
+                // Continue even if logging fails
+            }
+
+            return interaction.editReply({ embeds: [embed] });
+        } catch (error) {
+            console.error('Error setting GP balance:', error);
+            return interaction.editReply('An error occurred while setting the GP balance. Please try again.');
         }
     }
 };
