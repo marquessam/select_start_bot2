@@ -25,6 +25,14 @@ const betSchema = new mongoose.Schema({
     paid: {
         type: Boolean,
         default: false
+    },
+    payout: {
+        type: Number,
+        default: 0 // Total amount paid to user including their original bet
+    },
+    houseContribution: {
+        type: Number,
+        default: 0 // Amount the house contributed to guarantee minimum returns
     }
 });
 
@@ -53,10 +61,18 @@ const arenaChallengeSchema = new mongoose.Schema({
         type: String
     },
     gameId: {
-        type: String
+        type: Number // Changed from String to Number to match our updated implementation
     },
     iconUrl: {
         type: String
+    },
+    consoleName: {
+        type: String,
+        default: 'Unknown'
+    },
+    description: {
+        type: String,
+        default: '' // Challenge description field
     },
     wagerAmount: {
         type: Number,
@@ -73,7 +89,7 @@ const arenaChallengeSchema = new mongoose.Schema({
         type: Number,
         required: true,
         min: 1,
-        max: 168 // Max 1 week
+        max: 336 // Max 2 weeks (increased from 1 week)
     },
     status: {
         type: String,
@@ -99,6 +115,10 @@ const arenaChallengeSchema = new mongoose.Schema({
     totalPool: {
         type: Number,
         default: 0
+    },
+    houseContribution: {
+        type: Number,
+        default: 0 // Total house contribution for this challenge
     }
 }, {
     timestamps: true
