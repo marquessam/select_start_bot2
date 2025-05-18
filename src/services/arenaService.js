@@ -987,103 +987,128 @@ class ArenaService {
         }
     }
 
-    async processPayouts(challenge, winnerId, winnerUsername) {
-        try {
-            // Skip payouts if it's a tie
-            if (!winnerId) {
-                console.log(`Challenge ${challenge._id} ended in a tie - no payouts processed`);
-                return;
-            }
-            
-            // Get the users
-            const challenger = await User.findOne({ discordId: challenge.challengerId });
-            const challengee = await User.findOne({ discordId: challenge.challengeeId });
-            
-            if (!challenger || !challengee) {
-                console.error(`Could not find users for challenge ${challenge._id}`);
-                return;
-            }
-            
-            // Transfer wager amount from loser to winner
-            if (winnerId === challenge.challengerId) {
-                // Challenger won
-                challenger.gp = (challenger.gp || 0) + challenge.wagerAmount;
-                challenger.arenaStats = challenger.arenaStats || {};
-                challenger.arenaStats.wins = (challenger.arenaStats.wins || 0) + 1;
-                challenger.arenaStats.gpWon = (challenger.arenaStats.gpWon || 0) + challenge.wagerAmount;
-                
-                challengee.arenaStats = challengee.arenaStats || {};
-                challengee.arenaStats.losses = (challengee.arenaStats.losses || 0) + 1;
-                challengee.arenaStats.gpLost = (challengee.arenaStats.gpLost || 0) + challenge.wagerAmount;
-                
-                await challenger.save();
-                await challengee.save();
-            } else {
-                // Challengee won
-                challengee.gp = (challengee.gp || 0) + challenge.wagerAmount;
-                challengee.arenaStats = challengee.arenaStats || {};
-                challengee.arenaStats.wins = (challengee.arenaStats.wins || 0) + 1;
-                challengee.arenaStats.gpWon = (challengee.arenaStats.gpWon || 0) + challenge.wagerAmount;
-                
-                challenger.arenaStats = challenger.arenaStats || {};
-                challenger.arenaStats.losses = (challenger.arenaStats.losses || 0) + 1;
-                challenger.arenaStats.gpLost = (challenger.arenaStats.gpLost || 0) + challenge.wagerAmount;
-                
-                await challengee.save();
-                await challenger.save();
-            }
-            
-            // Process bets
-            if (challenge.bets && challenge.bets.length > 0) {
-                // Calculate total bet amount
-                const totalBets = challenge.bets.reduce((total, bet) => total + bet.betAmount, 0);
-                
-                // Get winning bets (bets placed on the winner)
-                const winningBets = challenge.bets.filter(bet => bet.targetPlayer === winnerUsername);
-                const totalWinningBets = winningBets.reduce((total, bet) => total + bet.betAmount, 0);
-                
-                if (winningBets.length > 0 && totalWinningBets > 0) {
-                    // Process each winning bet
-                    for (const bet of winningBets) {
-                        try {
-                            // Find the user who placed the bet
-                            const bettor = await User.findOne({ discordId: bet.userId });
-                            
-                            if (bettor) {
-                                // Calculate payout ratio based on bet amount relative to total winning bets
-                                const payoutRatio = bet.betAmount / totalWinningBets;
-                                
-                                // Calculate payout amount
-                                const payoutAmount = Math.floor(totalBets * payoutRatio);
-                                
-                                // Add payout to user
-                                bettor.gp = (bettor.gp || 0) + payoutAmount;
-                                bettor.arenaStats = bettor.arenaStats || {};
-                                bettor.arenaStats.betsWon = (bettor.arenaStats.betsWon || 0) + 1;
-                                
-                                // Mark bet as paid
-                                bet.paid = true;
-                                
-                                // Save user with updated GP
-                                await bettor.save();
-                                
-                                console.log(`Paid ${payoutAmount} GP to ${bettor.raUsername} for winning bet`);
-                            }
-                        } catch (betError) {
-                            console.error(`Error processing winning bet for user ${bet.userId}:`, betError);
-                        }
-                    }
-                } else {
-                    console.log(`No winning bets for challenge ${challenge._id}`);
-                }
-            }
-            
-            // Save the challenge with updated bet info
-            await challenge.save();
-        } catch (error) {
-            console.error(`Error processing payouts for challenge ${challenge._id}:`, error);
+async processPayouts(challenge, winnerId, winnerUsername) {
+    try {
+        // Skip payouts if it's a tie
+        if (!winnerId) {
+            console.log(`Challenge ${challenge._id} ended in a tie - no payouts processed`);
+            return;
         }
+        
+        // Get the users
+        const challenger = await User.findOne({ discordId: challenge.challengerId });
+        const challengee = await User.findOne({ discordId: challenge.challengeeId });
+        
+        if (!challenger || !challengee) {
+            console.error(`Could not find users for challenge ${challenge._id}`);
+            return;
+        }
+        
+        // Transfer wager amount from loser to winner
+        if (winnerId === challenge.challengerId) {
+            // Challenger won
+            challenger.gp = (challenger.gp || 0) + challenge.wagerAmount;
+            challenger.arenaStats = challenger.arenaStats || {};
+            challenger.arenaStats.wins = (challenger.arenaStats.wins || 0) + 1;
+            challenger.arenaStats.gpWon = (challenger.arenaStats.gpWon || 0) + challenge.wagerAmount;
+            
+            challengee.arenaStats = challengee.arenaStats || {};
+            challengee.arenaStats.losses = (challengee.arenaStats.losses || 0) + 1;
+            challengee.arenaStats.gpLost = (challengee.arenaStats.gpLost || 0) + challenge.wagerAmount;
+            
+            await challenger.save();
+            await challengee.save();
+        } else {
+            // Challengee won
+            challengee.gp = (challengee.gp || 0) + challenge.wagerAmount;
+            challengee.arenaStats = challengee.arenaStats || {};
+            challengee.arenaStats.wins = (challengee.arenaStats.wins || 0) + 1;
+            challengee.arenaStats.gpWon = (challengee.arenaStats.gpWon || 0) + challenge.wagerAmount;
+            
+            challenger.arenaStats = challenger.arenaStats || {};
+            challenger.arenaStats.losses = (challenger.arenaStats.losses || 0) + 1;
+            challenger.arenaStats.gpLost = (challenger.arenaStats.gpLost || 0) + challenge.wagerAmount;
+            
+            await challengee.save();
+            await challenger.save();
+        }
+        
+        // Process bets
+        if (challenge.bets && challenge.bets.length > 0) {
+            // Calculate total bet amount
+            const totalBets = challenge.bets.reduce((total, bet) => total + bet.betAmount, 0);
+            
+            // Get winning bets (bets placed on the winner)
+            const winningBets = challenge.bets.filter(bet => bet.targetPlayer === winnerUsername);
+            const totalWinningBets = winningBets.reduce((total, bet) => total + bet.betAmount, 0);
+            
+            // Track total house contribution
+            let totalHouseContribution = 0;
+            
+            if (winningBets.length > 0 && totalWinningBets > 0) {
+                // Process each winning bet
+                for (const bet of winningBets) {
+                    try {
+                        // Find the user who placed the bet
+                        const bettor = await User.findOne({ discordId: bet.userId });
+                        
+                        if (bettor) {
+                            // Calculate standard payout ratio based on bet amount relative to total winning bets
+                            const payoutRatio = bet.betAmount / totalWinningBets;
+                            
+                            // Calculate standard payout amount from the betting pool
+                            const standardPayout = Math.floor(totalBets * payoutRatio);
+                            
+                            // Calculate guaranteed minimum payout (original bet + equal profit, up to 500 GP house match)
+                            const guaranteedProfit = Math.min(bet.betAmount, 500);
+                            const guaranteedPayout = bet.betAmount + guaranteedProfit;
+                            
+                            // Determine how much the house needs to contribute (if any)
+                            let houseContribution = Math.max(0, guaranteedPayout - standardPayout);
+                            
+                            // Calculate final payout (including house contribution)
+                            const payoutAmount = standardPayout + houseContribution;
+                            
+                            // Track total house contribution
+                            totalHouseContribution += houseContribution;
+                            
+                            // Add payout to user
+                            bettor.gp = (bettor.gp || 0) + payoutAmount;
+                            bettor.arenaStats = bettor.arenaStats || {};
+                            bettor.arenaStats.betsWon = (bettor.arenaStats.betsWon || 0) + 1;
+                            bettor.arenaStats.gpWon = (bettor.arenaStats.gpWon || 0) + (payoutAmount - bet.betAmount);
+                            
+                            // Mark bet as paid
+                            bet.paid = true;
+                            bet.payout = payoutAmount;
+                            bet.houseContribution = houseContribution;
+                            
+                            // Save user with updated GP
+                            await bettor.save();
+                            
+                            console.log(`Paid ${payoutAmount} GP to ${bettor.raUsername} for winning bet (House contributed: ${houseContribution} GP)`);
+                        }
+                    } catch (betError) {
+                        console.error(`Error processing winning bet for user ${bet.userId}:`, betError);
+                    }
+                }
+                
+                // Log the total house contribution
+                console.log(`Total house contribution for challenge ${challenge._id}: ${totalHouseContribution} GP`);
+                
+                // Store the house contribution in the challenge for records
+                challenge.houseContribution = totalHouseContribution;
+            } else {
+                console.log(`No winning bets for challenge ${challenge._id}`);
+            }
+        }
+        
+        // Save the challenge with updated bet info
+        await challenge.save();
+    } catch (error) {
+        console.error(`Error processing payouts for challenge ${challenge._id}:`, error);
     }
+}
 
     async updateCompletedFeed(challenge) {
         try {
