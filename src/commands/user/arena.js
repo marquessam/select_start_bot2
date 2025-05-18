@@ -17,150 +17,282 @@ import arenaService from '../../services/arenaService.js';
 export default {
     data: new SlashCommandBuilder()
         .setName('arena')
-        .setDescription('Challenge players to competitive games and bet on outcomes')
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('manage')
-                .setDescription('Manage arena challenges and bets')
-        )
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('active')
-                .setDescription('View active arena challenges')
-        )
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('claim')
-                .setDescription('Claim your monthly 1,000 GP allowance')
-        )
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('leaderboard')
-                .setDescription('View the GP leaderboard')
-        ),
+        .setDescription('Arena system for competitive challenges and betting'),
 
     async execute(interaction) {
-        const subcommand = interaction.options.getSubcommand();
+        await interaction.deferReply({ ephemeral: true });
         
-        switch (subcommand) {
-            case 'manage':
-                await this.showManagementMenu(interaction);
-                break;
-            case 'active':
-                await this.handleActive(interaction);
-                break;
-            case 'claim':
-                await this.handleClaim(interaction);
-                break;
-            case 'leaderboard':
-                await this.handleLeaderboard(interaction);
-                break;
-        }
-    },
-    
-    // Show the main management menu
-    async showManagementMenu(interaction) {
         try {
-            // Create a menu with options for managing arena challenges
-            const embed = new EmbedBuilder()
-                .setColor('#FF5722')
-                .setTitle('🏆 Arena Management')
-                .setDescription('Select an action to perform:');
-
-            const actionRow = new ActionRowBuilder()
-                .addComponents(
-                    new StringSelectMenuBuilder()
-                        .setCustomId('arena_action')
-                        .setPlaceholder('Select an action')
-                        .addOptions([
-                            {
-                                label: 'Create Challenge',
-                                description: 'Challenge another player to a competition',
-                                value: 'create_challenge',
-                                emoji: '⚔️'
-                            },
-                            {
-                                label: 'Respond to Challenges',
-                                description: 'Accept or decline pending challenge requests',
-                                value: 'respond_challenge',
-                                emoji: '🛡️'
-                            },
-                            {
-                                label: 'Place Bet',
-                                description: 'Bet on an active arena challenge',
-                                value: 'place_bet',
-                                emoji: '💰'
-                            },
-                            {
-                                label: 'My Challenges',
-                                description: 'View your active and pending challenges',
-                                value: 'my_challenges',
-                                emoji: '📋'
-                            }
-                        ])
-                );
-
-            await interaction.reply({
-                embeds: [embed],
-                components: [actionRow],
-                ephemeral: true
+            // Verify user is registered
+            const user = await User.findOne({ discordId: interaction.user.id });
+            if (!user) {
+                return interaction.editReply('You need to be registered to use the Arena system. Please contact an admin.');
+            }
+            
+            // Check if user has pending challenges to respond to (priority)
+            const pendingChallenges = await ArenaChallenge.find({
+                challengeeId: user.discordId,
+                status: 'pending'
             });
+            
+            if (pendingChallenges.length > 0) {
+                // User has pending challenges - show them immediately
+                return this.showPendingChallenges(interaction, user, pendingChallenges);
+            }
+            
+            // No pending challenges - show main arena menu
+            await this.showMainArenaMenu(interaction, user);
         } catch (error) {
-            console.error('Error showing management menu:', error);
-            await interaction.reply({
-                content: 'An error occurred while preparing the arena menu.',
-                ephemeral: true
-            });
+            console.error('Error executing arena command:', error);
+            return interaction.editReply('An error occurred while accessing the Arena. Please try again.');
         }
     },
     
-    // Handle all select menu interactions
-    async handleSelectMenuInteraction(interaction) {
-        const customId = interaction.customId;
+    // Show the main arena menu with all options
+    async showMainArenaMenu(interaction, user) {
+        // Check if user should receive automatic monthly GP and give it
+        await this.checkAndGrantMonthlyGP(user);
         
-        if (customId === 'arena_action') {
-            const action = interaction.values[0];
-            
-            // Handle different actions from main menu
-            switch(action) {
-                case 'create_challenge':
-                    await this.showCreateChallengeModal(interaction);
-                    break;
-                case 'respond_challenge':
-                    await this.showPendingChallenges(interaction);
-                    break;
-                case 'place_bet':
-                    await this.showActiveChallengesForBetting(interaction);
-                    break;
-                case 'my_challenges':
-                    await this.showMyChallenges(interaction);
-                    break;
-                default:
-                    await interaction.reply({
-                        content: 'Invalid action selected',
-                        ephemeral: true
-                    });
+        // Get user's stats and relevant info
+        const activeCount = await ArenaChallenge.countDocuments({
+            $or: [
+                { challengerId: user.discordId, status: 'active' },
+                { challengeeId: user.discordId, status: 'active' }
+            ]
+        });
+        
+        // Format GP balance with commas
+        const gpBalance = (user.gp || 0).toLocaleString();
+        
+        // Create main arena embed
+        const embed = new EmbedBuilder()
+            .setColor('#FF5722')
+            .setTitle('🏆 RetroAchievements Arena')
+            .setDescription(
+                'Welcome to the Arena - where players compete for glory and GP!\n\n' +
+                'Challenge other players to leaderboard competitions, place bets on active matches, ' +
+                'and climb the rankings to earn special titles.'
+            )
+            .addFields(
+                { name: '💰 Your Balance', value: `**${gpBalance} GP**`, inline: true },
+                { name: '⚔️ Your Active Challenges', value: `**${activeCount}**`, inline: true }
+            )
+            .setFooter({ text: 'All challenges and bets are based on RetroAchievements leaderboards' });
+        
+        // Create action menu
+        const actionRow = new ActionRowBuilder()
+            .addComponents(
+                new StringSelectMenuBuilder()
+                    .setCustomId('arena_main_action')
+                    .setPlaceholder('Select an action')
+                    .addOptions([
+                        {
+                            label: 'Challenge a Player',
+                            description: 'Create a new challenge against another player',
+                            value: 'create_challenge',
+                            emoji: '⚔️'
+                        },
+                        {
+                            label: 'Place a Bet',
+                            description: 'Bet on active challenges',
+                            value: 'place_bet',
+                            emoji: '💰'
+                        },
+                        {
+                            label: 'My Challenges',
+                            description: 'View your active and pending challenges',
+                            value: 'my_challenges',
+                            emoji: '📋'
+                        },
+                        {
+                            label: 'Active Challenges',
+                            description: 'See all current Arena challenges',
+                            value: 'active_challenges',
+                            emoji: '🔥'
+                        },
+                        {
+                            label: 'GP Leaderboard',
+                            description: 'View the top GP earners',
+                            value: 'leaderboard',
+                            emoji: '📊'
+                        }
+                    ])
+            );
+        
+        // Create help button
+        const buttonsRow = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId('arena_help')
+                    .setLabel('How Arena Works')
+                    .setStyle(ButtonStyle.Secondary)
+                    .setEmoji('❓')
+            );
+        
+        // Send the arena menu
+        await interaction.editReply({
+            embeds: [embed],
+            components: [actionRow, buttonsRow]
+        });
+    },
+    
+    // Show pending challenges for user to respond to
+    async showPendingChallenges(interaction, user, pendingChallenges = null) {
+        try {
+            // If challenges not provided, fetch them
+            if (!pendingChallenges) {
+                pendingChallenges = await ArenaChallenge.find({
+                    challengeeId: user.discordId,
+                    status: 'pending'
+                });
+                
+                if (pendingChallenges.length === 0) {
+                    return interaction.editReply('You have no pending challenges to respond to.');
+                }
             }
-        } 
-        else if (customId === 'arena_pending_challenge_select') {
-            await this.handlePendingChallengeSelect(interaction);
-        }
-        else if (customId === 'arena_bet_challenge_select') {
-            await this.handleBetChallengeSelect(interaction);
-        }
-        else if (customId === 'arena_bet_player_select') {
-            await this.handleBetPlayerSelect(interaction);
+            
+            // Create embed showing all pending challenges
+            const embed = new EmbedBuilder()
+                .setColor('#3498DB')
+                .setTitle('⚠️ Pending Arena Challenges')
+                .setDescription(
+                    `You have ${pendingChallenges.length} pending challenge${pendingChallenges.length > 1 ? 's' : ''}!\n` +
+                    'Please respond to accept or decline:'
+                );
+            
+            // If only one challenge, show details directly
+            if (pendingChallenges.length === 1) {
+                const challenge = pendingChallenges[0];
+                
+                // Verify challenger still has enough GP
+                const challenger = await User.findOne({ discordId: challenge.challengerId });
+                if (!challenger || (challenger.gp || 0) < challenge.wagerAmount) {
+                    challenge.status = 'cancelled';
+                    await challenge.save();
+                    await arenaService.notifyChallengeUpdate(challenge);
+                    
+                    // Create a back button to return to main menu
+                    const backRow = new ActionRowBuilder()
+                        .addComponents(
+                            new ButtonBuilder()
+                                .setCustomId('arena_back_to_main')
+                                .setLabel('Back to Arena')
+                                .setStyle(ButtonStyle.Secondary)
+                        );
+                    
+                    return interaction.editReply({
+                        content: `The challenge from ${challenge.challengerUsername} was automatically cancelled because they don't have enough GP to cover their wager.`,
+                        components: [backRow],
+                        embeds: []
+                    });
+                }
+                
+                // Check if user has enough GP
+                if ((user.gp || 0) < challenge.wagerAmount) {
+                    // Create a back button to return to main menu
+                    const backRow = new ActionRowBuilder()
+                        .addComponents(
+                            new ButtonBuilder()
+                                .setCustomId('arena_back_to_main')
+                                .setLabel('Back to Arena')
+                                .setStyle(ButtonStyle.Secondary)
+                        );
+                    
+                    return interaction.editReply({
+                        content: `You don't have enough GP to accept this challenge. You need ${challenge.wagerAmount} GP, but your balance is ${user.gp || 0} GP.`,
+                        components: [backRow],
+                        embeds: []
+                    });
+                }
+                
+                // Show detailed challenge info
+                embed.setDescription(
+                    `**${challenge.challengerUsername}** has challenged you to compete in:\n\n` +
+                    `**${challenge.gameTitle}**\n\n` +
+                    `**Wager:** ${challenge.wagerAmount} GP\n` +
+                    `**Duration:** ${challenge.durationHours} hours\n\n` +
+                    `Do you accept this challenge?`
+                );
+                
+                // Create accept/decline buttons
+                const buttonsRow = new ActionRowBuilder()
+                    .addComponents(
+                        new ButtonBuilder()
+                            .setCustomId(`arena_accept_challenge_${challenge._id.toString()}`)
+                            .setLabel('Accept Challenge')
+                            .setStyle(ButtonStyle.Success),
+                        new ButtonBuilder()
+                            .setCustomId(`arena_decline_challenge_${challenge._id.toString()}`)
+                            .setLabel('Decline Challenge')
+                            .setStyle(ButtonStyle.Danger)
+                    );
+                    
+                // Add a button to view main arena menu instead
+                const secondRow = new ActionRowBuilder()
+                    .addComponents(
+                        new ButtonBuilder()
+                            .setCustomId('arena_back_to_main')
+                            .setLabel('View Arena Menu Instead')
+                            .setStyle(ButtonStyle.Secondary)
+                    );
+                
+                return interaction.editReply({
+                    embeds: [embed],
+                    components: [buttonsRow, secondRow]
+                });
+            } 
+            // Multiple challenges - show a selection menu
+            else {
+                pendingChallenges.forEach((challenge, index) => {
+                    embed.addFields({
+                        name: `${index + 1}. From ${challenge.challengerUsername}`,
+                        value: `**Game:** ${challenge.gameTitle}\n**Wager:** ${challenge.wagerAmount} GP`
+                    });
+                });
+                
+                // Create a select menu for multiple challenges
+                const selectMenu = new StringSelectMenuBuilder()
+                    .setCustomId('arena_pending_challenge_select')
+                    .setPlaceholder('Select a challenge to respond to');
+                    
+                pendingChallenges.forEach((challenge) => {
+                    selectMenu.addOptions({
+                        label: `From ${challenge.challengerUsername} - ${challenge.gameTitle}`,
+                        description: `Wager: ${challenge.wagerAmount} GP | Duration: ${challenge.durationHours} hrs`,
+                        value: challenge._id.toString()
+                    });
+                });
+                
+                const selectRow = new ActionRowBuilder().addComponents(selectMenu);
+                
+                // Add a button to view main arena menu instead
+                const secondRow = new ActionRowBuilder()
+                    .addComponents(
+                        new ButtonBuilder()
+                            .setCustomId('arena_back_to_main')
+                            .setLabel('View Arena Menu Instead')
+                            .setStyle(ButtonStyle.Secondary)
+                    );
+                
+                return interaction.editReply({
+                    embeds: [embed],
+                    components: [selectRow, secondRow]
+                });
+            }
+        } catch (error) {
+            console.error('Error showing pending challenges:', error);
+            return interaction.editReply('An error occurred while loading your pending challenges.');
         }
     },
     
     // Show a modal for creating a challenge
     async showCreateChallengeModal(interaction) {
         try {
-            await interaction.deferUpdate();
-            
-            // Verify user is registered
+            // Verify user is registered (without deferring first)
             const challenger = await User.findOne({ discordId: interaction.user.id });
             if (!challenger) {
+                // For error case, we defer and then edit
+                await interaction.deferUpdate();
                 return interaction.editReply('You need to be registered to issue challenges. Please contact an admin.');
             }
             
@@ -209,10 +341,12 @@ export default {
                 new ActionRowBuilder().addComponents(durationInput)
             );
             
-            // Show the modal
+            // Show the modal directly without deferring first
             await interaction.showModal(modal);
         } catch (error) {
             console.error('Error showing challenge creation modal:', error);
+            // For error handling, defer and then edit
+            await interaction.deferUpdate();
             await interaction.editReply('An error occurred while preparing the challenge form.');
         }
     },
@@ -648,20 +782,19 @@ export default {
     // Handle player selection for bet
     async handleBetPlayerSelect(interaction) {
         try {
-            await interaction.deferUpdate();
-            
             const [challengeId, playerName] = interaction.values[0].split('_');
             
             // Get the challenge
             const challenge = await ArenaChallenge.findById(challengeId);
             if (!challenge || challenge.status !== 'active') {
+                await interaction.deferUpdate();
                 return interaction.editReply('This challenge is no longer active.');
             }
             
             // Get user
             const user = await User.findOne({ discordId: interaction.user.id });
             
-            // Show bet amount modal
+            // Show bet amount modal without deferring first
             const betModal = new ModalBuilder()
                 .setCustomId(`arena_bet_amount_modal_${challengeId}_${playerName}`)
                 .setTitle(`Place Bet on ${playerName}`);
@@ -680,6 +813,7 @@ export default {
             await interaction.showModal(betModal);
         } catch (error) {
             console.error('Error selecting player for bet:', error);
+            await interaction.deferUpdate();
             await interaction.editReply('An error occurred while preparing your bet.');
         }
     },
@@ -845,6 +979,59 @@ export default {
             const challengeId = customId.split('_').pop();
             await this.handleDeclineChallenge(interaction, challengeId);
         }
+        else if (customId === 'arena_back_to_main') {
+            await interaction.deferUpdate();
+            const user = await User.findOne({ discordId: interaction.user.id });
+            await this.showMainArenaMenu(interaction, user);
+        }
+        else if (customId === 'arena_help') {
+            await interaction.deferUpdate();
+            await this.showArenaHelp(interaction);
+        }
+    },
+    
+    // Show arena help info
+    async showArenaHelp(interaction) {
+        const embed = new EmbedBuilder()
+            .setColor('#3498DB')
+            .setTitle('How the Arena Works')
+            .setDescription(
+                'The Arena is a competition system where players can challenge each other and place bets on outcomes.'
+            )
+            .addFields(
+                {
+                    name: '💰 GP Currency',
+                    value: 'GP (Gold Points) is the Arena currency. You automatically receive 1,000 GP at the start of each month.'
+                },
+                {
+                    name: '⚔️ Challenges',
+                    value: 'Challenge another player to compete on a RetroAchievements leaderboard for a set duration. ' +
+                           'Both players wager GP, and the winner takes all!'
+                },
+                {
+                    name: '🎲 Betting',
+                    value: 'You can bet GP on other players\' challenges. If your chosen player wins, you earn GP based on the odds!'
+                },
+                {
+                    name: '🏆 Rewards',
+                    value: 'The player with the most GP at the end of the year receives a special champion title and badge.'
+                }
+            )
+            .setFooter({ text: 'Use /arena to access all Arena features' });
+
+        // Add a back button
+        const backRow = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId('arena_back_to_main')
+                    .setLabel('Back to Arena')
+                    .setStyle(ButtonStyle.Secondary)
+            );
+            
+        await interaction.editReply({
+            embeds: [embed],
+            components: [backRow]
+        });
     },
     
     // Handle accepting a challenge
@@ -1003,68 +1190,37 @@ export default {
         }
     },
     
-    // Handle claiming monthly GP allowance
-    async handleClaim(interaction) {
-        await interaction.deferReply({ ephemeral: true });
-        
+    // New method to automatically check and grant monthly GP
+    async checkAndGrantMonthlyGP(user) {
         try {
-            // Find user
-            const user = await User.findOne({ discordId: interaction.user.id });
-            if (!user) {
-                return interaction.editReply('You need to be registered to claim GP.');
-            }
-            
-            // Check if user has already claimed this month
             const now = new Date();
             const currentMonth = now.getMonth();
             const currentYear = now.getFullYear();
             
             const lastClaim = user.lastMonthlyGpClaim ? new Date(user.lastMonthlyGpClaim) : null;
             
-            if (lastClaim && 
-                lastClaim.getMonth() === currentMonth && 
-                lastClaim.getFullYear() === currentYear) {
+            // Check if user hasn't received GP this month yet
+            if (!lastClaim || 
+                lastClaim.getMonth() !== currentMonth || 
+                lastClaim.getFullYear() !== currentYear) {
                 
-                const nextMonth = new Date(currentYear, currentMonth + 1, 1);
-                const daysUntilNext = Math.ceil((nextMonth - now) / (1000 * 60 * 60 * 24));
+                // Automatically award the GP
+                user.gp = (user.gp || 0) + 1000;
+                user.lastMonthlyGpClaim = now;
+                await user.save();
                 
-                const embed = new EmbedBuilder()
-                    .setColor('#FF9800')
-                    .setTitle('Monthly GP Claim')
-                    .setDescription(
-                        `You've already claimed your GP allowance for ${now.toLocaleString('default', { month: 'long' })}.\n\n` +
-                        `Your next claim will be available in ${daysUntilNext} days, on the 1st of ${nextMonth.toLocaleString('default', { month: 'long' })}.`
-                    )
-                    .addFields({ name: 'Current Balance', value: `${user.gp || 0} GP` });
-                
-                return interaction.editReply({ embeds: [embed] });
+                return true; // Indicate that GP was awarded
             }
             
-            // Award the GP
-            user.gp = (user.gp || 0) + 1000;
-            user.lastMonthlyGpClaim = now;
-            await user.save();
-            
-            const embed = new EmbedBuilder()
-                .setColor('#00FF00')
-                .setTitle('Monthly GP Claimed!')
-                .setDescription(
-                    `You've successfully claimed your 1,000 GP allowance for ${now.toLocaleString('default', { month: 'long' })}!\n\n` +
-                    `Use your GP to challenge other players or place bets on active challenges.`
-                )
-                .addFields({ name: 'New Balance', value: `${user.gp} GP` });
-            
-            return interaction.editReply({ embeds: [embed] });
+            return false; // No GP was awarded
         } catch (error) {
-            console.error('Error claiming GP:', error);
-            return interaction.editReply('An error occurred while claiming your GP.');
+            console.error('Error checking and granting monthly GP:', error);
+            return false;
         }
     },
     
     // Handle the GP leaderboard command
     async handleLeaderboard(interaction) {
-        await interaction.deferReply({ ephemeral: true });
-        
         try {
             // Get top users by GP
             const topUsers = await User.find({ gp: { $gt: 0 } })
@@ -1077,11 +1233,11 @@ export default {
             
             // Create an embed for the leaderboard
             const embed = new EmbedBuilder()
-                .setTitle('GP Leaderboard')
+                .setTitle('💰 GP Leaderboard')
                 .setColor('#FFD700')
                 .setDescription(
                     'These are the users with the most GP (Gold Points).\n' +
-                    'Earn GP by winning Arena challenges and bets, or claim your monthly allowance.'
+                    'Earn GP by winning Arena challenges and bets. Everyone receives 1,000 GP automatically each month.'
                 )
                 .setFooter({ text: 'The user with the most GP at the end of the year will receive a special title!' });
             
@@ -1089,7 +1245,7 @@ export default {
             
             topUsers.forEach((user, index) => {
                 const medal = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `${index + 1}.`;
-                leaderboardText += `${medal} **${user.raUsername}**: ${user.gp} GP\n`;
+                leaderboardText += `${medal} **${user.raUsername}**: ${user.gp.toLocaleString()} GP\n`;
                 
                 // Add a visual divider after the top 3
                 if (index === 2) {
@@ -1109,12 +1265,24 @@ export default {
                 // Add the user's position to the embed
                 embed.addFields({ 
                     name: 'Your Position', 
-                    value: `**${requestingUser.raUsername}**: ${requestingUser.gp} GP (Rank: #${position + 1})`
+                    value: `**${requestingUser.raUsername}**: ${requestingUser.gp.toLocaleString()} GP (Rank: #${position + 1})`
                 });
             }
             
+            // Add back button
+            const backButton = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('arena_back_to_main')
+                        .setLabel('Back to Arena')
+                        .setStyle(ButtonStyle.Secondary)
+                );
+            
             // Send the embed
-            await interaction.editReply({ embeds: [embed] });
+            await interaction.editReply({ 
+                embeds: [embed],
+                components: [backButton]
+            });
         } catch (error) {
             console.error('Error displaying GP leaderboard:', error);
             return interaction.editReply('An error occurred while fetching the GP leaderboard.');
