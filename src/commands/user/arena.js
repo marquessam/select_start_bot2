@@ -237,10 +237,16 @@ export default {
                 embed.setDescription(
                     `**${challenge.challengerUsername}** has challenged you to compete in:\n\n` +
                     `**${challenge.gameTitle}**\n\n` +
+                    `**Description:** ${challenge.description || 'No description provided'}\n\n` +
                     `**Wager:** ${challenge.wagerAmount} GP\n` +
                     `**Duration:** ${durationDays} days\n\n` +
                     `Do you accept this challenge?`
                 );
+                
+                // Add thumbnail if available
+                if (challenge.iconUrl) {
+                    embed.setThumbnail(`https://retroachievements.org${challenge.iconUrl}`);
+                }
                 
                 // Create accept/decline buttons
                 const buttonsRow = new ActionRowBuilder()
@@ -340,6 +346,14 @@ export default {
                 .setPlaceholder('Enter opponent\'s RA username')
                 .setRequired(true)
                 .setStyle(TextInputStyle.Short);
+
+            // Input for game ID (like in adminArcade)
+            const gameIdInput = new TextInputBuilder()
+                .setCustomId('game_id')
+                .setLabel('RetroAchievements Game ID')
+                .setPlaceholder('e.g. 14402')
+                .setRequired(true)
+                .setStyle(TextInputStyle.Short);
                 
             // Input for leaderboard ID
             const leaderboardInput = new TextInputBuilder()
@@ -349,6 +363,14 @@ export default {
                 .setRequired(true)
                 .setStyle(TextInputStyle.Short);
                 
+            // Input for description (like in adminArcade)
+            const descriptionInput = new TextInputBuilder()
+                .setCustomId('description')
+                .setLabel('Challenge Description')
+                .setPlaceholder('Describe the challenge or special rules')
+                .setRequired(true)
+                .setStyle(TextInputStyle.Paragraph);
+                
             // Input for wager amount
             const wagerInput = new TextInputBuilder()
                 .setCustomId('wager_amount')
@@ -357,7 +379,7 @@ export default {
                 .setRequired(true)
                 .setStyle(TextInputStyle.Short);
                 
-            // Input for challenge duration in days
+            // Input for challenge duration in days - embedded in description now
             const durationInput = new TextInputBuilder()
                 .setCustomId('duration_days')
                 .setLabel('Duration in Days (1-14)')
@@ -368,8 +390,9 @@ export default {
             // Add inputs to modal
             modal.addComponents(
                 new ActionRowBuilder().addComponents(usernameInput),
+                new ActionRowBuilder().addComponents(gameIdInput),
                 new ActionRowBuilder().addComponents(leaderboardInput),
-                new ActionRowBuilder().addComponents(wagerInput),
+                new ActionRowBuilder().addComponents(descriptionInput),
                 new ActionRowBuilder().addComponents(durationInput)
             );
             
@@ -388,8 +411,9 @@ export default {
                     // Add the same components
                     recoveryModal.addComponents(
                         new ActionRowBuilder().addComponents(usernameInput.setCustomId('opponent_username_recovery')),
+                        new ActionRowBuilder().addComponents(gameIdInput.setCustomId('game_id_recovery')),
                         new ActionRowBuilder().addComponents(leaderboardInput.setCustomId('leaderboard_id_recovery')),
-                        new ActionRowBuilder().addComponents(wagerInput.setCustomId('wager_amount_recovery')),
+                        new ActionRowBuilder().addComponents(descriptionInput.setCustomId('description_recovery')),
                         new ActionRowBuilder().addComponents(durationInput.setCustomId('duration_days_recovery'))
                     );
                     
@@ -445,7 +469,9 @@ export default {
             
             // Get form values
             const opponentUsername = interaction.fields.getTextInputValue('opponent_username');
+            const gameId = parseInt(interaction.fields.getTextInputValue('game_id'));
             const leaderboardId = interaction.fields.getTextInputValue('leaderboard_id');
+            const description = interaction.fields.getTextInputValue('description');
             const wagerAmount = parseInt(interaction.fields.getTextInputValue('wager_amount'), 10);
             
             // Get duration in days and convert to hours
@@ -459,6 +485,10 @@ export default {
             
             if (isNaN(durationDays) || durationDays < 1 || durationDays > 14) {
                 return interaction.editReply('Duration must be between 1 and 14 days.');
+            }
+            
+            if (isNaN(gameId)) {
+                return interaction.editReply('Please enter a valid Game ID.');
             }
             
             // Get challenger info
@@ -483,9 +513,15 @@ export default {
                 return interaction.editReply(`You don't have enough GP. Your balance: ${challenger.gp || 0} GP`);
             }
             
-            // Verify leaderboard exists - use direct method like in arcade.js
+            // Verify game exists - similar to adminArcade
+            const gameInfo = await retroAPI.getGameInfo(gameId);
+            if (!gameInfo) {
+                return interaction.editReply('Game not found. Please check the game ID.');
+            }
+            
+            // Verify leaderboard exists
             try {
-                // Fetch multiple batches of leaderboard entries to verify the leaderboard exists
+                // Fetch leaderboard entries to verify the leaderboard exists
                 const batch1 = await retroAPI.getLeaderboardEntriesDirect(leaderboardId, 0, 500);
                 const batch2 = await retroAPI.getLeaderboardEntriesDirect(leaderboardId, 500, 500);
                 
@@ -516,49 +552,6 @@ export default {
                     return interaction.editReply(`Leaderboard ID ${leaderboardId} not found or has no entries.`);
                 }
                 
-                // Process the entries with appropriate handling based on leaderboard type
-                const leaderboardEntries = rawEntries.map(entry => {
-                    // Standard properties that most entries have
-                    const user = entry.User || entry.user || '';
-                    const score = entry.Score || entry.score || entry.Value || entry.value || 0;
-                    const formattedScore = entry.FormattedScore || entry.formattedScore || entry.ScoreFormatted || score.toString();
-                    const rank = entry.Rank || entry.rank || 0;
-                    
-                    return {
-                        ApiRank: parseInt(rank, 10),
-                        User: user.trim(),
-                        RawScore: score,
-                        TrackTime: formattedScore.toString().trim() || score.toString()
-                    };
-                });
-                
-                // Filter entries to only show ranks <= 999
-                const filteredEntries = leaderboardEntries.filter(entry => {
-                    return entry.ApiRank && entry.ApiRank <= 999;
-                });
-                
-                // Get game information from API via direct method
-                let gameInfo = null;
-                let gameTitle = `Leaderboard ${leaderboardId}`;
-                let gameId = null;
-                
-                try {
-                    // Try direct API request for leaderboard info (might work for some instances)
-                    const leaderboardInfo = await retroAPI.apiRequest(`API_GetLeaderboardInfo.php?i=${leaderboardId}`);
-                    if (leaderboardInfo && leaderboardInfo.Title) {
-                        gameTitle = leaderboardInfo.Title;
-                        gameId = leaderboardInfo.GameID || null;
-                    }
-                    
-                    // If we have a gameId, get more details
-                    if (gameId) {
-                        gameInfo = await retroAPI.getGameInfo(gameId);
-                    }
-                } catch (apiError) {
-                    console.error('Error getting leaderboard info:', apiError);
-                    // Continue with available info - at least we verified the leaderboard exists
-                }
-                
                 // Check for any existing challenges between these users
                 const existingChallenge = await ArenaChallenge.findOne({
                     $or: [
@@ -580,16 +573,18 @@ export default {
                     return interaction.editReply(`You already have a challenge with ${opponentUsername} that is ${statusText}.`);
                 }
                 
-                // Create the challenge with best available info
+                // Create the challenge
                 const challenge = new ArenaChallenge({
                     challengerId: challenger.discordId,
                     challengerUsername: challenger.raUsername,
                     challengeeId: opponent.discordId,
                     challengeeUsername: opponent.raUsername,
                     leaderboardId: leaderboardId,
-                    gameTitle: gameTitle,
-                    gameId: gameId || 0,
-                    iconUrl: gameInfo?.imageIcon || null,
+                    gameId: gameId,
+                    gameTitle: gameInfo.title,
+                    consoleName: gameInfo.consoleName || 'Unknown',
+                    iconUrl: gameInfo.imageIcon || null,
+                    description: description,
                     wagerAmount: wagerAmount,
                     durationHours: durationHours,
                     status: 'pending'
@@ -615,13 +610,15 @@ export default {
                     .setColor('#00FF00')
                     .setTitle('Challenge Created!')
                     .setDescription(
-                        `You've challenged ${opponent.raUsername} to compete in ${gameTitle}!\n\n` +
+                        `You've challenged ${opponent.raUsername} to compete in ${gameInfo.title}!\n\n` +
+                        `**Game:** ${gameInfo.title} (${gameInfo.consoleName || 'Unknown'})\n` +
+                        `**Description:** ${description}\n` +
                         `**Wager:** ${wagerAmount} GP\n` +
                         `**Duration:** ${durationDays} days\n\n` +
                         `They'll be notified and can use \`/arena\` to respond.`
                     );
                 
-                if (gameInfo && gameInfo.imageIcon) {
+                if (gameInfo.imageIcon) {
                     embed.setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`);
                 }
                 
@@ -682,10 +679,16 @@ export default {
                 .setTitle(`Challenge from ${challenge.challengerUsername}`)
                 .setDescription(
                     `**Game:** ${challenge.gameTitle}\n` +
+                    `**Description:** ${challenge.description || 'No description provided'}\n` +
                     `**Wager:** ${challenge.wagerAmount} GP\n` +
                     `**Duration:** ${durationDays} days\n\n` +
                     `Do you want to accept or decline this challenge?`
                 );
+            
+            // Add thumbnail if available
+            if (challenge.iconUrl) {
+                embed.setThumbnail(`https://retroachievements.org${challenge.iconUrl}`);
+            }
             
             // Create buttons for accepting or declining
             const buttonsRow = new ActionRowBuilder()
@@ -744,7 +747,12 @@ export default {
             const embed = new EmbedBuilder()
                 .setColor('#9B59B6')
                 .setTitle('Active Arena Challenges - Place a Bet')
-                .setDescription('Select a challenge to bet on:');
+                .setDescription(
+                    'Select a challenge to bet on:\n\n' +
+                    '**Pot Betting System:** Your bet is added to the total prize pool. ' +
+                    'If your chosen player wins, you get your bet back plus a proportional share of the losing side bets based on your bet amount!\n\n' +
+                    '**House Guarantee:** If you\'re the only bettor, the house will guarantee a 50% profit on your bet if you win.'
+                );
             
             // Create a select menu
             const selectMenu = new StringSelectMenuBuilder()
@@ -825,6 +833,10 @@ export default {
                 return interaction.editReply(`You've already placed a bet of ${existingBet.betAmount} GP on ${existingBet.targetPlayer}.`);
             }
             
+            // Count bets on each side
+            const challengerBets = challenge.bets.filter(bet => bet.targetPlayer === challenge.challengerUsername);
+            const challengeeBets = challenge.bets.filter(bet => bet.targetPlayer === challenge.challengeeUsername);
+            
             // Create an embed with challenge details
             const embed = new EmbedBuilder()
                 .setColor('#9B59B6')
@@ -833,10 +845,17 @@ export default {
                     `**Game:** ${challenge.gameTitle}\n` +
                     `**Current Wager Pool:** ${challenge.wagerAmount * 2} GP\n` +
                     `**Total Betting Pool:** ${challenge.totalPool || 0} GP\n\n` +
-                    `**How Betting Works:** If your chosen player wins, you'll get your bet back plus at least the same amount in winnings! ` +
-                    `The house guarantees you'll at least double your money on winning bets (house matches up to 500 GP per bet).\n\n` +
+                    `**Pot Betting System:** Your bet joins the total prize pool. ` +
+                    `If your chosen player wins, you get your bet back plus a share of the losing side's bets proportional to your bet amount.\n\n` +
+                    `**House Guarantee:** If you're the only bettor, the house guarantees 50% profit on your bet if you win.\n\n` +
+                    `**Current Bets:** ${challengerBets.length} on ${challenge.challengerUsername}, ${challengeeBets.length} on ${challenge.challengeeUsername}\n\n` +
                     `Select which player you want to bet on:`
                 );
+            
+            // Add thumbnail if available
+            if (challenge.iconUrl) {
+                embed.setThumbnail(`https://retroachievements.org${challenge.iconUrl}`);
+            }
             
             // Create select menu for player selection
             const selectMenu = new StringSelectMenuBuilder()
@@ -845,12 +864,12 @@ export default {
                 .addOptions([
                     {
                         label: challenge.challengerUsername,
-                        description: `Challenger`,
+                        description: `Challenger (${challengerBets.length} bets)`,
                         value: `${selectedChallengeId}_${challenge.challengerUsername}`
                     },
                     {
                         label: challenge.challengeeUsername,
-                        description: `Challengee`,
+                        description: `Challengee (${challengeeBets.length} bets)`,
                         value: `${selectedChallengeId}_${challenge.challengeeUsername}`
                     }
                 ]);
@@ -897,7 +916,7 @@ export default {
             const betDescription = new TextInputBuilder()
                 .setCustomId('bet_description')
                 .setLabel('Betting System Info')
-                .setValue('House guarantees you\'ll double your money on winning bets')
+                .setValue('Pot Betting: Win your bet back plus a proportional share of the losing bets')
                 .setRequired(false)
                 .setStyle(TextInputStyle.Short);
             
@@ -965,8 +984,33 @@ export default {
                 return interaction.editReply(`You've already placed a bet on this challenge.`);
             }
             
-            // Calculate potential minimum winnings with house match (capped at 500 GP)
-            const guaranteedWinnings = Math.min(betAmount, 500);
+            // Check if user is the only bettor
+            const isSoleBettor = challenge.bets.length === 0;
+            
+            // Calculate potential winnings based on pot betting
+            let potDescription = '';
+            
+            if (isSoleBettor) {
+                const guaranteedProfit = Math.floor(betAmount * 0.5); // 50% guarantee
+                potDescription = `Since you're the only bettor, the house guarantees you'll win ${guaranteedProfit} GP (50% profit) if ${playerName} wins.`;
+            } else {
+                // Count bets on each side for pot description
+                const challengerBets = challenge.bets.filter(bet => bet.targetPlayer === challenge.challengerUsername);
+                const challengeeBets = challenge.bets.filter(bet => bet.targetPlayer === challenge.challengeeUsername);
+                
+                const targetPlayerBets = playerName === challenge.challengerUsername ? challengerBets : challengeeBets;
+                const opposingPlayerBets = playerName === challenge.challengerUsername ? challengeeBets : challengerBets;
+                
+                const targetPlayerPool = targetPlayerBets.reduce((sum, bet) => sum + bet.betAmount, 0) + betAmount;
+                const opposingPlayerPool = opposingPlayerBets.reduce((sum, bet) => sum + bet.betAmount, 0);
+                
+                if (opposingPlayerPool > 0) {
+                    const estimatedShare = Math.floor((betAmount / targetPlayerPool) * opposingPlayerPool);
+                    potDescription = `If ${playerName} wins, you'd get your ${betAmount} GP back plus about ${estimatedShare} GP from the pot (proportional share of ${opposingPlayerPool} GP).`;
+                } else {
+                    potDescription = `Currently all bets are on ${playerName}. If more users bet on the opposing player, you'll receive a proportional share of those bets if ${playerName} wins.`;
+                }
+            }
             
             // Deduct GP from user
             user.gp = (user.gp || 0) - betAmount;
@@ -999,9 +1043,14 @@ export default {
                     `You've bet **${betAmount} GP** on **${playerName}** to win the challenge.\n\n` +
                     `**Game:** ${challenge.gameTitle}\n` +
                     `**New GP Balance:** ${user.gp} GP\n\n` +
-                    `**If your pick wins:** You'll get your ${betAmount} GP back plus at least ${guaranteedWinnings} GP in winnings!\n\n` +
+                    `**Potential Winnings:** ${potDescription}\n\n` +
                     `Good luck! Results will be posted in the Arena channel.`
                 );
+            
+            // Add thumbnail if available
+            if (challenge.iconUrl) {
+                embed.setThumbnail(`https://retroachievements.org${challenge.iconUrl}`);
+            }
             
             return interaction.editReply({ embeds: [embed] });
         } catch (error) {
@@ -1166,12 +1215,13 @@ export default {
                            'Both players wager GP, and the winner takes all!'
                 },
                 {
-                    name: '🎲 Betting',
-                    value: 'You can bet GP on other players\' challenges. If your chosen player wins, you get your bet back plus at least the same amount in winnings! The house will match bets up to 500 GP if needed to guarantee your profit.'
+                    name: '🎲 Pot Betting',
+                    value: 'You can bet GP on other players\' challenges. Your bet joins the total prize pool. ' +
+                           'If your chosen player wins, you get your bet back plus a share of the losing bets proportional to your bet amount.'
                 },
                 {
-                    name: '💸 House-Matched Betting',
-                    value: 'Every winning bet is guaranteed a 100% return (minimum 2x your original bet). If not enough other users bet against you, the house will match up to 500 GP to ensure you get paid!'
+                    name: '💸 House Guarantee',
+                    value: 'If you\'re the only person to bet on a challenge, the house guarantees you\'ll get a 50% profit if your chosen player wins.'
                 },
                 {
                     name: '🏆 Rewards',
@@ -1259,6 +1309,11 @@ export default {
                     `Good luck! Updates will be posted in the Arena channel.`
                 );
             
+            // Add thumbnail if available
+            if (challenge.iconUrl) {
+                embed.setThumbnail(`https://retroachievements.org${challenge.iconUrl}`);
+            }
+            
             await interaction.editReply({
                 embeds: [embed],
                 components: []
@@ -1297,6 +1352,11 @@ export default {
                     `**Wager:** ${challenge.wagerAmount} GP`
                 );
             
+            // Add thumbnail if available
+            if (challenge.iconUrl) {
+                embed.setThumbnail(`https://retroachievements.org${challenge.iconUrl}`);
+            }
+            
             await interaction.editReply({
                 embeds: [embed],
                 components: []
@@ -1329,8 +1389,8 @@ export default {
                 .setDescription(
                     'These are the currently active challenges in the Arena.\n' +
                     'Use `/arena` and select "Place Bet" to bet on these challenges.\n\n' +
-                    '**Betting System:** If your chosen player wins, you\'ll get your bet back plus at least the same amount in winnings! ' +
-                    'The house will match bets up to 500 GP to guarantee your profit.'
+                    '**Pot Betting System:** Your bet joins the total prize pool. ' +
+                    'If your chosen player wins, you get your bet back plus a share of the losing bets proportional to your bet amount.'
                 )
                 .setFooter({ text: 'All challenge updates are posted in the Arena channel' });
             
@@ -1342,6 +1402,7 @@ export default {
                 embed.addFields({
                     name: `${index + 1}. ${challenge.challengerUsername} vs ${challenge.challengeeUsername}`,
                     value: `**Game:** ${challenge.gameTitle}\n` +
+                           (challenge.description ? `**Description:** ${challenge.description}\n` : '') +
                            `**Wager:** ${challenge.wagerAmount} GP each\n` +
                            `**Total Pool:** ${totalPool} GP\n` +
                            `**Ends:** ${challenge.endDate.toLocaleDateString()} (${timeRemaining})\n` +
