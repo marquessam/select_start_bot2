@@ -483,37 +483,37 @@ export default {
                 return interaction.editReply(`You don't have enough GP. Your balance: ${challenger.gp || 0} GP`);
             }
             
-            // Verify leaderboard exists - use direct leaderboard entries method
+            // Verify leaderboard exists - use direct method like in arcade.js
             try {
-                // Try to get leaderboard entries - this will verify the leaderboard exists
-                const entries = await retroAPI.getLeaderboardEntries(leaderboardId, 0, 1);
+                // Fetch batch of leaderboard entries to verify the leaderboard exists
+                const leaderboardEntries = await retroAPI.getLeaderboardEntriesDirect(leaderboardId, 0, 1);
                 
-                // If no entries or error, getLeaderboardEntries returns an empty array
-                if (!entries || entries.length === 0) {
-                    // Double check by trying to get direct entries through API
-                    const directEntries = await retroAPI.getLeaderboardEntriesDirect(leaderboardId, 0, 1);
-                    if (!directEntries || !directEntries.Results || directEntries.Results.length === 0) {
-                        return interaction.editReply(`Leaderboard ID ${leaderboardId} not found or has no entries.`);
-                    }
+                if (!leaderboardEntries || 
+                   (!leaderboardEntries.length && 
+                    (!leaderboardEntries.Results || !leaderboardEntries.Results.length))) {
+                    return interaction.editReply(`Leaderboard ID ${leaderboardId} not found or has no entries.`);
                 }
                 
-                // Find game ID from the first entry (not always provided but worth trying)
-                let gameId = null;
-                if (entries && entries.length > 0 && entries[0].GameID) {
-                    gameId = entries[0].GameID;
-                }
-                
-                // Get direct leaderboard data to get game title and ID
-                const directLeaderboardData = await retroAPI.apiRequest(`API_GetLeaderboardInfo.php?i=${leaderboardId}`);
-                
-                // Extract game info from the response or use placeholder values
-                const gameTitle = directLeaderboardData?.Title || `Leaderboard ${leaderboardId}`;
-                const gameId2 = directLeaderboardData?.GameID || gameId || 0;
-                
-                // Get game info if possible
+                // Get game information from API via direct method
                 let gameInfo = null;
-                if (gameId2) {
-                    gameInfo = await retroAPI.getGameInfo(gameId2);
+                let gameTitle = `Leaderboard ${leaderboardId}`;
+                let gameId = null;
+                
+                try {
+                    // Try direct API request for leaderboard info (might work for some instances)
+                    const leaderboardInfo = await retroAPI.apiRequest(`API_GetLeaderboardInfo.php?i=${leaderboardId}`);
+                    if (leaderboardInfo && leaderboardInfo.Title) {
+                        gameTitle = leaderboardInfo.Title;
+                        gameId = leaderboardInfo.GameID || null;
+                    }
+                    
+                    // If we have a gameId, get more details
+                    if (gameId) {
+                        gameInfo = await retroAPI.getGameInfo(gameId);
+                    }
+                } catch (apiError) {
+                    console.error('Error getting leaderboard info:', apiError);
+                    // Continue with available info - at least we verified the leaderboard exists
                 }
                 
                 // Check for any existing challenges between these users
@@ -537,21 +537,16 @@ export default {
                     return interaction.editReply(`You already have a challenge with ${opponentUsername} that is ${statusText}.`);
                 }
                 
-                // Use the best available info for the challenge
-                const finalGameTitle = gameInfo?.title || directLeaderboardData?.Title || `Leaderboard ${leaderboardId}`;
-                const finalGameId = gameInfo?.id || directLeaderboardData?.GameID || gameId || 0;
-                const iconUrl = gameInfo?.imageIcon || null;
-                
-                // Create the challenge
+                // Create the challenge with best available info
                 const challenge = new ArenaChallenge({
                     challengerId: challenger.discordId,
                     challengerUsername: challenger.raUsername,
                     challengeeId: opponent.discordId,
                     challengeeUsername: opponent.raUsername,
                     leaderboardId: leaderboardId,
-                    gameTitle: finalGameTitle,
-                    gameId: finalGameId,
-                    iconUrl: iconUrl,
+                    gameTitle: gameTitle,
+                    gameId: gameId || 0,
+                    iconUrl: gameInfo?.imageIcon || null,
                     wagerAmount: wagerAmount,
                     durationHours: durationHours,
                     status: 'pending'
@@ -577,14 +572,14 @@ export default {
                     .setColor('#00FF00')
                     .setTitle('Challenge Created!')
                     .setDescription(
-                        `You've challenged ${opponent.raUsername} to compete in ${finalGameTitle}!\n\n` +
+                        `You've challenged ${opponent.raUsername} to compete in ${gameTitle}!\n\n` +
                         `**Wager:** ${wagerAmount} GP\n` +
                         `**Duration:** ${durationDays} days\n\n` +
                         `They'll be notified and can use \`/arena\` to respond.`
                     );
                 
-                if (iconUrl) {
-                    embed.setThumbnail(`https://retroachievements.org${iconUrl}`);
+                if (gameInfo && gameInfo.imageIcon) {
+                    embed.setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`);
                 }
                 
                 return interaction.editReply({ embeds: [embed] });
