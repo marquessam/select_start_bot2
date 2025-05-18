@@ -27,7 +27,10 @@ export const config = {
         rankAlertsChannelId: process.env.RANK_ALERTS_CHANNEL || '1371350718505811989',
         arcadeAlertsChannelId: process.env.ARCADE_ALERTS_CHANNEL || '1300941091335438471',
         arcadeFeedChannelId: process.env.ARCADE_FEED_CHANNEL || '1371363491130114098',
-        adminLogChannelId: process.env.ADMIN_LOG_CHANNEL || '1304814893857374270' // Using the specific admin log channel ID
+        arenaChannelId: process.env.ARENA_CHANNEL || '1373570850912997476',
+        arenaFeedChannelId: process.env.ARENA_FEED_CHANNEL || '1373570913882214410',
+        memberRoleId: process.env.MEMBER_ROLE_ID || '1300941091335438469',
+        adminLogChannelId: process.env.ADMIN_LOG_CHANNEL || '1304814893857374270'
     },
     
     // RetroAchievements API Configuration
@@ -50,8 +53,24 @@ export const config = {
         
         // Role IDs for permissions
         roles: {
-            admin: process.env.ADMIN_ROLE_ID
+            admin: process.env.ADMIN_ROLE_ID,
+            member: process.env.MEMBER_ROLE_ID
         }
+    },
+    
+    // Arena Configuration
+    arena: {
+        // Default monthly GP allowance
+        monthlyGpAllowance: 1000,
+        
+        // Minimum bet amount
+        minBetAmount: 10,
+        
+        // Maximum challenge duration in hours (1 week)
+        maxChallengeDuration: 168,
+        
+        // Minimum challenge duration in hours
+        minChallengeDuration: 1
     }
 };
 
@@ -76,6 +95,9 @@ export function validateConfig() {
         'RANK_ALERTS_CHANNEL',
         'ARCADE_ALERTS_CHANNEL',
         'ARCADE_FEED_CHANNEL',
+        'ARENA_CHANNEL',
+        'ARENA_FEED_CHANNEL',
+        'MEMBER_ROLE_ID',
         'ADMIN_LOG_CHANNEL'
     ];
 
