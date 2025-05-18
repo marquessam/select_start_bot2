@@ -14,6 +14,8 @@ import leaderboardFeedService from './services/leaderboardFeedService.js';
 import arcadeAlertService from './services/arcadeAlertService.js';
 import arcadeFeedService from './services/arcadeFeedService.js';
 import membershipCheckService from './services/membershipCheckService.js';
+import arenaService from './services/arenaService.js'; // Add the new arenaService import
+import { User } from './models/User.js'; // Import User model for GP reset
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -163,6 +165,43 @@ client.on(Events.InteractionCreate, async interaction => {
     }
 });
 
+// Function to handle monthly GP allowance reset
+async function handleMonthlyGpAllowance() {
+    try {
+        const now = new Date();
+        // Only run on the 1st day of each month
+        if (now.getDate() === 1) {
+            console.log('Starting monthly GP allowance process...');
+            
+            // Reset lastMonthlyGpClaim for all users
+            await User.updateMany(
+                {}, 
+                { $set: { lastMonthlyGpClaim: null } }
+            );
+            
+            console.log('Reset monthly GP claim status for all users');
+            
+            // Optionally send a notification to the Arena channel
+            try {
+                const arenaChannel = await client.channels.fetch(config.discord.arenaChannelId);
+                if (arenaChannel) {
+                    await arenaChannel.send({
+                        content: 
+                            `# 🎉 Monthly GP Allowance Reset!\n` +
+                            `It's a new month, and your GP allowance has been reset!\n` +
+                            `Use \`/arena claim\` to claim your 1,000 GP for this month.\n\n` +
+                            `Don't forget to check the Arena leaderboard - who will be on top this month?`
+                    });
+                }
+            } catch (notifyError) {
+                console.error('Error sending GP reset notification:', notifyError);
+            }
+        }
+    } catch (error) {
+        console.error('Error handling monthly GP allowance:', error);
+    }
+}
+
 // Handle ready event
 client.once(Events.ClientReady, async () => {
     try {
@@ -184,6 +223,7 @@ client.once(Events.ClientReady, async () => {
         arcadeAlertService.setClient(client);
         arcadeFeedService.setClient(client);
         membershipCheckService.setClient(client);
+        arenaService.setClient(client); // Set client for the new arena service
 
         // Schedule stats updates every 30 minutes
         cron.schedule('*/30 * * * *', () => {
@@ -206,6 +246,11 @@ client.once(Events.ClientReady, async () => {
             console.log('Running monthly tasks...');
             monthlyTasksService.clearAllNominations().catch(error => {
                 console.error('Error clearing nominations:', error);
+            });
+            
+            // Add the GP allowance reset to monthly tasks
+            handleMonthlyGpAllowance().catch(error => {
+                console.error('Error in monthly GP allowance reset:', error);
             });
         });
 
@@ -239,6 +284,22 @@ client.once(Events.ClientReady, async () => {
             console.log('Running arcade feed update...');
             arcadeFeedService.updateArcadeFeed().catch(error => {
                 console.error('Error in arcade feed update:', error);
+            });
+        });
+
+        // Schedule arena feed updates every hour
+        cron.schedule('15 * * * *', () => { // Runs at 15 minutes past every hour
+            console.log('Running arena feed update...');
+            arenaService.updateArenaFeeds().catch(error => {
+                console.error('Error in arena feed update:', error);
+            });
+        });
+
+        // Schedule completed arena challenges check every hour at 30 minutes past
+        cron.schedule('30 * * * *', () => {
+            console.log('Running arena completed challenges check...');
+            arenaService.checkCompletedChallenges().catch(error => {
+                console.error('Error in arena completed challenges check:', error);
             });
         });
 
@@ -372,6 +433,12 @@ client.once(Events.ClientReady, async () => {
         
         // Start the membership check service
         await membershipCheckService.start();
+        
+        // Start the arena service
+        await arenaService.start();
+        
+        // Check if monthly GP allowance should be handled on startup
+        await handleMonthlyGpAllowance();
 
         console.log('Bot is ready!');
     } catch (error) {
