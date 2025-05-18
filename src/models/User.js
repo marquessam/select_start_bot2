@@ -98,6 +98,51 @@ const userSchema = new mongoose.Schema({
             stats: Object
         },
         default: () => new Map()
+    },
+    // New field for Arena Gold Points (GP)
+    gp: {
+        type: Number,
+        default: 1000 // Default starting GP
+    },
+    // New field to track when the user last claimed their monthly GP allowance
+    lastMonthlyGpClaim: {
+        type: Date,
+        default: null
+    },
+    // New field to track arena statistics
+    arenaStats: {
+        wins: { 
+            type: Number, 
+            default: 0 
+        },
+        losses: { 
+            type: Number, 
+            default: 0 
+        },
+        challengesIssued: { 
+            type: Number, 
+            default: 0 
+        },
+        challengesAccepted: { 
+            type: Number, 
+            default: 0 
+        },
+        gpWon: { 
+            type: Number, 
+            default: 0 
+        },
+        gpLost: { 
+            type: Number, 
+            default: 0 
+        },
+        betsPlaced: { 
+            type: Number, 
+            default: 0 
+        },
+        betsWon: { 
+            type: Number, 
+            default: 0 
+        }
     }
 }, {
     timestamps: true,
@@ -184,6 +229,26 @@ userSchema.methods.clearCurrentNominations = function() {
         const nomYear = nom.nominatedAt.getFullYear();
         return !(nomMonth === currentMonth && nomYear === currentYear);
     });
+};
+
+// New method to check if user has claimed their monthly GP allowance
+userSchema.methods.hasClaimedMonthlyGp = function() {
+    if (!this.lastMonthlyGpClaim) return false;
+    
+    const now = new Date();
+    const lastClaim = new Date(this.lastMonthlyGpClaim);
+    
+    return lastClaim.getMonth() === now.getMonth() && 
+           lastClaim.getFullYear() === now.getFullYear();
+};
+
+// New method to claim monthly GP allowance
+userSchema.methods.claimMonthlyGp = function(amount = 1000) {
+    if (this.hasClaimedMonthlyGp()) return false;
+    
+    this.gp = (this.gp || 0) + amount;
+    this.lastMonthlyGpClaim = new Date();
+    return true;
 };
 
 export const User = mongoose.model('User', userSchema);
