@@ -1,3 +1,4 @@
+
 import { 
     SlashCommandBuilder, 
     EmbedBuilder, 
@@ -48,8 +49,10 @@ export default {
         }
     },
     
-    // Show the main arena menu with all options
+    // Show the main arena menu with all options - clean version with logging
     async showMainArenaMenu(interaction, user) {
+        console.log(`[ARENA] Showing main menu for user ${user.raUsername} (${user.discordId})`);
+        
         // Check if user should receive automatic monthly GP and give it
         await this.checkAndGrantMonthlyGP(user);
         
@@ -63,6 +66,8 @@ export default {
         
         // Format GP balance with commas
         const gpBalance = (user.gp || 0).toLocaleString();
+        
+        console.log(`[ARENA] User ${user.raUsername} has ${gpBalance} GP and ${activeCount} active challenges`);
         
         // Create main arena embed
         const embed = new EmbedBuilder()
@@ -78,6 +83,8 @@ export default {
                 { name: '⚔️ Your Active Challenges', value: `**${activeCount}**`, inline: true }
             )
             .setFooter({ text: 'All challenges and bets are based on RetroAchievements leaderboards' });
+        
+        console.log(`[ARENA] Created embed for main menu`);
         
         // Create action menu - following the same pattern as adminarcade
         const actionRow = new ActionRowBuilder()
@@ -119,6 +126,8 @@ export default {
                     ])
             );
         
+        console.log(`[ARENA] Created dropdown menu for main actions`);
+        
         // Create help button
         const buttonsRow = new ActionRowBuilder()
             .addComponents(
@@ -129,11 +138,28 @@ export default {
                     .setEmoji('❓')
             );
         
+        console.log(`[ARENA] Created help button`);
+        console.log(`[ARENA] Sending main menu components to Discord...`);
+        
         // Send the arena menu
-        await interaction.editReply({
-            embeds: [embed],
-            components: [actionRow, buttonsRow]
-        });
+        try {
+            await interaction.editReply({
+                embeds: [embed],
+                components: [actionRow, buttonsRow]
+            });
+            console.log(`[ARENA] Successfully sent main menu to Discord`);
+        } catch (error) {
+            console.error(`[ARENA] Error sending main menu to Discord:`, error);
+            // Try a fallback approach if the initial reply fails
+            try {
+                await interaction.editReply({
+                    content: 'An error occurred while displaying the Arena menu. Please try again.',
+                    components: []
+                });
+            } catch (fallbackError) {
+                console.error(`[ARENA] Fallback error handling also failed:`, fallbackError);
+            }
+        }
     },
     
     // Show pending challenges for user to respond to
