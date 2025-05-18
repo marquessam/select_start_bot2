@@ -79,7 +79,7 @@ export default {
             )
             .setFooter({ text: 'All challenges and bets are based on RetroAchievements leaderboards' });
         
-        // Create action menu
+        // Create action menu - following the same pattern as adminarcade
         const actionRow = new ActionRowBuilder()
             .addComponents(
                 new StringSelectMenuBuilder()
