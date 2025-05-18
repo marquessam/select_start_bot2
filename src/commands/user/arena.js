@@ -230,12 +230,15 @@ export default {
                     });
                 }
                 
+                // Calculate days from hours for display
+                const durationDays = Math.floor(challenge.durationHours / 24);
+                
                 // Show detailed challenge info
                 embed.setDescription(
                     `**${challenge.challengerUsername}** has challenged you to compete in:\n\n` +
                     `**${challenge.gameTitle}**\n\n` +
                     `**Wager:** ${challenge.wagerAmount} GP\n` +
-                    `**Duration:** ${challenge.durationHours} hours\n\n` +
+                    `**Duration:** ${durationDays} days\n\n` +
                     `Do you accept this challenge?`
                 );
                 
@@ -269,6 +272,8 @@ export default {
             // Multiple challenges - show a selection menu
             else {
                 pendingChallenges.forEach((challenge, index) => {
+                    const durationDays = Math.floor(challenge.durationHours / 24);
+                    
                     embed.addFields({
                         name: `${index + 1}. From ${challenge.challengerUsername}`,
                         value: `**Game:** ${challenge.gameTitle}\n**Wager:** ${challenge.wagerAmount} GP`
@@ -281,9 +286,11 @@ export default {
                     .setPlaceholder('Select a challenge to respond to');
                     
                 pendingChallenges.forEach((challenge) => {
+                    const durationDays = Math.floor(challenge.durationHours / 24);
+                    
                     selectMenu.addOptions({
                         label: `From ${challenge.challengerUsername} - ${challenge.gameTitle}`,
-                        description: `Wager: ${challenge.wagerAmount} GP | Duration: ${challenge.durationHours} hrs`,
+                        description: `Wager: ${challenge.wagerAmount} GP | Duration: ${durationDays} days`,
                         value: challenge._id.toString()
                     });
                 });
@@ -350,11 +357,11 @@ export default {
                 .setRequired(true)
                 .setStyle(TextInputStyle.Short);
                 
-            // Input for challenge duration
+            // Input for challenge duration in days
             const durationInput = new TextInputBuilder()
-                .setCustomId('duration_hours')
-                .setLabel('Duration in Hours (1-168)')
-                .setPlaceholder('e.g. 24 for 1 day')
+                .setCustomId('duration_days')
+                .setLabel('Duration in Days (1-14)')
+                .setPlaceholder('e.g. 7 for one week')
                 .setRequired(true)
                 .setStyle(TextInputStyle.Short);
                 
@@ -383,7 +390,7 @@ export default {
                         new ActionRowBuilder().addComponents(usernameInput.setCustomId('opponent_username_recovery')),
                         new ActionRowBuilder().addComponents(leaderboardInput.setCustomId('leaderboard_id_recovery')),
                         new ActionRowBuilder().addComponents(wagerInput.setCustomId('wager_amount_recovery')),
-                        new ActionRowBuilder().addComponents(durationInput.setCustomId('duration_hours_recovery'))
+                        new ActionRowBuilder().addComponents(durationInput.setCustomId('duration_days_recovery'))
                     );
                     
                     // Try a different approach - reply with a button that shows the modal
@@ -440,15 +447,18 @@ export default {
             const opponentUsername = interaction.fields.getTextInputValue('opponent_username');
             const leaderboardId = interaction.fields.getTextInputValue('leaderboard_id');
             const wagerAmount = parseInt(interaction.fields.getTextInputValue('wager_amount'), 10);
-            const durationHours = parseInt(interaction.fields.getTextInputValue('duration_hours'), 10);
+            
+            // Get duration in days and convert to hours
+            const durationDays = parseInt(interaction.fields.getTextInputValue('duration_days'), 10);
+            const durationHours = durationDays * 24;
             
             // Validate inputs
             if (isNaN(wagerAmount) || wagerAmount < 10) {
                 return interaction.editReply('Wager amount must be at least 10 GP.');
             }
             
-            if (isNaN(durationHours) || durationHours < 1 || durationHours > 168) {
-                return interaction.editReply('Duration must be between 1 and 168 hours (1 week).');
+            if (isNaN(durationDays) || durationDays < 1 || durationDays > 14) {
+                return interaction.editReply('Duration must be between 1 and 14 days.');
             }
             
             // Get challenger info
@@ -473,15 +483,38 @@ export default {
                 return interaction.editReply(`You don't have enough GP. Your balance: ${challenger.gp || 0} GP`);
             }
             
-            // Verify leaderboard exists
+            // Verify leaderboard exists - use direct leaderboard entries method
             try {
-                const leaderboardInfo = await retroAPI.getLeaderboardInfo(leaderboardId);
-                if (!leaderboardInfo || !leaderboardInfo.Title) {
-                    return interaction.editReply(`Leaderboard ID ${leaderboardId} not found.`);
+                // Try to get leaderboard entries - this will verify the leaderboard exists
+                const entries = await retroAPI.getLeaderboardEntries(leaderboardId, 0, 1);
+                
+                // If no entries or error, getLeaderboardEntries returns an empty array
+                if (!entries || entries.length === 0) {
+                    // Double check by trying to get direct entries through API
+                    const directEntries = await retroAPI.getLeaderboardEntriesDirect(leaderboardId, 0, 1);
+                    if (!directEntries || !directEntries.Results || directEntries.Results.length === 0) {
+                        return interaction.editReply(`Leaderboard ID ${leaderboardId} not found or has no entries.`);
+                    }
                 }
                 
-                // Get game info for the leaderboard
-                const gameInfo = await retroAPI.getGameInfo(leaderboardInfo.GameID);
+                // Find game ID from the first entry (not always provided but worth trying)
+                let gameId = null;
+                if (entries && entries.length > 0 && entries[0].GameID) {
+                    gameId = entries[0].GameID;
+                }
+                
+                // Get direct leaderboard data to get game title and ID
+                const directLeaderboardData = await retroAPI.apiRequest(`API_GetLeaderboardInfo.php?i=${leaderboardId}`);
+                
+                // Extract game info from the response or use placeholder values
+                const gameTitle = directLeaderboardData?.Title || `Leaderboard ${leaderboardId}`;
+                const gameId2 = directLeaderboardData?.GameID || gameId || 0;
+                
+                // Get game info if possible
+                let gameInfo = null;
+                if (gameId2) {
+                    gameInfo = await retroAPI.getGameInfo(gameId2);
+                }
                 
                 // Check for any existing challenges between these users
                 const existingChallenge = await ArenaChallenge.findOne({
@@ -504,6 +537,11 @@ export default {
                     return interaction.editReply(`You already have a challenge with ${opponentUsername} that is ${statusText}.`);
                 }
                 
+                // Use the best available info for the challenge
+                const finalGameTitle = gameInfo?.title || directLeaderboardData?.Title || `Leaderboard ${leaderboardId}`;
+                const finalGameId = gameInfo?.id || directLeaderboardData?.GameID || gameId || 0;
+                const iconUrl = gameInfo?.imageIcon || null;
+                
                 // Create the challenge
                 const challenge = new ArenaChallenge({
                     challengerId: challenger.discordId,
@@ -511,9 +549,9 @@ export default {
                     challengeeId: opponent.discordId,
                     challengeeUsername: opponent.raUsername,
                     leaderboardId: leaderboardId,
-                    gameTitle: gameInfo.Title || leaderboardInfo.Title,
-                    gameId: gameInfo.ID || leaderboardInfo.GameID,
-                    iconUrl: gameInfo.ImageIcon,
+                    gameTitle: finalGameTitle,
+                    gameId: finalGameId,
+                    iconUrl: iconUrl,
                     wagerAmount: wagerAmount,
                     durationHours: durationHours,
                     status: 'pending'
@@ -539,14 +577,14 @@ export default {
                     .setColor('#00FF00')
                     .setTitle('Challenge Created!')
                     .setDescription(
-                        `You've challenged ${opponent.raUsername} to compete in ${gameInfo.Title || leaderboardInfo.Title}!\n\n` +
+                        `You've challenged ${opponent.raUsername} to compete in ${finalGameTitle}!\n\n` +
                         `**Wager:** ${wagerAmount} GP\n` +
-                        `**Duration:** ${durationHours} hours\n\n` +
-                        `They'll be notified and can use \`/arena manage\` to respond.`
+                        `**Duration:** ${durationDays} days\n\n` +
+                        `They'll be notified and can use \`/arena\` to respond.`
                     );
                 
-                if (gameInfo.ImageIcon) {
-                    embed.setThumbnail(`https://retroachievements.org${gameInfo.ImageIcon}`);
+                if (iconUrl) {
+                    embed.setThumbnail(`https://retroachievements.org${iconUrl}`);
                 }
                 
                 return interaction.editReply({ embeds: [embed] });
@@ -557,64 +595,6 @@ export default {
         } catch (error) {
             console.error('Error creating challenge:', error);
             return interaction.editReply('An error occurred while creating the challenge.');
-        }
-    },
-    
-    // Show pending challenges for user to respond to
-    async showPendingChallenges(interaction) {
-        try {
-            await interaction.deferUpdate();
-            
-            // Find user
-            const user = await User.findOne({ discordId: interaction.user.id });
-            if (!user) {
-                return interaction.editReply('You need to be registered to respond to challenges.');
-            }
-            
-            // Find pending challenges for this user
-            const pendingChallenges = await ArenaChallenge.find({
-                challengeeId: user.discordId,
-                status: 'pending'
-            });
-            
-            if (pendingChallenges.length === 0) {
-                return interaction.editReply('You have no pending challenges to respond to.');
-            }
-            
-            // Create embed showing all pending challenges
-            const embed = new EmbedBuilder()
-                .setColor('#3498DB')
-                .setTitle('Pending Arena Challenges')
-                .setDescription('Select a challenge to respond to:');
-            
-            // Create a select menu to choose which challenge to respond to
-            const selectMenu = new StringSelectMenuBuilder()
-                .setCustomId('arena_pending_challenge_select')
-                .setPlaceholder('Select a challenge');
-                
-            pendingChallenges.forEach((challenge, index) => {
-                selectMenu.addOptions({
-                    label: `${challenge.challengerUsername} - ${challenge.gameTitle}`,
-                    description: `Wager: ${challenge.wagerAmount} GP | Duration: ${challenge.durationHours} hrs`,
-                    value: challenge._id.toString()
-                });
-                
-                // Add info to the embed
-                embed.addFields({
-                    name: `${index + 1}. ${challenge.challengerUsername} - ${challenge.gameTitle}`,
-                    value: `**Wager:** ${challenge.wagerAmount} GP\n**Duration:** ${challenge.durationHours} hours`
-                });
-            });
-            
-            const selectRow = new ActionRowBuilder().addComponents(selectMenu);
-            
-            await interaction.editReply({
-                embeds: [embed],
-                components: [selectRow]
-            });
-        } catch (error) {
-            console.error('Error showing pending challenges:', error);
-            await interaction.editReply('An error occurred while loading your pending challenges.');
         }
     },
     
@@ -655,6 +635,9 @@ export default {
                 return interaction.editReply(`You don't have enough GP to accept this challenge. Your balance: ${user.gp || 0} GP`);
             }
             
+            // Calculate days for display
+            const durationDays = Math.floor(challenge.durationHours / 24);
+            
             // Create an embed with challenge details
             const embed = new EmbedBuilder()
                 .setColor('#FF5722')
@@ -662,7 +645,7 @@ export default {
                 .setDescription(
                     `**Game:** ${challenge.gameTitle}\n` +
                     `**Wager:** ${challenge.wagerAmount} GP\n` +
-                    `**Duration:** ${challenge.durationHours} hours\n\n` +
+                    `**Duration:** ${durationDays} days\n\n` +
                     `Do you want to accept or decline this challenge?`
                 );
             
@@ -1016,9 +999,10 @@ export default {
                 pendingChallenges.forEach((challenge, index) => {
                     const isChallenger = challenge.challengerId === user.discordId;
                     const opponent = isChallenger ? challenge.challengeeUsername : challenge.challengerUsername;
+                    const durationDays = Math.floor(challenge.durationHours / 24);
                     
                     pendingText += `**${index + 1}. ${challenge.gameTitle}** vs ${opponent}\n` +
-                                 `**Wager:** ${challenge.wagerAmount} GP | **Duration:** ${challenge.durationHours} hrs\n` +
+                                 `**Wager:** ${challenge.wagerAmount} GP | **Duration:** ${durationDays} days\n` +
                                  `**Status:** ${isChallenger ? 'Waiting for response' : 'Needs your response'}\n\n`;
                 });
                 
@@ -1075,7 +1059,7 @@ export default {
         }
     },
     
-    // Add this new method to handle select menu interactions
+    // Handle select menu interactions
     async handleSelectMenuInteraction(interaction) {
         const customId = interaction.customId;
         
@@ -1203,6 +1187,9 @@ export default {
             // Initialize the leaderboard in the feed
             await arenaService.createOrUpdateArenaFeed(challenge);
             
+            // Calculate duration in days for display
+            const durationDays = Math.floor(challenge.durationHours / 24);
+            
             // Create response embed
             const embed = new EmbedBuilder()
                 .setColor('#00FF00')
@@ -1211,7 +1198,7 @@ export default {
                     `You've accepted the challenge from ${challenge.challengerUsername}!\n\n` +
                     `**Game:** ${challenge.gameTitle}\n` +
                     `**Wager:** ${challenge.wagerAmount} GP\n` +
-                    `**Duration:** ${challenge.durationHours} hours\n` +
+                    `**Duration:** ${durationDays} days\n` +
                     `**Ends:** ${challenge.endDate.toLocaleString()}\n\n` +
                     `Good luck! Updates will be posted in the Arena channel.`
                 );
@@ -1285,13 +1272,14 @@ export default {
                 .setColor('#FF5722')
                 .setDescription(
                     'These are the currently active challenges in the Arena.\n' +
-                    'Use `/arena manage` and select "Place Bet" to bet on these challenges.'
+                    'Use `/arena` and select "Place Bet" to bet on these challenges.'
                 )
                 .setFooter({ text: 'All challenge updates are posted in the Arena channel' });
             
             activeChallengers.forEach((challenge, index) => {
                 const timeRemaining = this.formatTimeRemaining(challenge.endDate);
                 const totalPool = (challenge.totalPool || 0) + (challenge.wagerAmount * 2);
+                const durationDays = Math.floor(challenge.durationHours / 24);
                 
                 embed.addFields({
                     name: `${index + 1}. ${challenge.challengerUsername} vs ${challenge.challengeeUsername}`,
