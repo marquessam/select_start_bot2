@@ -485,14 +485,57 @@ export default {
             
             // Verify leaderboard exists - use direct method like in arcade.js
             try {
-                // Fetch batch of leaderboard entries to verify the leaderboard exists
-                const leaderboardEntries = await retroAPI.getLeaderboardEntriesDirect(leaderboardId, 0, 1);
+                // Fetch multiple batches of leaderboard entries to verify the leaderboard exists
+                const batch1 = await retroAPI.getLeaderboardEntriesDirect(leaderboardId, 0, 500);
+                const batch2 = await retroAPI.getLeaderboardEntriesDirect(leaderboardId, 500, 500);
                 
-                if (!leaderboardEntries || 
-                   (!leaderboardEntries.length && 
-                    (!leaderboardEntries.Results || !leaderboardEntries.Results.length))) {
+                // Combine the batches
+                let rawEntries = [];
+                
+                // Process first batch
+                if (batch1) {
+                    if (Array.isArray(batch1)) {
+                        rawEntries = [...rawEntries, ...batch1];
+                    } else if (batch1.Results && Array.isArray(batch1.Results)) {
+                        rawEntries = [...rawEntries, ...batch1.Results];
+                    }
+                }
+                
+                // Process second batch
+                if (batch2) {
+                    if (Array.isArray(batch2)) {
+                        rawEntries = [...rawEntries, ...batch2];
+                    } else if (batch2.Results && Array.isArray(batch2.Results)) {
+                        rawEntries = [...rawEntries, ...batch2.Results];
+                    }
+                }
+                
+                console.log(`Total entries fetched for leaderboard ${leaderboardId}: ${rawEntries.length}`);
+                
+                if (!rawEntries || rawEntries.length === 0) {
                     return interaction.editReply(`Leaderboard ID ${leaderboardId} not found or has no entries.`);
                 }
+                
+                // Process the entries with appropriate handling based on leaderboard type
+                const leaderboardEntries = rawEntries.map(entry => {
+                    // Standard properties that most entries have
+                    const user = entry.User || entry.user || '';
+                    const score = entry.Score || entry.score || entry.Value || entry.value || 0;
+                    const formattedScore = entry.FormattedScore || entry.formattedScore || entry.ScoreFormatted || score.toString();
+                    const rank = entry.Rank || entry.rank || 0;
+                    
+                    return {
+                        ApiRank: parseInt(rank, 10),
+                        User: user.trim(),
+                        RawScore: score,
+                        TrackTime: formattedScore.toString().trim() || score.toString()
+                    };
+                });
+                
+                // Filter entries to only show ranks <= 999
+                const filteredEntries = leaderboardEntries.filter(entry => {
+                    return entry.ApiRank && entry.ApiRank <= 999;
+                });
                 
                 // Get game information from API via direct method
                 let gameInfo = null;
@@ -790,6 +833,8 @@ export default {
                     `**Game:** ${challenge.gameTitle}\n` +
                     `**Current Wager Pool:** ${challenge.wagerAmount * 2} GP\n` +
                     `**Total Betting Pool:** ${challenge.totalPool || 0} GP\n\n` +
+                    `**How Betting Works:** If your chosen player wins, you'll get your bet back plus at least the same amount in winnings! ` +
+                    `The house guarantees you'll at least double your money on winning bets (house matches up to 500 GP per bet).\n\n` +
                     `Select which player you want to bet on:`
                 );
             
@@ -849,8 +894,16 @@ export default {
                 .setRequired(true)
                 .setStyle(TextInputStyle.Short);
                 
+            const betDescription = new TextInputBuilder()
+                .setCustomId('bet_description')
+                .setLabel('Betting System Info')
+                .setValue('House guarantees you\'ll double your money on winning bets')
+                .setRequired(false)
+                .setStyle(TextInputStyle.Short);
+            
             betModal.addComponents(
-                new ActionRowBuilder().addComponents(betAmountInput)
+                new ActionRowBuilder().addComponents(betAmountInput),
+                new ActionRowBuilder().addComponents(betDescription)
             );
             
             // Show the modal
@@ -912,6 +965,9 @@ export default {
                 return interaction.editReply(`You've already placed a bet on this challenge.`);
             }
             
+            // Calculate potential minimum winnings with house match (capped at 500 GP)
+            const guaranteedWinnings = Math.min(betAmount, 500);
+            
             // Deduct GP from user
             user.gp = (user.gp || 0) - betAmount;
             user.arenaStats = user.arenaStats || {};
@@ -943,6 +999,7 @@ export default {
                     `You've bet **${betAmount} GP** on **${playerName}** to win the challenge.\n\n` +
                     `**Game:** ${challenge.gameTitle}\n` +
                     `**New GP Balance:** ${user.gp} GP\n\n` +
+                    `**If your pick wins:** You'll get your ${betAmount} GP back plus at least ${guaranteedWinnings} GP in winnings!\n\n` +
                     `Good luck! Results will be posted in the Arena channel.`
                 );
             
@@ -1110,7 +1167,11 @@ export default {
                 },
                 {
                     name: '🎲 Betting',
-                    value: 'You can bet GP on other players\' challenges. If your chosen player wins, you earn GP based on the odds!'
+                    value: 'You can bet GP on other players\' challenges. If your chosen player wins, you get your bet back plus at least the same amount in winnings! The house will match bets up to 500 GP if needed to guarantee your profit.'
+                },
+                {
+                    name: '💸 House-Matched Betting',
+                    value: 'Every winning bet is guaranteed a 100% return (minimum 2x your original bet). If not enough other users bet against you, the house will match up to 500 GP to ensure you get paid!'
                 },
                 {
                     name: '🏆 Rewards',
@@ -1267,7 +1328,9 @@ export default {
                 .setColor('#FF5722')
                 .setDescription(
                     'These are the currently active challenges in the Arena.\n' +
-                    'Use `/arena` and select "Place Bet" to bet on these challenges.'
+                    'Use `/arena` and select "Place Bet" to bet on these challenges.\n\n' +
+                    '**Betting System:** If your chosen player wins, you\'ll get your bet back plus at least the same amount in winnings! ' +
+                    'The house will match bets up to 500 GP to guarantee your profit.'
                 )
                 .setFooter({ text: 'All challenge updates are posted in the Arena channel' });
             
