@@ -347,11 +347,19 @@ export default {
                 .setRequired(true)
                 .setStyle(TextInputStyle.Short);
 
-            // Combined input for game ID and leaderboard ID
-            const gameLeaderboardInput = new TextInputBuilder()
-                .setCustomId('game_leaderboard_ids')
-                .setLabel('Game ID and Leaderboard ID (comma separated)')
-                .setPlaceholder('Format: GameID,LeaderboardID (e.g. 14402,9391)')
+            // Input for game ID (like in adminArcade)
+            const gameIdInput = new TextInputBuilder()
+                .setCustomId('game_id')
+                .setLabel('RetroAchievements Game ID')
+                .setPlaceholder('e.g. 14402')
+                .setRequired(true)
+                .setStyle(TextInputStyle.Short);
+                
+            // Input for leaderboard ID
+            const leaderboardInput = new TextInputBuilder()
+                .setCustomId('leaderboard_id')
+                .setLabel('RetroAchievements Leaderboard ID')
+                .setPlaceholder('e.g. 9391')
                 .setRequired(true)
                 .setStyle(TextInputStyle.Short);
                 
@@ -371,21 +379,13 @@ export default {
                 .setRequired(true)
                 .setStyle(TextInputStyle.Short);
                 
-            // Input for challenge duration in days
-            const durationInput = new TextInputBuilder()
-                .setCustomId('duration_days')
-                .setLabel('Duration in Days (1-14)')
-                .setPlaceholder('e.g. 7 for one week')
-                .setRequired(true)
-                .setStyle(TextInputStyle.Short);
-                
             // Add inputs to modal - we can only have 5 max in a Discord modal
             modal.addComponents(
                 new ActionRowBuilder().addComponents(usernameInput),
-                new ActionRowBuilder().addComponents(gameLeaderboardInput),
+                new ActionRowBuilder().addComponents(gameIdInput),
+                new ActionRowBuilder().addComponents(leaderboardInput),
                 new ActionRowBuilder().addComponents(descriptionInput),
-                new ActionRowBuilder().addComponents(wagerInput),
-                new ActionRowBuilder().addComponents(durationInput)
+                new ActionRowBuilder().addComponents(wagerInput)
             );
             
             // Show the modal directly without deferring first
@@ -403,10 +403,10 @@ export default {
                     // Add the same components
                     recoveryModal.addComponents(
                         new ActionRowBuilder().addComponents(usernameInput.setCustomId('opponent_username_recovery')),
-                        new ActionRowBuilder().addComponents(gameLeaderboardInput.setCustomId('game_leaderboard_ids_recovery')),
+                        new ActionRowBuilder().addComponents(gameIdInput.setCustomId('game_id_recovery')),
+                        new ActionRowBuilder().addComponents(leaderboardInput.setCustomId('leaderboard_id_recovery')),
                         new ActionRowBuilder().addComponents(descriptionInput.setCustomId('description_recovery')),
-                        new ActionRowBuilder().addComponents(wagerInput.setCustomId('wager_amount_recovery')),
-                        new ActionRowBuilder().addComponents(durationInput.setCustomId('duration_days_recovery'))
+                        new ActionRowBuilder().addComponents(wagerInput.setCustomId('wager_amount_recovery'))
                     );
                     
                     // Try a different approach - reply with a button that shows the modal
