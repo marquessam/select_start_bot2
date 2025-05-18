@@ -194,7 +194,7 @@ class ArenaService {
                     `**${challenge.challengerUsername}** has challenged **${challenge.challengeeUsername}** to a competition!\n\n` +
                     `**Game:** ${challenge.gameTitle}\n` +
                     `**Wager:** ${challenge.wagerAmount} GP each\n` +
-                    `**Duration:** ${challenge.durationHours} hours\n\n` +
+                    `**Duration:** ${Math.floor(challenge.durationHours / 24)} days\n\n` +
                     `${challenge.challengeeUsername} can use \`/arena\` to view and respond to this challenge.`
                 )
                 .setTimestamp();
@@ -217,6 +217,7 @@ class ArenaService {
             if (!channel) return;
             
             let title, description, color;
+            const durationDays = Math.floor(challenge.durationHours / 24);
             
             switch (challenge.status) {
                 case 'active':
@@ -225,7 +226,7 @@ class ArenaService {
                         `**${challenge.challengeeUsername}** has accepted the challenge from **${challenge.challengerUsername}**!\n\n` +
                         `**Game:** ${challenge.gameTitle}\n` +
                         `**Wager:** ${challenge.wagerAmount} GP each\n` +
-                        `**Duration:** ${challenge.durationHours} hours\n` +
+                        `**Duration:** ${durationDays} days\n` +
                         `**Ends:** ${challenge.endDate.toLocaleString()}\n\n` +
                         `The challenge has begun! Watch the leaderboard updates in <#${this.arenaFeedChannelId}>.\n` +
                         `Want to bet on the outcome? Use \`/arena\` and select "Place a Bet"!`;
@@ -585,6 +586,9 @@ class ArenaService {
         const betPool = challengerBetAmount + challengeeBetAmount;
         const totalPool = wagerPool + betPool;
         
+        // Calculate days from hours for display
+        const durationDays = Math.floor(challenge.durationHours / 24);
+        
         // Create the embed
         const embed = new EmbedBuilder()
             .setTitle(`🏟️ Arena Challenge: ${challenge.challengerUsername} vs ${challenge.challengeeUsername}`)
@@ -592,6 +596,7 @@ class ArenaService {
             .setDescription(
                 `**Game:** ${challenge.gameTitle}\n` +
                 `**Wager:** ${challenge.wagerAmount} GP each\n` +
+                `**Duration:** ${durationDays} days\n` +
                 `**Started:** ${challenge.startDate.toLocaleString()}\n` +
                 `**Ends:** ${challenge.endDate.toLocaleString()} (${timeRemaining})\n\n` +
                 `**Current Status:** ${winningText}`
@@ -809,30 +814,73 @@ class ArenaService {
 
     async getChallengersScores(challenge) {
         try {
-            // Fetch leaderboard entries from RetroAchievements
-            const entries = await retroAPI.getLeaderboardEntriesDirect(challenge.leaderboardId, 0, 1000);
+            // Get all registered users for filtering
+            const users = await User.find({});
             
-            // Process entries
+            // Create mapping of RA usernames (lowercase) to canonical usernames
+            const registeredUsers = new Map();
+            for (const user of users) {
+                registeredUsers.set(user.raUsername.toLowerCase(), user.raUsername);
+            }
+            
+            // Fetch multiple batches of leaderboard entries like in arcade.js
+            const batch1 = await retroAPI.getLeaderboardEntriesDirect(challenge.leaderboardId, 0, 500);
+            const batch2 = await retroAPI.getLeaderboardEntriesDirect(challenge.leaderboardId, 500, 500);
+            
+            // Combine the batches
             let rawEntries = [];
             
-            if (entries) {
-                if (Array.isArray(entries)) {
-                    rawEntries = entries;
-                } else if (entries.Results && Array.isArray(entries.Results)) {
-                    rawEntries = entries.Results;
+            // Process first batch
+            if (batch1) {
+                if (Array.isArray(batch1)) {
+                    rawEntries = [...rawEntries, ...batch1];
+                } else if (batch1.Results && Array.isArray(batch1.Results)) {
+                    rawEntries = [...rawEntries, ...batch1.Results];
                 }
             }
             
-            // Find the entries for the challengers
-            const challengerEntry = rawEntries.find(entry => {
-                const user = entry.User || entry.user || '';
-                return user.trim().toLowerCase() === challenge.challengerUsername.toLowerCase();
+            // Process second batch
+            if (batch2) {
+                if (Array.isArray(batch2)) {
+                    rawEntries = [...rawEntries, ...batch2];
+                } else if (batch2.Results && Array.isArray(batch2.Results)) {
+                    rawEntries = [...rawEntries, ...batch2.Results];
+                }
+            }
+            
+            console.log(`Total entries fetched for challenge ${challenge._id}: ${rawEntries.length}`);
+            
+            // Filter entries to those ≤ 999 rank
+            rawEntries = rawEntries.filter(entry => {
+                const rank = entry.Rank || entry.rank || 0;
+                return parseInt(rank, 10) <= 999;
             });
             
-            const challengeeEntry = rawEntries.find(entry => {
+            // Process the entries with appropriate handling for different formats
+            const leaderboardEntries = rawEntries.map(entry => {
+                // Standard properties that most entries have
                 const user = entry.User || entry.user || '';
-                return user.trim().toLowerCase() === challenge.challengeeUsername.toLowerCase();
+                const score = entry.Score || entry.score || entry.Value || entry.value || 0;
+                const formattedScore = entry.FormattedScore || entry.formattedScore || entry.ScoreFormatted || score.toString();
+                const rank = entry.Rank || entry.rank || 0;
+                
+                return {
+                    ApiRank: parseInt(rank, 10),
+                    User: user.trim(),
+                    RawScore: score,
+                    TrackTime: formattedScore.toString().trim() || score.toString(),
+                    Value: parseFloat(score) || 0
+                };
             });
+            
+            // Find the entries for the challengers
+            const challengerEntry = leaderboardEntries.find(entry => 
+                entry.User.toLowerCase() === challenge.challengerUsername.toLowerCase()
+            );
+            
+            const challengeeEntry = leaderboardEntries.find(entry => 
+                entry.User.toLowerCase() === challenge.challengeeUsername.toLowerCase()
+            );
             
             // Format the challenger scores
             const challengerScore = {
@@ -841,11 +889,8 @@ class ArenaService {
             };
             
             if (challengerEntry) {
-                const score = challengerEntry.Score || challengerEntry.score || challengerEntry.Value || challengerEntry.value || 0;
-                const formattedScore = challengerEntry.FormattedScore || challengerEntry.formattedScore || challengerEntry.ScoreFormatted || score.toString();
-                
-                challengerScore.value = parseFloat(score) || 0;
-                challengerScore.formattedScore = formattedScore;
+                challengerScore.value = challengerEntry.Value;
+                challengerScore.formattedScore = challengerEntry.TrackTime;
             }
             
             // Format the challengee scores
@@ -855,11 +900,8 @@ class ArenaService {
             };
             
             if (challengeeEntry) {
-                const score = challengeeEntry.Score || challengeeEntry.score || challengeeEntry.Value || challengeeEntry.value || 0;
-                const formattedScore = challengeeEntry.FormattedScore || challengeeEntry.formattedScore || challengeeEntry.ScoreFormatted || score.toString();
-                
-                challengeeScore.value = parseFloat(score) || 0;
-                challengeeScore.formattedScore = formattedScore;
+                challengeeScore.value = challengeeEntry.Value;
+                challengeeScore.formattedScore = challengeeEntry.TrackTime;
             }
             
             return [challengerScore, challengeeScore];
@@ -1057,6 +1099,9 @@ class ArenaService {
             try {
                 const message = await feedChannel.messages.fetch(challenge.messageId);
                 
+                // Calculate days from hours for display
+                const durationDays = Math.floor(challenge.durationHours / 24);
+                
                 // Create a completed challenge embed
                 const embed = new EmbedBuilder()
                     .setTitle(`🏁 Completed Challenge: ${challenge.challengerUsername} vs ${challenge.challengeeUsername}`)
@@ -1064,7 +1109,7 @@ class ArenaService {
                     .setDescription(
                         `**Game:** ${challenge.gameTitle}\n` +
                         `**Wager:** ${challenge.wagerAmount} GP each\n` +
-                        `**Duration:** ${challenge.durationHours} hours\n` +
+                        `**Duration:** ${durationDays} days\n` +
                         `**Started:** ${challenge.startDate.toLocaleString()}\n` +
                         `**Ended:** ${challenge.endDate.toLocaleString()}\n\n` +
                         `**Result:** ${challenge.winnerUsername === 'Tie' ? 'The challenge ended in a tie!' : `${challenge.winnerUsername} won!`}`
