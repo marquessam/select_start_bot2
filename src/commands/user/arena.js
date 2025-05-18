@@ -1,4 +1,3 @@
-
 import { 
     SlashCommandBuilder, 
     EmbedBuilder, 
@@ -1076,6 +1075,42 @@ export default {
         }
     },
     
+    // Add this new method to handle select menu interactions
+    async handleSelectMenuInteraction(interaction) {
+        const customId = interaction.customId;
+        
+        if (customId === 'arena_main_action') {
+            const selectedValue = interaction.values[0];
+            
+            switch (selectedValue) {
+                case 'create_challenge':
+                    await this.showCreateChallengeModal(interaction);
+                    break;
+                case 'place_bet':
+                    await this.showActiveChallengesForBetting(interaction);
+                    break;
+                case 'my_challenges':
+                    await this.showMyChallenges(interaction);
+                    break;
+                case 'active_challenges':
+                    await this.handleActive(interaction);
+                    break;
+                case 'leaderboard':
+                    await this.handleLeaderboard(interaction);
+                    break;
+                default:
+                    await interaction.deferUpdate();
+                    await interaction.editReply('Invalid selection. Please try again.');
+            }
+        } else if (customId === 'arena_pending_challenge_select') {
+            await this.handlePendingChallengeSelect(interaction);
+        } else if (customId === 'arena_bet_challenge_select') {
+            await this.handleBetChallengeSelect(interaction);
+        } else if (customId === 'arena_bet_player_select') {
+            await this.handleBetPlayerSelect(interaction);
+        }
+    },
+    
     // Show arena help info
     async showArenaHelp(interaction) {
         const embed = new EmbedBuilder()
@@ -1231,7 +1266,7 @@ export default {
     
     // Handle the active challenges command
     async handleActive(interaction) {
-        await interaction.deferReply({ ephemeral: true });
+        await interaction.deferUpdate();
         
         try {
             // Get active challenges
@@ -1268,8 +1303,20 @@ export default {
                 });
             });
             
+            // Add back button
+            const backButton = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('arena_back_to_main')
+                        .setLabel('Back to Arena')
+                        .setStyle(ButtonStyle.Secondary)
+                );
+            
             // Send the embed
-            await interaction.editReply({ embeds: [embed] });
+            await interaction.editReply({ 
+                embeds: [embed],
+                components: [backButton]
+            });
         } catch (error) {
             console.error('Error displaying active challenges:', error);
             return interaction.editReply('An error occurred while fetching active challenges.');
@@ -1308,6 +1355,8 @@ export default {
     // Handle the GP leaderboard command
     async handleLeaderboard(interaction) {
         try {
+            await interaction.deferUpdate();
+            
             // Get top users by GP
             const topUsers = await User.find({ gp: { $gt: 0 } })
                 .sort({ gp: -1 })
