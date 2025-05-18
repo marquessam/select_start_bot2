@@ -1109,7 +1109,6 @@ async processPayouts(challenge, winnerId, winnerUsername) {
         console.error(`Error processing payouts for challenge ${challenge._id}:`, error);
     }
 }
-
     async updateCompletedFeed(challenge) {
         try {
             const feedChannel = await this.getArenaFeedChannel();
