@@ -1742,30 +1742,14 @@ export default {
             const embed = new EmbedBuilder()
                 .setColor('#00FF00')
                 .setTitle('Challenge Accepted!')
-                .setDescription(`You've accepted the challenge from ${challenge.challengerUsername}!`);
-                
-            // Add fields for challenge details
-            embed.addFields({ name: 'Game', value: challenge.gameTitle });
-            
-            if (challenge.description) {
-                embed.addFields({ name: 'Description', value: challenge.description });
-            }
-            
-            embed.addFields(
-                { name: 'Wager', value: `${challenge.wagerAmount} GP`, inline: true },
-                { name: 'Duration', value: `${durationDays} days`, inline: true },
-                { name: 'Ends', value: challenge.endDate.toLocaleString() }
-            );
-            
-            embed.addFields({ 
-                name: 'Next Steps', 
-                value: 'Good luck! Updates will be posted in the Arena channel.' 
-            });
-            
-            // Add thumbnail if available
-            if (challenge.iconUrl) {
-                embed.setThumbnail(`https://retroachievements.org${challenge.iconUrl}`);
-            }
+                .setDescription(
+                    `You've accepted the challenge from ${challenge.challengerUsername}!\n\n` +
+                    `**Game:** ${challenge.gameTitle}\n` +
+                    `**Wager:** ${challenge.wagerAmount} GP\n` +
+                    `**Duration:** ${durationDays} days\n` +
+                    `**Ends:** ${challenge.endDate.toLocaleString()}\n\n` +
+                    `Good luck! Updates will be posted in the Arena channel.`
+                );
             
             await interaction.editReply({
                 embeds: [embed],
