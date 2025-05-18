@@ -17,6 +17,9 @@ class ArenaService {
         this.feedMessageIds = new Map(); // Map of challengeId -> messageId
         this.headerMessageId = null;
         this.gpLeaderboardMessageId = null;
+        
+        // Store previous standings for comparison (for alerts)
+        this.previousStandings = new Map(); // Map of challengeId -> { username: { rank, score } }
     }
 
     setClient(client) {
@@ -32,6 +35,9 @@ class ArenaService {
 
         try {
             console.log('Starting arena service...');
+            
+            // Clear the arena feed channel first
+            await this.clearArenaFeedChannel();
             
             // Set up recurring updates
             await this.updateArenaFeeds();
@@ -121,6 +127,60 @@ class ArenaService {
         }
     }
 
+    async clearArenaFeedChannel() {
+        try {
+            const channel = await this.getArenaFeedChannel();
+            if (!channel) {
+                console.error('Arena feed channel not found or inaccessible');
+                return false;
+            }
+            
+            console.log(`Clearing all messages in arena feed channel (ID: ${this.arenaFeedChannelId})...`);
+            
+            // Fetch messages in batches (Discord API limitation)
+            let messagesDeleted = 0;
+            let messages;
+            
+            do {
+                messages = await channel.messages.fetch({ limit: 100 });
+                if (messages.size > 0) {
+                    // Use bulk delete for messages less than 14 days old
+                    try {
+                        await channel.bulkDelete(messages);
+                        messagesDeleted += messages.size;
+                        console.log(`Bulk deleted ${messages.size} messages from arena feed`);
+                    } catch (bulkError) {
+                        // If bulk delete fails (messages older than 14 days), delete one by one
+                        console.log(`Bulk delete failed for arena feed, falling back to individual deletion: ${bulkError.message}`);
+                        for (const [id, message] of messages) {
+                            try {
+                                await message.delete();
+                                messagesDeleted++;
+                            } catch (deleteError) {
+                                console.error(`Error deleting message ${id}:`, deleteError.message);
+                            }
+                            
+                            // Add a small delay to avoid rate limits
+                            await new Promise(resolve => setTimeout(resolve, 500));
+                        }
+                    }
+                }
+            } while (messages.size >= 100); // Keep fetching until no more messages
+            
+            console.log(`Cleared ${messagesDeleted} messages from arena feed channel`);
+            
+            // Reset state since we've cleared the channel
+            this.feedMessageIds.clear();
+            this.headerMessageId = null;
+            this.gpLeaderboardMessageId = null;
+            
+            return true;
+        } catch (error) {
+            console.error('Error clearing arena feed channel:', error);
+            return false;
+        }
+    }
+
     async notifyNewChallenge(challenge) {
         try {
             const channel = await this.getArenaChannel();
@@ -135,7 +195,7 @@ class ArenaService {
                     `**Game:** ${challenge.gameTitle}\n` +
                     `**Wager:** ${challenge.wagerAmount} GP each\n` +
                     `**Duration:** ${challenge.durationHours} hours\n\n` +
-                    `${challenge.challengeeUsername} must use \`/arena respond\` to accept or decline this challenge.`
+                    `${challenge.challengeeUsername} can use \`/arena\` to view and respond to this challenge.`
                 )
                 .setTimestamp();
             
@@ -168,7 +228,7 @@ class ArenaService {
                         `**Duration:** ${challenge.durationHours} hours\n` +
                         `**Ends:** ${challenge.endDate.toLocaleString()}\n\n` +
                         `The challenge has begun! Watch the leaderboard updates in <#${this.arenaFeedChannelId}>.\n` +
-                        `Want to bet on the outcome? Use \`/arena bet\` to place your bets!`;
+                        `Want to bet on the outcome? Use \`/arena\` and select "Place a Bet"!`;
                     color = '#2ECC71';
                     break;
                 case 'declined':
@@ -239,7 +299,7 @@ class ArenaService {
                 
                 // Add a followup message explaining how to bet
                 await channel.send({
-                    content: 'To place a bet, use the `/arena bet` command. You can bet on either player to win!',
+                    content: 'To place a bet, use the `/arena` command and select "Place a Bet". You can bet on either player to win!',
                     reply: { messageReference: message.id }
                 });
             } else {
@@ -248,6 +308,40 @@ class ArenaService {
             }
         } catch (error) {
             console.error('Error sending challenge update notification:', error);
+        }
+    }
+
+    async notifyStandingsChange(challenge, changedPosition) {
+        try {
+            const channel = await this.getArenaChannel();
+            if (!channel) return;
+            
+            const leaderboardUrl = `https://retroachievements.org/leaderboardinfo.php?i=${challenge.leaderboardId}`;
+            
+            // Create an embed for the standings change notification
+            const embed = new EmbedBuilder()
+                .setTitle('🏟️ Arena Standings Update!')
+                .setColor('#9B59B6')
+                .setDescription(
+                    `There's been a change in the leaderboard for the active challenge between **${challenge.challengerUsername}** and **${challenge.challengeeUsername}**!\n\n` +
+                    `**Game:** [${challenge.gameTitle}](${leaderboardUrl})\n\n` +
+                    `**${changedPosition.newLeader}** has overtaken **${changedPosition.previousLeader}**!\n` +
+                    `Current scores:\n` +
+                    `• **${challenge.challengerUsername}**: ${challenge.challengerScore}\n` +
+                    `• **${challenge.challengeeUsername}**: ${challenge.challengeeScore}\n\n` +
+                    `Follow the challenge in <#${this.arenaFeedChannelId}>!`
+                )
+                .setTimestamp();
+            
+            // Add thumbnail if available
+            if (challenge.iconUrl) {
+                embed.setThumbnail(`https://retroachievements.org${challenge.iconUrl}`);
+            }
+            
+            // Send the notification
+            await channel.send({ embeds: [embed] });
+        } catch (error) {
+            console.error('Error sending standings change notification:', error);
         }
     }
 
@@ -287,10 +381,17 @@ class ArenaService {
             // Get leaderboard data for this challenge
             const [challengerScore, challengeeScore] = await this.getChallengersScores(challenge);
             
+            // Store the previous scores before updating
+            const previousChallengerScore = challenge.challengerScore;
+            const previousChallengeeScore = challenge.challengeeScore;
+            
             // Save the scores
             challenge.challengerScore = challengerScore.formattedScore;
             challenge.challengeeScore = challengeeScore.formattedScore;
             await challenge.save();
+            
+            // Check for position changes and notify if needed
+            await this.checkForPositionChanges(challenge, challengerScore, challengeeScore, previousChallengerScore, previousChallengeeScore);
             
             // Create embed for the challenge
             const embed = this.createChallengeEmbed(challenge, challengerScore, challengeeScore);
@@ -302,9 +403,24 @@ class ArenaService {
                 if (this.feedMessageIds.has(challengeId)) {
                     // Try to update existing message
                     const messageId = this.feedMessageIds.get(challengeId);
-                    const message = await feedChannel.messages.fetch(messageId);
-                    await message.edit({ embeds: [embed] });
-                    console.log(`Updated arena feed for challenge ${challengeId}`);
+                    try {
+                        const message = await feedChannel.messages.fetch(messageId);
+                        await message.edit({ embeds: [embed] });
+                        console.log(`Updated arena feed for challenge ${challengeId}`);
+                    } catch (fetchError) {
+                        // If message not found, create a new one
+                        if (fetchError.message.includes('Unknown Message')) {
+                            const message = await feedChannel.send({ embeds: [embed] });
+                            this.feedMessageIds.set(challengeId, message.id);
+                            console.log(`Created new arena feed after failed fetch for challenge ${challengeId}`);
+                            
+                            // Store message ID in challenge
+                            challenge.messageId = message.id;
+                            await challenge.save();
+                        } else {
+                            throw fetchError; // Re-throw if it's some other error
+                        }
+                    }
                 } else {
                     // Create new message
                     const message = await feedChannel.send({ embeds: [embed] });
@@ -335,6 +451,98 @@ class ArenaService {
             }
         } catch (error) {
             console.error('Error creating/updating arena feed:', error);
+        }
+    }
+
+    // Check for position changes in the leaderboard
+    async checkForPositionChanges(challenge, challengerScore, challengeeScore, previousChallengerScore, previousChallengeeScore) {
+        try {
+            // Only check if we have previous scores
+            if (!previousChallengerScore || !previousChallengeeScore) {
+                return;
+            }
+
+            let positionChange = null;
+
+            // Parse the numerical values for comparison (handling different score formats)
+            let previousChallengerValue, previousChallengeeValue, currentChallengerValue, currentChallengeeValue;
+
+            // For time-based challenges (lower is better), we need to parse the times
+            if (challenge.gameTitle.toLowerCase().includes('racing') || 
+                previousChallengerScore.includes(':') || 
+                challengerScore.formattedScore.includes(':')) {
+                
+                // Parse times like "1:23.456" into seconds
+                const parseTime = (timeString) => {
+                    if (!timeString || timeString === 'No score yet') return Infinity;
+                    
+                    // Extract numbers from the string
+                    const matches = timeString.match(/(\d+):(\d+)\.(\d+)/);
+                    if (!matches) return Infinity;
+                    
+                    const minutes = parseInt(matches[1], 10);
+                    const seconds = parseInt(matches[2], 10);
+                    const milliseconds = parseInt(matches[3], 10);
+                    
+                    return (minutes * 60) + seconds + (milliseconds / 1000);
+                };
+                
+                previousChallengerValue = parseTime(previousChallengerScore);
+                previousChallengeeValue = parseTime(previousChallengeeScore);
+                currentChallengerValue = parseTime(challengerScore.formattedScore);
+                currentChallengeeValue = parseTime(challengeeScore.formattedScore);
+                
+                // For times, lower is better, so we need to invert the comparison
+                // Check if challenger overtook challengee
+                if (previousChallengerValue > previousChallengeeValue && currentChallengerValue <= currentChallengeeValue) {
+                    positionChange = {
+                        newLeader: challenge.challengerUsername,
+                        previousLeader: challenge.challengeeUsername
+                    };
+                }
+                // Check if challengee overtook challenger
+                else if (previousChallengeeValue > previousChallengerValue && currentChallengeeValue <= currentChallengerValue) {
+                    positionChange = {
+                        newLeader: challenge.challengeeUsername,
+                        previousLeader: challenge.challengerUsername
+                    };
+                }
+            } 
+            // For point-based challenges (higher is better)
+            else {
+                // Parse numbers from the strings, removing commas and other non-numeric characters
+                const parseNumber = (numString) => {
+                    if (!numString || numString === 'No score yet') return -1;
+                    return parseFloat(numString.replace(/[^\d.-]/g, '')) || -1;
+                };
+                
+                previousChallengerValue = parseNumber(previousChallengerScore);
+                previousChallengeeValue = parseNumber(previousChallengeeScore);
+                currentChallengerValue = parseNumber(challengerScore.formattedScore);
+                currentChallengeeValue = parseNumber(challengeeScore.formattedScore);
+                
+                // Check if challenger overtook challengee
+                if (previousChallengerValue < previousChallengeeValue && currentChallengerValue >= currentChallengeeValue) {
+                    positionChange = {
+                        newLeader: challenge.challengerUsername,
+                        previousLeader: challenge.challengeeUsername
+                    };
+                }
+                // Check if challengee overtook challenger
+                else if (previousChallengeeValue < previousChallengerValue && currentChallengeeValue >= currentChallengerValue) {
+                    positionChange = {
+                        newLeader: challenge.challengeeUsername,
+                        previousLeader: challenge.challengerUsername
+                    };
+                }
+            }
+            
+            // If there was a position change, notify
+            if (positionChange) {
+                await this.notifyStandingsChange(challenge, positionChange);
+            }
+        } catch (error) {
+            console.error('Error checking for position changes:', error);
         }
     }
 
@@ -413,7 +621,7 @@ class ArenaService {
                 `**Bets Placed:** ${totalBets} total bets\n` +
                 `• On ${challenge.challengerUsername}: ${challengerBets} bets (${challengerBetAmount} GP)\n` +
                 `• On ${challenge.challengeeUsername}: ${challengeeBets} bets (${challengeeBetAmount} GP)\n\n` +
-                `Use \`/arena bet\` to place a bet on the outcome!`
+                `Use \`/arena\` and select "Place a Bet" to bet on the outcome!`
         });
         
         return embed;
@@ -438,14 +646,39 @@ class ArenaService {
                 `# 🏟️ The Arena - Active Challenges\n` +
                 `Currently there ${activeCount === 1 ? 'is' : 'are'} **${activeCount}** active challenge${activeCount === 1 ? '' : 's'} in the Arena.\n` +
                 `**Last Updated:** <t:${unixTimestamp}:f> | **Updates:** Every hour\n` +
-                `Challenge others with \`/arena challenge\` or place bets with \`/arena bet\``;
+                `Use \`/arena\` to challenge others, place bets, or view your challenges`;
             
             try {
                 if (this.headerMessageId) {
                     // Try to update existing header
-                    const headerMessage = await feedChannel.messages.fetch(this.headerMessageId);
-                    await headerMessage.edit({ content: headerContent });
-                    console.log(`Updated arena feed header message`);
+                    try {
+                        const headerMessage = await feedChannel.messages.fetch(this.headerMessageId);
+                        await headerMessage.edit({ content: headerContent });
+                        console.log(`Updated arena feed header message`);
+                    } catch (fetchError) {
+                        // If message not found, create a new one
+                        if (fetchError.message.includes('Unknown Message')) {
+                            const message = await feedChannel.send({ content: headerContent });
+                            this.headerMessageId = message.id;
+                            console.log(`Created new arena feed header after failed fetch`);
+                            
+                            // Try to pin the header message
+                            try {
+                                const pinnedMessages = await feedChannel.messages.fetchPinned();
+                                if (pinnedMessages.size >= 50) {
+                                    // Unpin oldest if limit reached
+                                    const oldestPinned = pinnedMessages.last();
+                                    await oldestPinned.unpin();
+                                }
+                                await message.pin();
+                                console.log(`Pinned arena feed header message`);
+                            } catch (pinError) {
+                                console.error(`Error pinning message: ${pinError.message}`);
+                            }
+                        } else {
+                            throw fetchError; // Re-throw if it's some other error
+                        }
+                    }
                 } else {
                     // Create new header message
                     const message = await feedChannel.send({ content: headerContent });
@@ -505,7 +738,7 @@ class ArenaService {
                 .setColor('#FFD700')
                 .setDescription(
                     'These are the users with the most GP (Gold Points).\n' +
-                    'Earn GP by winning Arena challenges and bets, or claim your monthly allowance.'
+                    'Earn GP by winning Arena challenges and bets. Everyone receives 1,000 GP automatically each month.'
                 )
                 .setFooter({ 
                     text: 'The user with the most GP at the end of the year will receive a special title and award points!' 
@@ -525,19 +758,30 @@ class ArenaService {
             
             embed.addFields({ name: 'Top 10 Rankings', value: leaderboardText });
             
-            // Add a "how to claim" field
+            // Add a note about monthly GP
             embed.addFields({ 
                 name: 'Monthly Allowance', 
-                value: 'Remember to claim your monthly 1,000 GP allowance using `/arena claim`!' 
+                value: 'You automatically receive 1,000 GP at the beginning of each month!' 
             });
             
             // Update or create the message
             try {
                 if (this.gpLeaderboardMessageId) {
                     // Try to update existing leaderboard
-                    const gpMessage = await feedChannel.messages.fetch(this.gpLeaderboardMessageId);
-                    await gpMessage.edit({ embeds: [embed] });
-                    console.log(`Updated GP leaderboard message`);
+                    try {
+                        const gpMessage = await feedChannel.messages.fetch(this.gpLeaderboardMessageId);
+                        await gpMessage.edit({ embeds: [embed] });
+                        console.log(`Updated GP leaderboard message`);
+                    } catch (fetchError) {
+                        // If message not found, create a new one
+                        if (fetchError.message.includes('Unknown Message')) {
+                            const message = await feedChannel.send({ embeds: [embed] });
+                            this.gpLeaderboardMessageId = message.id;
+                            console.log(`Created new GP leaderboard after failed fetch`);
+                        } else {
+                            throw fetchError; // Re-throw if it's some other error
+                        }
+                    }
                 } else {
                     // Create new leaderboard message
                     const message = await feedChannel.send({ embeds: [embed] });
