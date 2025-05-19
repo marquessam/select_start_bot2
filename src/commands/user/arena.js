@@ -1,3 +1,4 @@
+// src/commands/user/arena.js
 import { 
     SlashCommandBuilder, 
     EmbedBuilder, 
@@ -49,11 +50,13 @@ export default {
     },
     
     // Show the main arena menu with all options - clean version with logging
-    async showMainArenaMenu(interaction, user) {
+    async showMainArenaMenu(interaction, user, skipGpCheck = false) {
         console.log(`[ARENA] Showing main menu for user ${user.raUsername} (${user.discordId})`);
         
-        // Check if user should receive automatic monthly GP and give it
-        await this.checkAndGrantMonthlyGP(user);
+        // Check if user should receive automatic monthly GP and give it - only if not skipped
+        if (!skipGpCheck) {
+            await this.checkAndGrantMonthlyGP(user);
+        }
         
         // Get user's stats and relevant info
         const activeCount = await ArenaChallenge.countDocuments({
@@ -166,6 +169,65 @@ export default {
             } catch (fallbackError) {
                 console.error(`[ARENA] Fallback error handling also failed:`, fallbackError);
             }
+        }
+    },
+    
+    // Modified checkAndGrantMonthlyGP method to prevent multiple awards
+    async checkAndGrantMonthlyGP(user) {
+        try {
+            // If there's an active session flag for this user, return immediately
+            if (user._monthlyGpProcessing) {
+                console.log(`[ARENA] Monthly GP check already in progress for ${user.raUsername}`);
+                return false;
+            }
+            
+            // Set a flag to prevent concurrent processing
+            user._monthlyGpProcessing = true;
+            
+            const now = new Date();
+            const currentMonth = now.getMonth();
+            const currentYear = now.getFullYear();
+            
+            // Force refresh from database to ensure we have the latest data
+            const freshUser = await User.findOne({ discordId: user.discordId });
+            const lastClaim = freshUser.lastMonthlyGpClaim ? new Date(freshUser.lastMonthlyGpClaim) : null;
+            
+            // Check if user hasn't received GP this month yet
+            if (!lastClaim || 
+                lastClaim.getMonth() !== currentMonth || 
+                lastClaim.getFullYear() !== currentYear) {
+                
+                // Log before giving GP
+                console.log(`[ARENA] Granting monthly 1000 GP to ${freshUser.raUsername} for ${currentMonth}/${currentYear}`);
+                
+                // Automatically award the GP
+                freshUser.gp = (freshUser.gp || 0) + 1000;
+                freshUser.lastMonthlyGpClaim = now;
+                await freshUser.save();
+                
+                // Update the original user object to reflect changes
+                user.gp = freshUser.gp;
+                user.lastMonthlyGpClaim = freshUser.lastMonthlyGpClaim;
+                
+                // Log after saving
+                console.log(`[ARENA] Monthly GP granted and saved for ${freshUser.raUsername}. New balance: ${freshUser.gp} GP`);
+                
+                // Clear the flag
+                delete user._monthlyGpProcessing;
+                return true; // Indicate that GP was awarded
+            }
+            
+            // Log no GP awarded
+            console.log(`[ARENA] No monthly GP awarded to ${freshUser.raUsername}. Last claim: ${lastClaim ? lastClaim.toISOString() : 'never'}`);
+            
+            // Clear the flag
+            delete user._monthlyGpProcessing;
+            return false; // No GP was awarded
+        } catch (error) {
+            console.error(`[ARENA] Error checking and granting monthly GP for ${user?.raUsername}:`, error);
+            // Clear the flag even on error
+            delete user._monthlyGpProcessing;
+            return false;
         }
     },
     
@@ -480,7 +542,7 @@ export default {
                 .setPlaceholder('Enter amount (minimum 10 GP)')
                 .setRequired(true)
                 .setStyle(TextInputStyle.Short);
-            
+                
             // Add inputs to modal - now with 5 inputs (removed duration)
             modal.addComponents(
                 new ActionRowBuilder().addComponents(usernameInput),
@@ -702,8 +764,13 @@ export default {
                 // Save the challenge
                 await challenge.save();
                 
-                // Deduct wager from challenger - CRITICAL FIX
-                challenger.gp = (challenger.gp || 0) - wagerAmount;
+                // Track the GP transaction
+                await arenaService.trackGpTransaction(
+                    challenger, 
+                    -wagerAmount, 
+                    'Challenge wager', 
+                    `Challenge ID: ${challenge._id}, Game: ${gameInfo.title}`
+                );
                 
                 // Update user stats
                 challenger.arenaStats = challenger.arenaStats || {};
@@ -782,10 +849,14 @@ export default {
                 challenge.status = 'cancelled';
                 await challenge.save();
                 
-                // Return wager to challenger if challenge is cancelled - CRITICAL FIX
+                // Return wager to challenger if challenge is cancelled
                 if (challenger) {
-                    challenger.gp = (challenger.gp || 0) + challenge.wagerAmount;
-                    await challenger.save();
+                    await arenaService.trackGpTransaction(
+                        challenger, 
+                        challenge.wagerAmount, 
+                        'Challenge cancelled - wager refund', 
+                        `Challenge ID: ${challenge._id}, Game: ${challenge.gameTitle}`
+                    );
                 }
                 
                 await arenaService.notifyChallengeUpdate(challenge);
@@ -897,8 +968,17 @@ export default {
                 
             bettableChallenges.forEach((challenge, index) => {
                 // Check if user already has a bet on this challenge
-                const existingBet = challenge.bets.find(bet => bet.userId === user.discordId);
-                let label = `${challenge.challengerUsername} vs ${challenge.challengeeUsername}`;
+                const existingBet = challenge.bets?.find(bet => bet.userId === user.discordId);
+                
+                // Create a title for the challenge
+                let title;
+                if (challenge.isOpenChallenge) {
+                    title = `${challenge.challengerUsername}'s Open Challenge`;
+                } else {
+                    title = `${challenge.challengerUsername} vs ${challenge.challengeeUsername}`;
+                }
+                
+                let label = title;
                 
                 if (existingBet) {
                     label += ` (Bet: ${existingBet.betAmount} GP on ${existingBet.targetPlayer})`;
@@ -912,12 +992,35 @@ export default {
                 
                 // Add info to the embed
                 const timeRemaining = this.formatTimeRemaining(challenge.endDate);
-                const totalPool = (challenge.totalPool || 0) + (challenge.wagerAmount * 2);
+                
+                // Calculate total pot based on challenge type
+                let wagerPool;
+                if (challenge.isOpenChallenge) {
+                    const participantCount = (challenge.participants?.length || 0) + 1; // +1 for creator
+                    wagerPool = challenge.wagerAmount * participantCount;
+                } else {
+                    wagerPool = challenge.wagerAmount * 2;
+                }
+                
+                const totalPool = (challenge.totalPool || 0) + wagerPool;
+                
+                // Create description for challenge type
+                let challengeDescription;
+                if (challenge.isOpenChallenge) {
+                    const participantCount = (challenge.participants?.length || 0) + 1; // +1 for creator
+                    const participantsList = [`${challenge.challengerUsername} (Creator)`];
+                    challenge.participants.forEach(p => participantsList.push(p.username));
+                    
+                    challengeDescription = `**Open Challenge with ${participantCount} participants**\n` +
+                                          `**Participants:** ${participantsList.join(', ')}\n`;
+                } else {
+                    challengeDescription = `**Game:** ${challenge.gameTitle}\n`;
+                }
                 
                 embed.addFields({
-                    name: `${index + 1}. ${challenge.challengerUsername} vs ${challenge.challengeeUsername}`,
-                    value: `**Game:** ${challenge.gameTitle}\n` +
-                           `**Wager Pool:** ${challenge.wagerAmount * 2} GP\n` +
+                    name: `${index + 1}. ${title}`,
+                    value: challengeDescription +
+                           `**Wager Pool:** ${wagerPool} GP\n` +
                            `**Total Betting Pool:** ${totalPool} GP\n` +
                            `**Ends:** ${timeRemaining}`
                 });
@@ -932,9 +1035,18 @@ export default {
             
             const selectRow = new ActionRowBuilder().addComponents(selectMenu);
             
+            // Add back button
+            const backRow = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('arena_back_to_main')
+                        .setLabel('Back to Arena')
+                        .setStyle(ButtonStyle.Secondary)
+                );
+            
             await interaction.editReply({
                 embeds: [embed],
-                components: [selectRow]
+                components: [selectRow, backRow]
             });
         } catch (error) {
             console.error('Error showing active challenges for betting:', error);
@@ -972,27 +1084,21 @@ export default {
             }
             
             // Check if user has already bet on this challenge
-            const existingBet = challenge.bets.find(bet => bet.userId === user.discordId);
+            const existingBet = challenge.bets?.find(bet => bet.userId === user.discordId);
             if (existingBet) {
                 return interaction.editReply(`You've already placed a bet of ${existingBet.betAmount} GP on ${existingBet.targetPlayer}.`);
             }
             
-            // Count bets on each side
-            const challengerBets = challenge.bets.filter(bet => bet.targetPlayer === challenge.challengerUsername);
-            const challengeeBets = challenge.bets.filter(bet => bet.targetPlayer === challenge.challengeeUsername);
-            
             // Create an embed with challenge details
             const embed = new EmbedBuilder()
                 .setColor('#9B59B6')
-                .setTitle(`Place Bet: ${challenge.challengerUsername} vs ${challenge.challengeeUsername}`)
+                .setTitle(`Place Bet: ${challenge.isOpenChallenge ? challenge.gameTitle : `${challenge.challengerUsername} vs ${challenge.challengeeUsername}`}`)
                 .setDescription(
                     `**Game:** ${challenge.gameTitle}\n` +
-                    `**Current Wager Pool:** ${challenge.wagerAmount * 2} GP\n` +
-                    `**Total Betting Pool:** ${challenge.totalPool || 0} GP\n\n` +
+                    `**Description:** ${challenge.description || 'No description provided'}\n\n` +
                     `**Pot Betting System:** Your bet joins the total prize pool. ` +
                     `If your chosen player wins, you get your bet back plus a share of the losing side's bets proportional to your bet amount.\n\n` +
                     `**House Guarantee:** If you're the only bettor, the house guarantees 50% profit on your bet if you win.\n\n` +
-                    `**Current Bets:** ${challengerBets.length} on ${challenge.challengerUsername}, ${challengeeBets.length} on ${challenge.challengeeUsername}\n\n` +
                     `Select which player you want to bet on:`
                 );
             
@@ -1001,42 +1107,56 @@ export default {
                 embed.setThumbnail(`https://retroachievements.org${challenge.iconUrl}`);
             }
             
-            // Create select menu for player selection - modified for open challenges
+            // Create select menu for player selection
             const selectMenu = new StringSelectMenuBuilder()
                 .setCustomId('arena_bet_player_select')
                 .setPlaceholder('Select a player to bet on');
                 
+            // Count bets on each option
+            const betCounts = new Map();
+            
+            if (challenge.bets && challenge.bets.length > 0) {
+                for (const bet of challenge.bets) {
+                    const count = betCounts.get(bet.targetPlayer) || 0;
+                    betCounts.set(bet.targetPlayer, count + 1);
+                }
+            }
+                
             // If open challenge with participants, show all options
             if (challenge.isOpenChallenge && challenge.participants && challenge.participants.length > 0) {
                 // Add creator as option
+                const creatorBets = betCounts.get(challenge.challengerUsername) || 0;
                 selectMenu.addOptions({
                     label: challenge.challengerUsername,
-                    description: `Creator (${challengerBets.length} bets)`,
+                    description: `Creator (${creatorBets} bets)`,
                     value: `${selectedChallengeId}_${challenge.challengerUsername}`
                 });
                 
                 // Add each participant as option
                 challenge.participants.forEach(participant => {
-                    const participantBets = challenge.bets.filter(bet => bet.targetPlayer === participant.username);
+                    const participantBets = betCounts.get(participant.username) || 0;
                     
                     selectMenu.addOptions({
                         label: participant.username,
-                        description: `Participant (${participantBets.length} bets)`,
+                        description: `Participant (${participantBets} bets)`,
                         value: `${selectedChallengeId}_${participant.username}`
                     });
                 });
             } 
             // Regular 1v1 challenge
             else {
+                const challengerBets = betCounts.get(challenge.challengerUsername) || 0;
+                const challengeeBets = betCounts.get(challenge.challengeeUsername) || 0;
+                
                 selectMenu.addOptions([
                     {
                         label: challenge.challengerUsername,
-                        description: `Challenger (${challengerBets.length} bets)`,
+                        description: `Challenger (${challengerBets} bets)`,
                         value: `${selectedChallengeId}_${challenge.challengerUsername}`
                     },
                     {
                         label: challenge.challengeeUsername,
-                        description: `Challengee (${challengeeBets.length} bets)`,
+                        description: `Challengee (${challengeeBets} bets)`,
                         value: `${selectedChallengeId}_${challenge.challengeeUsername}`
                     }
                 ]);
@@ -1044,9 +1164,18 @@ export default {
             
             const selectRow = new ActionRowBuilder().addComponents(selectMenu);
             
+            // Add back button
+            const backRow = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('arena_back_to_main')
+                        .setLabel('Back to Arena')
+                        .setStyle(ButtonStyle.Secondary)
+                );
+            
             await interaction.editReply({
                 embeds: [embed],
-                components: [selectRow]
+                components: [selectRow, backRow]
             });
         } catch (error) {
             console.error('Error selecting challenge for betting:', error);
@@ -1160,13 +1289,13 @@ export default {
             }
             
             // Check if user has already bet on this challenge
-            const existingBet = challenge.bets.find(bet => bet.userId === user.discordId);
+            const existingBet = challenge.bets?.find(bet => bet.userId === user.discordId);
             if (existingBet) {
                 return interaction.editReply(`You've already placed a bet on this challenge.`);
             }
             
             // Check if user is the only bettor
-            const isSoleBettor = challenge.bets.length === 0;
+            const isSoleBettor = !challenge.bets || challenge.bets.length === 0;
             
             // Calculate potential winnings based on pot betting
             let potDescription = '';
@@ -1176,19 +1305,13 @@ export default {
                 potDescription = `Since you're the only bettor, the house guarantees you'll win ${guaranteedProfit} GP (50% profit) if ${playerName} wins.`;
             } else {
                 // Count bets on each side for pot description
-                const challengerBets = challenge.bets.filter(bet => bet.targetPlayer === challenge.challengerUsername);
-                const challengeeBets = challenge.bets.filter(bet => bet.targetPlayer === challenge.challengeeUsername);
+                const bets = challenge.bets || [];
                 
                 // For open challenges, determine which bets are on the same player as the user's bet
                 let targetPlayerBets, opposingPlayerBets;
                 
-                if (challenge.isOpenChallenge && challenge.participants && challenge.participants.length > 0) {
-                    targetPlayerBets = challenge.bets.filter(bet => bet.targetPlayer === playerName);
-                    opposingPlayerBets = challenge.bets.filter(bet => bet.targetPlayer !== playerName);
-                } else {
-                    targetPlayerBets = playerName === challenge.challengerUsername ? challengerBets : challengeeBets;
-                    opposingPlayerBets = playerName === challenge.challengerUsername ? challengeeBets : challengerBets;
-                }
+                targetPlayerBets = bets.filter(bet => bet.targetPlayer === playerName);
+                opposingPlayerBets = bets.filter(bet => bet.targetPlayer !== playerName);
                 
                 const targetPlayerPool = targetPlayerBets.reduce((sum, bet) => sum + bet.betAmount, 0) + betAmount;
                 const opposingPlayerPool = opposingPlayerBets.reduce((sum, bet) => sum + bet.betAmount, 0);
@@ -1201,13 +1324,24 @@ export default {
                 }
             }
             
-            // Deduct GP from user
-            user.gp = (user.gp || 0) - betAmount;
+            // Place the bet with GP tracking
+            await arenaService.trackGpTransaction(
+                user, 
+                -betAmount, 
+                'Bet placement', 
+                `Challenge ID: ${challenge._id}, Bet on: ${playerName}`
+            );
+            
+            // Update user stats
             user.arenaStats = user.arenaStats || {};
             user.arenaStats.betsPlaced = (user.arenaStats.betsPlaced || 0) + 1;
             await user.save();
             
             // Add bet to challenge
+            if (!challenge.bets) {
+                challenge.bets = [];
+            }
+            
             challenge.bets.push({
                 userId: user.discordId,
                 raUsername: user.raUsername,
@@ -1262,7 +1396,7 @@ export default {
             // Find user's challenges - updated to include open challenges they've joined
             const challenges = await ArenaChallenge.find({
                 $or: [
-                    { challengerId: user.discordId, status: { $in: ['pending', 'active'] } },
+                    { challengerId: user.discordId, status: { $in: ['pending', 'active', 'open'] } },
                     { challengeeId: user.discordId, status: { $in: ['pending', 'active'] } },
                     { 'participants.userId': user.discordId, status: 'active' }
                 ]
@@ -1280,6 +1414,7 @@ export default {
             
             // Group challenges by status and type
             const pendingChallenges = challenges.filter(c => c.status === 'pending');
+            const openChallenges = challenges.filter(c => c.status === 'open' && c.challengerId === user.discordId);
             const activeDirectChallenges = challenges.filter(c => c.status === 'active' && !c.isOpenChallenge);
             const activeOpenChallenges = challenges.filter(c => c.status === 'active' && c.isOpenChallenge);
             
@@ -1297,6 +1432,21 @@ export default {
                 });
                 
                 embed.addFields({ name: '🕒 Pending Challenges', value: pendingText || 'None' });
+            }
+            
+            // Add open challenges that you created
+            if (openChallenges.length > 0) {
+                let openText = '';
+                
+                openChallenges.forEach((challenge, index) => {
+                    const timeRemaining = this.formatTimeRemaining(challenge.endDate || new Date(Date.now() + 604800000)); // Default to 1 week from now
+                    
+                    openText += `**${index + 1}. ${challenge.gameTitle}** (Open Challenge)\n` +
+                                `**Wager:** ${challenge.wagerAmount} GP\n` +
+                                `**Status:** Waiting for participants to join\n\n`;
+                });
+                
+                embed.addFields({ name: '📢 Your Open Challenges', value: openText || 'None' });
             }
             
             // Add active direct challenges
@@ -1324,19 +1474,30 @@ export default {
                     const isCreator = challenge.challengerId === user.discordId;
                     const timeRemaining = this.formatTimeRemaining(challenge.endDate);
                     const participantCount = (challenge.participants?.length || 0) + 1; // +1 for creator
+                    const totalWagered = challenge.wagerAmount * participantCount;
+                    const totalPool = (challenge.totalPool || 0) + totalWagered;
                     
                     openText += `**${index + 1}. ${challenge.gameTitle}** (${isCreator ? 'You created' : 'You joined'})\n` +
                                `**Wager:** ${challenge.wagerAmount} GP | **Ends:** ${timeRemaining}\n` +
                                `**Participants:** ${participantCount} | ` +
-                               `**Total Pool:** ${(challenge.totalPool || 0) + (challenge.wagerAmount * participantCount)} GP\n\n`;
+                               `**Total Pool:** ${totalPool} GP\n\n`;
                 });
                 
                 embed.addFields({ name: '🌐 Active Open Challenges', value: openText || 'None' });
             }
             
+            // Add back button
+            const backRow = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('arena_back_to_main')
+                        .setLabel('Back to Arena')
+                        .setStyle(ButtonStyle.Secondary)
+                );
+            
             await interaction.editReply({
                 embeds: [embed],
-                components: []
+                components: [backRow]
             });
         } catch (error) {
             console.error('Error showing user challenges:', error);
@@ -1475,9 +1636,13 @@ export default {
                 return interaction.editReply(`You don't have enough GP to join. Required: ${challenge.wagerAmount} GP, Your balance: ${user.gp || 0} GP`);
             }
             
-            // Deduct GP from user
-            user.gp -= challenge.wagerAmount;
-            await user.save();
+            // Deduct GP from user with tracking
+            await arenaService.trackGpTransaction(
+                user, 
+                -challenge.wagerAmount, 
+                'Joined open challenge', 
+                `Challenge ID: ${challenge._id}, Game: ${challenge.gameTitle}`
+            );
             
             // Add user to participants
             if (!challenge.participants) {
@@ -1506,6 +1671,9 @@ export default {
             
             // Notify about the new participant
             await arenaService.notifyParticipantJoined(challenge, user.raUsername);
+            
+            // Update the arena feed
+            await arenaService.createOrUpdateArenaFeed(challenge);
             
             // Create response embed
             const embed = new EmbedBuilder()
@@ -1545,7 +1713,8 @@ export default {
         else if (customId === 'arena_back_to_main') {
             await interaction.deferUpdate();
             const user = await User.findOne({ discordId: interaction.user.id });
-            await this.showMainArenaMenu(interaction, user);
+            // Skip GP check when returning to main menu
+            await this.showMainArenaMenu(interaction, user, true);
         }
         else if (customId === 'arena_help') {
             await interaction.deferUpdate();
@@ -1693,8 +1862,13 @@ export default {
             challenge.endDate = new Date(now.getTime() + (challenge.durationHours * 60 * 60 * 1000));
             await challenge.save();
             
-            // Deduct wager from user accepting the challenge - CRITICAL FIX
-            user.gp = (user.gp || 0) - challenge.wagerAmount;
+            // Deduct wager from user with tracking
+            await arenaService.trackGpTransaction(
+                user, 
+                -challenge.wagerAmount, 
+                'Accepted challenge', 
+                `Challenge ID: ${challenge._id}, Game: ${challenge.gameTitle}`
+            );
             
             // Update user stats
             user.arenaStats = user.arenaStats || {};
@@ -1750,11 +1924,15 @@ export default {
             challenge.status = 'declined';
             await challenge.save();
             
-            // Return wager to challenger since challenge was declined - CRITICAL FIX
+            // Return wager to challenger with tracking
             const challenger = await User.findOne({ discordId: challenge.challengerId });
             if (challenger) {
-                challenger.gp = (challenger.gp || 0) + challenge.wagerAmount;
-                await challenger.save();
+                await arenaService.trackGpTransaction(
+                    challenger, 
+                    challenge.wagerAmount, 
+                    'Challenge declined - wager refund', 
+                    `Challenge ID: ${challenge._id}, Game: ${challenge.gameTitle}`
+                );
             }
             
             // Notify about the declined challenge
@@ -1841,7 +2019,7 @@ export default {
                                `**Wager:** ${challenge.wagerAmount} GP per player\n` +
                                `**Total Pool:** ${totalPool} GP\n` +
                                `**Ends:** ${challenge.endDate.toLocaleDateString()} (${timeRemaining})\n` +
-                               `**Bets:** ${challenge.bets.length} bets placed`
+                               `**Bets:** ${challenge.bets?.length || 0} bets placed`
                     });
                 } else {
                     // For regular 1v1 challenges
@@ -1854,7 +2032,7 @@ export default {
                                `**Wager:** ${challenge.wagerAmount} GP each\n` +
                                `**Total Pool:** ${totalPool} GP\n` +
                                `**Ends:** ${challenge.endDate.toLocaleDateString()} (${timeRemaining})\n` +
-                               `**Bets:** ${challenge.bets.length} bets placed`
+                               `**Bets:** ${challenge.bets?.length || 0} bets placed`
                     });
                 }
             });
@@ -1876,60 +2054,6 @@ export default {
         } catch (error) {
             console.error('Error displaying active challenges:', error);
             return interaction.editReply('An error occurred while fetching active challenges.');
-        }
-    },
-    
-    // New method to automatically check and grant monthly GP
-    async checkAndGrantMonthlyGP(user) {
-        try {
-            const now = new Date();
-            const currentMonth = now.getMonth();
-            const currentYear = now.getFullYear();
-            
-            const lastClaim = user.lastMonthlyGpClaim ? new Date(user.lastMonthlyGpClaim) : null;
-            
-            // Check if user hasn't received GP this month yet
-            if (!lastClaim || 
-                lastClaim.getMonth() !== currentMonth || 
-                lastClaim.getFullYear() !== currentYear) {
-                
-                // Automatically award the GP
-                user.gp = (user.gp || 0) + 1000;
-                user.lastMonthlyGpClaim = now;
-                await user.save();
-                
-                return true; // Indicate that GP was awarded
-            }
-            
-            return false; // No GP was awarded
-        } catch (error) {
-            console.error('Error checking and granting monthly GP:', error);
-            return false;
-        }
-    },
-    
-    // Reset GP for all users (admin function)
-    async resetAllUsersGP() {
-        try {
-            // Set all users' GP to 1000 and mark as claimed this month
-            const now = new Date();
-            
-            // Update all users
-            const result = await User.updateMany(
-                {}, // Match all users
-                {
-                    $set: { 
-                        gp: 1000,
-                        lastMonthlyGpClaim: now
-                    }
-                }
-            );
-            
-            console.log(`Reset GP for ${result.modifiedCount} users`);
-            return result.modifiedCount;
-        } catch (error) {
-            console.error('Error resetting user GP:', error);
-            return 0;
         }
     },
     
@@ -2002,6 +2126,31 @@ export default {
         } catch (error) {
             console.error('Error displaying GP leaderboard:', error);
             return interaction.editReply('An error occurred while fetching the GP leaderboard.');
+        }
+    },
+    
+    // Reset GP for all users (admin function)
+    async resetAllUsersGP() {
+        try {
+            // Set all users' GP to 1000 and mark as claimed this month
+            const now = new Date();
+            
+            // Update all users
+            const result = await User.updateMany(
+                {}, // Match all users
+                {
+                    $set: { 
+                        gp: 1000,
+                        lastMonthlyGpClaim: now
+                    }
+                }
+            );
+            
+            console.log(`Reset GP for ${result.modifiedCount} users`);
+            return result.modifiedCount;
+        } catch (error) {
+            console.error('Error resetting user GP:', error);
+            return 0;
         }
     },
     
