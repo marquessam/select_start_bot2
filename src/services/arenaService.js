@@ -482,7 +482,7 @@ class ArenaService {
                     try {
                         const entry = await this.getParticipantScore(challenge, participant.username);
                         participant.score = entry.formattedScore;
-                        participantScores.set(participant.username.toLowerCase(), entry.formattedScore);
+                        participantScores.set(participant.username.toLowerCase(), entry);
                     } catch (error) {
                         console.error(`Error getting score for participant ${participant.username}:`, error);
                     }
@@ -693,24 +693,28 @@ class ArenaService {
                 entry.User.toLowerCase() === challenge.challengeeUsername.toLowerCase()
             );
             
-            // Format challenger score
+            // Format challenger score - UPDATED to include ApiRank
             const challengerScore = {
                 value: challengerEntry ? challengerEntry.Value : 0,
-                formattedScore: challengerEntry ? challengerEntry.FormattedScore : 'No score yet'
+                formattedScore: challengerEntry ? challengerEntry.FormattedScore : 'No score yet',
+                exists: !!challengerEntry,
+                rank: challengerEntry ? challengerEntry.ApiRank : 0
             };
             
-            // Format challengee score
+            // Format challengee score - UPDATED to include ApiRank
             const challengeeScore = {
                 value: challengeeEntry ? challengeeEntry.Value : 0,
-                formattedScore: challengeeEntry ? challengeeEntry.FormattedScore : 'No score yet'
+                formattedScore: challengeeEntry ? challengeeEntry.FormattedScore : 'No score yet',
+                exists: !!challengeeEntry,
+                rank: challengeeEntry ? challengeeEntry.ApiRank : 0
             };
             
             return [challengerScore, challengeeScore];
         } catch (error) {
             console.error('Error getting challenger scores:', error);
             return [
-                { value: 0, formattedScore: 'Error retrieving score' }, 
-                { value: 0, formattedScore: 'Error retrieving score' }
+                { value: 0, formattedScore: 'Error retrieving score', exists: false, rank: 0 }, 
+                { value: 0, formattedScore: 'Error retrieving score', exists: false, rank: 0 }
             ];
         }
     }
@@ -729,7 +733,7 @@ class ArenaService {
                 entry.User.toLowerCase() === participantUsername.toLowerCase()
             );
             
-            // Format score
+            // Format score - UPDATED to preserve ApiRank
             return {
                 exists: !!participantEntry,
                 formattedScore: participantEntry ? participantEntry.FormattedScore : 'No entry',
@@ -796,7 +800,8 @@ class ArenaService {
         participantScores.set(challenge.challengerUsername.toLowerCase(), {
             exists: challengerScore.value > 0,
             formattedScore: challengerScore.formattedScore,
-            value: challengerScore.value
+            value: challengerScore.value,
+            rank: challengerScore.rank
         });
         
         // Store the challenger score
@@ -813,37 +818,57 @@ class ArenaService {
                 participantScores.set(participant.username.toLowerCase(), {
                     exists: false,
                     formattedScore: 'No score',
-                    value: 0
+                    value: 0,
+                    rank: 0
                 });
             }
         }
         
-        // Determine winner
+        // Determine winner - now using ApiRank as primary consideration
         let winnerId = null;
         let winnerUsername = 'No Winner';
+        let bestRank = Number.MAX_SAFE_INTEGER;
         let bestScore = null;
         
         // Check if it's a time-based challenge (lower is better)
         const isTimeBased = isTimeBasedLeaderboard(challenge);
         
         // Start with the creator as potential winner
-        if (challengerScore.value !== 0) {
+        if (challengerScore.rank && challengerScore.rank > 0) {
+            winnerId = challenge.challengerId;
+            winnerUsername = challenge.challengerUsername;
+            bestRank = challengerScore.rank;
+            bestScore = challengerScore.value;
+        } else if (challengerScore.value !== 0) {
+            // Fall back to score if no rank
             winnerId = challenge.challengerId;
             winnerUsername = challenge.challengerUsername;
             bestScore = challengerScore.value;
         }
         
-        // Check each participant
+        // Check each participant for better rank or score
         for (const participant of challenge.participants) {
             const participantScore = participantScores.get(participant.username.toLowerCase());
-            if (!participantScore || participantScore.value === 0) continue;
+            if (!participantScore) continue;
             
-            if (bestScore === null || 
-                (isTimeBased && participantScore.value < bestScore) || 
-                (!isTimeBased && participantScore.value > bestScore)) {
-                winnerId = participant.userId;
-                winnerUsername = participant.username;
-                bestScore = participantScore.value;
+            // First check by rank (preferred method)
+            if (participantScore.rank && participantScore.rank > 0) {
+                if (bestRank === Number.MAX_SAFE_INTEGER || participantScore.rank < bestRank) {
+                    winnerId = participant.userId;
+                    winnerUsername = participant.username;
+                    bestRank = participantScore.rank;
+                    bestScore = participantScore.value;
+                }
+            } 
+            // Fall back to score comparison if no rank
+            else if (participantScore.value !== 0 && (bestScore === null || bestRank === Number.MAX_SAFE_INTEGER)) {
+                if (bestScore === null || 
+                    (isTimeBased && participantScore.value < bestScore) || 
+                    (!isTimeBased && participantScore.value > bestScore)) {
+                    winnerId = participant.userId;
+                    winnerUsername = participant.username;
+                    bestScore = participantScore.value;
+                }
             }
         }
         
@@ -888,19 +913,52 @@ class ArenaService {
         // Get final scores
         const [challengerScore, challengeeScore] = await this.getChallengersScores(challenge);
         
-        // Determine the winner
+        // Determine the winner - now using ApiRank as primary criteria
         let winnerId, winnerUsername;
         
-        if (challengerScore.value > challengeeScore.value) {
-            winnerId = challenge.challengerId;
-            winnerUsername = challenge.challengerUsername;
-        } else if (challengeeScore.value > challengerScore.value) {
-            winnerId = challenge.challengeeId;
-            winnerUsername = challenge.challengeeUsername;
-        } else {
-            // It's a tie - no winner
-            winnerId = null;
-            winnerUsername = 'Tie';
+        // First try to determine by ApiRank (global position)
+        if (challengerScore.rank && challengeeScore.rank) {
+            if (challengerScore.rank < challengeeScore.rank) {
+                winnerId = challenge.challengerId;
+                winnerUsername = challenge.challengerUsername;
+            } else if (challengeeScore.rank < challengerScore.rank) {
+                winnerId = challenge.challengeeId;
+                winnerUsername = challenge.challengeeUsername;
+            } else {
+                // Ranks are identical - fall back to score
+                winnerId = null;
+                winnerUsername = 'Tie';
+            }
+        } 
+        // Fall back to score-based comparison if ranks aren't available
+        else {
+            const isTimeBased = isTimeBasedLeaderboard(challenge);
+            
+            if (isTimeBased) {
+                // Time-based (lower is better)
+                if (challengerScore.value < challengeeScore.value) {
+                    winnerId = challenge.challengerId;
+                    winnerUsername = challenge.challengerUsername;
+                } else if (challengeeScore.value < challengerScore.value) {
+                    winnerId = challenge.challengeeId;
+                    winnerUsername = challenge.challengeeUsername;
+                } else {
+                    winnerId = null;
+                    winnerUsername = 'Tie';
+                }
+            } else {
+                // Score-based (higher is better)
+                if (challengerScore.value > challengeeScore.value) {
+                    winnerId = challenge.challengerId;
+                    winnerUsername = challenge.challengerUsername;
+                } else if (challengeeScore.value > challengerScore.value) {
+                    winnerId = challenge.challengeeId;
+                    winnerUsername = challenge.challengeeUsername;
+                } else {
+                    winnerId = null;
+                    winnerUsername = 'Tie';
+                }
+            }
         }
         
         // Update challenge data
@@ -1585,12 +1643,14 @@ class ArenaService {
             // Create leaderboard table
             let leaderboardText = `**Current Rankings (Refreshed at ${new Date().toLocaleTimeString()}):**\n\n`;
             
-            // Add creator's score
-            leaderboardText += `1. **${challenge.challengerUsername} (Creator):** ${creatorScore.exists ? creatorScore.formattedScore : 'No score yet'}\n`;
+            // Add creator's score with global rank
+            leaderboardText += `1. **${challenge.challengerUsername} (Creator):** ${creatorScore.exists ? creatorScore.formattedScore : 'No score yet'}` + 
+                             (creatorScore.rank ? ` (Global Rank: #${creatorScore.rank})` : '') + `\n`;
             
-            // Add participants' scores
+            // Add participants' scores with global ranks
             participantScores.forEach((score, index) => {
-                leaderboardText += `${index + 2}. **${score.username}:** ${score.exists ? score.formattedScore : 'No score yet'}\n`;
+                leaderboardText += `${index + 2}. **${score.username}:** ${score.exists ? score.formattedScore : 'No score yet'}` + 
+                                 (score.rank ? ` (Global Rank: #${score.rank})` : '') + `\n`;
             });
             
             leaderboardText += `\n**Leaderboard:** ${leaderboardLink}`;
@@ -1653,14 +1713,18 @@ class ArenaService {
             // Create leaderboard table
             let leaderboardText = `**Current Standings (Refreshed at ${new Date().toLocaleTimeString()}):**\n\n`;
             
+            // Add challenger with global rank
             if (challengerScore.exists) {
-                leaderboardText += `• **${challenge.challengerUsername}:** ${challengerScore.formattedScore}\n`;
+                leaderboardText += `• **${challenge.challengerUsername}:** ${challengerScore.formattedScore}` + 
+                                 (challengerScore.rank ? ` (Global Rank: #${challengerScore.rank})` : '') + `\n`;
             } else {
                 leaderboardText += `• **${challenge.challengerUsername}:** No score yet\n`;
             }
             
+            // Add challengee with global rank
             if (challengeeScore.exists) {
-                leaderboardText += `• **${challenge.challengeeUsername}:** ${challengeeScore.formattedScore}\n`;
+                leaderboardText += `• **${challenge.challengeeUsername}:** ${challengeeScore.formattedScore}` + 
+                                 (challengeeScore.rank ? ` (Global Rank: #${challengeeScore.rank})` : '') + `\n`;
             } else {
                 leaderboardText += `• **${challenge.challengeeUsername}:** No score yet\n`;
             }
