@@ -336,8 +336,8 @@ export default {
             const usernameInput = new TextInputBuilder()
                 .setCustomId('opponent_username')
                 .setLabel('RetroAchievements Username to Challenge')
-                .setPlaceholder('Enter opponent\'s RA username')
-                .setRequired(true)
+                .setPlaceholder('Enter opponent\'s RA username (leave blank for open challenge)')
+                .setRequired(false) // Make it optional to allow for open challenges
                 .setStyle(TextInputStyle.Short);
 
             // Input for game ID (like in adminArcade)
@@ -356,11 +356,11 @@ export default {
                 .setRequired(true)
                 .setStyle(TextInputStyle.Short);
                 
-            // Input for description (updated with guidance about competition type)
+            // Input for description (updated with more detailed guidance about competition type)
             const descriptionInput = new TextInputBuilder()
                 .setCustomId('description')
                 .setLabel('Challenge Description')
-                .setPlaceholder('Explain how to compete (e.g., fastest time, highest score) and any special rules')
+                .setPlaceholder('Must specify: 1) Which track/level/mode 2) How to compete (fastest time, highest score) 3) Any special rules')
                 .setRequired(true)
                 .setStyle(TextInputStyle.Paragraph);
                 
@@ -472,26 +472,58 @@ export default {
                 return interaction.editReply('Please enter a valid Game ID.');
             }
             
+            // Check if description has enough detail
+            if (description.length < 20) {
+                return interaction.editReply('Your description is too brief. Please provide details about which track/level, how to compete (fastest time, highest score), and any special rules.');
+            }
+            
             // Get challenger info
             const challenger = await User.findOne({ discordId: interaction.user.id });
-            
-            // Verify opponent exists and is registered
-            const opponent = await User.findOne({ 
-                raUsername: { $regex: new RegExp(`^${opponentUsername}$`, 'i') }
-            });
-            
-            if (!opponent) {
-                return interaction.editReply(`The user "${opponentUsername}" is not registered in our system.`);
-            }
-            
-            // Prevent challenging yourself
-            if (opponent.discordId === interaction.user.id) {
-                return interaction.editReply('You cannot challenge yourself.');
-            }
             
             // Check if user has enough GP
             if ((challenger.gp || 0) < wagerAmount) {
                 return interaction.editReply(`You don't have enough GP. Your balance: ${challenger.gp || 0} GP`);
+            }
+            
+            // Check if this is an open challenge (no opponent specified)
+            let isOpenChallenge = !opponentUsername || opponentUsername.trim() === '';
+            let opponent = null;
+            
+            if (!isOpenChallenge) {
+                // Verify opponent exists and is registered
+                opponent = await User.findOne({ 
+                    raUsername: { $regex: new RegExp(`^${opponentUsername}$`, 'i') }
+                });
+                
+                if (!opponent) {
+                    return interaction.editReply(`The user "${opponentUsername}" is not registered in our system.`);
+                }
+                
+                // Prevent challenging yourself
+                if (opponent.discordId === interaction.user.id) {
+                    return interaction.editReply('You cannot challenge yourself.');
+                }
+                
+                // Check for any existing challenges between these users
+                const existingChallenge = await ArenaChallenge.findOne({
+                    $or: [
+                        {
+                            challengerId: challenger.discordId,
+                            challengeeId: opponent.discordId,
+                            status: { $in: ['pending', 'active'] }
+                        },
+                        {
+                            challengerId: opponent.discordId,
+                            challengeeId: challenger.discordId,
+                            status: { $in: ['pending', 'active'] }
+                        }
+                    ]
+                });
+                
+                if (existingChallenge) {
+                    let statusText = existingChallenge.status === 'pending' ? 'pending response' : 'already active';
+                    return interaction.editReply(`You already have a challenge with ${opponentUsername} that is ${statusText}.`);
+                }
             }
             
             // Verify game exists - similar to adminArcade
@@ -533,33 +565,13 @@ export default {
                     return interaction.editReply(`Leaderboard ID ${leaderboardId} not found or has no entries.`);
                 }
                 
-                // Check for any existing challenges between these users
-                const existingChallenge = await ArenaChallenge.findOne({
-                    $or: [
-                        {
-                            challengerId: challenger.discordId,
-                            challengeeId: opponent.discordId,
-                            status: { $in: ['pending', 'active'] }
-                        },
-                        {
-                            challengerId: opponent.discordId,
-                            challengeeId: challenger.discordId,
-                            status: { $in: ['pending', 'active'] }
-                        }
-                    ]
-                });
-                
-                if (existingChallenge) {
-                    let statusText = existingChallenge.status === 'pending' ? 'pending response' : 'already active';
-                    return interaction.editReply(`You already have a challenge with ${opponentUsername} that is ${statusText}.`);
-                }
-                
                 // Create the challenge
                 const challenge = new ArenaChallenge({
                     challengerId: challenger.discordId,
                     challengerUsername: challenger.raUsername,
-                    challengeeId: opponent.discordId,
-                    challengeeUsername: opponent.raUsername,
+                    challengeeId: isOpenChallenge ? null : opponent.discordId,
+                    challengeeUsername: isOpenChallenge ? "Open Challenge" : opponent.raUsername,
+                    isOpenChallenge: isOpenChallenge,
                     leaderboardId: leaderboardId,
                     gameId: gameId,
                     gameTitle: gameInfo.title,
@@ -568,7 +580,7 @@ export default {
                     description: description,
                     wagerAmount: wagerAmount,
                     durationHours: durationHours,
-                    status: 'pending'
+                    status: isOpenChallenge ? 'open' : 'pending'
                 });
                 
                 // Save the challenge
@@ -589,15 +601,24 @@ export default {
                 // Create response embed
                 const embed = new EmbedBuilder()
                     .setColor('#00FF00')
-                    .setTitle('Challenge Created!')
+                    .setTitle(isOpenChallenge ? 'Open Challenge Created!' : 'Challenge Created!')
                     .setDescription(
-                        `You've challenged ${opponent.raUsername} to compete in ${gameInfo.title}!\n\n` +
-                        `**Game:** ${gameInfo.title} (${gameInfo.consoleName || 'Unknown'})\n` +
-                        `**Description:** ${description}\n` +
-                        `**Wager:** ${wagerAmount} GP\n` +
-                        `**Duration:** 1 week\n\n` +
-                        `They'll be notified and can use \`/arena\` to respond.`
+                        isOpenChallenge ? 
+                        `You've created an open challenge for ${gameInfo.title}!\n\n` :
+                        `You've challenged ${opponent.raUsername} to compete in ${gameInfo.title}!\n\n`
+                    )
+                    .addFields(
+                        { name: 'Game', value: `${gameInfo.title} (${gameInfo.consoleName || 'Unknown'})`, inline: false },
+                        { name: 'Description', value: description, inline: false },
+                        { name: 'Wager', value: `${wagerAmount} GP`, inline: true },
+                        { name: 'Duration', value: '1 week', inline: true }
                     );
+                
+                if (!isOpenChallenge) {
+                    embed.setFooter({ text: `${opponent.raUsername} will be notified and can use /arena to respond.` });
+                } else {
+                    embed.setFooter({ text: 'Other players can use /arena to join this open challenge.' });
+                }
                 
                 if (gameInfo.imageIcon) {
                     embed.setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`);
@@ -951,6 +972,11 @@ export default {
                 return interaction.editReply('This challenge is no longer active.');
             }
             
+            // Check if user is part of the challenge
+            if (challenge.challengerId === user.discordId || challenge.challengeeId === user.discordId) {
+                return interaction.editReply('You cannot bet on a challenge you are participating in.');
+            }
+            
             // Check if user has enough GP
             if ((user.gp || 0) < betAmount) {
                 return interaction.editReply(`You don't have enough GP. Your balance: ${user.gp || 0} GP`);
@@ -1203,6 +1229,13 @@ export default {
                 {
                     name: '🏆 Rewards',
                     value: 'The player with the most GP at the end of the year receives a special champion title and badge.'
+                },
+                {
+                    name: '📝 Creating Good Challenges',
+                    value: 'When creating a challenge, you must clearly specify:\n' +
+                           '• Which track/level/circuit in a racing game\n' +
+                           '• Which game mode or difficulty\n' +
+                           '• What determines the winner (fastest time, highest score)'
                 }
             )
             .setFooter({ text: 'Use /arena to access all Arena features' });
@@ -1429,6 +1462,31 @@ export default {
         } catch (error) {
             console.error('Error checking and granting monthly GP:', error);
             return false;
+        }
+    },
+    
+    // Reset GP for all users (admin function)
+    async resetAllUsersGP() {
+        try {
+            // Set all users' GP to 1000 and mark as claimed this month
+            const now = new Date();
+            
+            // Update all users
+            const result = await User.updateMany(
+                {}, // Match all users
+                {
+                    $set: { 
+                        gp: 1000,
+                        lastMonthlyGpClaim: now
+                    }
+                }
+            );
+            
+            console.log(`Reset GP for ${result.modifiedCount} users`);
+            return result.modifiedCount;
+        } catch (error) {
+            console.error('Error resetting user GP:', error);
+            return 0;
         }
     },
     
