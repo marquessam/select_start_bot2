@@ -230,13 +230,34 @@ export default {
                     });
                 }
                 
+                // Fetch current leaderboard positions for both players
+                const [challengerScore, challengeeScore] = await this.fetchLeaderboardPositions(challenge);
+
+                // Prepare leaderboard info text
+                let leaderboardText = '';
+                if (challengerScore.exists || challengeeScore.exists) {
+                    leaderboardText = "\n\n**Current Leaderboard Positions:**\n";
+                    
+                    if (challengerScore.exists) {
+                        leaderboardText += `• ${challenge.challengerUsername}: ${challengerScore.formattedScore}\n`;
+                    } else {
+                        leaderboardText += `• ${challenge.challengerUsername}: No existing score\n`;
+                    }
+                    
+                    if (challengeeScore.exists) {
+                        leaderboardText += `• ${challenge.challengeeUsername} (You): ${challengeeScore.formattedScore}\n`;
+                    } else {
+                        leaderboardText += `• ${challenge.challengeeUsername} (You): No existing score\n`;
+                    }
+                }
+                
                 // Show detailed challenge info with fixed duration of 1 week
                 embed.setDescription(
                     `**${challenge.challengerUsername}** has challenged you to compete in:\n\n` +
                     `**${challenge.gameTitle}**\n\n` +
                     `**Description:** ${challenge.description || 'No description provided'}\n\n` +
                     `**Wager:** ${challenge.wagerAmount} GP\n` +
-                    `**Duration:** 1 week\n\n` +
+                    `**Duration:** 1 week${leaderboardText}\n\n` +
                     `Do you accept this challenge?`
                 );
                 
@@ -313,6 +334,86 @@ export default {
         } catch (error) {
             console.error('Error showing pending challenges:', error);
             return interaction.editReply('An error occurred while loading your pending challenges.');
+        }
+    },
+    
+    // Helper function to fetch current leaderboard positions
+    async fetchLeaderboardPositions(challenge) {
+        try {
+            // Fetch leaderboard entries
+            const batch1 = await retroAPI.getLeaderboardEntriesDirect(challenge.leaderboardId, 0, 500);
+            const batch2 = await retroAPI.getLeaderboardEntriesDirect(challenge.leaderboardId, 500, 500);
+            
+            // Combine the batches
+            let rawEntries = [];
+            
+            // Process first batch
+            if (batch1) {
+                if (Array.isArray(batch1)) {
+                    rawEntries = [...rawEntries, ...batch1];
+                } else if (batch1.Results && Array.isArray(batch1.Results)) {
+                    rawEntries = [...rawEntries, ...batch1.Results];
+                }
+            }
+            
+            // Process second batch
+            if (batch2) {
+                if (Array.isArray(batch2)) {
+                    rawEntries = [...rawEntries, ...batch2];
+                } else if (batch2.Results && Array.isArray(batch2.Results)) {
+                    rawEntries = [...rawEntries, ...batch2.Results];
+                }
+            }
+            
+            // Process the entries with appropriate handling for different formats
+            const leaderboardEntries = rawEntries.map(entry => {
+                // Standard properties that most entries have
+                const user = entry.User || entry.user || '';
+                const score = entry.Score || entry.score || entry.Value || entry.value || 0;
+                const formattedScore = entry.FormattedScore || entry.formattedScore || entry.ScoreFormatted || score.toString();
+                const rank = entry.Rank || entry.rank || 0;
+                
+                return {
+                    ApiRank: parseInt(rank, 10),
+                    User: user.trim(),
+                    RawScore: score,
+                    FormattedScore: formattedScore.toString().trim() || score.toString(),
+                    Value: parseFloat(score) || 0
+                };
+            });
+            
+            // Find entries for both users
+            const challengerEntry = leaderboardEntries.find(entry => 
+                entry.User.toLowerCase() === challenge.challengerUsername.toLowerCase()
+            );
+            
+            const challengeeEntry = leaderboardEntries.find(entry => 
+                entry.User.toLowerCase() === challenge.challengeeUsername.toLowerCase()
+            );
+            
+            // Format the challenger score
+            const challengerScore = {
+                exists: !!challengerEntry,
+                formattedScore: challengerEntry ? challengerEntry.FormattedScore : 'No entry',
+                rank: challengerEntry ? challengerEntry.ApiRank : 0,
+                value: challengerEntry ? challengerEntry.Value : 0
+            };
+            
+            // Format the challengee score
+            const challengeeScore = {
+                exists: !!challengeeEntry,
+                formattedScore: challengeeEntry ? challengeeEntry.FormattedScore : 'No entry',
+                rank: challengeeEntry ? challengeeEntry.ApiRank : 0,
+                value: challengeeEntry ? challengeeEntry.Value : 0
+            };
+            
+            return [challengerScore, challengeeScore];
+        } catch (error) {
+            console.error('Error fetching leaderboard positions:', error);
+            return [
+                { exists: false, formattedScore: 'Error fetching score', rank: 0, value: 0 },
+                { exists: false, formattedScore: 'Error fetching score', rank: 0, value: 0 }
+            ];
         }
     },
     
