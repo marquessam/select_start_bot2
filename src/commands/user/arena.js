@@ -230,7 +230,7 @@ export default {
                 }
                 
                 // Fetch current leaderboard positions for both players
-                const [challengerScore, challengeeScore] = await arenaService.fetchLeaderboardPositions(challenge);
+            const [challengerScore, challengeeScore] = await arenaService.getChallengersScores(challenge);
 
                 // Prepare leaderboard info text
                 let leaderboardText = '';
