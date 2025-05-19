@@ -188,6 +188,17 @@ export function getEstimatedWinner(challenge, challengerScore, challengeeScore) 
         return null;
     }
     
+    // NEW APPROACH: Use ApiRank for determining winner
+    // Lower ApiRank is better (1st place is better than 2nd)
+    if (challengerScore.rank && challengeeScore.rank) {
+        if (challengerScore.rank < challengeeScore.rank) {
+            return challengerScore.username;
+        } else if (challengeeScore.rank < challengerScore.rank) {
+            return challengeeScore.username;
+        }
+    }
+    
+    // Fallback to value-based comparison if ranks aren't available
     const isTimeBased = isTimeBasedLeaderboard(challenge);
     
     // For time-based leaderboards, lower value is better
@@ -345,19 +356,11 @@ export function processLeaderboardEntries(rawEntries, isTimeBased = false) {
         };
     });
     
-    // Sort entries properly based on leaderboard type
-    if (isTimeBased) {
-        // For time-based leaderboards, lower is better
-        entries.sort((a, b) => a.Value - b.Value);
-    } else {
-        // For score-based leaderboards, higher is better
-        entries.sort((a, b) => b.Value - a.Value);
-    }
+    // Sort entries based on their original API Rank (global rank) instead of recalculating
+    // This ensures we respect the global leaderboard ranking
+    entries.sort((a, b) => a.ApiRank - b.ApiRank);
     
-    // Reassign ranks based on proper sorting
-    entries.forEach((entry, index) => {
-        entry.ApiRank = index + 1;
-    });
+    // IMPORTANT: We no longer reassign ranks here, preserving the original ApiRank from RA
     
     return entries;
 }
@@ -379,55 +382,65 @@ export function checkPositionChanges(challenge, challengerScore, challengeeScore
 
     let positionChange = null;
     
-    // Determine if it's a time-based leaderboard
-    const isTimeBased = isTimeBasedLeaderboard(challenge);
-    
-    // Parse the numerical values for comparison
-    let previousChallengerValue, previousChallengeeValue, currentChallengerValue, currentChallengeeValue;
-    
-    if (isTimeBased) {
-        // Parse times for time-based challenges
-        previousChallengerValue = parseTimeToSeconds(previousChallengerScore);
-        previousChallengeeValue = parseTimeToSeconds(previousChallengeeScore);
-        currentChallengerValue = parseTimeToSeconds(challengerScore.formattedScore);
-        currentChallengeeValue = parseTimeToSeconds(challengeeScore.formattedScore);
+    // NEW APPROACH: Check if ranks have changed
+    if (challengerScore.rank && challengeeScore.rank) {
+        // Get previous ranks
+        let previousChallengerRank = Infinity;
+        let previousChallengeeRank = Infinity;
         
-        // For times, lower is better
-        // Check if challenger overtook challengee
-        if (previousChallengerValue > previousChallengeeValue && currentChallengerValue <= currentChallengeeValue) {
-            positionChange = {
-                newLeader: challenge.challengerUsername,
-                previousLeader: challenge.challengeeUsername
-            };
-        }
-        // Check if challengee overtook challenger
-        else if (previousChallengeeValue > previousChallengerValue && currentChallengeeValue <= currentChallengerValue) {
-            positionChange = {
-                newLeader: challenge.challengeeUsername,
-                previousLeader: challenge.challengerUsername
-            };
-        }
-    } else {
-        // Parse scores for score-based challenges
-        previousChallengerValue = parseScoreString(previousChallengerScore);
-        previousChallengeeValue = parseScoreString(previousChallengeeScore);
-        currentChallengerValue = parseScoreString(challengerScore.formattedScore);
-        currentChallengeeValue = parseScoreString(challengeeScore.formattedScore);
+        // Try to extract ranks from previous state
+        // This would only work if we stored ranks earlier, but we'll improve it gradually
         
-        // For scores, higher is better
-        // Check if challenger overtook challengee
-        if (previousChallengerValue < previousChallengeeValue && currentChallengerValue >= currentChallengeeValue) {
-            positionChange = {
-                newLeader: challenge.challengerUsername,
-                previousLeader: challenge.challengeeUsername
-            };
-        }
-        // Check if challengee overtook challenger
-        else if (previousChallengeeValue < previousChallengerValue && currentChallengeeValue >= currentChallengerValue) {
-            positionChange = {
-                newLeader: challenge.challengeeUsername,
-                previousLeader: challenge.challengerUsername
-            };
+        // Fall back to checking if the leader changed based on score values        
+        const isTimeBased = isTimeBasedLeaderboard(challenge);
+        
+        // Parse the numerical values for comparison
+        let previousChallengerValue, previousChallengeeValue, currentChallengerValue, currentChallengeeValue;
+        
+        if (isTimeBased) {
+            // Parse times for time-based challenges
+            previousChallengerValue = parseTimeToSeconds(previousChallengerScore);
+            previousChallengeeValue = parseTimeToSeconds(previousChallengeeScore);
+            currentChallengerValue = parseTimeToSeconds(challengerScore.formattedScore);
+            currentChallengeeValue = parseTimeToSeconds(challengeeScore.formattedScore);
+            
+            // For times, lower is better
+            // Check if challenger overtook challengee
+            if (previousChallengerValue > previousChallengeeValue && currentChallengerValue <= currentChallengeeValue) {
+                positionChange = {
+                    newLeader: challenge.challengerUsername,
+                    previousLeader: challenge.challengeeUsername
+                };
+            }
+            // Check if challengee overtook challenger
+            else if (previousChallengeeValue > previousChallengerValue && currentChallengeeValue <= currentChallengerValue) {
+                positionChange = {
+                    newLeader: challenge.challengeeUsername,
+                    previousLeader: challenge.challengerUsername
+                };
+            }
+        } else {
+            // Parse scores for score-based challenges
+            previousChallengerValue = parseScoreString(previousChallengerScore);
+            previousChallengeeValue = parseScoreString(previousChallengeeScore);
+            currentChallengerValue = parseScoreString(challengerScore.formattedScore);
+            currentChallengeeValue = parseScoreString(challengeeScore.formattedScore);
+            
+            // For scores, higher is better
+            // Check if challenger overtook challengee
+            if (previousChallengerValue < previousChallengeeValue && currentChallengerValue >= currentChallengeeValue) {
+                positionChange = {
+                    newLeader: challenge.challengerUsername,
+                    previousLeader: challenge.challengeeUsername
+                };
+            }
+            // Check if challengee overtook challenger
+            else if (previousChallengeeValue < previousChallengerValue && currentChallengeeValue >= currentChallengerValue) {
+                positionChange = {
+                    newLeader: challenge.challengeeUsername,
+                    previousLeader: challenge.challengerUsername
+                };
+            }
         }
     }
     
@@ -496,14 +509,19 @@ function createOpenChallengeEmbed(challenge, challengerScore, participantScores,
     // Add participants with scores
     let participantsText = '';
     
-    // Add creator
-    participantsText += `• **${challenge.challengerUsername}** (Creator): ${challengerScore.formattedScore}\n`;
+    // Add creator with global rank
+    participantsText += `• **${challenge.challengerUsername}** (Creator): ${challengerScore.formattedScore}` + 
+                      (challengerScore.rank ? ` (Global Rank: #${challengerScore.rank})` : '') + `\n`;
     
-    // Add each participant
+    // Add each participant with global rank
     if (challenge.participants) {
         challenge.participants.forEach(participant => {
-            const score = participantScores?.get?.(participant.username.toLowerCase()) || participant.score || 'No score yet';
-            participantsText += `• **${participant.username}**: ${score}\n`;
+            const scoreInfo = participantScores?.get?.(participant.username.toLowerCase());
+            const score = scoreInfo?.formattedScore || participant.score || 'No score yet';
+            const rank = scoreInfo?.rank || 0;
+            
+            participantsText += `• **${participant.username}**: ${score}` + 
+                              (rank ? ` (Global Rank: #${rank})` : '') + `\n`;
         });
     }
     
@@ -592,12 +610,14 @@ function createDirectChallengeEmbed(challenge, challengerScore, challengeeScore,
         }
     );
     
-    // Add current scores
+    // Add current scores with global ranks
     embed.addFields({
         name: '📊 Current Scores',
         value: 
-            `**${challenge.challengerUsername}:** ${challengerScore.formattedScore}\n` +
-            `**${challenge.challengeeUsername}:** ${challengeeScore.formattedScore}`
+            `**${challenge.challengerUsername}:** ${challengerScore.formattedScore}` + 
+            (challengerScore.rank ? ` (Global Rank: #${challengerScore.rank})` : '') + `\n` +
+            `**${challenge.challengeeUsername}:** ${challengeeScore.formattedScore}` +
+            (challengeeScore.rank ? ` (Global Rank: #${challengeeScore.rank})` : '')
     });
     
     // Add betting info
