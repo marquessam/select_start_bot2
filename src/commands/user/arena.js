@@ -586,6 +586,9 @@ export default {
                 // Save the challenge
                 await challenge.save();
                 
+                // Deduct wager from challenger - CRITICAL FIX
+                challenger.gp = (challenger.gp || 0) - wagerAmount;
+                
                 // Update user stats
                 challenger.arenaStats = challenger.arenaStats || {};
                 challenger.arenaStats.challengesIssued = (challenger.arenaStats.challengesIssued || 0) + 1;
@@ -662,6 +665,12 @@ export default {
                 // Update challenge to cancelled and notify
                 challenge.status = 'cancelled';
                 await challenge.save();
+                
+                // Return wager to challenger if challenge is cancelled - CRITICAL FIX
+                if (challenger) {
+                    challenger.gp = (challenger.gp || 0) + challenge.wagerAmount;
+                    await challenger.save();
+                }
                 
                 await arenaService.notifyChallengeUpdate(challenge);
                 
@@ -1292,6 +1301,9 @@ export default {
             challenge.endDate = new Date(now.getTime() + (challenge.durationHours * 60 * 60 * 1000));
             await challenge.save();
             
+            // Deduct wager from user accepting the challenge - CRITICAL FIX
+            user.gp = (user.gp || 0) - challenge.wagerAmount;
+            
             // Update user stats
             user.arenaStats = user.arenaStats || {};
             user.arenaStats.challengesAccepted = (user.arenaStats.challengesAccepted || 0) + 1;
@@ -1345,6 +1357,13 @@ export default {
             // Update challenge status
             challenge.status = 'declined';
             await challenge.save();
+            
+            // Return wager to challenger since challenge was declined - CRITICAL FIX
+            const challenger = await User.findOne({ discordId: challenge.challengerId });
+            if (challenger) {
+                challenger.gp = (challenger.gp || 0) + challenge.wagerAmount;
+                await challenger.save();
+            }
             
             // Notify about the declined challenge
             await arenaService.notifyChallengeUpdate(challenge);
