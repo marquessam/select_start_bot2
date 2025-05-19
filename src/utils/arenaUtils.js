@@ -553,85 +553,48 @@ function createOpenChallengeEmbed(challenge, challengerScore, participantScores,
  * @private
  */
 function createDirectChallengeEmbed(challenge, challengerScore, challengeeScore, embed, timeLeft) {
-    // Determine who's winning
-    let winningText = 'The challenge is tied!';
-    const estimatedWinner = getEstimatedWinner(challenge, challengerScore, challengeeScore);
+    // More concise title
+    embed.setTitle(`🏟️ ${challenge.challengerUsername} vs ${challenge.challengeeUsername}`);
+    embed.setDescription(`**Game:** ${challenge.gameTitle} | [View Leaderboard](https://retroachievements.org/leaderboardinfo.php?i=${challenge.leaderboardId})`);
     
-    if (estimatedWinner === challengerScore.username) {
-        winningText = `${challenge.challengerUsername} is in the lead!`;
-    } else if (estimatedWinner === challengeeScore.username) {
-        winningText = `${challenge.challengeeUsername} is in the lead!`;
-    }
-    
-    // Calculate bet distribution
-    const totalBets = challenge.bets ? challenge.bets.length : 0;
-    let challengerBets = 0;
-    let challengeeBets = 0;
-    let challengerBetAmount = 0;
-    let challengeeBetAmount = 0;
-    
-    if (challenge.bets) {
-        challenge.bets.forEach(bet => {
-            if (bet.targetPlayer === challenge.challengerUsername) {
-                challengerBets++;
-                challengerBetAmount += bet.betAmount;
-            } else if (bet.targetPlayer === challenge.challengeeUsername) {
-                challengeeBets++;
-                challengeeBetAmount += bet.betAmount;
-            }
-        });
-    }
-    
-    // Calculate total pot (wagers + bets)
-    const wagerPool = challenge.wagerAmount * 2;
-    const betPool = challengerBetAmount + challengeeBetAmount;
-    const totalPool = wagerPool + betPool;
-    
-    // Calculate days from hours for display
-    const durationDays = Math.floor(challenge.durationHours / 24);
-    
-    // Set title and description
-    embed.setTitle(`🏟️ Arena Challenge: ${challenge.challengerUsername} vs ${challenge.challengeeUsername}`);
-    embed.setDescription(`**Game:** ${challenge.gameTitle}`);
-    
-    // Add description if available
+    // Add description if available (keep this compact)
     if (challenge.description) {
-        embed.addFields({ name: 'Description', value: challenge.description });
+        embed.addFields({ name: 'Challenge', value: challenge.description });
     }
     
-    // Add challenge details
+    // Streamlined challenge details
     embed.addFields(
-        { name: 'Challenge Details', 
+        { name: 'Details', 
           value: `**Wager:** ${challenge.wagerAmount} GP each\n` +
-                 `**Duration:** ${durationDays} days\n` +
-                 `**Started:** ${challenge.startDate.toLocaleString()}\n` +
-                 `**Ends:** ${challenge.endDate.toLocaleString()} (${timeLeft})\n\n` +
-                 `**Current Status:** ${winningText}`
+                 `**Ends:** ${challenge.endDate.toLocaleDateString()} (${timeLeft})\n` +
+                 `**Status:** ${challengerScore.value < challengeeScore.value ? 
+                    `${challenge.challengeeUsername} leads` : 
+                    `${challenge.challengerUsername} leads`}`
         }
     );
     
-    // Add current scores with global ranks
+    // Use medal notation for current scores
+    const getRankDisplay = (rank) => rank <= 100 ? `#${rank}` : `${rank}`;
     embed.addFields({
         name: '📊 Current Scores',
         value: 
+            `${challengerScore.rank === 1 ? '🥇' : challengerScore.rank === 2 ? '🥈' : challengerScore.rank === 3 ? '🥉' : ''}` +
             `**${challenge.challengerUsername}:** ${challengerScore.formattedScore}` + 
-            (challengerScore.rank ? ` (Global Rank: #${challengerScore.rank})` : '') + `\n` +
+            (challengerScore.rank ? ` (Rank: ${getRankDisplay(challengerScore.rank)})` : '') + `\n` +
+            `${challengeeScore.rank === 1 ? '🥇' : challengeeScore.rank === 2 ? '🥈' : challengeeScore.rank === 3 ? '🥉' : ''}` +
             `**${challenge.challengeeUsername}:** ${challengeeScore.formattedScore}` +
-            (challengeeScore.rank ? ` (Global Rank: #${challengeeScore.rank})` : '')
+            (challengeeScore.rank ? ` (Rank: ${getRankDisplay(challengeeScore.rank)})` : '')
     });
     
-    // Add betting info
+    // More concise betting section
+    const totalPool = (challenge.totalPool || 0) + (challenge.wagerAmount * 2);
     embed.addFields({
-        name: '💰 Betting Information',
+        name: '💰 Bets',
         value: 
-            `**Total Prize Pool:** ${totalPool} GP\n` +
-            `• Base Wager: ${wagerPool} GP\n` +
-            `• Betting Pool: ${betPool} GP\n\n` +
-            `**Bets Placed:** ${totalBets} total bets\n` +
-            `• On ${challenge.challengerUsername}: ${challengerBets} bets (${challengerBetAmount} GP)\n` +
-            `• On ${challenge.challengeeUsername}: ${challengeeBets} bets (${challengeeBetAmount} GP)\n\n` +
-            `Use \`/arena\` and select "Place a Bet" to bet on the outcome!\n` +
-            `**Pot Betting:** If your player wins, you get your bet back plus a share of the opposing bets proportional to your bet amount.`
+            `**Total Pool:** ${totalPool} GP\n` +
+            `**Bets on ${challenge.challengerUsername}:** ${challenge.bets?.filter(b => b.targetPlayer === challenge.challengerUsername).length || 0} bets\n` +
+            `**Bets on ${challenge.challengeeUsername}:** ${challenge.bets?.filter(b => b.targetPlayer === challenge.challengeeUsername).length || 0} bets\n` +
+            `Use \`/arena\` → "Place a Bet"`
     });
 }
 
