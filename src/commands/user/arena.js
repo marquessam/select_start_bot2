@@ -14,7 +14,7 @@ import { User } from '../../models/User.js';
 import { ArenaChallenge } from '../../models/ArenaChallenge.js';
 import retroAPI from '../../services/retroAPI.js';
 import arenaService from '../../services/arenaService.js';
-import { formatTimeRemaining } from '../../utils/arenaUtils.js';
+import { formatTimeRemaining, getLeaderboardEntries } from '../../utils/arenaUtils.js';
 
 export default {
     data: new SlashCommandBuilder()
@@ -561,8 +561,8 @@ export default {
                 return interaction.editReply('Game not found. Please check the game ID.');
             }
             
-            // Verify leaderboard exists
-            const leaderboardEntries = await arenaService.getLeaderboardEntries(leaderboardId);
+            // Verify leaderboard exists - FIXED - use imported function
+            const leaderboardEntries = await getLeaderboardEntries(leaderboardId);
             if (!leaderboardEntries || leaderboardEntries.length === 0) {
                 return interaction.editReply(`Leaderboard ID ${leaderboardId} not found or has no entries.`);
             }
@@ -1287,7 +1287,7 @@ export default {
                 $or: [
                     { challengerId: user.discordId, status: { $in: ['pending', 'active', 'open'] } },
                     { challengeeId: user.discordId, status: { $in: ['pending', 'active'] } },
-                    { 'participants.userId': user.discordId, status: 'active' }
+                    { 'participants.userId': user.discordId, status: { $in: ['active', 'open'] } }
                 ]
             }).sort({ createdAt: -1 });
             
@@ -1304,6 +1304,7 @@ export default {
             // Group challenges by status and type
             const pendingChallenges = challenges.filter(c => c.status === 'pending');
             const openChallenges = challenges.filter(c => c.status === 'open' && c.challengerId === user.discordId);
+            const joinedOpenChallenges = challenges.filter(c => c.status === 'open' && c.challengerId !== user.discordId && c.participants?.some(p => p.userId === user.discordId));
             const activeDirectChallenges = challenges.filter(c => c.status === 'active' && !c.isOpenChallenge);
             const activeOpenChallenges = challenges.filter(c => c.status === 'active' && c.isOpenChallenge);
             
@@ -1332,14 +1333,34 @@ export default {
                 openChallenges.forEach((challenge, index) => {
                     const timeRemaining = formatTimeRemaining(challenge.endDate || new Date(Date.now() + 604800000)); // Default to 1 week from now
                     const leaderboardLink = `[View Leaderboard](https://retroachievements.org/leaderboardinfo.php?i=${challenge.leaderboardId})`;
+                    const participantCount = (challenge.participants?.length || 0) + 1; // +1 to include creator
                     
                     openText += `**${index + 1}. ${challenge.gameTitle}** (Open Challenge)\n` +
                                 `**Wager:** ${challenge.wagerAmount} GP\n` +
+                                `**Participants:** ${participantCount}\n` + 
                                 `${leaderboardLink}\n` +
-                                `**Status:** Waiting for participants to join\n\n`;
+                                `**Status:** Open for joining\n\n`;
                 });
                 
                 embed.addFields({ name: '📢 Your Open Challenges', value: openText || 'None' });
+            }
+            
+            // Add open challenges that you've joined
+            if (joinedOpenChallenges.length > 0) {
+                let joinedText = '';
+                
+                joinedOpenChallenges.forEach((challenge, index) => {
+                    const leaderboardLink = `[View Leaderboard](https://retroachievements.org/leaderboardinfo.php?i=${challenge.leaderboardId})`;
+                    const participantCount = (challenge.participants?.length || 0) + 1; // +1 to include creator
+                    
+                    joinedText += `**${index + 1}. ${challenge.gameTitle}** (Created by ${challenge.challengerUsername})\n` +
+                                `**Wager:** ${challenge.wagerAmount} GP\n` +
+                                `**Participants:** ${participantCount}\n` + 
+                                `${leaderboardLink}\n` +
+                                `**Status:** You have joined this open challenge\n\n`;
+                });
+                
+                embed.addFields({ name: '🔵 Open Challenges You\'ve Joined', value: joinedText || 'None' });
             }
             
             // Add active direct challenges
@@ -1471,12 +1492,24 @@ export default {
                 // Add leaderboard link
                 const leaderboardLink = `[View Leaderboard](https://retroachievements.org/leaderboardinfo.php?i=${challenge.leaderboardId})`;
                 
+                // Check if user has already joined this challenge
+                const alreadyJoined = challenge.participants?.some(p => p.userId === user.discordId);
+                const isCreator = challenge.challengerId === user.discordId;
+                
+                let statusText = '';
+                if (isCreator) {
+                    statusText = '**Status:** You created this challenge\n';
+                } else if (alreadyJoined) {
+                    statusText = '**Status:** You have already joined this challenge\n';
+                }
+                
                 embed.addFields({
                     name: `${index + 1}. ${challenge.gameTitle}`,
                     value: `**Creator:** ${challenge.challengerUsername}\n` +
                            `**Description:** ${challenge.description || 'No description provided'}\n` +
                            `**Wager:** ${challenge.wagerAmount} GP\n` +
                            `**Participants:** ${participantLimit}\n` +
+                           statusText +
                            `${leaderboardLink}\n` +
                            `**Challenge ID:** \`${challenge._id}\``
                 });
@@ -1492,11 +1525,17 @@ export default {
                 
                 for (let j = 0; j < buttonsPerRow && (i + j) < maxButtons; j++) {
                     const challenge = openChallenges[i + j];
+                    
+                    // Don't allow joining if user is creator or already joined
+                    const alreadyJoined = challenge.participants?.some(p => p.userId === user.discordId);
+                    const isCreator = challenge.challengerId === user.discordId;
+                    
                     row.addComponents(
                         new ButtonBuilder()
                             .setCustomId(`arena_join_challenge_${challenge._id}`)
                             .setLabel(`Join #${i + j + 1}`)
                             .setStyle(ButtonStyle.Primary)
+                            .setDisabled(isCreator || alreadyJoined)
                     );
                 }
                 
@@ -1524,7 +1563,7 @@ export default {
         }
     },
     
-    // Handle joining an open challenge
+    // Handle joining an open challenge - FIXED to keep challenges open after joining
     async handleJoinChallenge(interaction) {
         await interaction.deferReply({ ephemeral: true });
         
@@ -1591,13 +1630,24 @@ export default {
                 completed: false
             });
             
-            // Update status if this is the first participant (and challenge is 'open')
-            if (challenge.status === 'open' && challenge.participants.length === 1) {
-                challenge.status = 'active';
+            // IMPORTANT FIX: Keep the challenge status as "open" even after participants join
+            // This ensures it remains visible to other potential participants
+            // Only set start date if not already set
+            if (!challenge.startDate) {
                 challenge.startDate = new Date();
-                // Set end date to 1 week from now
+            }
+            
+            // Set end date based on duration if needed
+            if (!challenge.endDate) {
                 challenge.endDate = new Date(challenge.startDate.getTime() + (challenge.durationHours * 60 * 60 * 1000));
             }
+            
+            // Only change to active if we've hit a max participant limit
+            if (challenge.maxParticipants && challenge.participants.length >= challenge.maxParticipants) {
+                challenge.status = 'active';
+            }
+            
+            console.log(`User ${user.raUsername} joined challenge ${challenge._id}. New status: ${challenge.status}, Participant count: ${challenge.participants.length}`);
             
             await challenge.save();
             
@@ -1619,6 +1669,8 @@ export default {
                     `**Description:** ${challenge.description || 'No description provided'}\n` +
                     `**Wager:** ${challenge.wagerAmount} GP\n` +
                     `**Your new GP balance:** ${user.gp} GP\n` +
+                    `**Challenge status:** ${challenge.status}\n` +
+                    `**Participants:** ${challenge.participants.length + 1} (including creator)\n` +
                     `${leaderboardLink}\n\n` +
                     `Good luck! Updates will be posted in the Arena channel.`
                 );
@@ -1627,7 +1679,23 @@ export default {
                 embed.setThumbnail(`https://retroachievements.org${challenge.iconUrl}`);
             }
             
-            return interaction.editReply({ embeds: [embed] });
+            // Add buttons to navigate to My Challenges or View Open Challenges
+            const buttonsRow = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('arena_my_challenges')
+                        .setLabel('View My Challenges')
+                        .setStyle(ButtonStyle.Primary),
+                    new ButtonBuilder()
+                        .setCustomId('arena_open_challenges')
+                        .setLabel('View Open Challenges')
+                        .setStyle(ButtonStyle.Secondary)
+                );
+            
+            return interaction.editReply({ 
+                embeds: [embed],
+                components: [buttonsRow]
+            });
         } catch (error) {
             console.error('Error joining challenge:', error);
             return interaction.editReply('An error occurred while joining the challenge.');
@@ -2012,6 +2080,13 @@ export default {
                     ephemeral: true
                 });
             }
+        }
+        // Add handlers for additional navigation buttons
+        else if (customId === 'arena_my_challenges') {
+            await this.showMyChallenges(interaction);
+        }
+        else if (customId === 'arena_open_challenges') {
+            await this.showOpenChallenges(interaction);
         }
     },
     
