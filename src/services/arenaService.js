@@ -189,13 +189,22 @@ class ArenaService {
             // Create an embed for the new challenge
             const embed = new EmbedBuilder()
                 .setTitle('🏟️ New Arena Challenge Issued!')
-                .setColor('#3498DB')
-                .setDescription(
-                    `**${challenge.challengerUsername}** has challenged **${challenge.challengeeUsername}** to a competition!`
-                )
-                .addFields(
-                    { name: 'Game', value: challenge.gameTitle, inline: false }
+                .setColor('#3498DB');
+            
+            // Different description for open vs direct challenges
+            if (challenge.isOpenChallenge) {
+                embed.setDescription(
+                    `**${challenge.challengerUsername}** has created an open challenge for anyone to join!`
                 );
+            } else {
+                embed.setDescription(
+                    `**${challenge.challengerUsername}** has challenged **${challenge.challengeeUsername}** to a competition!`
+                );
+            }
+            
+            embed.addFields(
+                { name: 'Game', value: challenge.gameTitle, inline: false }
+            );
             
             // Add description if available
             if (challenge.description) {
@@ -203,12 +212,37 @@ class ArenaService {
             }
             
             // Add other details
-            embed.addFields(
-                { name: 'Wager', value: `${challenge.wagerAmount} GP each`, inline: true },
+            const fields = [
+                { name: 'Wager', value: challenge.isOpenChallenge ? 
+                    `${challenge.wagerAmount} GP per player` : 
+                    `${challenge.wagerAmount} GP each`, 
+                  inline: true },
                 { name: 'Duration', value: `${Math.floor(challenge.durationHours / 24)} days`, inline: true }
-            )
-            .setFooter({ text: `${challenge.challengeeUsername} can use /arena to view and respond to this challenge.` })
-            .setTimestamp();
+            ];
+            
+            // Add max participants for open challenges
+            if (challenge.isOpenChallenge && challenge.maxParticipants) {
+                fields.push({ 
+                    name: 'Max Participants', 
+                    value: `${challenge.maxParticipants}`, 
+                    inline: true 
+                });
+            }
+            
+            embed.addFields(fields);
+            
+            // Set appropriate footer based on challenge type
+            if (challenge.isOpenChallenge) {
+                embed.setFooter({ 
+                    text: `Use /arena and select "Browse Open Challenges" to join this challenge.` 
+                });
+            } else {
+                embed.setFooter({ 
+                    text: `${challenge.challengeeUsername} can use /arena to view and respond to this challenge.` 
+                });
+            }
+            
+            embed.setTimestamp();
             
             // Add thumbnail if available
             if (challenge.iconUrl) {
@@ -222,119 +256,215 @@ class ArenaService {
         }
     }
 
-async notifyChallengeUpdate(challenge) {
-    try {
-        const channel = await this.getArenaChannel();
-        if (!channel) return;
-        
-        let title, description, color;
-        const durationDays = Math.floor(challenge.durationHours / 24);
-        
-        switch(challenge.status) {
-            case 'active':
-                title = '🏟️ Arena Challenge Accepted!';
-                description = 
-                    `**${challenge.challengeeUsername}** has accepted the challenge from **${challenge.challengerUsername}**!`;
-                color = '#2ECC71';
-                break;
-            case 'declined':
-                title = '🏟️ Arena Challenge Declined';
-                description = 
-                    `**${challenge.challengeeUsername}** has declined the challenge from **${challenge.challengerUsername}**.`;
-                color = '#E74C3C';
-                break;
-            case 'cancelled':
-                title = '🏟️ Arena Challenge Cancelled';
-                description = 
-                    `The challenge between **${challenge.challengerUsername}** and **${challenge.challengeeUsername}** has been cancelled.`;
-                color = '#95A5A6';
-                break;
-            case 'completed':
-                title = '🏟️ Arena Challenge Completed!';
-                description = 
-                    `The challenge between **${challenge.challengerUsername}** and **${challenge.challengeeUsername}** has ended!`;
-                color = '#F1C40F';
-                break;
-            default:
-                return; // Don't notify for other statuses
-        }
-        
-        // Create an embed for the update
-        const embed = new EmbedBuilder()
-            .setTitle(title)
-            .setColor(color)
-            .setDescription(description)
-            .addFields(
-                { name: 'Game', value: challenge.gameTitle, inline: false }
-            );
+    async notifyChallengeUpdate(challenge) {
+        try {
+            const channel = await this.getArenaChannel();
+            if (!channel) return;
             
-        // Add description if available
-        if (challenge.description) {
-            embed.addFields({ name: 'Description', value: challenge.description, inline: false });
-        }
-        
-        // Add other fields based on status
-        if (challenge.status === 'active') {
-            embed.addFields(
-                { name: 'Wager', value: `${challenge.wagerAmount} GP each`, inline: true },
-                { name: 'Duration', value: `${durationDays} days`, inline: true },
-                { name: 'Ends', value: challenge.endDate.toLocaleString(), inline: true }
-            )
-            .setFooter({ text: 'Watch the leaderboard updates in the arena feed channel! Use /arena to place bets.' });
-        } else if (challenge.status === 'completed') {
-            embed.addFields(
-                { name: 'Winner', value: challenge.winnerUsername, inline: false },
-                { name: 'Wager', value: `${challenge.wagerAmount} GP each`, inline: true },
-                { name: 'Final Scores', value: 
-                    `• ${challenge.challengerUsername}: ${challenge.challengerScore}\n` +
-                    `• ${challenge.challengeeUsername}: ${challenge.challengeeScore}`
+            let title, description, color;
+            const durationDays = Math.floor(challenge.durationHours / 24);
+            
+            // Different messages for open challenges
+            if (challenge.isOpenChallenge) {
+                switch(challenge.status) {
+                    case 'active':
+                        title = '🏟️ Open Arena Challenge Started!';
+                        description = 
+                            `The open challenge created by **${challenge.challengerUsername}** has begun!`;
+                        color = '#2ECC71';
+                        break;
+                    case 'cancelled':
+                        title = '🏟️ Open Arena Challenge Cancelled';
+                        description = 
+                            `The open challenge created by **${challenge.challengerUsername}** has been cancelled.`;
+                        color = '#95A5A6';
+                        break;
+                    case 'completed':
+                        title = '🏟️ Open Arena Challenge Completed!';
+                        description = 
+                            `The open challenge created by **${challenge.challengerUsername}** has ended!`;
+                        color = '#F1C40F';
+                        break;
+                    default:
+                        return; // Don't notify for other statuses
                 }
-            )
-            .setFooter({ text: 'Congratulations to the winner! All bets have been paid out.' });
+            } else {
+                // Original code for 1v1 challenges
+                switch(challenge.status) {
+                    case 'active':
+                        title = '🏟️ Arena Challenge Accepted!';
+                        description = 
+                            `**${challenge.challengeeUsername}** has accepted the challenge from **${challenge.challengerUsername}**!`;
+                        color = '#2ECC71';
+                        break;
+                    case 'declined':
+                        title = '🏟️ Arena Challenge Declined';
+                        description = 
+                            `**${challenge.challengeeUsername}** has declined the challenge from **${challenge.challengerUsername}**.`;
+                        color = '#E74C3C';
+                        break;
+                    case 'cancelled':
+                        title = '🏟️ Arena Challenge Cancelled';
+                        description = 
+                            `The challenge between **${challenge.challengerUsername}** and **${challenge.challengeeUsername}** has been cancelled.`;
+                        color = '#95A5A6';
+                        break;
+                    case 'completed':
+                        title = '🏟️ Arena Challenge Completed!';
+                        description = 
+                            `The challenge between **${challenge.challengerUsername}** and **${challenge.challengeeUsername}** has ended!`;
+                        color = '#F1C40F';
+                        break;
+                    default:
+                        return; // Don't notify for other statuses
+                }
+            }
+            
+            // Create an embed for the update
+            const embed = new EmbedBuilder()
+                .setTitle(title)
+                .setColor(color)
+                .setDescription(description)
+                .addFields(
+                    { name: 'Game', value: challenge.gameTitle, inline: false }
+                );
+                
+            // Add description if available
+            if (challenge.description) {
+                embed.addFields({ name: 'Description', value: challenge.description, inline: false });
+            }
+            
+            // Add other fields based on status
+            if (challenge.status === 'active') {
+                // Different fields for open vs direct challenges
+                if (challenge.isOpenChallenge) {
+                    const participantCount = challenge.participants.length + 1; // +1 for creator
+                    
+                    embed.addFields(
+                        { name: 'Participants', value: `${participantCount} players`, inline: true },
+                        { name: 'Wager', value: `${challenge.wagerAmount} GP per player`, inline: true },
+                        { name: 'Duration', value: `${durationDays} days`, inline: true },
+                        { name: 'Ends', value: challenge.endDate.toLocaleString(), inline: true }
+                    )
+                    .setFooter({ text: 'Watch the leaderboard updates in the arena feed channel! Use /arena to place bets.' });
+                } else {
+                    embed.addFields(
+                        { name: 'Wager', value: `${challenge.wagerAmount} GP each`, inline: true },
+                        { name: 'Duration', value: `${durationDays} days`, inline: true },
+                        { name: 'Ends', value: challenge.endDate.toLocaleString(), inline: true }
+                    )
+                    .setFooter({ text: 'Watch the leaderboard updates in the arena feed channel! Use /arena to place bets.' });
+                }
+            } else if (challenge.status === 'completed') {
+                // Handle completed challenges
+                if (challenge.isOpenChallenge) {
+                    // For open challenges
+                    const participantCount = challenge.participants.length + 1; // +1 for creator
+                    const totalPot = challenge.wagerAmount * participantCount;
+                    
+                    embed.addFields(
+                        { name: 'Winner', value: challenge.winnerUsername || 'No Winner', inline: false },
+                        { name: 'Participants', value: `${participantCount} players`, inline: true },
+                        { name: 'Total Pot', value: `${totalPot} GP`, inline: true }
+                    );
+                    
+                    // If there are participant scores, add them
+                    if (challenge.participants && challenge.participants.length > 0) {
+                        let scoresText = `• **${challenge.challengerUsername}** (Creator): ${challenge.challengerScore || 'No score'}\n`;
+                        
+                        challenge.participants.forEach(participant => {
+                            scoresText += `• **${participant.username}**: ${participant.score || 'No score'}\n`;
+                        });
+                        
+                        embed.addFields({ name: 'Final Scores', value: scoresText });
+                    }
+                } else {
+                    // For regular 1v1 challenges
+                    embed.addFields(
+                        { name: 'Winner', value: challenge.winnerUsername, inline: false },
+                        { name: 'Wager', value: `${challenge.wagerAmount} GP each`, inline: true },
+                        { name: 'Final Scores', value: 
+                            `• ${challenge.challengerUsername}: ${challenge.challengerScore}\n` +
+                            `• ${challenge.challengeeUsername}: ${challenge.challengeeScore}`
+                        }
+                    );
+                }
+                
+                embed.setFooter({ text: 'Congratulations to the winner! All bets have been paid out.' });
+            }
+            
+            // Add thumbnail if available
+            if (challenge.iconUrl) {
+                embed.setThumbnail(`https://retroachievements.org${challenge.iconUrl}`);
+            }
+            
+            // Set timestamp
+            embed.setTimestamp();
+            
+            // Add betting button for active challenges
+            let components = [];
+            if (challenge.status === 'active') {
+                const row = new ActionRowBuilder()
+                    .addComponents(
+                        new ButtonBuilder()
+                            .setCustomId('not_used_here')
+                            .setLabel('Place a Bet')
+                            .setStyle(ButtonStyle.Primary)
+                            .setEmoji('💰')
+                    );
+                
+                components = [row];
+                
+                // Send the notification with button - REMOVED ROLE MENTION
+                const message = await channel.send({ 
+                    embeds: [embed],
+                    components: components,
+                    content: `A new Arena challenge has begun!` // Removed the role mention
+                });
+                
+                // Add a followup message explaining how to bet
+                await channel.send({
+                    content: 'To place a bet, use the `/arena` command and select "Place a Bet". Pot Betting System: Your bet joins the total prize pool. If your chosen player wins, you get your bet back plus a share of the losing bets proportional to your bet amount!',
+                    reply: { messageReference: message.id }
+                });
+            } else {
+                // Send the notification without button
+                await channel.send({ embeds: [embed] });
+            }
+        } catch (error) {
+            console.error('Error sending challenge update notification:', error);
         }
-        
-        // Add thumbnail if available
-        if (challenge.iconUrl) {
-            embed.setThumbnail(`https://retroachievements.org${challenge.iconUrl}`);
-        }
-        
-        // Set timestamp
-        embed.setTimestamp();
-        
-        // Add betting button for active challenges
-        let components = [];
-        if (challenge.status === 'active') {
-            const row = new ActionRowBuilder()
-                .addComponents(
-                    new ButtonBuilder()
-                        .setCustomId('not_used_here')
-                        .setLabel('Place a Bet')
-                        .setStyle(ButtonStyle.Primary)
-                        .setEmoji('💰')
+    }
+    
+    // Add Notification for New Participant
+    async notifyParticipantJoined(challenge, participantUsername) {
+        try {
+            const channel = await this.getArenaChannel();
+            if (!channel) return;
+            
+            // Create an embed for the participant notification
+            const embed = new EmbedBuilder()
+                .setTitle('🏟️ New Participant Joined Challenge!')
+                .setColor('#3498DB')
+                .setDescription(
+                    `**${participantUsername}** has joined the open challenge for **${challenge.gameTitle}**!`
+                )
+                .addFields(
+                    { name: 'Challenge Creator', value: challenge.challengerUsername, inline: true },
+                    { name: 'Wager', value: `${challenge.wagerAmount} GP`, inline: true },
+                    { name: 'Total Participants', value: `${challenge.participants.length + 1}`, inline: true },
+                    { name: 'Description', value: challenge.description || 'No description provided' }
                 );
             
-            components = [row];
+            if (challenge.iconUrl) {
+                embed.setThumbnail(`https://retroachievements.org${challenge.iconUrl}`);
+            }
             
-            // Send the notification with button - REMOVED ROLE MENTION
-            const message = await channel.send({ 
-                embeds: [embed],
-                components: components,
-                content: `A new Arena challenge has begun!` // Removed the role mention
-            });
-            
-            // Add a followup message explaining how to bet
-            await channel.send({
-                content: 'To place a bet, use the `/arena` command and select "Place a Bet". Pot Betting System: Your bet joins the total prize pool. If your chosen player wins, you get your bet back plus a share of the losing bets proportional to your bet amount!',
-                reply: { messageReference: message.id }
-            });
-        } else {
-            // Send the notification without button
             await channel.send({ embeds: [embed] });
+        } catch (error) {
+            console.error('Error sending participant joined notification:', error);
         }
-    } catch (error) {
-        console.error('Error sending challenge update notification:', error);
     }
-}
     
     async notifyStandingsChange(challenge, changedPosition) {
         try {
@@ -588,96 +718,173 @@ async notifyChallengeUpdate(challenge) {
         }
     }
 
+    // Create Challenge Embed with support for open challenges
     createChallengeEmbed(challenge, challengerScore, challengeeScore) {
         // Calculate time remaining
         const now = new Date();
         const timeRemaining = this.formatTimeRemaining(challenge.endDate);
         
-        // Determine who's winning
+        // Determine who's winning for regular challenges
         let winningText = 'The challenge is tied!';
         let winningUser = null;
         
-        if (challengerScore.value > challengeeScore.value) {
-            winningText = `${challenge.challengerUsername} is in the lead!`;
-            winningUser = challenge.challengerUsername;
-        } else if (challengeeScore.value > challengerScore.value) {
-            winningText = `${challenge.challengeeUsername} is in the lead!`;
-            winningUser = challenge.challengeeUsername;
-        }
-        
-        // Calculate bet distribution
-        const totalBets = challenge.bets.length;
-        let challengerBets = 0;
-        let challengeeBets = 0;
-        let challengerBetAmount = 0;
-        let challengeeBetAmount = 0;
-        
-        challenge.bets.forEach(bet => {
-            if (bet.targetPlayer === challenge.challengerUsername) {
-                challengerBets++;
-                challengerBetAmount += bet.betAmount;
-            } else if (bet.targetPlayer === challenge.challengeeUsername) {
-                challengeeBets++;
-                challengeeBetAmount += bet.betAmount;
-            }
-        });
-        
-        // Calculate total pot (wagers + bets)
-        const wagerPool = challenge.wagerAmount * 2;
-        const betPool = challengerBetAmount + challengeeBetAmount;
-        const totalPool = wagerPool + betPool;
-        
-        // Calculate days from hours for display
-        const durationDays = Math.floor(challenge.durationHours / 24);
-        
         // Create the embed
         const embed = new EmbedBuilder()
-            .setTitle(`🏟️ Arena Challenge: ${challenge.challengerUsername} vs ${challenge.challengeeUsername}`)
-            .setColor(challenge.endDate > now ? '#3498DB' : '#E74C3C')
-            .setDescription(`**Game:** ${challenge.gameTitle}`);
-        
-        // Add description if available
-        if (challenge.description) {
-            embed.addFields({ name: 'Description', value: challenge.description });
-        }
-        
-        // Add challenge details
-        embed.addFields(
-            { name: 'Challenge Details', 
-              value: `**Wager:** ${challenge.wagerAmount} GP each\n` +
-                     `**Duration:** ${durationDays} days\n` +
-                     `**Started:** ${challenge.startDate.toLocaleString()}\n` +
-                     `**Ends:** ${challenge.endDate.toLocaleString()} (${timeRemaining})\n\n` +
-                     `**Current Status:** ${winningText}`
-            }
-        );
+            .setColor(challenge.endDate > now ? '#3498DB' : '#E74C3C');
         
         // Add thumbnail if available
         if (challenge.iconUrl) {
             embed.setThumbnail(`https://retroachievements.org${challenge.iconUrl}`);
         }
         
-        // Add current scores
-        embed.addFields({
-            name: '📊 Current Scores',
-            value: 
-                `**${challenge.challengerUsername}:** ${challengerScore.formattedScore}\n` +
-                `**${challenge.challengeeUsername}:** ${challengeeScore.formattedScore}`
-        });
-        
-        // Add betting info - updated for pot betting system
-        embed.addFields({
-            name: '💰 Betting Information',
-            value: 
-                `**Total Prize Pool:** ${totalPool} GP\n` +
-                `• Base Wager: ${wagerPool} GP\n` +
-                `• Betting Pool: ${betPool} GP\n\n` +
-                `**Bets Placed:** ${totalBets} total bets\n` +
-                `• On ${challenge.challengerUsername}: ${challengerBets} bets (${challengerBetAmount} GP)\n` +
-                `• On ${challenge.challengeeUsername}: ${challengeeBets} bets (${challengeeBetAmount} GP)\n\n` +
-                `Use \`/arena\` and select "Place a Bet" to bet on the outcome!\n` +
-                `**Pot Betting:** If your player wins, you get your bet back plus a share of the opposing bets proportional to your bet amount.`
-        });
+        // Handle open challenges with participants separately
+        if (challenge.isOpenChallenge && challenge.participants && challenge.participants.length > 0) {
+            // Set title for open challenge
+            embed.setTitle(`🏟️ Open Challenge: ${challenge.gameTitle}`);
+            embed.setDescription(`**Creator:** ${challenge.challengerUsername}`);
+            
+            // Add description if available
+            if (challenge.description) {
+                embed.addFields({ name: 'Description', value: challenge.description });
+            }
+            
+            // Add challenge details
+            embed.addFields(
+                { name: 'Challenge Details', 
+                  value: `**Wager:** ${challenge.wagerAmount} GP per player\n` +
+                         `**Duration:** ${Math.floor(challenge.durationHours / 24)} days\n` +
+                         `**Started:** ${challenge.startDate.toLocaleString()}\n` +
+                         `**Ends:** ${challenge.endDate.toLocaleString()} (${timeRemaining})\n\n` +
+                         `**Participants:** ${challenge.participants.length + 1} total` // +1 for the creator
+                }
+            );
+            
+            // Cache participant scores
+            const participantScores = new Map();
+            
+            // Get scores for participants from our API calls - implemented elsewhere
+            if (challenge.participants) {
+                challenge.participants.forEach(participant => {
+                    participantScores.set(participant.username.toLowerCase(), participant.score);
+                });
+            }
+            
+            // Add participants with scores
+            let participantsText = '';
+            
+            // Add creator
+            participantsText += `• **${challenge.challengerUsername}** (Creator): ${challengerScore.formattedScore}\n`;
+            
+            // Add each participant
+            challenge.participants.forEach(participant => {
+                // Get participant score from our cached scores if available
+                const participantScore = participantScores.get(participant.username.toLowerCase()) || 'No score yet';
+                participantsText += `• **${participant.username}**: ${participantScore}\n`;
+            });
+            
+            embed.addFields({
+                name: `Participants (${challenge.participants.length + 1})`, 
+                value: participantsText
+            });
+            
+            // Calculate total pot
+            const wagerPool = challenge.wagerAmount * (challenge.participants.length + 1); // all participants + creator
+            const betPool = challenge.bets ? challenge.bets.reduce((sum, bet) => sum + bet.betAmount, 0) : 0;
+            const totalPool = wagerPool + betPool;
+            
+            // Add betting info section
+            embed.addFields({
+                name: '💰 Betting Information',
+                value: 
+                    `**Total Prize Pool:** ${totalPool} GP\n` +
+                    `• Wager Pool: ${wagerPool} GP\n` +
+                    `• Betting Pool: ${betPool} GP\n\n` +
+                    `**Bets Placed:** ${challenge.bets ? challenge.bets.length : 0} total bets\n\n` +
+                    `Use \`/arena\` and select "Place a Bet" to bet on the outcome!\n` +
+                    `**Pot Betting:** If your player wins, you get your bet back plus a share of the opposing bets proportional to your bet amount.`
+            });
+            
+        } else {
+            // Regular 1v1 challenge handling
+            
+            // Determine who's winning
+            if (challengerScore.value > challengeeScore.value) {
+                winningText = `${challenge.challengerUsername} is in the lead!`;
+                winningUser = challenge.challengerUsername;
+            } else if (challengeeScore.value > challengerScore.value) {
+                winningText = `${challenge.challengeeUsername} is in the lead!`;
+                winningUser = challenge.challengeeUsername;
+            }
+            
+            // Calculate bet distribution
+            const totalBets = challenge.bets ? challenge.bets.length : 0;
+            let challengerBets = 0;
+            let challengeeBets = 0;
+            let challengerBetAmount = 0;
+            let challengeeBetAmount = 0;
+            
+            if (challenge.bets) {
+                challenge.bets.forEach(bet => {
+                    if (bet.targetPlayer === challenge.challengerUsername) {
+                        challengerBets++;
+                        challengerBetAmount += bet.betAmount;
+                    } else if (bet.targetPlayer === challenge.challengeeUsername) {
+                        challengeeBets++;
+                        challengeeBetAmount += bet.betAmount;
+                    }
+                });
+            }
+            
+            // Calculate total pot (wagers + bets)
+            const wagerPool = challenge.wagerAmount * 2;
+            const betPool = challengerBetAmount + challengeeBetAmount;
+            const totalPool = wagerPool + betPool;
+            
+            // Calculate days from hours for display
+            const durationDays = Math.floor(challenge.durationHours / 24);
+            
+            // Set title and description
+            embed.setTitle(`🏟️ Arena Challenge: ${challenge.challengerUsername} vs ${challenge.challengeeUsername}`);
+            embed.setDescription(`**Game:** ${challenge.gameTitle}`);
+            
+            // Add description if available
+            if (challenge.description) {
+                embed.addFields({ name: 'Description', value: challenge.description });
+            }
+            
+            // Add challenge details
+            embed.addFields(
+                { name: 'Challenge Details', 
+                  value: `**Wager:** ${challenge.wagerAmount} GP each\n` +
+                         `**Duration:** ${durationDays} days\n` +
+                         `**Started:** ${challenge.startDate.toLocaleString()}\n` +
+                         `**Ends:** ${challenge.endDate.toLocaleString()} (${timeRemaining})\n\n` +
+                         `**Current Status:** ${winningText}`
+                }
+            );
+            
+            // Add current scores
+            embed.addFields({
+                name: '📊 Current Scores',
+                value: 
+                    `**${challenge.challengerUsername}:** ${challengerScore.formattedScore}\n` +
+                    `**${challenge.challengeeUsername}:** ${challengeeScore.formattedScore}`
+            });
+            
+            // Add betting info
+            embed.addFields({
+                name: '💰 Betting Information',
+                value: 
+                    `**Total Prize Pool:** ${totalPool} GP\n` +
+                    `• Base Wager: ${wagerPool} GP\n` +
+                    `• Betting Pool: ${betPool} GP\n\n` +
+                    `**Bets Placed:** ${totalBets} total bets\n` +
+                    `• On ${challenge.challengerUsername}: ${challengerBets} bets (${challengerBetAmount} GP)\n` +
+                    `• On ${challenge.challengeeUsername}: ${challengeeBets} bets (${challengeeBetAmount} GP)\n\n` +
+                    `Use \`/arena\` and select "Place a Bet" to bet on the outcome!\n` +
+                    `**Pot Betting:** If your player wins, you get your bet back plus a share of the opposing bets proportional to your bet amount.`
+            });
+        }
         
         embed.setTimestamp();
         return embed;
@@ -966,6 +1173,73 @@ async notifyChallengeUpdate(challenge) {
         }
     }
 
+    // Helper method to get a participant's score from the leaderboard
+    async getParticipantScore(challenge, participantUsername) {
+        try {
+            // Fetch leaderboard entries
+            const batch1 = await retroAPI.getLeaderboardEntriesDirect(challenge.leaderboardId, 0, 500);
+            const batch2 = await retroAPI.getLeaderboardEntriesDirect(challenge.leaderboardId, 500, 500);
+            
+            // Combine the batches
+            let rawEntries = [];
+            
+            // Process batches similar to fetchLeaderboardPositions
+            if (batch1) {
+                if (Array.isArray(batch1)) {
+                    rawEntries = [...rawEntries, ...batch1];
+                } else if (batch1.Results && Array.isArray(batch1.Results)) {
+                    rawEntries = [...rawEntries, ...batch1.Results];
+                }
+            }
+            
+            if (batch2) {
+                if (Array.isArray(batch2)) {
+                    rawEntries = [...rawEntries, ...batch2];
+                } else if (batch2.Results && Array.isArray(batch2.Results)) {
+                    rawEntries = [...rawEntries, ...batch2.Results];
+                }
+            }
+            
+            // Process the entries with appropriate handling for different formats
+            const leaderboardEntries = rawEntries.map(entry => {
+                // Standard properties that most entries have
+                const user = entry.User || entry.user || '';
+                const score = entry.Score || entry.score || entry.Value || entry.value || 0;
+                const formattedScore = entry.FormattedScore || entry.formattedScore || entry.ScoreFormatted || score.toString();
+                const rank = entry.Rank || entry.rank || 0;
+                
+                return {
+                    ApiRank: parseInt(rank, 10),
+                    User: user.trim(),
+                    RawScore: score,
+                    FormattedScore: formattedScore.toString().trim() || score.toString(),
+                    Value: parseFloat(score) || 0
+                };
+            });
+            
+            // Find entry for this participant
+            const participantEntry = leaderboardEntries.find(entry => 
+                entry.User.toLowerCase() === participantUsername.toLowerCase()
+            );
+            
+            // Format the score
+            return {
+                exists: !!participantEntry,
+                formattedScore: participantEntry ? participantEntry.FormattedScore : 'No entry',
+                rank: participantEntry ? participantEntry.ApiRank : 0,
+                value: participantEntry ? participantEntry.Value : 0
+            };
+        } catch (error) {
+            console.error(`Error fetching leaderboard position for ${participantUsername}:`, error);
+            return {
+                exists: false,
+                formattedScore: 'Error fetching score',
+                rank: 0,
+                value: 0
+            };
+        }
+    }
+
     async checkCompletedChallenges() {
         try {
             // Find challenges that have ended but haven't been marked as completed
@@ -995,51 +1269,234 @@ async notifyChallengeUpdate(challenge) {
 
     async processCompletedChallenge(challenge) {
         try {
-            // Get final scores
-            const [challengerScore, challengeeScore] = await this.getChallengersScores(challenge);
-            
-            // Determine the winner
-            let winnerId, winnerUsername, loserId, loserUsername;
-            
-            if (challengerScore.value > challengeeScore.value) {
-                winnerId = challenge.challengerId;
-                winnerUsername = challenge.challengerUsername;
-                loserId = challenge.challengeeId;
-                loserUsername = challenge.challengeeUsername;
-            } else if (challengeeScore.value > challengerScore.value) {
-                winnerId = challenge.challengeeId;
-                winnerUsername = challenge.challengeeUsername;
-                loserId = challenge.challengerId;
-                loserUsername = challenge.challengerUsername;
-            } else {
-                // It's a tie - no winner
-                winnerId = null;
-                winnerUsername = 'Tie';
+            // For open challenges with multiple participants
+            if (challenge.isOpenChallenge && challenge.participants && challenge.participants.length > 0) {
+                // Get scores for all participants
+                const participantScores = new Map();
+                
+                // Get challenger (creator) score
+                const [challengerScore, _] = await this.getChallengersScores(challenge);
+                
+                // Add challenger to scores map
+                participantScores.set(challenge.challengerUsername.toLowerCase(), {
+                    exists: challengerScore.value > 0,
+                    formattedScore: challengerScore.formattedScore,
+                    value: challengerScore.value
+                });
+                
+                // Store the challenger score
+                challenge.challengerScore = challengerScore.formattedScore;
+                
+                // Get scores for each participant
+                for (const participant of challenge.participants) {
+                    try {
+                        // Fetch the participant's leaderboard entry
+                        const entry = await this.getParticipantScore(challenge, participant.username);
+                        participantScores.set(participant.username.toLowerCase(), entry);
+                        
+                        // Update the participant's score in the challenge
+                        participant.score = entry.formattedScore;
+                    } catch (scoreError) {
+                        console.error(`Error getting score for participant ${participant.username}:`, scoreError);
+                        // Default score if not found
+                        participantScores.set(participant.username.toLowerCase(), {
+                            exists: false,
+                            formattedScore: 'No score',
+                            value: 0
+                        });
+                    }
+                }
+                
+                // Determine winner (highest score/lowest time)
+                let winnerId = null;
+                let winnerUsername = 'No Winner';
+                let bestScore = null;
+                
+                // Check if it's a time-based challenge (lower is better)
+                const isTimeBased = 
+                    challenge.gameTitle.toLowerCase().includes('racing') || 
+                    challengerScore.formattedScore.includes(':');
+                
+                // Start with the creator as potential winner
+                if (challengerScore.value !== 0) {
+                    winnerId = challenge.challengerId;
+                    winnerUsername = challenge.challengerUsername;
+                    bestScore = challengerScore.value;
+                }
+                
+                // Check each participant
+                for (const participant of challenge.participants) {
+                    const participantScore = participantScores.get(participant.username.toLowerCase());
+                    if (!participantScore || participantScore.value === 0) continue;
+                    
+                    if (bestScore === null || 
+                        (isTimeBased && participantScore.value < bestScore) || 
+                        (!isTimeBased && participantScore.value > bestScore)) {
+                        winnerId = participant.userId;
+                        winnerUsername = participant.username;
+                        bestScore = participantScore.value;
+                    }
+                }
+                
+                // Calculate total pot (creator + all participants)
+                const totalWagered = challenge.wagerAmount * (1 + challenge.participants.length);
+                
+                // Award pot to winner
+                if (winnerId) {
+                    const winner = await User.findOne({ discordId: winnerId });
+                    if (winner) {
+                        winner.gp = (winner.gp || 0) + totalWagered;
+                        winner.arenaStats = winner.arenaStats || {};
+                        winner.arenaStats.wins = (winner.arenaStats.wins || 0) + 1;
+                        winner.arenaStats.gpWon = (winner.arenaStats.gpWon || 0) + totalWagered - challenge.wagerAmount;
+                        await winner.save();
+                    }
+                }
+                
+                // Update challenge data
+                challenge.status = 'completed';
+                challenge.winnerId = winnerId;
+                challenge.winnerUsername = winnerUsername;
+                
+                // Save the updated challenge
+                await challenge.save();
+                
+                // Process bet payouts based on winner
+                await this.processBetsForOpenChallenge(challenge, winnerId, winnerUsername);
+                
+                // Notify about the completed challenge
+                await this.notifyChallengeUpdate(challenge);
+                
+                // Update the feed message
+                await this.updateCompletedFeed(challenge);
+                
+                console.log(`Processed completed open challenge ${challenge._id}: ${winnerUsername} won`);
+            } 
+            else {
+                // Original code for regular 1v1 challenges
+                
+                // Get final scores
+                const [challengerScore, challengeeScore] = await this.getChallengersScores(challenge);
+                
+                // Determine the winner
+                let winnerId, winnerUsername, loserId, loserUsername;
+                
+                if (challengerScore.value > challengeeScore.value) {
+                    winnerId = challenge.challengerId;
+                    winnerUsername = challenge.challengerUsername;
+                    loserId = challenge.challengeeId;
+                    loserUsername = challenge.challengeeUsername;
+                } else if (challengeeScore.value > challengerScore.value) {
+                    winnerId = challenge.challengeeId;
+                    winnerUsername = challenge.challengeeUsername;
+                    loserId = challenge.challengerId;
+                    loserUsername = challenge.challengerUsername;
+                } else {
+                    // It's a tie - no winner
+                    winnerId = null;
+                    winnerUsername = 'Tie';
+                }
+                
+                // Update challenge data
+                challenge.status = 'completed';
+                challenge.challengerScore = challengerScore.formattedScore;
+                challenge.challengeeScore = challengeeScore.formattedScore;
+                challenge.winnerId = winnerId;
+                challenge.winnerUsername = winnerUsername;
+                
+                // Save the updated challenge
+                await challenge.save();
+                
+                // Process wager transfers and bet payouts
+                await this.processPayouts(challenge, winnerId, winnerUsername);
+                
+                // Notify about the completed challenge
+                await this.notifyChallengeUpdate(challenge);
+                
+                // Update the feed message
+                await this.updateCompletedFeed(challenge);
+                
+                console.log(`Processed completed challenge ${challenge._id}: ${winnerUsername} won`);
             }
-            
-            // Update challenge data
-            challenge.status = 'completed';
-            challenge.challengerScore = challengerScore.formattedScore;
-            challenge.challengeeScore = challengeeScore.formattedScore;
-            challenge.winnerId = winnerId;
-            challenge.winnerUsername = winnerUsername;
-            
-            // Save the updated challenge
-            await challenge.save();
-            
-            // Process wager transfers and bet payouts
-            await this.processPayouts(challenge, winnerId, winnerUsername);
-            
-            // Notify about the completed challenge
-            await this.notifyChallengeUpdate(challenge);
-            
-            // Update the feed message
-            await this.updateCompletedFeed(challenge);
-            
-            console.log(`Processed completed challenge ${challenge._id}: ${winnerUsername} won`);
         } catch (error) {
             console.error(`Error processing completed challenge ${challenge._id}:`, error);
         }
+    }
+
+    // Method to Handle Bets on Open Challenges
+    async processBetsForOpenChallenge(challenge, winnerId, winnerUsername) {
+        // Skip if no bets were placed
+        if (!challenge.bets || challenge.bets.length === 0) return;
+        
+        // If no winner, return all bets
+        if (!winnerId) {
+            for (const bet of challenge.bets) {
+                const bettor = await User.findOne({ discordId: bet.userId });
+                if (bettor) {
+                    bettor.gp = (bettor.gp || 0) + bet.betAmount;
+                    await bettor.save();
+                }
+            }
+            return;
+        }
+        
+        // Separate winning and losing bets
+        const winningBets = challenge.bets.filter(bet => bet.targetPlayer === winnerUsername);
+        const losingBets = challenge.bets.filter(bet => bet.targetPlayer !== winnerUsername);
+        
+        // Calculate total bet amounts
+        const totalWinningBetsAmount = winningBets.reduce((total, bet) => total + bet.betAmount, 0);
+        const totalLosingBetsAmount = losingBets.reduce((total, bet) => total + bet.betAmount, 0);
+        
+        // Track total house contribution
+        let totalHouseContribution = 0;
+        
+        // Process winning bets
+        for (const bet of winningBets) {
+            try {
+                const bettor = await User.findOne({ discordId: bet.userId });
+                if (!bettor) continue;
+                
+                let payoutAmount = bet.betAmount; // Start with getting the original bet back
+                let houseContribution = 0;
+                
+                // If no losing bets, apply 50% house guarantee
+                if (totalLosingBetsAmount === 0) {
+                    houseContribution = Math.floor(bet.betAmount * 0.5);
+                    payoutAmount += houseContribution;
+                } 
+                // Otherwise, distribute losing bets proportionally
+                else {
+                    const proportion = bet.betAmount / totalWinningBetsAmount;
+                    const shareOfLosingBets = Math.floor(totalLosingBetsAmount * proportion);
+                    payoutAmount += shareOfLosingBets;
+                }
+                
+                // Track total house contribution
+                totalHouseContribution += houseContribution;
+                
+                // Add payout to user
+                bettor.gp = (bettor.gp || 0) + payoutAmount;
+                bettor.arenaStats = bettor.arenaStats || {};
+                bettor.arenaStats.betsWon = (bettor.arenaStats.betsWon || 0) + 1;
+                bettor.arenaStats.gpWon = (bettor.arenaStats.gpWon || 0) + (payoutAmount - bet.betAmount);
+                
+                // Mark bet as paid
+                bet.paid = true;
+                bet.payout = payoutAmount;
+                bet.houseContribution = houseContribution;
+                
+                await bettor.save();
+            } catch (error) {
+                console.error(`Error processing bet for user ${bet.userId}:`, error);
+            }
+        }
+        
+        // Store the house contribution in the challenge for records
+        challenge.houseContribution = totalHouseContribution;
+        
+        // Save the challenge with updated bet info
+        await challenge.save();
     }
 
     async processPayouts(challenge, winnerId, winnerUsername) {
@@ -1182,94 +1639,201 @@ async notifyChallengeUpdate(challenge) {
                 
                 // Create a completed challenge embed
                 const embed = new EmbedBuilder()
-                    .setTitle(`🏁 Completed Challenge: ${challenge.challengerUsername} vs ${challenge.challengeeUsername}`)
-                    .setColor('#27AE60')
-                    .setDescription(`**Game:** ${challenge.gameTitle}`);
+                    .setColor('#27AE60');
                 
-                // Add description if available
-                if (challenge.description) {
-                    embed.addFields({ name: 'Description', value: challenge.description });
-                }
-                
-                // Add challenge details
-                embed.addFields({
-                    name: 'Challenge Details',
-                    value: `**Wager:** ${challenge.wagerAmount} GP each\n` +
-                        `**Duration:** ${durationDays} days\n` +
-                        `**Started:** ${challenge.startDate.toLocaleString()}\n` +
-                        `**Ended:** ${challenge.endDate.toLocaleString()}\n\n` +
-                        `**Result:** ${challenge.winnerUsername === 'Tie' ? 'The challenge ended in a tie!' : `${challenge.winnerUsername} won!`}`
-                });
-                
-                // Add thumbnail if available
-                if (challenge.iconUrl) {
-                    embed.setThumbnail(`https://retroachievements.org${challenge.iconUrl}`);
-                }
-                
-                // Add final scores
-                embed.addFields({
-                    name: '📊 Final Scores',
-                    value: 
-                        `**${challenge.challengerUsername}:** ${challenge.challengerScore}\n` +
-                        `**${challenge.challengeeUsername}:** ${challenge.challengeeScore}`
-                });
-                
-                // Add betting results - UPDATED FOR POT BETTING
-                if (challenge.bets && challenge.bets.length > 0) {
-                    if (challenge.winnerUsername !== 'Tie') {
-                        // Get winning bets
-                        const winningBets = challenge.bets.filter(bet => bet.targetPlayer === challenge.winnerUsername);
-                        const losingBets = challenge.bets.filter(bet => bet.targetPlayer !== challenge.winnerUsername);
-                        
-                        // Calculate total amounts
-                        const totalWinningBetsAmount = winningBets.reduce((total, bet) => total + bet.betAmount, 0);
-                        const totalLosingBetsAmount = losingBets.reduce((total, bet) => total + bet.betAmount, 0);
-                        
-                        // Show house contribution if any
-                        const houseContribution = challenge.houseContribution || 0;
-                        
-                        // Create betting results text
-                        let bettingText = `**Total Bets:** ${challenge.bets.length} (${challenge.bets.reduce((sum, bet) => sum + bet.betAmount, 0)} GP)\n` +
-                                        `**Winning Bets:** ${winningBets.length} bets totaling ${totalWinningBetsAmount} GP\n` +
-                                        `**Losing Bets:** ${losingBets.length} bets totaling ${totalLosingBetsAmount} GP\n`;
-                        
-                        if (houseContribution > 0) {
-                            bettingText += `**House Contribution:** ${houseContribution} GP (50% profit for sole bettors)\n`;
-                        }
-                        
-                        bettingText += '\n';
-                        
-                        // List top bet winners
-                        if (winningBets.length > 0) {
-                            bettingText += '**Top Bet Winners:**\n';
+                // Handle open challenges differently
+                if (challenge.isOpenChallenge && challenge.participants && challenge.participants.length > 0) {
+                    // Set title for open challenge
+                    embed.setTitle(`🏁 Completed Open Challenge: ${challenge.gameTitle}`);
+                    embed.setDescription(`**Creator:** ${challenge.challengerUsername}`);
+                    
+                    // Add description if available
+                    if (challenge.description) {
+                        embed.addFields({ name: 'Description', value: challenge.description });
+                    }
+                    
+                    // Calculate participant count and total pot
+                    const participantCount = challenge.participants.length + 1; // +1 for creator
+                    const wagerPool = challenge.wagerAmount * participantCount;
+                    
+                    // Add challenge details
+                    embed.addFields({
+                        name: 'Challenge Details',
+                        value: `**Wager:** ${challenge.wagerAmount} GP per player\n` +
+                            `**Total Participants:** ${participantCount}\n` +
+                            `**Duration:** ${durationDays} days\n` +
+                            `**Started:** ${challenge.startDate.toLocaleString()}\n` +
+                            `**Ended:** ${challenge.endDate.toLocaleString()}\n\n` +
+                            `**Result:** ${challenge.winnerUsername === 'Tie' || !challenge.winnerUsername ? 
+                                'No clear winner determined.' : 
+                                `${challenge.winnerUsername} won!`}`
+                    });
+                    
+                    // Add thumbnail if available
+                    if (challenge.iconUrl) {
+                        embed.setThumbnail(`https://retroachievements.org${challenge.iconUrl}`);
+                    }
+                    
+                    // Add final scores for all participants
+                    let scoresText = `**${challenge.challengerUsername}** (Creator): ${challenge.challengerScore || 'No score'}\n`;
+                    
+                    challenge.participants.forEach(participant => {
+                        scoresText += `**${participant.username}**: ${participant.score || 'No score'}\n`;
+                    });
+                    
+                    embed.addFields({
+                        name: '📊 Final Scores',
+                        value: scoresText
+                    });
+                    
+                    // Add betting results for open challenges
+                    if (challenge.bets && challenge.bets.length > 0) {
+                        if (challenge.winnerUsername && challenge.winnerUsername !== 'Tie' && challenge.winnerUsername !== 'No Winner') {
+                            // Get winning bets
+                            const winningBets = challenge.bets.filter(bet => bet.targetPlayer === challenge.winnerUsername);
+                            const losingBets = challenge.bets.filter(bet => bet.targetPlayer !== challenge.winnerUsername);
                             
-                            // Sort by payout amount (highest first)
-                            const sortedBets = [...winningBets]
-                                .sort((a, b) => (b.payout || 0) - (a.payout || 0));
+                            // Calculate total amounts
+                            const totalWinningBetsAmount = winningBets.reduce((total, bet) => total + bet.betAmount, 0);
+                            const totalLosingBetsAmount = losingBets.reduce((total, bet) => total + bet.betAmount, 0);
                             
-                            // Show top 3 or fewer
-                            const topBets = sortedBets.slice(0, 3);
-                            topBets.forEach((bet, index) => {
-                                // Use the saved payout amount
-                                const payoutAmount = bet.payout || 0;
-                                const profit = payoutAmount - bet.betAmount;
+                            // Show house contribution if any
+                            const houseContribution = challenge.houseContribution || 0;
+                            
+                            // Create betting results text
+                            let bettingText = `**Total Bets:** ${challenge.bets.length} (${challenge.bets.reduce((sum, bet) => sum + bet.betAmount, 0)} GP)\n` +
+                                            `**Winning Bets:** ${winningBets.length} bets totaling ${totalWinningBetsAmount} GP\n` +
+                                            `**Losing Bets:** ${losingBets.length} bets totaling ${totalLosingBetsAmount} GP\n`;
+                            
+                            if (houseContribution > 0) {
+                                bettingText += `**House Contribution:** ${houseContribution} GP (50% profit for sole bettors)\n`;
+                            }
+                            
+                            bettingText += '\n';
+                            
+                            // List top bet winners
+                            if (winningBets.length > 0) {
+                                bettingText += '**Top Bet Winners:**\n';
                                 
-                                bettingText += `${index + 1}. ${bet.raUsername}: Bet ${bet.betAmount} GP, won ${payoutAmount} GP (profit: ${profit} GP)\n`;
+                                // Sort by payout amount (highest first)
+                                const sortedBets = [...winningBets]
+                                    .sort((a, b) => (b.payout || 0) - (a.payout || 0));
+                                
+                                // Show top 3 or fewer
+                                const topBets = sortedBets.slice(0, 3);
+                                topBets.forEach((bet, index) => {
+                                    // Use the saved payout amount
+                                    const payoutAmount = bet.payout || 0;
+                                    const profit = payoutAmount - bet.betAmount;
+                                    
+                                    bettingText += `${index + 1}. ${bet.raUsername}: Bet ${bet.betAmount} GP, won ${payoutAmount} GP (profit: ${profit} GP)\n`;
+                                });
+                            } else {
+                                bettingText += 'No winning bets were placed.';
+                            }
+                            
+                            embed.addFields({
+                                name: '💰 Betting Results',
+                                value: bettingText
                             });
                         } else {
-                            bettingText += 'No winning bets were placed.';
+                            // For ties or no winner, just show basic bet info
+                            embed.addFields({
+                                name: '💰 Betting Results',
+                                value: `Since there was no clear winner, all ${challenge.bets.length} bets (${challenge.bets.reduce((sum, bet) => sum + bet.betAmount, 0)} GP) were returned to their owners.`
+                            });
                         }
-                        
-                        embed.addFields({
-                            name: '💰 Betting Results',
-                            value: bettingText
-                        });
-                    } else {
-                        // For ties, just show basic bet info
-                        embed.addFields({
-                            name: '💰 Betting Results',
-                            value: `Since the challenge ended in a tie, all ${challenge.bets.length} bets (${challenge.bets.reduce((sum, bet) => sum + bet.betAmount, 0)} GP) were returned to their owners.`
-                        });
+                    }
+                } else {
+                    // Regular 1v1 challenge completion (existing code)
+                    embed.setTitle(`🏁 Completed Challenge: ${challenge.challengerUsername} vs ${challenge.challengeeUsername}`);
+                    embed.setDescription(`**Game:** ${challenge.gameTitle}`);
+                    
+                    // Add description if available
+                    if (challenge.description) {
+                        embed.addFields({ name: 'Description', value: challenge.description });
+                    }
+                    
+                    // Add challenge details
+                    embed.addFields({
+                        name: 'Challenge Details',
+                        value: `**Wager:** ${challenge.wagerAmount} GP each\n` +
+                            `**Duration:** ${durationDays} days\n` +
+                            `**Started:** ${challenge.startDate.toLocaleString()}\n` +
+                            `**Ended:** ${challenge.endDate.toLocaleString()}\n\n` +
+                            `**Result:** ${challenge.winnerUsername === 'Tie' ? 'The challenge ended in a tie!' : `${challenge.winnerUsername} won!`}`
+                    });
+                    
+                    // Add thumbnail if available
+                    if (challenge.iconUrl) {
+                        embed.setThumbnail(`https://retroachievements.org${challenge.iconUrl}`);
+                    }
+                    
+                    // Add final scores
+                    embed.addFields({
+                        name: '📊 Final Scores',
+                        value: 
+                            `**${challenge.challengerUsername}:** ${challenge.challengerScore}\n` +
+                            `**${challenge.challengeeUsername}:** ${challenge.challengeeScore}`
+                    });
+                    
+                    // Add betting results
+                    if (challenge.bets && challenge.bets.length > 0) {
+                        if (challenge.winnerUsername !== 'Tie') {
+                            // Get winning bets
+                            const winningBets = challenge.bets.filter(bet => bet.targetPlayer === challenge.winnerUsername);
+                            const losingBets = challenge.bets.filter(bet => bet.targetPlayer !== challenge.winnerUsername);
+                            
+                            // Calculate total amounts
+                            const totalWinningBetsAmount = winningBets.reduce((total, bet) => total + bet.betAmount, 0);
+                            const totalLosingBetsAmount = losingBets.reduce((total, bet) => total + bet.betAmount, 0);
+                            
+                            // Show house contribution if any
+                            const houseContribution = challenge.houseContribution || 0;
+                            
+                            // Create betting results text
+                            let bettingText = `**Total Bets:** ${challenge.bets.length} (${challenge.bets.reduce((sum, bet) => sum + bet.betAmount, 0)} GP)\n` +
+                                            `**Winning Bets:** ${winningBets.length} bets totaling ${totalWinningBetsAmount} GP\n` +
+                                            `**Losing Bets:** ${losingBets.length} bets totaling ${totalLosingBetsAmount} GP\n`;
+                            
+                            if (houseContribution > 0) {
+                                bettingText += `**House Contribution:** ${houseContribution} GP (50% profit for sole bettors)\n`;
+                            }
+                            
+                            bettingText += '\n';
+                            
+                            // List top bet winners
+                            if (winningBets.length > 0) {
+                                bettingText += '**Top Bet Winners:**\n';
+                                
+                                // Sort by payout amount (highest first)
+                                const sortedBets = [...winningBets]
+                                    .sort((a, b) => (b.payout || 0) - (a.payout || 0));
+                                
+                                // Show top 3 or fewer
+                                const topBets = sortedBets.slice(0, 3);
+                                topBets.forEach((bet, index) => {
+                                    // Use the saved payout amount
+                                    const payoutAmount = bet.payout || 0;
+                                    const profit = payoutAmount - bet.betAmount;
+                                    
+                                    bettingText += `${index + 1}. ${bet.raUsername}: Bet ${bet.betAmount} GP, won ${payoutAmount} GP (profit: ${profit} GP)\n`;
+                                });
+                            } else {
+                                bettingText += 'No winning bets were placed.';
+                            }
+                            
+                            embed.addFields({
+                                name: '💰 Betting Results',
+                                value: bettingText
+                            });
+                        } else {
+                            // For ties, just show basic bet info
+                            embed.addFields({
+                                name: '💰 Betting Results',
+                                value: `Since the challenge ended in a tie, all ${challenge.bets.length} bets (${challenge.bets.reduce((sum, bet) => sum + bet.betAmount, 0)} GP) were returned to their owners.`
+                            });
+                        }
                     }
                 }
                 
