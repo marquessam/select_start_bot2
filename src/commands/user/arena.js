@@ -230,16 +230,13 @@ export default {
                     });
                 }
                 
-                // Calculate days from hours for display
-                const durationDays = Math.floor(challenge.durationHours / 24);
-                
-                // Show detailed challenge info
+                // Show detailed challenge info with fixed duration of 1 week
                 embed.setDescription(
                     `**${challenge.challengerUsername}** has challenged you to compete in:\n\n` +
                     `**${challenge.gameTitle}**\n\n` +
                     `**Description:** ${challenge.description || 'No description provided'}\n\n` +
                     `**Wager:** ${challenge.wagerAmount} GP\n` +
-                    `**Duration:** ${durationDays} days\n\n` +
+                    `**Duration:** 1 week\n\n` +
                     `Do you accept this challenge?`
                 );
                 
@@ -278,8 +275,6 @@ export default {
             // Multiple challenges - show a selection menu
             else {
                 pendingChallenges.forEach((challenge, index) => {
-                    const durationDays = Math.floor(challenge.durationHours / 24);
-                    
                     embed.addFields({
                         name: `${index + 1}. From ${challenge.challengerUsername}`,
                         value: `**Game:** ${challenge.gameTitle}\n**Wager:** ${challenge.wagerAmount} GP`
@@ -292,11 +287,9 @@ export default {
                     .setPlaceholder('Select a challenge to respond to');
                     
                 pendingChallenges.forEach((challenge) => {
-                    const durationDays = Math.floor(challenge.durationHours / 24);
-                    
                     selectMenu.addOptions({
                         label: `From ${challenge.challengerUsername} - ${challenge.gameTitle}`,
-                        description: `Wager: ${challenge.wagerAmount} GP | Duration: ${durationDays} days`,
+                        description: `Wager: ${challenge.wagerAmount} GP | Duration: 1 week`,
                         value: challenge._id.toString()
                     });
                 });
@@ -363,11 +356,11 @@ export default {
                 .setRequired(true)
                 .setStyle(TextInputStyle.Short);
                 
-            // Input for description (like in adminArcade)
+            // Input for description (updated with guidance about competition type)
             const descriptionInput = new TextInputBuilder()
                 .setCustomId('description')
                 .setLabel('Challenge Description')
-                .setPlaceholder('Describe the challenge or special rules')
+                .setPlaceholder('Explain how to compete (e.g., fastest time, highest score) and any special rules')
                 .setRequired(true)
                 .setStyle(TextInputStyle.Paragraph);
                 
@@ -379,21 +372,13 @@ export default {
                 .setRequired(true)
                 .setStyle(TextInputStyle.Short);
                 
-            // Input for challenge duration in days - embedded in description now
-            const durationInput = new TextInputBuilder()
-                .setCustomId('duration_days')
-                .setLabel('Duration in Days (1-14)')
-                .setPlaceholder('e.g. 7 for one week')
-                .setRequired(true)
-                .setStyle(TextInputStyle.Short);
-                
-            // Add inputs to modal
+            // Add inputs to modal - now with 5 inputs (removed duration)
             modal.addComponents(
                 new ActionRowBuilder().addComponents(usernameInput),
                 new ActionRowBuilder().addComponents(gameIdInput),
                 new ActionRowBuilder().addComponents(leaderboardInput),
                 new ActionRowBuilder().addComponents(descriptionInput),
-                new ActionRowBuilder().addComponents(durationInput)
+                new ActionRowBuilder().addComponents(wagerInput)
             );
             
             // Show the modal directly without deferring first
@@ -414,7 +399,7 @@ export default {
                         new ActionRowBuilder().addComponents(gameIdInput.setCustomId('game_id_recovery')),
                         new ActionRowBuilder().addComponents(leaderboardInput.setCustomId('leaderboard_id_recovery')),
                         new ActionRowBuilder().addComponents(descriptionInput.setCustomId('description_recovery')),
-                        new ActionRowBuilder().addComponents(durationInput.setCustomId('duration_days_recovery'))
+                        new ActionRowBuilder().addComponents(wagerInput.setCustomId('wager_amount_recovery'))
                     );
                     
                     // Try a different approach - reply with a button that shows the modal
@@ -474,17 +459,13 @@ export default {
             const description = interaction.fields.getTextInputValue('description');
             const wagerAmount = parseInt(interaction.fields.getTextInputValue('wager_amount'), 10);
             
-            // Get duration in days and convert to hours
-            const durationDays = parseInt(interaction.fields.getTextInputValue('duration_days'), 10);
+            // Set fixed duration of 7 days (1 week)
+            const durationDays = 7;
             const durationHours = durationDays * 24;
             
             // Validate inputs
             if (isNaN(wagerAmount) || wagerAmount < 10) {
                 return interaction.editReply('Wager amount must be at least 10 GP.');
-            }
-            
-            if (isNaN(durationDays) || durationDays < 1 || durationDays > 14) {
-                return interaction.editReply('Duration must be between 1 and 14 days.');
             }
             
             if (isNaN(gameId)) {
@@ -614,7 +595,7 @@ export default {
                         `**Game:** ${gameInfo.title} (${gameInfo.consoleName || 'Unknown'})\n` +
                         `**Description:** ${description}\n` +
                         `**Wager:** ${wagerAmount} GP\n` +
-                        `**Duration:** ${durationDays} days\n\n` +
+                        `**Duration:** 1 week\n\n` +
                         `They'll be notified and can use \`/arena\` to respond.`
                     );
                 
@@ -670,10 +651,7 @@ export default {
                 return interaction.editReply(`You don't have enough GP to accept this challenge. Your balance: ${user.gp || 0} GP`);
             }
             
-            // Calculate days for display
-            const durationDays = Math.floor(challenge.durationHours / 24);
-            
-            // Create an embed with challenge details
+            // Create an embed with challenge details - updated to show fixed duration of 1 week
             const embed = new EmbedBuilder()
                 .setColor('#FF5722')
                 .setTitle(`Challenge from ${challenge.challengerUsername}`)
@@ -681,7 +659,7 @@ export default {
                     `**Game:** ${challenge.gameTitle}\n` +
                     `**Description:** ${challenge.description || 'No description provided'}\n` +
                     `**Wager:** ${challenge.wagerAmount} GP\n` +
-                    `**Duration:** ${durationDays} days\n\n` +
+                    `**Duration:** 1 week\n\n` +
                     `Do you want to accept or decline this challenge?`
                 );
             
@@ -1100,10 +1078,9 @@ export default {
                 pendingChallenges.forEach((challenge, index) => {
                     const isChallenger = challenge.challengerId === user.discordId;
                     const opponent = isChallenger ? challenge.challengeeUsername : challenge.challengerUsername;
-                    const durationDays = Math.floor(challenge.durationHours / 24);
                     
                     pendingText += `**${index + 1}. ${challenge.gameTitle}** vs ${opponent}\n` +
-                                 `**Wager:** ${challenge.wagerAmount} GP | **Duration:** ${durationDays} days\n` +
+                                 `**Wager:** ${challenge.wagerAmount} GP | **Duration:** 1 week\n` +
                                  `**Status:** ${isChallenger ? 'Waiting for response' : 'Needs your response'}\n\n`;
                 });
                 
@@ -1211,7 +1188,7 @@ export default {
                 },
                 {
                     name: '⚔️ Challenges',
-                    value: 'Challenge another player to compete on a RetroAchievements leaderboard for a set duration. ' +
+                    value: 'Challenge another player to compete on a RetroAchievements leaderboard for 1 week. ' +
                            'Both players wager GP, and the winner takes all!'
                 },
                 {
@@ -1293,10 +1270,7 @@ export default {
             // Initialize the leaderboard in the feed
             await arenaService.createOrUpdateArenaFeed(challenge);
             
-            // Calculate duration in days for display
-            const durationDays = Math.floor(challenge.durationHours / 24);
-            
-            // Create response embed
+            // Create response embed - fixed duration
             const embed = new EmbedBuilder()
                 .setColor('#00FF00')
                 .setTitle('Challenge Accepted!')
@@ -1304,7 +1278,7 @@ export default {
                     `You've accepted the challenge from ${challenge.challengerUsername}!\n\n` +
                     `**Game:** ${challenge.gameTitle}\n` +
                     `**Wager:** ${challenge.wagerAmount} GP\n` +
-                    `**Duration:** ${durationDays} days\n` +
+                    `**Duration:** 1 week\n` +
                     `**Ends:** ${challenge.endDate.toLocaleString()}\n\n` +
                     `Good luck! Updates will be posted in the Arena channel.`
                 );
@@ -1397,7 +1371,6 @@ export default {
             activeChallengers.forEach((challenge, index) => {
                 const timeRemaining = this.formatTimeRemaining(challenge.endDate);
                 const totalPool = (challenge.totalPool || 0) + (challenge.wagerAmount * 2);
-                const durationDays = Math.floor(challenge.durationHours / 24);
                 
                 embed.addFields({
                     name: `${index + 1}. ${challenge.challengerUsername} vs ${challenge.challengeeUsername}`,
