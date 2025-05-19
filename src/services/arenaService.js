@@ -222,119 +222,119 @@ class ArenaService {
         }
     }
 
-    async notifyChallengeUpdate(challenge) {
-        try {
-            const channel = await this.getArenaChannel();
-            if (!channel) return;
-            
-            let title, description, color;
-            const durationDays = Math.floor(challenge.durationHours / 24);
-            
-            switch(challenge.status) {
-                case 'active':
-                    title = '🏟️ Arena Challenge Accepted!';
-                    description = 
-                        `**${challenge.challengeeUsername}** has accepted the challenge from **${challenge.challengerUsername}**!`;
-                    color = '#2ECC71';
-                    break;
-                case 'declined':
-                    title = '🏟️ Arena Challenge Declined';
-                    description = 
-                        `**${challenge.challengeeUsername}** has declined the challenge from **${challenge.challengerUsername}**.`;
-                    color = '#E74C3C';
-                    break;
-                case 'cancelled':
-                    title = '🏟️ Arena Challenge Cancelled';
-                    description = 
-                        `The challenge between **${challenge.challengerUsername}** and **${challenge.challengeeUsername}** has been cancelled.`;
-                    color = '#95A5A6';
-                    break;
-                case 'completed':
-                    title = '🏟️ Arena Challenge Completed!';
-                    description = 
-                        `The challenge between **${challenge.challengerUsername}** and **${challenge.challengeeUsername}** has ended!`;
-                    color = '#F1C40F';
-                    break;
-                default:
-                    return; // Don't notify for other statuses
-            }
-            
-            // Create an embed for the update
-            const embed = new EmbedBuilder()
-                .setTitle(title)
-                .setColor(color)
-                .setDescription(description)
-                .addFields(
-                    { name: 'Game', value: challenge.gameTitle, inline: false }
-                );
-                
-            // Add description if available
-            if (challenge.description) {
-                embed.addFields({ name: 'Description', value: challenge.description, inline: false });
-            }
-            
-            // Add other fields based on status
-            if (challenge.status === 'active') {
-                embed.addFields(
-                    { name: 'Wager', value: `${challenge.wagerAmount} GP each`, inline: true },
-                    { name: 'Duration', value: `${durationDays} days`, inline: true },
-                    { name: 'Ends', value: challenge.endDate.toLocaleString(), inline: true }
-                )
-                .setFooter({ text: 'Watch the leaderboard updates in the arena feed channel! Use /arena to place bets.' });
-            } else if (challenge.status === 'completed') {
-                embed.addFields(
-                    { name: 'Winner', value: challenge.winnerUsername, inline: false },
-                    { name: 'Wager', value: `${challenge.wagerAmount} GP each`, inline: true },
-                    { name: 'Final Scores', value: 
-                        `• ${challenge.challengerUsername}: ${challenge.challengerScore}\n` +
-                        `• ${challenge.challengeeUsername}: ${challenge.challengeeScore}`
-                    }
-                )
-                .setFooter({ text: 'Congratulations to the winner! All bets have been paid out.' });
-            }
-            
-            // Add thumbnail if available
-            if (challenge.iconUrl) {
-                embed.setThumbnail(`https://retroachievements.org${challenge.iconUrl}`);
-            }
-            
-            // Set timestamp
-            embed.setTimestamp();
-            
-            // Add betting button for active challenges
-            let components = [];
-            if (challenge.status === 'active') {
-                const row = new ActionRowBuilder()
-                    .addComponents(
-                        new ButtonBuilder()
-                            .setCustomId('not_used_here')
-                            .setLabel('Place a Bet')
-                            .setStyle(ButtonStyle.Primary)
-                            .setEmoji('💰')
-                    );
-                
-                components = [row];
-                
-                // Send the notification with button
-                const message = await channel.send({ 
-                    embeds: [embed],
-                    components: components,
-                    content: `<@&${config.discord.memberRoleId || '1234567890'}> A new Arena challenge has begun!`
-                });
-                
-                // Add a followup message explaining how to bet
-                await channel.send({
-                    content: 'To place a bet, use the `/arena` command and select "Place a Bet". Pot Betting System: Your bet joins the total prize pool. If your chosen player wins, you get your bet back plus a share of the losing bets proportional to your bet amount!',
-                    reply: { messageReference: message.id }
-                });
-            } else {
-                // Send the notification without button
-                await channel.send({ embeds: [embed] });
-            }
-        } catch (error) {
-            console.error('Error sending challenge update notification:', error);
+async notifyChallengeUpdate(challenge) {
+    try {
+        const channel = await this.getArenaChannel();
+        if (!channel) return;
+        
+        let title, description, color;
+        const durationDays = Math.floor(challenge.durationHours / 24);
+        
+        switch(challenge.status) {
+            case 'active':
+                title = '🏟️ Arena Challenge Accepted!';
+                description = 
+                    `**${challenge.challengeeUsername}** has accepted the challenge from **${challenge.challengerUsername}**!`;
+                color = '#2ECC71';
+                break;
+            case 'declined':
+                title = '🏟️ Arena Challenge Declined';
+                description = 
+                    `**${challenge.challengeeUsername}** has declined the challenge from **${challenge.challengerUsername}**.`;
+                color = '#E74C3C';
+                break;
+            case 'cancelled':
+                title = '🏟️ Arena Challenge Cancelled';
+                description = 
+                    `The challenge between **${challenge.challengerUsername}** and **${challenge.challengeeUsername}** has been cancelled.`;
+                color = '#95A5A6';
+                break;
+            case 'completed':
+                title = '🏟️ Arena Challenge Completed!';
+                description = 
+                    `The challenge between **${challenge.challengerUsername}** and **${challenge.challengeeUsername}** has ended!`;
+                color = '#F1C40F';
+                break;
+            default:
+                return; // Don't notify for other statuses
         }
+        
+        // Create an embed for the update
+        const embed = new EmbedBuilder()
+            .setTitle(title)
+            .setColor(color)
+            .setDescription(description)
+            .addFields(
+                { name: 'Game', value: challenge.gameTitle, inline: false }
+            );
+            
+        // Add description if available
+        if (challenge.description) {
+            embed.addFields({ name: 'Description', value: challenge.description, inline: false });
+        }
+        
+        // Add other fields based on status
+        if (challenge.status === 'active') {
+            embed.addFields(
+                { name: 'Wager', value: `${challenge.wagerAmount} GP each`, inline: true },
+                { name: 'Duration', value: `${durationDays} days`, inline: true },
+                { name: 'Ends', value: challenge.endDate.toLocaleString(), inline: true }
+            )
+            .setFooter({ text: 'Watch the leaderboard updates in the arena feed channel! Use /arena to place bets.' });
+        } else if (challenge.status === 'completed') {
+            embed.addFields(
+                { name: 'Winner', value: challenge.winnerUsername, inline: false },
+                { name: 'Wager', value: `${challenge.wagerAmount} GP each`, inline: true },
+                { name: 'Final Scores', value: 
+                    `• ${challenge.challengerUsername}: ${challenge.challengerScore}\n` +
+                    `• ${challenge.challengeeUsername}: ${challenge.challengeeScore}`
+                }
+            )
+            .setFooter({ text: 'Congratulations to the winner! All bets have been paid out.' });
+        }
+        
+        // Add thumbnail if available
+        if (challenge.iconUrl) {
+            embed.setThumbnail(`https://retroachievements.org${challenge.iconUrl}`);
+        }
+        
+        // Set timestamp
+        embed.setTimestamp();
+        
+        // Add betting button for active challenges
+        let components = [];
+        if (challenge.status === 'active') {
+            const row = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('not_used_here')
+                        .setLabel('Place a Bet')
+                        .setStyle(ButtonStyle.Primary)
+                        .setEmoji('💰')
+                );
+            
+            components = [row];
+            
+            // Send the notification with button - REMOVED ROLE MENTION
+            const message = await channel.send({ 
+                embeds: [embed],
+                components: components,
+                content: `A new Arena challenge has begun!` // Removed the role mention
+            });
+            
+            // Add a followup message explaining how to bet
+            await channel.send({
+                content: 'To place a bet, use the `/arena` command and select "Place a Bet". Pot Betting System: Your bet joins the total prize pool. If your chosen player wins, you get your bet back plus a share of the losing bets proportional to your bet amount!',
+                reply: { messageReference: message.id }
+            });
+        } else {
+            // Send the notification without button
+            await channel.send({ embeds: [embed] });
+        }
+    } catch (error) {
+        console.error('Error sending challenge update notification:', error);
     }
+}
     
     async notifyStandingsChange(challenge, changedPosition) {
         try {
@@ -774,94 +774,98 @@ class ArenaService {
         }
     }
 
-    async updateGpLeaderboard() {
-        try {
-            const feedChannel = await this.getArenaFeedChannel();
-            if (!feedChannel) return;
+ async updateGpLeaderboard() {
+    try {
+        const feedChannel = await this.getArenaFeedChannel();
+        if (!feedChannel) return;
+        
+        // Get top users by GP
+        const topUsers = await User.find({ gp: { $gt: 0 } })
+            .sort({ gp: -1 })
+            .limit(10);
+        
+        if (topUsers.length === 0) {
+            return; // No users to display
+        }
+        
+        // Get current Unix timestamp for Discord formatting
+        const unixTimestamp = Math.floor(Date.now() / 1000);
+        
+        // Create an embed for the leaderboard
+        const embed = new EmbedBuilder()
+            .setTitle('💰 GP Leaderboard')
+            .setColor('#FFD700')
+            .setDescription(
+                'These are the users with the most GP (Gold Points).\n' +
+                'Earn GP by winning Arena challenges and bets. Everyone receives 1,000 GP automatically each month.\n\n' +
+                `**Last Updated:** <t:${unixTimestamp}:R>` // Added Discord timestamp in relative format
+            )
+            .setFooter({ 
+                text: 'The user with the most GP at the end of the year will receive a special title and award points!' 
+            });
+        
+        let leaderboardText = '';
+        
+        topUsers.forEach((user, index) => {
+            const medal = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `${index + 1}.`;
+            leaderboardText += `${medal} **${user.raUsername}**: ${user.gp.toLocaleString()} GP\n`;
             
-            // Get top users by GP
-            const topUsers = await User.find({ gp: { $gt: 0 } })
-                .sort({ gp: -1 })
-                .limit(10);
-            
-            if (topUsers.length === 0) {
-                return; // No users to display
+            // Add a visual divider after the top 3
+            if (index === 2) {
+                leaderboardText += '──────────────\n';
             }
-            
-            // Create an embed for the leaderboard
-            const embed = new EmbedBuilder()
-                .setTitle('💰 GP Leaderboard')
-                .setColor('#FFD700')
-                .setDescription(
-                    'These are the users with the most GP (Gold Points).\n' +
-                    'Earn GP by winning Arena challenges and bets. Everyone receives 1,000 GP automatically each month.'
-                )
-                .setFooter({ 
-                    text: 'The user with the most GP at the end of the year will receive a special title and award points!' 
-                });
-            
-            let leaderboardText = '';
-            
-            topUsers.forEach((user, index) => {
-                const medal = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `${index + 1}.`;
-                leaderboardText += `${medal} **${user.raUsername}**: ${user.gp} GP\n`;
-                
-                // Add a visual divider after the top 3
-                if (index === 2) {
-                    leaderboardText += '──────────────\n';
-                }
-            });
-            
-            embed.addFields({ name: 'Top 10 Rankings', value: leaderboardText });
-            
-            // Add a note about monthly GP
-            embed.addFields({ 
-                name: 'Monthly Allowance', 
-                value: 'You automatically receive 1,000 GP at the beginning of each month!' 
-            });
-            
-            // Update or create the message
-            try {
-                if (this.gpLeaderboardMessageId) {
-                    // Try to update existing leaderboard
-                    try {
-                        const gpMessage = await feedChannel.messages.fetch(this.gpLeaderboardMessageId);
-                        await gpMessage.edit({ embeds: [embed] });
-                        console.log(`Updated GP leaderboard message`);
-                    } catch (fetchError) {
-                        // If message not found, create a new one
-                        if (fetchError.message.includes('Unknown Message')) {
-                            const message = await feedChannel.send({ embeds: [embed] });
-                            this.gpLeaderboardMessageId = message.id;
-                            console.log(`Created new GP leaderboard after failed fetch`);
-                        } else {
-                            throw fetchError; // Re-throw if it's some other error
-                        }
-                    }
-                } else {
-                    // Create new leaderboard message
-                    const message = await feedChannel.send({ embeds: [embed] });
-                    this.gpLeaderboardMessageId = message.id;
-                    console.log(`Created new GP leaderboard message`);
-                }
-            } catch (error) {
-                console.error('Error updating GP leaderboard:', error);
-                
-                // If message not found, create a new one
-                if (error.message.includes('Unknown Message')) {
-                    try {
+        });
+        
+        embed.addFields({ name: 'Top 10 Rankings', value: leaderboardText });
+        
+        // Add a note about monthly GP
+        embed.addFields({ 
+            name: 'Monthly Allowance', 
+            value: 'You automatically receive 1,000 GP at the beginning of each month!' 
+        });
+        
+        // Update or create the message
+        try {
+            if (this.gpLeaderboardMessageId) {
+                // Try to update existing leaderboard
+                try {
+                    const gpMessage = await feedChannel.messages.fetch(this.gpLeaderboardMessageId);
+                    await gpMessage.edit({ embeds: [embed] });
+                    console.log(`Updated GP leaderboard message`);
+                } catch (fetchError) {
+                    // If message not found, create a new one
+                    if (fetchError.message.includes('Unknown Message')) {
                         const message = await feedChannel.send({ embeds: [embed] });
                         this.gpLeaderboardMessageId = message.id;
-                        console.log(`Created new GP leaderboard message after error`);
-                    } catch (sendError) {
-                        console.error('Error creating GP leaderboard after failed update:', sendError);
+                        console.log(`Created new GP leaderboard after failed fetch`);
+                    } else {
+                        throw fetchError; // Re-throw if it's some other error
                     }
                 }
+            } else {
+                // Create new leaderboard message
+                const message = await feedChannel.send({ embeds: [embed] });
+                this.gpLeaderboardMessageId = message.id;
+                console.log(`Created new GP leaderboard message`);
             }
         } catch (error) {
             console.error('Error updating GP leaderboard:', error);
+            
+            // If message not found, create a new one
+            if (error.message.includes('Unknown Message')) {
+                try {
+                    const message = await feedChannel.send({ embeds: [embed] });
+                    this.gpLeaderboardMessageId = message.id;
+                    console.log(`Created new GP leaderboard message after error`);
+                } catch (sendError) {
+                    console.error('Error creating GP leaderboard after failed update:', sendError);
+                }
+            }
         }
+    } catch (error) {
+        console.error('Error updating GP leaderboard:', error);
     }
+}
 
     async getChallengersScores(challenge) {
         try {
