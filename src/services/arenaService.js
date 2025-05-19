@@ -608,70 +608,70 @@ class ArenaService {
         }
     }
 
-    async updateGpLeaderboard() {
-        try {
-            const feedChannel = await this.getArenaFeedChannel();
-            if (!feedChannel) return;
-            
-            // Get top users by GP
-            const topUsers = await User.find({ gp: { $gt: 0 } })
-                .sort({ gp: -1 })
-                .limit(10);
-            
-            if (topUsers.length === 0) return;
-            
-            // Create leaderboard embed
-            const unixTimestamp = Math.floor(Date.now() / 1000);
-            
-            const embed = new EmbedBuilder()
-                .setTitle('💰 GP Leaderboard')
-                .setColor('#FFD700')
-                .setDescription(
-                    'These are the users with the most GP (Gold Points).\n' +
-                    'Earn GP by winning Arena challenges and bets. Everyone receives 1,000 GP automatically each month.\n\n' +
-                    `**Last Updated:** <t:${unixTimestamp}:R>`
-                )
-                .setFooter({ 
-                    text: 'The user with the most GP at the end of the year will receive a special title and award points!' 
-                });
-            
-            // Build leaderboard text
-            let leaderboardText = '';
-            
-            topUsers.forEach((user, index) => {
-                const medal = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `${index + 1}.`;
-                leaderboardText += `${medal} **${user.raUsername}**: ${user.gp.toLocaleString()} GP\n`;
-                
-                if (index === 2) {
-                    leaderboardText += '──────────────\n';
-                }
+async updateGpLeaderboard() {
+    try {
+        const feedChannel = await this.getArenaFeedChannel();
+        if (!feedChannel) return;
+        
+        // Get top users by GP
+        const topUsers = await User.find({ gp: { $gt: 0 } })
+            .sort({ gp: -1 })
+            .limit(10);
+        
+        if (topUsers.length === 0) return;
+        
+        // Create leaderboard embed with exact timestamp
+        const formattedDate = new Date().toLocaleString();
+        
+        const embed = new EmbedBuilder()
+            .setTitle('💰 GP Leaderboard')
+            .setColor('#FFD700')
+            .setDescription(
+                'These are the users with the most GP (Gold Points).\n' +
+                'Earn GP by winning Arena challenges and bets. Everyone receives 1,000 GP automatically each month.\n\n' +
+                `**Last Updated:** ${formattedDate}`
+            )
+            .setFooter({ 
+                text: 'Updates hourly | Year-end champion receives a special title and award!' 
             });
+        
+        // Build leaderboard text with medals
+        let leaderboardText = '';
+        
+        topUsers.forEach((user, index) => {
+            const medal = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `${index + 1}.`;
+            leaderboardText += `${medal} **${user.raUsername}**: ${user.gp.toLocaleString()} GP\n`;
             
-            embed.addFields({ name: 'Top 10 Rankings', value: leaderboardText });
-            embed.addFields({ 
-                name: 'Monthly Allowance', 
-                value: 'You automatically receive 1,000 GP at the beginning of each month!' 
-            });
-            
-            // Update or create the leaderboard message
-            if (this.gpLeaderboardMessageId) {
-                try {
-                    const gpMessage = await feedChannel.messages.fetch(this.gpLeaderboardMessageId);
-                    await gpMessage.edit({ embeds: [embed] });
-                } catch (error) {
-                    if (error.message.includes('Unknown Message')) {
-                        const message = await feedChannel.send({ embeds: [embed] });
-                        this.gpLeaderboardMessageId = message.id;
-                    }
-                }
-            } else {
-                const message = await feedChannel.send({ embeds: [embed] });
-                this.gpLeaderboardMessageId = message.id;
+            if (index === 2) {
+                leaderboardText += '──────────────\n';
             }
-        } catch (error) {
-            console.error('Error updating GP leaderboard:', error);
+        });
+        
+        embed.addFields({ name: 'Top 10 Rankings', value: leaderboardText });
+        embed.addFields({ 
+            name: 'Monthly Allowance', 
+            value: 'You automatically receive 1,000 GP at the beginning of each month!' 
+        });
+        
+        // Update or create the leaderboard message
+        if (this.gpLeaderboardMessageId) {
+            try {
+                const gpMessage = await feedChannel.messages.fetch(this.gpLeaderboardMessageId);
+                await gpMessage.edit({ embeds: [embed] });
+            } catch (error) {
+                if (error.message.includes('Unknown Message')) {
+                    const message = await feedChannel.send({ embeds: [embed] });
+                    this.gpLeaderboardMessageId = message.id;
+                }
+            }
+        } else {
+            const message = await feedChannel.send({ embeds: [embed] });
+            this.gpLeaderboardMessageId = message.id;
         }
+    } catch (error) {
+        console.error('Error updating GP leaderboard:', error);
     }
+}
 
     // Challenge score management
     async getChallengersScores(challenge) {
