@@ -1770,9 +1770,6 @@ async updateGpLeaderboard() {
             return interaction.editReply('An error occurred while refreshing the leaderboard data.');
         }
     }
-    async fetchLeaderboardPositions(challenge) {
-    return await this.getChallengersScores(challenge);
-}
 }
 
 // Create singleton instance
