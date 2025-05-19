@@ -528,12 +528,12 @@ export default {
                 .setStyle(TextInputStyle.Short);
                 
             // Input for description (updated with more detailed guidance about competition type)
-            const descriptionInput = new TextInputBuilder()
-                .setCustomId('description')
-                .setLabel('Challenge Description')
-                .setPlaceholder('Must specify: 1) Which track/level/mode 2) How to compete (fastest time, highest score) 3) Any special rules')
-                .setRequired(true)
-                .setStyle(TextInputStyle.Paragraph);
+           const descriptionInput = new TextInputBuilder()
+    .setCustomId('description')
+    .setLabel('Challenge Description')
+    .setPlaceholder('Specify: 1) Track/level 2) Competition type (time/score) 3) Rules')
+    .setRequired(true)
+    .setStyle(TextInputStyle.Paragraph);
                 
             // Input for wager amount
             const wagerInput = new TextInputBuilder()
