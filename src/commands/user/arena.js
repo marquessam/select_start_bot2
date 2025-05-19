@@ -14,6 +14,7 @@ import { User } from '../../models/User.js';
 import { ArenaChallenge } from '../../models/ArenaChallenge.js';
 import retroAPI from '../../services/retroAPI.js';
 import arenaService from '../../services/arenaService.js';
+import { formatTimeRemaining } from '../../utils/arenaUtils.js';
 
 export default {
     data: new SlashCommandBuilder()
@@ -49,13 +50,11 @@ export default {
         }
     },
     
-    // Show the main arena menu with all options - clean version with logging
+    // Show the main arena menu with all options
     async showMainArenaMenu(interaction, user, skipGpCheck = false) {
-        console.log(`[ARENA] Showing main menu for user ${user.raUsername} (${user.discordId})`);
-        
-        // Check if user should receive automatic monthly GP and give it - only if not skipped
+        // Check if user should receive automatic monthly GP
         if (!skipGpCheck) {
-            await this.checkAndGrantMonthlyGP(user);
+            await arenaService.checkAndGrantMonthlyGP(user);
         }
         
         // Get user's stats and relevant info
@@ -63,15 +62,12 @@ export default {
             $or: [
                 { challengerId: user.discordId, status: 'active' },
                 { challengeeId: user.discordId, status: 'active' },
-                // Add check for participant in open challenges
                 { 'participants.userId': user.discordId, status: 'active' }
             ]
         });
         
         // Format GP balance with commas
         const gpBalance = (user.gp || 0).toLocaleString();
-        
-        console.log(`[ARENA] User ${user.raUsername} has ${gpBalance} GP and ${activeCount} active challenges`);
         
         // Create main arena embed
         const embed = new EmbedBuilder()
@@ -88,9 +84,7 @@ export default {
             )
             .setFooter({ text: 'All challenges and bets are based on RetroAchievements leaderboards' });
         
-        console.log(`[ARENA] Created embed for main menu`);
-        
-        // Create action menu - following the same pattern as adminarcade
+        // Create action menu
         const actionRow = new ActionRowBuilder()
             .addComponents(
                 new StringSelectMenuBuilder()
@@ -136,8 +130,6 @@ export default {
                     ])
             );
         
-        console.log(`[ARENA] Created dropdown menu for main actions`);
-        
         // Create help button
         const buttonsRow = new ActionRowBuilder()
             .addComponents(
@@ -148,18 +140,14 @@ export default {
                     .setEmoji('❓')
             );
         
-        console.log(`[ARENA] Created help button`);
-        console.log(`[ARENA] Sending main menu components to Discord...`);
-        
         // Send the arena menu
         try {
             await interaction.editReply({
                 embeds: [embed],
                 components: [actionRow, buttonsRow]
             });
-            console.log(`[ARENA] Successfully sent main menu to Discord`);
         } catch (error) {
-            console.error(`[ARENA] Error sending main menu to Discord:`, error);
+            console.error(`Error sending main menu:`, error);
             // Try a fallback approach if the initial reply fails
             try {
                 await interaction.editReply({
@@ -167,67 +155,8 @@ export default {
                     components: []
                 });
             } catch (fallbackError) {
-                console.error(`[ARENA] Fallback error handling also failed:`, fallbackError);
+                console.error(`Fallback error handling also failed:`, fallbackError);
             }
-        }
-    },
-    
-    // Modified checkAndGrantMonthlyGP method to prevent multiple awards
-    async checkAndGrantMonthlyGP(user) {
-        try {
-            // If there's an active session flag for this user, return immediately
-            if (user._monthlyGpProcessing) {
-                console.log(`[ARENA] Monthly GP check already in progress for ${user.raUsername}`);
-                return false;
-            }
-            
-            // Set a flag to prevent concurrent processing
-            user._monthlyGpProcessing = true;
-            
-            const now = new Date();
-            const currentMonth = now.getMonth();
-            const currentYear = now.getFullYear();
-            
-            // Force refresh from database to ensure we have the latest data
-            const freshUser = await User.findOne({ discordId: user.discordId });
-            const lastClaim = freshUser.lastMonthlyGpClaim ? new Date(freshUser.lastMonthlyGpClaim) : null;
-            
-            // Check if user hasn't received GP this month yet
-            if (!lastClaim || 
-                lastClaim.getMonth() !== currentMonth || 
-                lastClaim.getFullYear() !== currentYear) {
-                
-                // Log before giving GP
-                console.log(`[ARENA] Granting monthly 1000 GP to ${freshUser.raUsername} for ${currentMonth}/${currentYear}`);
-                
-                // Automatically award the GP
-                freshUser.gp = (freshUser.gp || 0) + 1000;
-                freshUser.lastMonthlyGpClaim = now;
-                await freshUser.save();
-                
-                // Update the original user object to reflect changes
-                user.gp = freshUser.gp;
-                user.lastMonthlyGpClaim = freshUser.lastMonthlyGpClaim;
-                
-                // Log after saving
-                console.log(`[ARENA] Monthly GP granted and saved for ${freshUser.raUsername}. New balance: ${freshUser.gp} GP`);
-                
-                // Clear the flag
-                delete user._monthlyGpProcessing;
-                return true; // Indicate that GP was awarded
-            }
-            
-            // Log no GP awarded
-            console.log(`[ARENA] No monthly GP awarded to ${freshUser.raUsername}. Last claim: ${lastClaim ? lastClaim.toISOString() : 'never'}`);
-            
-            // Clear the flag
-            delete user._monthlyGpProcessing;
-            return false; // No GP was awarded
-        } catch (error) {
-            console.error(`[ARENA] Error checking and granting monthly GP for ${user?.raUsername}:`, error);
-            // Clear the flag even on error
-            delete user._monthlyGpProcessing;
-            return false;
         }
     },
     
@@ -301,7 +230,7 @@ export default {
                 }
                 
                 // Fetch current leaderboard positions for both players
-                const [challengerScore, challengeeScore] = await this.fetchLeaderboardPositions(challenge);
+                const [challengerScore, challengeeScore] = await arenaService.fetchLeaderboardPositions(challenge);
 
                 // Prepare leaderboard info text
                 let leaderboardText = '';
@@ -411,108 +340,6 @@ export default {
         }
     },
     
-    // Helper function to fetch current leaderboard positions - UPDATED for time-based leaderboards
-    async fetchLeaderboardPositions(challenge) {
-        try {
-            // Determine if this is a time-based leaderboard
-            const isTimeBased = challenge.description?.toLowerCase().includes('time') || 
-                              challenge.description?.toLowerCase().includes('fastest');
-                
-            console.log(`[ARENA] Leaderboard ${challenge.leaderboardId} is time-based: ${isTimeBased}`);
-            
-            // Fetch leaderboard entries
-            const batch1 = await retroAPI.getLeaderboardEntriesDirect(challenge.leaderboardId, 0, 500);
-            const batch2 = await retroAPI.getLeaderboardEntriesDirect(challenge.leaderboardId, 500, 500);
-            
-            // Combine the batches
-            let rawEntries = [];
-            
-            // Process first batch
-            if (batch1) {
-                if (Array.isArray(batch1)) {
-                    rawEntries = [...rawEntries, ...batch1];
-                } else if (batch1.Results && Array.isArray(batch1.Results)) {
-                    rawEntries = [...rawEntries, ...batch1.Results];
-                }
-            }
-            
-            // Process second batch
-            if (batch2) {
-                if (Array.isArray(batch2)) {
-                    rawEntries = [...rawEntries, ...batch2];
-                } else if (batch2.Results && Array.isArray(batch2.Results)) {
-                    rawEntries = [...rawEntries, ...batch2.Results];
-                }
-            }
-            
-            // Process the entries with appropriate handling for different formats
-            const leaderboardEntries = rawEntries.map(entry => {
-                // Standard properties that most entries have
-                const user = entry.User || entry.user || '';
-                const score = entry.Score || entry.score || entry.Value || entry.value || 0;
-                const formattedScore = entry.FormattedScore || entry.formattedScore || entry.ScoreFormatted || score.toString();
-                const rank = entry.Rank || entry.rank || 0;
-                
-                return {
-                    ApiRank: parseInt(rank, 10),
-                    User: user.trim(),
-                    RawScore: score,
-                    FormattedScore: formattedScore.toString().trim() || score.toString(),
-                    Value: parseFloat(score) || 0
-                };
-            });
-            
-            // Sort entries properly based on leaderboard type
-            if (isTimeBased) {
-                // For time-based leaderboards, lower is better
-                leaderboardEntries.sort((a, b) => a.Value - b.Value);
-            } else {
-                // For score-based leaderboards, higher is better
-                leaderboardEntries.sort((a, b) => b.Value - a.Value);
-            }
-            
-            // Reassign ranks based on proper sorting
-            leaderboardEntries.forEach((entry, index) => {
-                entry.ApiRank = index + 1;
-            });
-            
-            console.log(`[ARENA] Processed ${leaderboardEntries.length} leaderboard entries`);
-            
-            // Find entries for both users
-            const challengerEntry = leaderboardEntries.find(entry => 
-                entry.User.toLowerCase() === challenge.challengerUsername.toLowerCase()
-            );
-            
-            const challengeeEntry = leaderboardEntries.find(entry => 
-                entry.User.toLowerCase() === challenge.challengeeUsername.toLowerCase()
-            );
-            
-            // Format the challenger score
-            const challengerScore = {
-                exists: !!challengerEntry,
-                formattedScore: challengerEntry ? challengerEntry.FormattedScore : 'No entry',
-                rank: challengerEntry ? challengerEntry.ApiRank : 0,
-                value: challengerEntry ? challengerEntry.Value : 0
-            };
-            
-            // Format the challengee score
-            const challengeeScore = {
-                exists: !!challengeeEntry,
-                formattedScore: challengeeEntry ? challengeeEntry.FormattedScore : 'No entry',
-                rank: challengeeEntry ? challengeeEntry.ApiRank : 0,
-                value: challengeeEntry ? challengeeEntry.Value : 0
-            };
-            
-            return [challengerScore, challengeeScore];
-        } catch (error) {
-            console.error('Error fetching leaderboard positions:', error);
-            return [
-                { exists: false, formattedScore: 'Error fetching score', rank: 0, value: 0 },
-                { exists: false, formattedScore: 'Error fetching score', rank: 0, value: 0 }
-            ];
-        }
-    },
-    
     // Show a modal for creating a challenge
     async showCreateChallengeModal(interaction) {
         try {
@@ -537,7 +364,7 @@ export default {
                 .setRequired(false) // Make it optional to allow for open challenges
                 .setStyle(TextInputStyle.Short);
 
-            // Input for game ID (like in adminArcade)
+            // Input for game ID
             const gameIdInput = new TextInputBuilder()
                 .setCustomId('game_id')
                 .setLabel('RetroAchievements Game ID')
@@ -553,7 +380,7 @@ export default {
                 .setRequired(true)
                 .setStyle(TextInputStyle.Short);
                 
-            // Input for description (UPDATED with shorter placeholder)
+            // Input for description (shorter placeholder)
             const descriptionInput = new TextInputBuilder()
                 .setCustomId('description')
                 .setLabel('Challenge Description')
@@ -569,7 +396,7 @@ export default {
                 .setRequired(true)
                 .setStyle(TextInputStyle.Short);
                 
-            // Add inputs to modal - now with 5 inputs (removed duration)
+            // Add inputs to modal
             modal.addComponents(
                 new ActionRowBuilder().addComponents(usernameInput),
                 new ActionRowBuilder().addComponents(gameIdInput),
@@ -585,20 +412,6 @@ export default {
                 console.error('Error showing modal:', modalError);
                 // If the interaction was already replied to, try a different approach
                 if (modalError.message.includes('already been replied') || modalError.message.includes('already replied')) {
-                    // Create a new modal with a different ID that isn't tied to the current interaction
-                    const recoveryModal = new ModalBuilder()
-                        .setCustomId('arena_create_challenge_modal_recovery')
-                        .setTitle('Challenge Another Player');
-                        
-                    // Add the same components
-                    recoveryModal.addComponents(
-                        new ActionRowBuilder().addComponents(usernameInput.setCustomId('opponent_username_recovery')),
-                        new ActionRowBuilder().addComponents(gameIdInput.setCustomId('game_id_recovery')),
-                        new ActionRowBuilder().addComponents(leaderboardInput.setCustomId('leaderboard_id_recovery')),
-                        new ActionRowBuilder().addComponents(descriptionInput.setCustomId('description_recovery')),
-                        new ActionRowBuilder().addComponents(wagerInput.setCustomId('wager_amount_recovery'))
-                    );
-                    
                     // Try a different approach - reply with a button that shows the modal
                     await interaction.reply({
                         content: 'Click the button below to create a challenge:',
@@ -702,149 +515,103 @@ export default {
                 }
                 
                 // Check for any existing challenges between these users
-                const existingChallenge = await ArenaChallenge.findOne({
-                    $or: [
-                        {
-                            challengerId: challenger.discordId,
-                            challengeeId: opponent.discordId,
-                            status: { $in: ['pending', 'active'] }
-                        },
-                        {
-                            challengerId: opponent.discordId,
-                            challengeeId: challenger.discordId,
-                            status: { $in: ['pending', 'active'] }
-                        }
-                    ]
-                });
-                
+                const existingChallenge = await arenaService.checkExistingChallenge(challenger, opponent);
                 if (existingChallenge) {
                     let statusText = existingChallenge.status === 'pending' ? 'pending response' : 'already active';
                     return interaction.editReply(`You already have a challenge with ${opponentUsername} that is ${statusText}.`);
                 }
             }
             
-            // Verify game exists - similar to adminArcade
+            // Verify game exists
             const gameInfo = await retroAPI.getGameInfo(gameId);
             if (!gameInfo) {
                 return interaction.editReply('Game not found. Please check the game ID.');
             }
             
             // Verify leaderboard exists
-            try {
-                // Fetch leaderboard entries to verify the leaderboard exists
-                const batch1 = await retroAPI.getLeaderboardEntriesDirect(leaderboardId, 0, 500);
-                const batch2 = await retroAPI.getLeaderboardEntriesDirect(leaderboardId, 500, 500);
-                
-                // Combine the batches
-                let rawEntries = [];
-                
-                // Process first batch
-                if (batch1) {
-                    if (Array.isArray(batch1)) {
-                        rawEntries = [...rawEntries, ...batch1];
-                    } else if (batch1.Results && Array.isArray(batch1.Results)) {
-                        rawEntries = [...rawEntries, ...batch1.Results];
-                    }
-                }
-                
-                // Process second batch
-                if (batch2) {
-                    if (Array.isArray(batch2)) {
-                        rawEntries = [...rawEntries, ...batch2];
-                    } else if (batch2.Results && Array.isArray(batch2.Results)) {
-                        rawEntries = [...rawEntries, ...batch2.Results];
-                    }
-                }
-                
-                console.log(`Total entries fetched for leaderboard ${leaderboardId}: ${rawEntries.length}`);
-                
-                if (!rawEntries || rawEntries.length === 0) {
-                    return interaction.editReply(`Leaderboard ID ${leaderboardId} not found or has no entries.`);
-                }
-                
-                // Create the challenge
-                const challenge = new ArenaChallenge({
-                    challengerId: challenger.discordId,
-                    challengerUsername: challenger.raUsername,
-                    challengeeId: isOpenChallenge ? null : opponent.discordId,
-                    challengeeUsername: isOpenChallenge ? "Open Challenge" : opponent.raUsername,
-                    isOpenChallenge: isOpenChallenge,
-                    leaderboardId: leaderboardId,
-                    gameId: gameId,
-                    gameTitle: gameInfo.title,
-                    consoleName: gameInfo.consoleName || 'Unknown',
-                    iconUrl: gameInfo.imageIcon || null,
-                    description: description,
-                    wagerAmount: wagerAmount,
-                    durationHours: durationHours,
-                    status: isOpenChallenge ? 'open' : 'pending'
-                });
-                
-                // Initialize participants array for open challenges
-                if (isOpenChallenge) {
-                    challenge.participants = [];
-                    // You can also add maxParticipants field if you want to limit the number of participants
-                    // challenge.maxParticipants = 10; // Example: limit to 10 participants
-                }
-                
-                // Save the challenge
-                await challenge.save();
-                
-                // Track the GP transaction
-                await arenaService.trackGpTransaction(
-                    challenger, 
-                    -wagerAmount, 
-                    'Challenge wager', 
-                    `Challenge ID: ${challenge._id}, Game: ${gameInfo.title}`
-                );
-                
-                // Update user stats
-                challenger.arenaStats = challenger.arenaStats || {};
-                challenger.arenaStats.challengesIssued = (challenger.arenaStats.challengesIssued || 0) + 1;
-                await challenger.save();
-                
-                // Send notification to the arena channel
-                try {
-                    await arenaService.notifyNewChallenge(challenge);
-                } catch (notifyError) {
-                    console.error('Error notifying about new challenge:', notifyError);
-                }
-                
-                // Add leaderboard link
-                const leaderboardLink = `[View Leaderboard](https://retroachievements.org/leaderboardinfo.php?i=${leaderboardId})`;
-                
-                // Create response embed
-                const embed = new EmbedBuilder()
-                    .setColor('#00FF00')
-                    .setTitle(isOpenChallenge ? 'Open Challenge Created!' : 'Challenge Created!')
-                    .setDescription(
-                        isOpenChallenge ? 
-                        `You've created an open challenge for ${gameInfo.title}!\n\n` :
-                        `You've challenged ${opponent.raUsername} to compete in ${gameInfo.title}!\n\n`
-                    )
-                    .addFields(
-                        { name: 'Game', value: `${gameInfo.title} (${gameInfo.consoleName || 'Unknown'})`, inline: false },
-                        { name: 'Description', value: description, inline: false },
-                        { name: 'Wager', value: `${wagerAmount} GP`, inline: true },
-                        { name: 'Duration', value: '1 week', inline: true },
-                        { name: 'Leaderboard', value: leaderboardLink, inline: false }
-                    );
-                
-                if (!isOpenChallenge) {
-                    embed.setFooter({ text: `${opponent.raUsername} will be notified and can use /arena to respond.` });
-                } else {
-                    embed.setFooter({ text: 'Other players can use /arena to join this open challenge.' });
-                }
-                
-                if (gameInfo.imageIcon) {
-                    embed.setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`);
-                }
-                
-                return interaction.editReply({ embeds: [embed] });
-            } catch (apiError) {
-                console.error('Error fetching leaderboard data:', apiError);
-                return interaction.editReply('Error verifying leaderboard. Please check the ID and try again.');
+            const leaderboardEntries = await arenaService.getLeaderboardEntries(leaderboardId);
+            if (!leaderboardEntries || leaderboardEntries.length === 0) {
+                return interaction.editReply(`Leaderboard ID ${leaderboardId} not found or has no entries.`);
             }
+            
+            // Create the challenge
+            const challengeData = {
+                challengerId: challenger.discordId,
+                challengerUsername: challenger.raUsername,
+                challengeeId: isOpenChallenge ? null : opponent.discordId,
+                challengeeUsername: isOpenChallenge ? "Open Challenge" : opponent.raUsername,
+                isOpenChallenge: isOpenChallenge,
+                leaderboardId: leaderboardId,
+                gameId: gameId,
+                gameTitle: gameInfo.title,
+                consoleName: gameInfo.consoleName || 'Unknown',
+                iconUrl: gameInfo.imageIcon || null,
+                description: description,
+                wagerAmount: wagerAmount,
+                durationHours: durationHours,
+                status: isOpenChallenge ? 'open' : 'pending'
+            };
+            
+            // For open challenges, initialize participants array
+            if (isOpenChallenge) {
+                challengeData.participants = [];
+            }
+            
+            // Create and save the challenge
+            const challenge = new ArenaChallenge(challengeData);
+            await challenge.save();
+            
+            // Track the GP transaction
+            await arenaService.trackGpTransaction(
+                challenger, 
+                -wagerAmount, 
+                'Challenge wager', 
+                `Challenge ID: ${challenge._id}, Game: ${gameInfo.title}`
+            );
+            
+            // Update user stats
+            challenger.arenaStats = challenger.arenaStats || {};
+            challenger.arenaStats.challengesIssued = (challenger.arenaStats.challengesIssued || 0) + 1;
+            await challenger.save();
+            
+            // Send notification to the arena channel
+            try {
+                await arenaService.notifyNewChallenge(challenge);
+            } catch (notifyError) {
+                console.error('Error notifying about new challenge:', notifyError);
+            }
+            
+            // Add leaderboard link
+            const leaderboardLink = `[View Leaderboard](https://retroachievements.org/leaderboardinfo.php?i=${leaderboardId})`;
+            
+            // Create response embed
+            const embed = new EmbedBuilder()
+                .setColor('#00FF00')
+                .setTitle(isOpenChallenge ? 'Open Challenge Created!' : 'Challenge Created!')
+                .setDescription(
+                    isOpenChallenge ? 
+                    `You've created an open challenge for ${gameInfo.title}!\n\n` :
+                    `You've challenged ${opponent.raUsername} to compete in ${gameInfo.title}!\n\n`
+                )
+                .addFields(
+                    { name: 'Game', value: `${gameInfo.title} (${gameInfo.consoleName || 'Unknown'})`, inline: false },
+                    { name: 'Description', value: description, inline: false },
+                    { name: 'Wager', value: `${wagerAmount} GP`, inline: true },
+                    { name: 'Duration', value: '1 week', inline: true },
+                    { name: 'Leaderboard', value: leaderboardLink, inline: false }
+                );
+            
+            if (!isOpenChallenge) {
+                embed.setFooter({ text: `${opponent.raUsername} will be notified and can use /arena to respond.` });
+            } else {
+                embed.setFooter({ text: 'Other players can use /arena to join this open challenge.' });
+            }
+            
+            if (gameInfo.imageIcon) {
+                embed.setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`);
+            }
+            
+            return interaction.editReply({ embeds: [embed] });
         } catch (error) {
             console.error('Error creating challenge:', error);
             return interaction.editReply('An error occurred while creating the challenge.');
@@ -873,27 +640,16 @@ export default {
             const user = await User.findOne({ discordId: interaction.user.id });
             const challenger = await User.findOne({ discordId: challenge.challengerId });
             
-            // Verify users have enough GP
+            // Verify challenger still has enough GP
             if (!challenger || (challenger.gp || 0) < challenge.wagerAmount) {
-                // Update challenge to cancelled and notify
                 challenge.status = 'cancelled';
                 await challenge.save();
-                
-                // Return wager to challenger if challenge is cancelled
-                if (challenger) {
-                    await arenaService.trackGpTransaction(
-                        challenger, 
-                        challenge.wagerAmount, 
-                        'Challenge cancelled - wager refund', 
-                        `Challenge ID: ${challenge._id}, Game: ${challenge.gameTitle}`
-                    );
-                }
-                
                 await arenaService.notifyChallengeUpdate(challenge);
                 
-                return interaction.editReply(`The challenger doesn't have enough GP to cover their wager anymore. Challenge cancelled.`);
+                return interaction.editReply(`The challenger doesn't have enough GP anymore. Challenge cancelled.`);
             }
             
+            // Verify user has enough GP
             if ((user.gp || 0) < challenge.wagerAmount) {
                 return interaction.editReply(`You don't have enough GP to accept this challenge. Your balance: ${user.gp || 0} GP`);
             }
@@ -942,7 +698,7 @@ export default {
         }
     },
     
-    // Show active challenges for betting - UPDATED to include 72-hour betting window
+    // Show active challenges for betting - Updated for 72-hour betting window
     async showActiveChallengesForBetting(interaction) {
         try {
             await interaction.deferUpdate();
@@ -1036,8 +792,8 @@ export default {
                 });
                 
                 // Add info to the embed
-                const timeRemaining = this.formatTimeRemaining(challenge.endDate);
-                const bettingEnds = this.formatTimeRemaining(new Date(challenge.startDate.getTime() + (72 * 60 * 60 * 1000)));
+                const timeRemaining = formatTimeRemaining(challenge.endDate);
+                const bettingEnds = formatTimeRemaining(new Date(challenge.startDate.getTime() + (72 * 60 * 60 * 1000)));
                 
                 // Calculate total pot based on challenge type
                 let wagerPool;
@@ -1105,7 +861,7 @@ export default {
         }
     },
     
-    // Handle the selection of an active challenge for betting - UPDATED to include 72-hour betting window
+    // Handle the selection of an active challenge for betting
     async handleBetChallengeSelect(interaction) {
         try {
             await interaction.deferUpdate();
@@ -1149,7 +905,7 @@ export default {
             
             // Add leaderboard link
             const leaderboardLink = `[View Leaderboard](https://retroachievements.org/leaderboardinfo.php?i=${challenge.leaderboardId})`;
-            const bettingEnds = this.formatTimeRemaining(new Date(challenge.startDate.getTime() + (72 * 60 * 60 * 1000)));
+            const bettingEnds = formatTimeRemaining(new Date(challenge.startDate.getTime() + (72 * 60 * 60 * 1000)));
             
             // Create an embed with challenge details
             const embed = new EmbedBuilder()
@@ -1323,7 +1079,7 @@ export default {
         }
     },
     
-    // Handle bet amount modal submission - UPDATED to cap bets at 100 GP
+    // Handle bet amount modal submission - capped at 100 GP
     async handleBetAmountModal(interaction, challengeId, playerName) {
         try {
             await interaction.deferReply({ ephemeral: true });
@@ -1467,7 +1223,7 @@ export default {
         }
     },
     
-    // Show user's active and pending challenges - UPDATED to include refresh buttons for active challenges
+    // Show user's active and pending challenges - with refresh buttons for active challenges
     async showMyChallenges(interaction) {
         try {
             await interaction.deferUpdate();
@@ -1526,7 +1282,7 @@ export default {
                 let openText = '';
                 
                 openChallenges.forEach((challenge, index) => {
-                    const timeRemaining = this.formatTimeRemaining(challenge.endDate || new Date(Date.now() + 604800000)); // Default to 1 week from now
+                    const timeRemaining = formatTimeRemaining(challenge.endDate || new Date(Date.now() + 604800000)); // Default to 1 week from now
                     const leaderboardLink = `[View Leaderboard](https://retroachievements.org/leaderboardinfo.php?i=${challenge.leaderboardId})`;
                     
                     openText += `**${index + 1}. ${challenge.gameTitle}** (Open Challenge)\n` +
@@ -1545,7 +1301,7 @@ export default {
                 activeDirectChallenges.forEach((challenge, index) => {
                     const isChallenger = challenge.challengerId === user.discordId;
                     const opponent = isChallenger ? challenge.challengeeUsername : challenge.challengerUsername;
-                    const timeRemaining = this.formatTimeRemaining(challenge.endDate);
+                    const timeRemaining = formatTimeRemaining(challenge.endDate);
                     const leaderboardLink = `[View Leaderboard](https://retroachievements.org/leaderboardinfo.php?i=${challenge.leaderboardId})`;
                     
                     activeText += `**${index + 1}. ${challenge.gameTitle}** vs ${opponent}\n` +
@@ -1563,7 +1319,7 @@ export default {
                 
                 activeOpenChallenges.forEach((challenge, index) => {
                     const isCreator = challenge.challengerId === user.discordId;
-                    const timeRemaining = this.formatTimeRemaining(challenge.endDate);
+                    const timeRemaining = formatTimeRemaining(challenge.endDate);
                     const participantCount = (challenge.participants?.length || 0) + 1; // +1 for creator
                     const totalWagered = challenge.wagerAmount * participantCount;
                     const totalPool = (challenge.totalPool || 0) + totalWagered;
@@ -1630,7 +1386,7 @@ export default {
         }
     },
     
-    // Show open challenges for joining - UPDATED to fix open challenges display
+    // Show open challenges for joining
     async showOpenChallenges(interaction) {
         await interaction.deferUpdate();
         
@@ -1640,12 +1396,6 @@ export default {
                 isOpenChallenge: true,
                 status: 'open'
             }).sort({ createdAt: -1 });
-            
-            // Log for debugging
-            console.log(`[ARENA] Found ${openChallenges.length} open challenges`);
-            for (const challenge of openChallenges) {
-                console.log(`[ARENA] Open challenge: ${challenge._id}, Game: ${challenge.gameTitle}, Creator: ${challenge.challengerUsername}`);
-            }
             
             if (openChallenges.length === 0) {
                 return interaction.editReply('There are no open challenges available right now.');
@@ -1836,73 +1586,27 @@ export default {
         }
     },
     
-    // Handle button interactions
-    async handleButtonInteraction(interaction) {
-        const customId = interaction.customId;
-        
-        if (customId.startsWith('arena_accept_challenge_')) {
-            const challengeId = customId.split('_').pop();
-            await this.handleAcceptChallenge(interaction, challengeId);
-        }
-        else if (customId.startsWith('arena_decline_challenge_')) {
-            const challengeId = customId.split('_').pop();
-            await this.handleDeclineChallenge(interaction, challengeId);
-        }
-        else if (customId === 'arena_back_to_main') {
+    // Handle refreshing leaderboard data
+    async handleRefreshLeaderboard(interaction, challengeId) {
+        try {
             await interaction.deferUpdate();
-            const user = await User.findOne({ discordId: interaction.user.id });
-            // Skip GP check when returning to main menu
-            await this.showMainArenaMenu(interaction, user, true);
-        }
-        else if (customId === 'arena_help') {
-            await interaction.deferUpdate();
-            await this.showArenaHelp(interaction);
-        }
-        else if (customId.startsWith('arena_join_challenge_')) {
-            await this.handleJoinChallenge(interaction);
-        }
-        else if (customId.startsWith('arena_refresh_leaderboard_')) {
-            const challengeId = customId.replace('arena_refresh_leaderboard_', '');
-            await this.handleRefreshLeaderboard(interaction, challengeId);
-        }
-    },
-    
-    // Handle select menu interactions
-    async handleSelectMenuInteraction(interaction) {
-        const customId = interaction.customId;
-        
-        if (customId === 'arena_main_action') {
-            const selectedValue = interaction.values[0];
             
-            switch (selectedValue) {
-                case 'create_challenge':
-                    await this.showCreateChallengeModal(interaction);
-                    break;
-                case 'place_bet':
-                    await this.showActiveChallengesForBetting(interaction);
-                    break;
-                case 'my_challenges':
-                    await this.showMyChallenges(interaction);
-                    break;
-                case 'active_challenges':
-                    await this.handleActive(interaction);
-                    break;
-                case 'leaderboard':
-                    await this.handleLeaderboard(interaction);
-                    break;
-                case 'open_challenges':
-                    await this.showOpenChallenges(interaction);
-                    break;
-                default:
-                    await interaction.deferUpdate();
-                    await interaction.editReply('Invalid selection. Please try again.');
+            // Get the challenge
+            const challenge = await ArenaChallenge.findById(challengeId);
+            if (!challenge || challenge.status !== 'active') {
+                return interaction.editReply('This challenge is no longer active.');
             }
-        } else if (customId === 'arena_pending_challenge_select') {
-            await this.handlePendingChallengeSelect(interaction);
-        } else if (customId === 'arena_bet_challenge_select') {
-            await this.handleBetChallengeSelect(interaction);
-        } else if (customId === 'arena_bet_player_select') {
-            await this.handleBetPlayerSelect(interaction);
+            
+            if (challenge.isOpenChallenge) {
+                // For open challenges with multiple participants
+                await arenaService.refreshOpenChallengeLeaderboard(interaction, challenge);
+            } else {
+                // For regular 1v1 challenges
+                await arenaService.refreshDirectChallengeLeaderboard(interaction, challenge);
+            }
+        } catch (error) {
+            console.error('Error refreshing leaderboard:', error);
+            return interaction.editReply('An error occurred while refreshing the leaderboard data.');
         }
     },
     
@@ -2056,313 +1760,128 @@ export default {
         }
     },
     
-    // New function to handle refreshing leaderboard data
-    async handleRefreshLeaderboard(interaction, challengeId) {
+    // Handle declining a challenge
+    async handleDeclineChallenge(interaction, challengeId) {
         try {
             await interaction.deferUpdate();
             
             // Get the challenge
             const challenge = await ArenaChallenge.findById(challengeId);
-            if (!challenge || challenge.status !== 'active') {
-                return interaction.editReply('This challenge is no longer active.');
+            if (!challenge || challenge.status !== 'pending') {
+                return interaction.editReply('This challenge is no longer available.');
             }
             
-            // Get user
-            const user = await User.findOne({ discordId: interaction.user.id });
+            // Verify the user is the challengee
+            if (challenge.challengeeId !== interaction.user.id) {
+                return interaction.editReply('This challenge is not for you to decline.');
+            }
             
-            // Fetch fresh leaderboard data
-            if (challenge.isOpenChallenge) {
-                // For open challenges, we need to check all participants
-                const creatorScore = { exists: false, formattedScore: 'No entry', rank: 0, value: 0 };
-                const participantScores = [];
-                
-                // Fetch the complete leaderboard
-                const batch1 = await retroAPI.getLeaderboardEntriesDirect(challenge.leaderboardId, 0, 500);
-                const batch2 = await retroAPI.getLeaderboardEntriesDirect(challenge.leaderboardId, 500, 500);
-                
-                // Combine batches
-                let rawEntries = [];
-                
-                // Process first batch
-                if (batch1) {
-                    if (Array.isArray(batch1)) {
-                        rawEntries = [...rawEntries, ...batch1];
-                    } else if (batch1.Results && Array.isArray(batch1.Results)) {
-                        rawEntries = [...rawEntries, ...batch1.Results];
-                    }
-                }
-                
-                // Process second batch
-                if (batch2) {
-                    if (Array.isArray(batch2)) {
-                        rawEntries = [...rawEntries, ...batch2];
-                    } else if (batch2.Results && Array.isArray(batch2.Results)) {
-                        rawEntries = [...rawEntries, ...batch2.Results];
-                    }
-                }
-                
-                // Determine if this is a time-based leaderboard
-                const isTimeBased = challenge.description?.toLowerCase().includes('time') || 
-                                  challenge.description?.toLowerCase().includes('fastest');
-                
-                // Process entries
-                const leaderboardEntries = rawEntries.map(entry => {
-                    const user = entry.User || entry.user || '';
-                    const score = entry.Score || entry.score || entry.Value || entry.value || 0;
-                    const formattedScore = entry.FormattedScore || entry.formattedScore || entry.ScoreFormatted || score.toString();
-                    const rank = entry.Rank || entry.rank || 0;
-                    
-                    return {
-                        ApiRank: parseInt(rank, 10),
-                        User: user.trim(),
-                        RawScore: score,
-                        FormattedScore: formattedScore.toString().trim() || score.toString(),
-                        Value: parseFloat(score) || 0
-                    };
-                });
-                
-                // Sort entries based on leaderboard type
-                if (isTimeBased) {
-                    leaderboardEntries.sort((a, b) => a.Value - b.Value); // Lower time is better
-                } else {
-                    leaderboardEntries.sort((a, b) => b.Value - a.Value); // Higher score is better
-                }
-                
-                // Reassign ranks based on sorting
-                leaderboardEntries.forEach((entry, index) => {
-                    entry.ApiRank = index + 1;
-                });
-                
-                // Look up creator's score
-                const creatorEntry = leaderboardEntries.find(entry => 
-                    entry.User.toLowerCase() === challenge.challengerUsername.toLowerCase()
+            // Get the challenger
+            const challenger = await User.findOne({ discordId: challenge.challengerId });
+            
+            // Update challenge status
+            challenge.status = 'declined';
+            await challenge.save();
+            
+            // Refund the challenger's wager
+            if (challenger) {
+                await arenaService.trackGpTransaction(
+                    challenger, 
+                    challenge.wagerAmount, 
+                    'Challenge declined - wager refunded', 
+                    `Challenge ID: ${challenge._id}, Game: ${challenge.gameTitle}`
                 );
-                
-                if (creatorEntry) {
-                    creatorScore.exists = true;
-                    creatorScore.formattedScore = creatorEntry.FormattedScore;
-                    creatorScore.rank = creatorEntry.ApiRank;
-                    creatorScore.value = creatorEntry.Value;
-                }
-                
-                // Look up each participant's score
-                for (const participant of challenge.participants) {
-                    const participantEntry = leaderboardEntries.find(entry => 
-                        entry.User.toLowerCase() === participant.username.toLowerCase()
-                    );
-                    
-                    const participantScore = {
-                        userId: participant.userId,
-                        username: participant.username,
-                        exists: false,
-                        formattedScore: 'No entry',
-                        rank: 0,
-                        value: 0
-                    };
-                    
-                    if (participantEntry) {
-                        participantScore.exists = true;
-                        participantScore.formattedScore = participantEntry.FormattedScore;
-                        participantScore.rank = participantEntry.ApiRank;
-                        participantScore.value = participantEntry.Value;
-                    }
-                    
-                    participantScores.push(participantScore);
-                }
-                
-                // Create an embed with the updated leaderboard data
-                const embed = new EmbedBuilder()
-                    .setColor('#00FF00')
-                    .setTitle(`${challenge.gameTitle} - Leaderboard Refreshed`)
-                    .setDescription(`**Open Challenge** created by ${challenge.challengerUsername}\n**Description:** ${challenge.description || 'No description provided'}`);
-                
-                // Add leaderboard link
-                const leaderboardLink = `[View on RetroAchievements](https://retroachievements.org/leaderboardinfo.php?i=${challenge.leaderboardId})`;
-                
-                // Create leaderboard table
-                let leaderboardText = `**Current Rankings (Refreshed at ${new Date().toLocaleTimeString()}):**\n\n`;
-                
-                // Add creator's score
-                leaderboardText += `1. **${challenge.challengerUsername} (Creator):** ${creatorScore.exists ? creatorScore.formattedScore : 'No score yet'}\n`;
-                
-                // Add participants' scores
-                participantScores.forEach((score, index) => {
-                    leaderboardText += `${index + 2}. **${score.username}:** ${score.exists ? score.formattedScore : 'No score yet'}\n`;
-                });
-                
-                leaderboardText += `\n**Leaderboard:** ${leaderboardLink}`;
-                
-                embed.addFields({ name: 'Current Standings', value: leaderboardText });
-                
-                // Add time remaining
-                const timeRemaining = this.formatTimeRemaining(challenge.endDate);
-                embed.addFields({ 
-                    name: 'Challenge Info', 
-                    value: `**Wager:** ${challenge.wagerAmount} GP per player\n` +
-                           `**Participants:** ${challenge.participants.length + 1}\n` +
-                           `**Total Pool:** ${(challenge.totalPool || 0) + (challenge.wagerAmount * (challenge.participants.length + 1))} GP\n` +
-                           `**Ends:** ${timeRemaining}`
-                });
-                
-                // Add thumbnail if available
-                if (challenge.iconUrl) {
-                    embed.setThumbnail(`https://retroachievements.org${challenge.iconUrl}`);
-                }
-                
-                // Add buttons: Refresh again and Back to menu
-                const buttonsRow = new ActionRowBuilder()
-                    .addComponents(
-                        new ButtonBuilder()
-                            .setCustomId(`arena_refresh_leaderboard_${challenge._id}`)
-                            .setLabel('Refresh Again')
-                            .setStyle(ButtonStyle.Primary)
-                            .setEmoji('🔄'),
-                        new ButtonBuilder()
-                            .setCustomId('arena_back_to_main')
-                            .setLabel('Back to Arena')
-                            .setStyle(ButtonStyle.Secondary)
-                    );
-                
-                return interaction.editReply({
-                    embeds: [embed],
-                    components: [buttonsRow]
-                });
-            } 
-            // Regular 1v1 challenge
-            else {
-                // Fetch fresh scores for both players
-                const [challengerScore, challengeeScore] = await this.fetchLeaderboardPositions(challenge);
-                
-                // Create an embed with the updated leaderboard data
-                const embed = new EmbedBuilder()
-                    .setColor('#00FF00')
-                    .setTitle(`${challenge.gameTitle} - Leaderboard Refreshed`)
-                    .setDescription(`**Challenge:** ${challenge.challengerUsername} vs ${challenge.challengeeUsername}\n**Description:** ${challenge.description || 'No description provided'}`);
-                
-                // Add leaderboard link
-                const leaderboardLink = `[View on RetroAchievements](https://retroachievements.org/leaderboardinfo.php?i=${challenge.leaderboardId})`;
-                
-                // Create leaderboard table
-                let leaderboardText = `**Current Standings (Refreshed at ${new Date().toLocaleTimeString()}):**\n\n`;
-                
-                if (challengerScore.exists) {
-                    leaderboardText += `• **${challenge.challengerUsername}:** ${challengerScore.formattedScore}\n`;
-                } else {
-                    leaderboardText += `• **${challenge.challengerUsername}:** No score yet\n`;
-                }
-                
-                if (challengeeScore.exists) {
-                    leaderboardText += `• **${challenge.challengeeUsername}:** ${challengeeScore.formattedScore}\n`;
-                } else {
-                    leaderboardText += `• **${challenge.challengeeUsername}:** No score yet\n`;
-                }
-                
-                leaderboardText += `\n**Leaderboard:** ${leaderboardLink}`;
-                
-                embed.addFields({ name: 'Current Standings', value: leaderboardText });
-                
-                // Add time remaining
-                const timeRemaining = this.formatTimeRemaining(challenge.endDate);
-                embed.addFields({ 
-                    name: 'Challenge Info', 
-                    value: `**Wager:** ${challenge.wagerAmount} GP each\n` +
-                           `**Total Pool:** ${(challenge.totalPool || 0) + (challenge.wagerAmount * 2)} GP\n` +
-                           `**Ends:** ${timeRemaining}`
-                });
-                
-                // Add thumbnail if available
-                if (challenge.iconUrl) {
-                    embed.setThumbnail(`https://retroachievements.org${challenge.iconUrl}`);
-                }
-                
-                // Add buttons: Refresh again and Back to menu
-                const buttonsRow = new ActionRowBuilder()
-                    .addComponents(
-                        new ButtonBuilder()
-                            .setCustomId(`arena_refresh_leaderboard_${challenge._id}`)
-                            .setLabel('Refresh Again')
-                            .setStyle(ButtonStyle.Primary)
-                            .setEmoji('🔄'),
-                        new ButtonBuilder()
-                            .setCustomId('arena_back_to_main')
-                            .setLabel('Back to Arena')
-                            .setStyle(ButtonStyle.Secondary)
-                    );
-                
-                return interaction.editReply({
-                    embeds: [embed],
-                    components: [buttonsRow]
-                });
             }
+            
+            // Send notification about declined challenge
+            await arenaService.notifyChallengeUpdate(challenge);
+            
+            // Show confirmation to the user
+            await interaction.editReply({
+                content: `You have declined the challenge from ${challenge.challengerUsername}. The challenger has been refunded their wager.`,
+                components: [
+                    new ActionRowBuilder()
+                        .addComponents(
+                            new ButtonBuilder()
+                                .setCustomId('arena_back_to_main')
+                                .setLabel('Back to Arena')
+                                .setStyle(ButtonStyle.Secondary)
+                        )
+                ]
+            });
         } catch (error) {
-            console.error('Error refreshing leaderboard:', error);
-            return interaction.editReply('An error occurred while refreshing the leaderboard data.');
+            console.error('Error declining challenge:', error);
+            await interaction.editReply('An error occurred while declining the challenge.');
         }
     },
     
-    // Handle the active challenges command
-    async handleActive(interaction) {
-        await interaction.deferUpdate();
+    // Handle button interactions
+    async handleButtonInteraction(interaction) {
+        const customId = interaction.customId;
         
-        try {
-            // Get active challenges
-            const activeChallengers = await ArenaChallenge.find({
-                status: 'active',
-                endDate: { $gt: new Date() }
-            }).sort({ endDate: 1 }); // Sort by end date (earliest first)
+        if (customId.startsWith('arena_accept_challenge_')) {
+            const challengeId = customId.split('_').pop();
+            await this.handleAcceptChallenge(interaction, challengeId);
+        }
+        else if (customId.startsWith('arena_decline_challenge_')) {
+            const challengeId = customId.split('_').pop();
+            await this.handleDeclineChallenge(interaction, challengeId);
+        }
+        else if (customId === 'arena_back_to_main') {
+            await interaction.deferUpdate();
+            const user = await User.findOne({ discordId: interaction.user.id });
+            // Skip GP check when returning to main menu
+            await this.showMainArenaMenu(interaction, user, true);
+        }
+        else if (customId === 'arena_help') {
+            await interaction.deferUpdate();
+            await this.showArenaHelp(interaction);
+        }
+        else if (customId.startsWith('arena_join_challenge_')) {
+            await this.handleJoinChallenge(interaction);
+        }
+        else if (customId.startsWith('arena_refresh_leaderboard_')) {
+            const challengeId = customId.replace('arena_refresh_leaderboard_', '');
+            await this.handleRefreshLeaderboard(interaction, challengeId);
+        }
+    },
+    
+    // Handle select menu interactions
+    async handleSelectMenuInteraction(interaction) {
+        const customId = interaction.customId;
+        
+        if (customId === 'arena_main_action') {
+            const selectedValue = interaction.values[0];
             
-            if (activeChallengers.length === 0) {
-                return interaction.editReply('There are no active challenges right now.');
+            switch (selectedValue) {
+                case 'create_challenge':
+                    await this.showCreateChallengeModal(interaction);
+                    break;
+                case 'place_bet':
+                    await this.showActiveChallengesForBetting(interaction);
+                    break;
+                case 'my_challenges':
+                    await this.showMyChallenges(interaction);
+                    break;
+                case 'active_challenges':
+                    await arenaService.showActiveChallengesToUser(interaction);
+                    break;
+                case 'leaderboard':
+                    await arenaService.showGpLeaderboard(interaction);
+                    break;
+                case 'open_challenges':
+                    await this.showOpenChallenges(interaction);
+                    break;
+                default:
+                    await interaction.deferUpdate();
+                    await interaction.editReply('Invalid selection. Please try again.');
             }
-            
-            // Create an embed to display active challenges
-            const embed = new EmbedBuilder()
-                .setTitle('Active Arena Challenges')
-                .setColor('#FF5722')
-                .setDescription(
-                    'These are the currently active challenges in the Arena.\n' +
-                    'Use `/arena` and select "Place Bet" to bet on these challenges.\n\n' +
-                    '**Pot Betting System:** Your bet joins the total prize pool. ' +
-                    'If your chosen player wins, you get your bet back plus a share of the losing bets proportional to your bet amount.' +
-                    '\n**Note:** Betting is only available during the first 72 hours of a challenge. Maximum bet: 100 GP.'
-                )
-                .setFooter({ text: 'All challenge updates are posted in the Arena channel' });
-            
-            activeChallengers.forEach((challenge, index) => {
-                const timeRemaining = this.formatTimeRemaining(challenge.endDate);
-                const now = new Date();
-                const bettingOpen = (now - challenge.startDate) / (1000 * 60 * 60) <= 72;
-                const bettingStatus = bettingOpen ? 'Open' : 'Closed';
-                
-                // Add leaderboard link
-                const leaderboardLink = `[View Leaderboard](https://retroachievements.org/leaderboardinfo.php?i=${challenge.leaderboardId})`;
-                
-                if (challenge.isOpenChallenge && challenge.participants && challenge.participants.length > 0) {
-                    // For open challenges with participants
-                    const participantCount = challenge.participants.length + 1; // +1 for creator
-                    const wagerPool = challenge.wagerAmount * participantCount;
-                    const totalPool = (challenge.totalPool || 0) + wagerPool;
-                    
-                    // Create a list of participants (creator + joined users)
-                    let participantsText = `${challenge.challengerUsername} (Creator)`;
-                    challenge.participants.forEach((participant, pIndex) => {
-                        if (pIndex < 3) { // Show max 3 participants directly
-                            participantsText += `, ${participant.username}`;
-                        }
-                    });
-                    
-                    if (challenge.participants.length > 3) {
-                        participantsText += ` and ${challenge.participants.length - 3} more`;
-                    }
-                    
-                    embed.addFields({
-                        name: `${index + 1}. ${challenge.gameTitle} (Open Challenge)`,
-                        value: `**Creator:** ${challenge.challengerUsername}\n` +
-                               (challenge.description ? `**Description:** ${challenge.description}\n` : '') +
-                               `**Participants:** ${participantCount} (${participantsText})\n` +
-                               `**Wager:** ${challenge.wagerAmount} GP per player\n` +
-                               `**Total Pool:** ${totalPool} GP\n` +
-                               `**Ends:** ${challenge.endDate.toLocaleDateString()} (${timeRemaining})\n` +
-                               `**Betting:** ${bettingStatus} | **Bets:** ${challenge.bets?.length || 0}\n` +
-                               `${leaderboardLink}`
-                    });
+        } else if (customId === 'arena_pending_challenge_select') {
+            await this.handlePendingChallengeSelect(interaction);
+        } else if (customId === 'arena_bet_challenge_select') {
+            await this.handleBetChallengeSelect(interaction);
+        } else if (customId === 'arena_bet_player_select') {
+            await this.handleBetPlayerSelect(interaction);
+        }
+    }
+};
