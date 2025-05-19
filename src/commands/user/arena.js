@@ -321,6 +321,9 @@ export default {
                     }
                 }
                 
+                // Add leaderboard link
+                const leaderboardLink = `[View Leaderboard](https://retroachievements.org/leaderboardinfo.php?i=${challenge.leaderboardId})`;
+                
                 // Show detailed challenge info with fixed duration of 1 week
                 embed.setDescription(
                     `**${challenge.challengerUsername}** has challenged you to compete in:\n\n` +
@@ -328,6 +331,7 @@ export default {
                     `**Description:** ${challenge.description || 'No description provided'}\n\n` +
                     `**Wager:** ${challenge.wagerAmount} GP\n` +
                     `**Duration:** 1 week${leaderboardText}\n\n` +
+                    `**Leaderboard:** ${leaderboardLink}\n\n` +
                     `Do you accept this challenge?`
                 );
                 
@@ -407,9 +411,15 @@ export default {
         }
     },
     
-    // Helper function to fetch current leaderboard positions
+    // Helper function to fetch current leaderboard positions - UPDATED for time-based leaderboards
     async fetchLeaderboardPositions(challenge) {
         try {
+            // Determine if this is a time-based leaderboard
+            const isTimeBased = challenge.description?.toLowerCase().includes('time') || 
+                              challenge.description?.toLowerCase().includes('fastest');
+                
+            console.log(`[ARENA] Leaderboard ${challenge.leaderboardId} is time-based: ${isTimeBased}`);
+            
             // Fetch leaderboard entries
             const batch1 = await retroAPI.getLeaderboardEntriesDirect(challenge.leaderboardId, 0, 500);
             const batch2 = await retroAPI.getLeaderboardEntriesDirect(challenge.leaderboardId, 500, 500);
@@ -451,6 +461,22 @@ export default {
                     Value: parseFloat(score) || 0
                 };
             });
+            
+            // Sort entries properly based on leaderboard type
+            if (isTimeBased) {
+                // For time-based leaderboards, lower is better
+                leaderboardEntries.sort((a, b) => a.Value - b.Value);
+            } else {
+                // For score-based leaderboards, higher is better
+                leaderboardEntries.sort((a, b) => b.Value - a.Value);
+            }
+            
+            // Reassign ranks based on proper sorting
+            leaderboardEntries.forEach((entry, index) => {
+                entry.ApiRank = index + 1;
+            });
+            
+            console.log(`[ARENA] Processed ${leaderboardEntries.length} leaderboard entries`);
             
             // Find entries for both users
             const challengerEntry = leaderboardEntries.find(entry => 
@@ -527,13 +553,13 @@ export default {
                 .setRequired(true)
                 .setStyle(TextInputStyle.Short);
                 
-            // Input for description (updated with more detailed guidance about competition type)
-           const descriptionInput = new TextInputBuilder()
-    .setCustomId('description')
-    .setLabel('Challenge Description')
-    .setPlaceholder('Specify: 1) Track/level 2) Competition type (time/score) 3) Rules')
-    .setRequired(true)
-    .setStyle(TextInputStyle.Paragraph);
+            // Input for description (UPDATED with shorter placeholder)
+            const descriptionInput = new TextInputBuilder()
+                .setCustomId('description')
+                .setLabel('Challenge Description')
+                .setPlaceholder('Specify: 1) Track/level 2) Competition type (time/score) 3) Rules')
+                .setRequired(true)
+                .setStyle(TextInputStyle.Paragraph);
                 
             // Input for wager amount
             const wagerInput = new TextInputBuilder()
@@ -784,6 +810,9 @@ export default {
                     console.error('Error notifying about new challenge:', notifyError);
                 }
                 
+                // Add leaderboard link
+                const leaderboardLink = `[View Leaderboard](https://retroachievements.org/leaderboardinfo.php?i=${leaderboardId})`;
+                
                 // Create response embed
                 const embed = new EmbedBuilder()
                     .setColor('#00FF00')
@@ -797,7 +826,8 @@ export default {
                         { name: 'Game', value: `${gameInfo.title} (${gameInfo.consoleName || 'Unknown'})`, inline: false },
                         { name: 'Description', value: description, inline: false },
                         { name: 'Wager', value: `${wagerAmount} GP`, inline: true },
-                        { name: 'Duration', value: '1 week', inline: true }
+                        { name: 'Duration', value: '1 week', inline: true },
+                        { name: 'Leaderboard', value: leaderboardLink, inline: false }
                     );
                 
                 if (!isOpenChallenge) {
@@ -868,6 +898,9 @@ export default {
                 return interaction.editReply(`You don't have enough GP to accept this challenge. Your balance: ${user.gp || 0} GP`);
             }
             
+            // Add leaderboard link
+            const leaderboardLink = `[View Leaderboard](https://retroachievements.org/leaderboardinfo.php?i=${challenge.leaderboardId})`;
+            
             // Create an embed with challenge details - updated to show fixed duration of 1 week
             const embed = new EmbedBuilder()
                 .setColor('#FF5722')
@@ -876,7 +909,8 @@ export default {
                     `**Game:** ${challenge.gameTitle}\n` +
                     `**Description:** ${challenge.description || 'No description provided'}\n` +
                     `**Wager:** ${challenge.wagerAmount} GP\n` +
-                    `**Duration:** 1 week\n\n` +
+                    `**Duration:** 1 week\n` +
+                    `**Leaderboard:** ${leaderboardLink}\n\n` +
                     `Do you want to accept or decline this challenge?`
                 );
             
@@ -908,7 +942,7 @@ export default {
         }
     },
     
-    // Show active challenges for betting
+    // Show active challenges for betting - UPDATED to include 72-hour betting window
     async showActiveChallengesForBetting(interaction) {
         try {
             await interaction.deferUpdate();
@@ -929,9 +963,17 @@ export default {
                 return interaction.editReply('There are no active challenges to bet on.');
             }
             
-            // Filter out challenges the user is participating in
+            const now = new Date();
+            
+            // Filter out challenges the user is participating in and those older than 72 hours
             const bettableChallenges = activeChallengers.filter(
                 challenge => {
+                    // Check if challenge is less than 72 hours old
+                    const challengeAge = (now - challenge.startDate) / (1000 * 60 * 60);
+                    if (challengeAge > 72) {
+                        return false; // Exclude challenges older than 72 hours
+                    }
+                    
                     // Check if user is challenger or challengee
                     if (challenge.challengerId === user.discordId || challenge.challengeeId === user.discordId) {
                         return false;
@@ -947,7 +989,7 @@ export default {
             );
             
             if (bettableChallenges.length === 0) {
-                return interaction.editReply('There are no active challenges available for you to bet on. You cannot bet on challenges you are participating in.');
+                return interaction.editReply('There are no active challenges available for you to bet on. You cannot bet on challenges you are participating in, or on challenges that have been active for more than 72 hours.');
             }
             
             // Create embed showing all active challenges
@@ -958,7 +1000,8 @@ export default {
                     'Select a challenge to bet on:\n\n' +
                     '**Pot Betting System:** Your bet is added to the total prize pool. ' +
                     'If your chosen player wins, you get your bet back plus a proportional share of the losing side bets based on your bet amount!\n\n' +
-                    '**House Guarantee:** If you\'re the only bettor, the house will guarantee a 50% profit on your bet if you win.'
+                    '**House Guarantee:** If you\'re the only bettor, the house will guarantee a 50% profit on your bet if you win.\n\n' +
+                    '**Note:** Betting is only available during the first 72 hours of a challenge. Max bet: 100 GP.'
                 );
             
             // Create a select menu
@@ -984,14 +1027,17 @@ export default {
                     label += ` (Bet: ${existingBet.betAmount} GP on ${existingBet.targetPlayer})`;
                 }
                 
+                const hoursLeft = Math.floor(72 - ((now - challenge.startDate) / (1000 * 60 * 60)));
+                
                 selectMenu.addOptions({
                     label: label.substring(0, 100),
-                    description: `${challenge.gameTitle} | Pool: ${challenge.totalPool || 0} GP`,
+                    description: `${challenge.gameTitle} | Pool: ${challenge.totalPool || 0} GP | Betting: ${hoursLeft}h left`,
                     value: challenge._id.toString()
                 });
                 
                 // Add info to the embed
                 const timeRemaining = this.formatTimeRemaining(challenge.endDate);
+                const bettingEnds = this.formatTimeRemaining(new Date(challenge.startDate.getTime() + (72 * 60 * 60 * 1000)));
                 
                 // Calculate total pot based on challenge type
                 let wagerPool;
@@ -1017,12 +1063,17 @@ export default {
                     challengeDescription = `**Game:** ${challenge.gameTitle}\n`;
                 }
                 
+                // Add leaderboard link
+                const leaderboardLink = `[View Leaderboard](https://retroachievements.org/leaderboardinfo.php?i=${challenge.leaderboardId})`;
+                
                 embed.addFields({
                     name: `${index + 1}. ${title}`,
                     value: challengeDescription +
                            `**Wager Pool:** ${wagerPool} GP\n` +
                            `**Total Betting Pool:** ${totalPool} GP\n` +
-                           `**Ends:** ${timeRemaining}`
+                           `**Challenge Ends:** ${timeRemaining}\n` +
+                           `**Betting Ends:** ${bettingEnds}\n` +
+                           `**Leaderboard:** ${leaderboardLink}`
                 });
                 
                 if (existingBet) {
@@ -1054,7 +1105,7 @@ export default {
         }
     },
     
-    // Handle the selection of an active challenge for betting
+    // Handle the selection of an active challenge for betting - UPDATED to include 72-hour betting window
     async handleBetChallengeSelect(interaction) {
         try {
             await interaction.deferUpdate();
@@ -1065,6 +1116,13 @@ export default {
             const challenge = await ArenaChallenge.findById(selectedChallengeId);
             if (!challenge || challenge.status !== 'active') {
                 return interaction.editReply('This challenge is no longer active.');
+            }
+            
+            // Check if challenge is within 72-hour betting window
+            const now = new Date();
+            const challengeAge = (now - challenge.startDate) / (1000 * 60 * 60);
+            if (challengeAge > 72) {
+                return interaction.editReply('Betting for this challenge has closed. Bets are only accepted during the first 72 hours of a challenge.');
             }
             
             // Get user
@@ -1089,16 +1147,23 @@ export default {
                 return interaction.editReply(`You've already placed a bet of ${existingBet.betAmount} GP on ${existingBet.targetPlayer}.`);
             }
             
+            // Add leaderboard link
+            const leaderboardLink = `[View Leaderboard](https://retroachievements.org/leaderboardinfo.php?i=${challenge.leaderboardId})`;
+            const bettingEnds = this.formatTimeRemaining(new Date(challenge.startDate.getTime() + (72 * 60 * 60 * 1000)));
+            
             // Create an embed with challenge details
             const embed = new EmbedBuilder()
                 .setColor('#9B59B6')
                 .setTitle(`Place Bet: ${challenge.isOpenChallenge ? challenge.gameTitle : `${challenge.challengerUsername} vs ${challenge.challengeeUsername}`}`)
                 .setDescription(
                     `**Game:** ${challenge.gameTitle}\n` +
-                    `**Description:** ${challenge.description || 'No description provided'}\n\n` +
+                    `**Description:** ${challenge.description || 'No description provided'}\n` +
+                    `**Betting Ends:** ${bettingEnds}\n` +
+                    `**Leaderboard:** ${leaderboardLink}\n\n` +
                     `**Pot Betting System:** Your bet joins the total prize pool. ` +
                     `If your chosen player wins, you get your bet back plus a share of the losing side's bets proportional to your bet amount.\n\n` +
                     `**House Guarantee:** If you're the only bettor, the house guarantees 50% profit on your bet if you win.\n\n` +
+                    `**Note:** Maximum bet is 100 GP.\n\n` +
                     `Select which player you want to bet on:`
                 );
             
@@ -1195,6 +1260,14 @@ export default {
                 return interaction.editReply('This challenge is no longer active.');
             }
             
+            // Check 72-hour betting window
+            const now = new Date();
+            const challengeAge = (now - challenge.startDate) / (1000 * 60 * 60);
+            if (challengeAge > 72) {
+                await interaction.deferUpdate();
+                return interaction.editReply('Betting for this challenge has closed. Bets are only accepted during the first 72 hours of a challenge.');
+            }
+            
             // Get user
             const user = await User.findOne({ discordId: interaction.user.id });
             
@@ -1205,8 +1278,8 @@ export default {
                 
             const betAmountInput = new TextInputBuilder()
                 .setCustomId('bet_amount')
-                .setLabel(`GP to Bet (Current Balance: ${user.gp || 0} GP)`)
-                .setPlaceholder('Enter amount (minimum 10 GP)')
+                .setLabel(`GP to Bet (Max: 100 GP, Balance: ${user.gp || 0} GP)`)
+                .setPlaceholder('Enter amount (10-100 GP)')
                 .setRequired(true)
                 .setStyle(TextInputStyle.Short);
                 
@@ -1250,7 +1323,7 @@ export default {
         }
     },
     
-    // Handle bet amount modal submission
+    // Handle bet amount modal submission - UPDATED to cap bets at 100 GP
     async handleBetAmountModal(interaction, challengeId, playerName) {
         try {
             await interaction.deferReply({ ephemeral: true });
@@ -1262,12 +1335,24 @@ export default {
                 return interaction.editReply('Bet amount must be at least 10 GP.');
             }
             
+            // Cap bets at 100 GP
+            if (betAmount > 100) {
+                return interaction.editReply('Bets are capped at 100 GP maximum. Please enter a bet amount of 100 GP or less.');
+            }
+            
             // Get user and challenge
             const user = await User.findOne({ discordId: interaction.user.id });
             const challenge = await ArenaChallenge.findById(challengeId);
             
             if (!challenge || challenge.status !== 'active') {
                 return interaction.editReply('This challenge is no longer active.');
+            }
+            
+            // Check 72-hour betting window
+            const now = new Date();
+            const challengeAge = (now - challenge.startDate) / (1000 * 60 * 60);
+            if (challengeAge > 72) {
+                return interaction.editReply('Betting for this challenge has closed. Bets are only accepted during the first 72 hours of a challenge.');
             }
             
             // Check if user is part of the challenge
@@ -1382,7 +1467,7 @@ export default {
         }
     },
     
-    // Show user's active and pending challenges
+    // Show user's active and pending challenges - UPDATED to include refresh buttons for active challenges
     async showMyChallenges(interaction) {
         try {
             await interaction.deferUpdate();
@@ -1425,9 +1510,11 @@ export default {
                 pendingChallenges.forEach((challenge, index) => {
                     const isChallenger = challenge.challengerId === user.discordId;
                     const opponent = isChallenger ? challenge.challengeeUsername : challenge.challengerUsername;
+                    const leaderboardLink = `[View Leaderboard](https://retroachievements.org/leaderboardinfo.php?i=${challenge.leaderboardId})`;
                     
                     pendingText += `**${index + 1}. ${challenge.gameTitle}** vs ${opponent}\n` +
                                  `**Wager:** ${challenge.wagerAmount} GP | **Duration:** 1 week\n` +
+                                 `${leaderboardLink}\n` +
                                  `**Status:** ${isChallenger ? 'Waiting for response' : 'Needs your response'}\n\n`;
                 });
                 
@@ -1440,9 +1527,11 @@ export default {
                 
                 openChallenges.forEach((challenge, index) => {
                     const timeRemaining = this.formatTimeRemaining(challenge.endDate || new Date(Date.now() + 604800000)); // Default to 1 week from now
+                    const leaderboardLink = `[View Leaderboard](https://retroachievements.org/leaderboardinfo.php?i=${challenge.leaderboardId})`;
                     
                     openText += `**${index + 1}. ${challenge.gameTitle}** (Open Challenge)\n` +
                                 `**Wager:** ${challenge.wagerAmount} GP\n` +
+                                `${leaderboardLink}\n` +
                                 `**Status:** Waiting for participants to join\n\n`;
                 });
                 
@@ -1457,10 +1546,12 @@ export default {
                     const isChallenger = challenge.challengerId === user.discordId;
                     const opponent = isChallenger ? challenge.challengeeUsername : challenge.challengerUsername;
                     const timeRemaining = this.formatTimeRemaining(challenge.endDate);
+                    const leaderboardLink = `[View Leaderboard](https://retroachievements.org/leaderboardinfo.php?i=${challenge.leaderboardId})`;
                     
                     activeText += `**${index + 1}. ${challenge.gameTitle}** vs ${opponent}\n` +
                                 `**Wager:** ${challenge.wagerAmount} GP | **Ends:** ${timeRemaining}\n` +
-                                `**Total Pool:** ${(challenge.totalPool || 0) + (challenge.wagerAmount * 2)} GP\n\n`;
+                                `**Total Pool:** ${(challenge.totalPool || 0) + (challenge.wagerAmount * 2)} GP\n` +
+                                `${leaderboardLink}\n\n`;
                 });
                 
                 embed.addFields({ name: '⚔️ Active Direct Challenges', value: activeText || 'None' });
@@ -1476,17 +1567,49 @@ export default {
                     const participantCount = (challenge.participants?.length || 0) + 1; // +1 for creator
                     const totalWagered = challenge.wagerAmount * participantCount;
                     const totalPool = (challenge.totalPool || 0) + totalWagered;
+                    const leaderboardLink = `[View Leaderboard](https://retroachievements.org/leaderboardinfo.php?i=${challenge.leaderboardId})`;
                     
                     openText += `**${index + 1}. ${challenge.gameTitle}** (${isCreator ? 'You created' : 'You joined'})\n` +
                                `**Wager:** ${challenge.wagerAmount} GP | **Ends:** ${timeRemaining}\n` +
                                `**Participants:** ${participantCount} | ` +
-                               `**Total Pool:** ${totalPool} GP\n\n`;
+                               `**Total Pool:** ${totalPool} GP\n` +
+                               `${leaderboardLink}\n\n`;
                 });
                 
                 embed.addFields({ name: '🌐 Active Open Challenges', value: openText || 'None' });
             }
             
-            // Add back button
+            // Create buttons for active challenges (if any)
+            const rows = [];
+            
+            // Create buttons for refreshing active challenges
+            const allActiveChallenges = [...activeDirectChallenges, ...activeOpenChallenges];
+            const refreshButtons = [];
+            
+            // Only show refresh buttons if there are active challenges
+            if (allActiveChallenges.length > 0) {
+                // Create buttons for up to 5 active challenges (Discord limit)
+                const maxButtons = Math.min(allActiveChallenges.length, 5);
+                
+                for (let i = 0; i < maxButtons; i++) {
+                    const challenge = allActiveChallenges[i];
+                    refreshButtons.push(
+                        new ButtonBuilder()
+                            .setCustomId(`arena_refresh_leaderboard_${challenge._id}`)
+                            .setLabel(`Refresh #${i + 1}`)
+                            .setStyle(ButtonStyle.Primary)
+                            .setEmoji('🔄')
+                    );
+                }
+                
+                // If we have refresh buttons, add them to a row
+                if (refreshButtons.length > 0) {
+                    const refreshRow = new ActionRowBuilder().addComponents(refreshButtons);
+                    rows.push(refreshRow);
+                }
+            }
+            
+            // Always add the back button
             const backRow = new ActionRowBuilder()
                 .addComponents(
                     new ButtonBuilder()
@@ -1495,9 +1618,11 @@ export default {
                         .setStyle(ButtonStyle.Secondary)
                 );
             
+            rows.push(backRow);
+            
             await interaction.editReply({
                 embeds: [embed],
-                components: [backRow]
+                components: rows
             });
         } catch (error) {
             console.error('Error showing user challenges:', error);
@@ -1505,17 +1630,22 @@ export default {
         }
     },
     
-    // Show open challenges for joining
+    // Show open challenges for joining - UPDATED to fix open challenges display
     async showOpenChallenges(interaction) {
         await interaction.deferUpdate();
         
         try {
-            // Find open challenges
+            // Find open challenges - FIXED to show all open challenges correctly
             const openChallenges = await ArenaChallenge.find({
                 isOpenChallenge: true,
-                status: 'open',
-                endDate: { $gt: new Date() }
+                status: 'open'
             }).sort({ createdAt: -1 });
+            
+            // Log for debugging
+            console.log(`[ARENA] Found ${openChallenges.length} open challenges`);
+            for (const challenge of openChallenges) {
+                console.log(`[ARENA] Open challenge: ${challenge._id}, Game: ${challenge.gameTitle}, Creator: ${challenge.challengerUsername}`);
+            }
             
             if (openChallenges.length === 0) {
                 return interaction.editReply('There are no open challenges available right now.');
@@ -1540,12 +1670,16 @@ export default {
                     `${participantCount + 1}/${challenge.maxParticipants}` : 
                     `${participantCount + 1} (unlimited)`; // +1 to include creator
                 
+                // Add leaderboard link
+                const leaderboardLink = `[View Leaderboard](https://retroachievements.org/leaderboardinfo.php?i=${challenge.leaderboardId})`;
+                
                 embed.addFields({
                     name: `${index + 1}. ${challenge.gameTitle}`,
                     value: `**Creator:** ${challenge.challengerUsername}\n` +
                            `**Description:** ${challenge.description || 'No description provided'}\n` +
                            `**Wager:** ${challenge.wagerAmount} GP\n` +
                            `**Participants:** ${participantLimit}\n` +
+                           `${leaderboardLink}\n` +
                            `**Challenge ID:** \`${challenge._id}\``
                 });
             });
@@ -1675,6 +1809,9 @@ export default {
             // Update the arena feed
             await arenaService.createOrUpdateArenaFeed(challenge);
             
+            // Add leaderboard link
+            const leaderboardLink = `[View Leaderboard](https://retroachievements.org/leaderboardinfo.php?i=${challenge.leaderboardId})`;
+            
             // Create response embed
             const embed = new EmbedBuilder()
                 .setColor('#00FF00')
@@ -1683,7 +1820,8 @@ export default {
                     `You've successfully joined the open challenge for **${challenge.gameTitle}**!\n\n` +
                     `**Description:** ${challenge.description || 'No description provided'}\n` +
                     `**Wager:** ${challenge.wagerAmount} GP\n` +
-                    `**Your new GP balance:** ${user.gp} GP\n\n` +
+                    `**Your new GP balance:** ${user.gp} GP\n` +
+                    `${leaderboardLink}\n\n` +
                     `Good luck! Updates will be posted in the Arena channel.`
                 );
             
@@ -1722,6 +1860,10 @@ export default {
         }
         else if (customId.startsWith('arena_join_challenge_')) {
             await this.handleJoinChallenge(interaction);
+        }
+        else if (customId.startsWith('arena_refresh_leaderboard_')) {
+            const challengeId = customId.replace('arena_refresh_leaderboard_', '');
+            await this.handleRefreshLeaderboard(interaction, challengeId);
         }
     },
     
@@ -1790,7 +1932,8 @@ export default {
                 {
                     name: '🎲 Pot Betting',
                     value: 'You can bet GP on other players\' challenges. Your bet joins the total prize pool. ' +
-                           'If your chosen player wins, you get your bet back plus a share of the losing bets proportional to your bet amount.'
+                           'If your chosen player wins, you get your bet back plus a share of the losing bets proportional to your bet amount. ' +
+                           'Maximum bet: 100 GP. Betting is only available during the first 72 hours of a challenge.'
                 },
                 {
                     name: '💸 House Guarantee',
@@ -1881,6 +2024,9 @@ export default {
             // Initialize the leaderboard in the feed
             await arenaService.createOrUpdateArenaFeed(challenge);
             
+            // Add leaderboard link
+            const leaderboardLink = `[View Leaderboard](https://retroachievements.org/leaderboardinfo.php?i=${challenge.leaderboardId})`;
+            
             // Create response embed - fixed duration
             const embed = new EmbedBuilder()
                 .setColor('#00FF00')
@@ -1890,7 +2036,8 @@ export default {
                     `**Game:** ${challenge.gameTitle}\n` +
                     `**Wager:** ${challenge.wagerAmount} GP\n` +
                     `**Duration:** 1 week\n` +
-                    `**Ends:** ${challenge.endDate.toLocaleString()}\n\n` +
+                    `**Ends:** ${challenge.endDate.toLocaleString()}\n` +
+                    `${leaderboardLink}\n\n` +
                     `Good luck! Updates will be posted in the Arena channel.`
                 );
             
@@ -1909,57 +2056,247 @@ export default {
         }
     },
     
-    // Handle declining a challenge
-    async handleDeclineChallenge(interaction, challengeId) {
+    // New function to handle refreshing leaderboard data
+    async handleRefreshLeaderboard(interaction, challengeId) {
         try {
             await interaction.deferUpdate();
             
             // Get the challenge
             const challenge = await ArenaChallenge.findById(challengeId);
-            if (!challenge || challenge.status !== 'pending') {
-                return interaction.editReply('This challenge is no longer available.');
+            if (!challenge || challenge.status !== 'active') {
+                return interaction.editReply('This challenge is no longer active.');
             }
             
-            // Update challenge status
-            challenge.status = 'declined';
-            await challenge.save();
+            // Get user
+            const user = await User.findOne({ discordId: interaction.user.id });
             
-            // Return wager to challenger with tracking
-            const challenger = await User.findOne({ discordId: challenge.challengerId });
-            if (challenger) {
-                await arenaService.trackGpTransaction(
-                    challenger, 
-                    challenge.wagerAmount, 
-                    'Challenge declined - wager refund', 
-                    `Challenge ID: ${challenge._id}, Game: ${challenge.gameTitle}`
+            // Fetch fresh leaderboard data
+            if (challenge.isOpenChallenge) {
+                // For open challenges, we need to check all participants
+                const creatorScore = { exists: false, formattedScore: 'No entry', rank: 0, value: 0 };
+                const participantScores = [];
+                
+                // Fetch the complete leaderboard
+                const batch1 = await retroAPI.getLeaderboardEntriesDirect(challenge.leaderboardId, 0, 500);
+                const batch2 = await retroAPI.getLeaderboardEntriesDirect(challenge.leaderboardId, 500, 500);
+                
+                // Combine batches
+                let rawEntries = [];
+                
+                // Process first batch
+                if (batch1) {
+                    if (Array.isArray(batch1)) {
+                        rawEntries = [...rawEntries, ...batch1];
+                    } else if (batch1.Results && Array.isArray(batch1.Results)) {
+                        rawEntries = [...rawEntries, ...batch1.Results];
+                    }
+                }
+                
+                // Process second batch
+                if (batch2) {
+                    if (Array.isArray(batch2)) {
+                        rawEntries = [...rawEntries, ...batch2];
+                    } else if (batch2.Results && Array.isArray(batch2.Results)) {
+                        rawEntries = [...rawEntries, ...batch2.Results];
+                    }
+                }
+                
+                // Determine if this is a time-based leaderboard
+                const isTimeBased = challenge.description?.toLowerCase().includes('time') || 
+                                  challenge.description?.toLowerCase().includes('fastest');
+                
+                // Process entries
+                const leaderboardEntries = rawEntries.map(entry => {
+                    const user = entry.User || entry.user || '';
+                    const score = entry.Score || entry.score || entry.Value || entry.value || 0;
+                    const formattedScore = entry.FormattedScore || entry.formattedScore || entry.ScoreFormatted || score.toString();
+                    const rank = entry.Rank || entry.rank || 0;
+                    
+                    return {
+                        ApiRank: parseInt(rank, 10),
+                        User: user.trim(),
+                        RawScore: score,
+                        FormattedScore: formattedScore.toString().trim() || score.toString(),
+                        Value: parseFloat(score) || 0
+                    };
+                });
+                
+                // Sort entries based on leaderboard type
+                if (isTimeBased) {
+                    leaderboardEntries.sort((a, b) => a.Value - b.Value); // Lower time is better
+                } else {
+                    leaderboardEntries.sort((a, b) => b.Value - a.Value); // Higher score is better
+                }
+                
+                // Reassign ranks based on sorting
+                leaderboardEntries.forEach((entry, index) => {
+                    entry.ApiRank = index + 1;
+                });
+                
+                // Look up creator's score
+                const creatorEntry = leaderboardEntries.find(entry => 
+                    entry.User.toLowerCase() === challenge.challengerUsername.toLowerCase()
                 );
+                
+                if (creatorEntry) {
+                    creatorScore.exists = true;
+                    creatorScore.formattedScore = creatorEntry.FormattedScore;
+                    creatorScore.rank = creatorEntry.ApiRank;
+                    creatorScore.value = creatorEntry.Value;
+                }
+                
+                // Look up each participant's score
+                for (const participant of challenge.participants) {
+                    const participantEntry = leaderboardEntries.find(entry => 
+                        entry.User.toLowerCase() === participant.username.toLowerCase()
+                    );
+                    
+                    const participantScore = {
+                        userId: participant.userId,
+                        username: participant.username,
+                        exists: false,
+                        formattedScore: 'No entry',
+                        rank: 0,
+                        value: 0
+                    };
+                    
+                    if (participantEntry) {
+                        participantScore.exists = true;
+                        participantScore.formattedScore = participantEntry.FormattedScore;
+                        participantScore.rank = participantEntry.ApiRank;
+                        participantScore.value = participantEntry.Value;
+                    }
+                    
+                    participantScores.push(participantScore);
+                }
+                
+                // Create an embed with the updated leaderboard data
+                const embed = new EmbedBuilder()
+                    .setColor('#00FF00')
+                    .setTitle(`${challenge.gameTitle} - Leaderboard Refreshed`)
+                    .setDescription(`**Open Challenge** created by ${challenge.challengerUsername}\n**Description:** ${challenge.description || 'No description provided'}`);
+                
+                // Add leaderboard link
+                const leaderboardLink = `[View on RetroAchievements](https://retroachievements.org/leaderboardinfo.php?i=${challenge.leaderboardId})`;
+                
+                // Create leaderboard table
+                let leaderboardText = `**Current Rankings (Refreshed at ${new Date().toLocaleTimeString()}):**\n\n`;
+                
+                // Add creator's score
+                leaderboardText += `1. **${challenge.challengerUsername} (Creator):** ${creatorScore.exists ? creatorScore.formattedScore : 'No score yet'}\n`;
+                
+                // Add participants' scores
+                participantScores.forEach((score, index) => {
+                    leaderboardText += `${index + 2}. **${score.username}:** ${score.exists ? score.formattedScore : 'No score yet'}\n`;
+                });
+                
+                leaderboardText += `\n**Leaderboard:** ${leaderboardLink}`;
+                
+                embed.addFields({ name: 'Current Standings', value: leaderboardText });
+                
+                // Add time remaining
+                const timeRemaining = this.formatTimeRemaining(challenge.endDate);
+                embed.addFields({ 
+                    name: 'Challenge Info', 
+                    value: `**Wager:** ${challenge.wagerAmount} GP per player\n` +
+                           `**Participants:** ${challenge.participants.length + 1}\n` +
+                           `**Total Pool:** ${(challenge.totalPool || 0) + (challenge.wagerAmount * (challenge.participants.length + 1))} GP\n` +
+                           `**Ends:** ${timeRemaining}`
+                });
+                
+                // Add thumbnail if available
+                if (challenge.iconUrl) {
+                    embed.setThumbnail(`https://retroachievements.org${challenge.iconUrl}`);
+                }
+                
+                // Add buttons: Refresh again and Back to menu
+                const buttonsRow = new ActionRowBuilder()
+                    .addComponents(
+                        new ButtonBuilder()
+                            .setCustomId(`arena_refresh_leaderboard_${challenge._id}`)
+                            .setLabel('Refresh Again')
+                            .setStyle(ButtonStyle.Primary)
+                            .setEmoji('🔄'),
+                        new ButtonBuilder()
+                            .setCustomId('arena_back_to_main')
+                            .setLabel('Back to Arena')
+                            .setStyle(ButtonStyle.Secondary)
+                    );
+                
+                return interaction.editReply({
+                    embeds: [embed],
+                    components: [buttonsRow]
+                });
+            } 
+            // Regular 1v1 challenge
+            else {
+                // Fetch fresh scores for both players
+                const [challengerScore, challengeeScore] = await this.fetchLeaderboardPositions(challenge);
+                
+                // Create an embed with the updated leaderboard data
+                const embed = new EmbedBuilder()
+                    .setColor('#00FF00')
+                    .setTitle(`${challenge.gameTitle} - Leaderboard Refreshed`)
+                    .setDescription(`**Challenge:** ${challenge.challengerUsername} vs ${challenge.challengeeUsername}\n**Description:** ${challenge.description || 'No description provided'}`);
+                
+                // Add leaderboard link
+                const leaderboardLink = `[View on RetroAchievements](https://retroachievements.org/leaderboardinfo.php?i=${challenge.leaderboardId})`;
+                
+                // Create leaderboard table
+                let leaderboardText = `**Current Standings (Refreshed at ${new Date().toLocaleTimeString()}):**\n\n`;
+                
+                if (challengerScore.exists) {
+                    leaderboardText += `• **${challenge.challengerUsername}:** ${challengerScore.formattedScore}\n`;
+                } else {
+                    leaderboardText += `• **${challenge.challengerUsername}:** No score yet\n`;
+                }
+                
+                if (challengeeScore.exists) {
+                    leaderboardText += `• **${challenge.challengeeUsername}:** ${challengeeScore.formattedScore}\n`;
+                } else {
+                    leaderboardText += `• **${challenge.challengeeUsername}:** No score yet\n`;
+                }
+                
+                leaderboardText += `\n**Leaderboard:** ${leaderboardLink}`;
+                
+                embed.addFields({ name: 'Current Standings', value: leaderboardText });
+                
+                // Add time remaining
+                const timeRemaining = this.formatTimeRemaining(challenge.endDate);
+                embed.addFields({ 
+                    name: 'Challenge Info', 
+                    value: `**Wager:** ${challenge.wagerAmount} GP each\n` +
+                           `**Total Pool:** ${(challenge.totalPool || 0) + (challenge.wagerAmount * 2)} GP\n` +
+                           `**Ends:** ${timeRemaining}`
+                });
+                
+                // Add thumbnail if available
+                if (challenge.iconUrl) {
+                    embed.setThumbnail(`https://retroachievements.org${challenge.iconUrl}`);
+                }
+                
+                // Add buttons: Refresh again and Back to menu
+                const buttonsRow = new ActionRowBuilder()
+                    .addComponents(
+                        new ButtonBuilder()
+                            .setCustomId(`arena_refresh_leaderboard_${challenge._id}`)
+                            .setLabel('Refresh Again')
+                            .setStyle(ButtonStyle.Primary)
+                            .setEmoji('🔄'),
+                        new ButtonBuilder()
+                            .setCustomId('arena_back_to_main')
+                            .setLabel('Back to Arena')
+                            .setStyle(ButtonStyle.Secondary)
+                    );
+                
+                return interaction.editReply({
+                    embeds: [embed],
+                    components: [buttonsRow]
+                });
             }
-            
-            // Notify about the declined challenge
-            await arenaService.notifyChallengeUpdate(challenge);
-            
-            // Create response embed
-            const embed = new EmbedBuilder()
-                .setColor('#FF0000')
-                .setTitle('Challenge Declined')
-                .setDescription(
-                    `You've declined the challenge from ${challenge.challengerUsername}.\n\n` +
-                    `**Game:** ${challenge.gameTitle}\n` +
-                    `**Wager:** ${challenge.wagerAmount} GP`
-                );
-            
-            // Add thumbnail if available
-            if (challenge.iconUrl) {
-                embed.setThumbnail(`https://retroachievements.org${challenge.iconUrl}`);
-            }
-            
-            await interaction.editReply({
-                embeds: [embed],
-                components: []
-            });
         } catch (error) {
-            console.error('Error declining challenge:', error);
-            await interaction.editReply('An error occurred while declining the challenge.');
+            console.error('Error refreshing leaderboard:', error);
+            return interaction.editReply('An error occurred while refreshing the leaderboard data.');
         }
     },
     
@@ -1986,12 +2323,19 @@ export default {
                     'These are the currently active challenges in the Arena.\n' +
                     'Use `/arena` and select "Place Bet" to bet on these challenges.\n\n' +
                     '**Pot Betting System:** Your bet joins the total prize pool. ' +
-                    'If your chosen player wins, you get your bet back plus a share of the losing bets proportional to your bet amount.'
+                    'If your chosen player wins, you get your bet back plus a share of the losing bets proportional to your bet amount.' +
+                    '\n**Note:** Betting is only available during the first 72 hours of a challenge. Maximum bet: 100 GP.'
                 )
                 .setFooter({ text: 'All challenge updates are posted in the Arena channel' });
             
             activeChallengers.forEach((challenge, index) => {
                 const timeRemaining = this.formatTimeRemaining(challenge.endDate);
+                const now = new Date();
+                const bettingOpen = (now - challenge.startDate) / (1000 * 60 * 60) <= 72;
+                const bettingStatus = bettingOpen ? 'Open' : 'Closed';
+                
+                // Add leaderboard link
+                const leaderboardLink = `[View Leaderboard](https://retroachievements.org/leaderboardinfo.php?i=${challenge.leaderboardId})`;
                 
                 if (challenge.isOpenChallenge && challenge.participants && challenge.participants.length > 0) {
                     // For open challenges with participants
@@ -2019,160 +2363,6 @@ export default {
                                `**Wager:** ${challenge.wagerAmount} GP per player\n` +
                                `**Total Pool:** ${totalPool} GP\n` +
                                `**Ends:** ${challenge.endDate.toLocaleDateString()} (${timeRemaining})\n` +
-                               `**Bets:** ${challenge.bets?.length || 0} bets placed`
+                               `**Betting:** ${bettingStatus} | **Bets:** ${challenge.bets?.length || 0}\n` +
+                               `${leaderboardLink}`
                     });
-                } else {
-                    // For regular 1v1 challenges
-                    const totalPool = (challenge.totalPool || 0) + (challenge.wagerAmount * 2);
-                    
-                    embed.addFields({
-                        name: `${index + 1}. ${challenge.challengerUsername} vs ${challenge.challengeeUsername}`,
-                        value: `**Game:** ${challenge.gameTitle}\n` +
-                               (challenge.description ? `**Description:** ${challenge.description}\n` : '') +
-                               `**Wager:** ${challenge.wagerAmount} GP each\n` +
-                               `**Total Pool:** ${totalPool} GP\n` +
-                               `**Ends:** ${challenge.endDate.toLocaleDateString()} (${timeRemaining})\n` +
-                               `**Bets:** ${challenge.bets?.length || 0} bets placed`
-                    });
-                }
-            });
-            
-            // Add back button
-            const backButton = new ActionRowBuilder()
-                .addComponents(
-                    new ButtonBuilder()
-                        .setCustomId('arena_back_to_main')
-                        .setLabel('Back to Arena')
-                        .setStyle(ButtonStyle.Secondary)
-                );
-            
-            // Send the embed
-            await interaction.editReply({ 
-                embeds: [embed],
-                components: [backButton]
-            });
-        } catch (error) {
-            console.error('Error displaying active challenges:', error);
-            return interaction.editReply('An error occurred while fetching active challenges.');
-        }
-    },
-    
-    // Handle the GP leaderboard command
-    async handleLeaderboard(interaction) {
-        try {
-            await interaction.deferUpdate();
-            
-            // Get top users by GP
-            const topUsers = await User.find({ gp: { $gt: 0 } })
-                .sort({ gp: -1 })
-                .limit(20);
-            
-            if (topUsers.length === 0) {
-                return interaction.editReply('No users have any GP yet.');
-            }
-            
-            // Create an embed for the leaderboard
-            const embed = new EmbedBuilder()
-                .setTitle('💰 GP Leaderboard')
-                .setColor('#FFD700')
-                .setDescription(
-                    'These are the users with the most GP (Gold Points).\n' +
-                    'Earn GP by winning Arena challenges and bets. Everyone receives 1,000 GP automatically each month.'
-                )
-                .setFooter({ text: 'The user with the most GP at the end of the year will receive a special title!' });
-            
-            let leaderboardText = '';
-            
-            topUsers.forEach((user, index) => {
-                const medal = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `${index + 1}.`;
-                leaderboardText += `${medal} **${user.raUsername}**: ${user.gp.toLocaleString()} GP\n`;
-                
-                // Add a visual divider after the top 3
-                if (index === 2) {
-                    leaderboardText += '──────────────\n';
-                }
-            });
-            
-            embed.addFields({ name: 'Rankings', value: leaderboardText });
-            
-            // Find the requesting user's position
-            const requestingUser = await User.findOne({ discordId: interaction.user.id });
-            
-            if (requestingUser && requestingUser.gp > 0) {
-                // Count users with more GP than the requesting user
-                const position = await User.countDocuments({ gp: { $gt: requestingUser.gp } });
-                
-                // Add the user's position to the embed
-                embed.addFields({ 
-                    name: 'Your Position', 
-                    value: `**${requestingUser.raUsername}**: ${requestingUser.gp.toLocaleString()} GP (Rank: #${position + 1})`
-                });
-            }
-            
-            // Add back button
-            const backButton = new ActionRowBuilder()
-                .addComponents(
-                    new ButtonBuilder()
-                        .setCustomId('arena_back_to_main')
-                        .setLabel('Back to Arena')
-                        .setStyle(ButtonStyle.Secondary)
-                );
-            
-            // Send the embed
-            await interaction.editReply({ 
-                embeds: [embed],
-                components: [backButton]
-            });
-        } catch (error) {
-            console.error('Error displaying GP leaderboard:', error);
-            return interaction.editReply('An error occurred while fetching the GP leaderboard.');
-        }
-    },
-    
-    // Reset GP for all users (admin function)
-    async resetAllUsersGP() {
-        try {
-            // Set all users' GP to 1000 and mark as claimed this month
-            const now = new Date();
-            
-            // Update all users
-            const result = await User.updateMany(
-                {}, // Match all users
-                {
-                    $set: { 
-                        gp: 1000,
-                        lastMonthlyGpClaim: now
-                    }
-                }
-            );
-            
-            console.log(`Reset GP for ${result.modifiedCount} users`);
-            return result.modifiedCount;
-        } catch (error) {
-            console.error('Error resetting user GP:', error);
-            return 0;
-        }
-    },
-    
-    // Helper function to format time remaining
-    formatTimeRemaining(endDate) {
-        const now = new Date();
-        const diff = endDate - now;
-        
-        if (diff <= 0) {
-            return 'Ended';
-        }
-        
-        const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-        const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-        const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-        
-        if (days > 0) {
-            return `${days}d ${hours}h remaining`;
-        } else if (hours > 0) {
-            return `${hours}h ${minutes}m remaining`;
-        } else {
-            return `${minutes}m remaining`;
-        }
-    }
-};
