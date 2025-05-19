@@ -36,6 +36,38 @@ const betSchema = new mongoose.Schema({
     }
 });
 
+// Define participant schema for open challenges
+const participantSchema = new mongoose.Schema({
+    userId: {
+        type: String,
+        required: true // Discord ID
+    },
+    username: {
+        type: String,
+        required: true // RA username
+    },
+    joinedAt: {
+        type: Date,
+        default: Date.now
+    },
+    score: {
+        type: String,
+        default: 'No score yet'
+    },
+    rank: {
+        type: Number,
+        default: 0
+    },
+    wagerPaid: {
+        type: Boolean,
+        default: false
+    },
+    completed: {
+        type: Boolean,
+        default: false
+    }
+});
+
 const arenaChallengeSchema = new mongoose.Schema({
     challengerId: {
         type: String, 
@@ -47,11 +79,11 @@ const arenaChallengeSchema = new mongoose.Schema({
     },
     challengeeId: {
         type: String,
-        required: true
+        required: function() { return !this.isOpenChallenge; } // Required unless it's an open challenge
     },
     challengeeUsername: {
         type: String,
-        required: true
+        required: true // Will be "Open Challenge" for open challenges
     },
     leaderboardId: {
         type: String,
@@ -93,7 +125,7 @@ const arenaChallengeSchema = new mongoose.Schema({
     },
     status: {
         type: String,
-        enum: ['pending', 'active', 'completed', 'declined', 'cancelled'],
+        enum: ['pending', 'open', 'active', 'completed', 'declined', 'cancelled'],
         default: 'pending'
     },
     messageId: {
@@ -119,6 +151,16 @@ const arenaChallengeSchema = new mongoose.Schema({
     houseContribution: {
         type: Number,
         default: 0 // Total house contribution for this challenge
+    },
+    // New fields for open challenges
+    isOpenChallenge: {
+        type: Boolean,
+        default: false
+    },
+    participants: [participantSchema], // Array of participants for open challenges
+    maxParticipants: {
+        type: Number,
+        default: null // Optional max participants (null for unlimited)
     }
 }, {
     timestamps: true
