@@ -343,11 +343,13 @@ export default {
     // Show a modal for creating a challenge
     async showCreateChallengeModal(interaction) {
         try {
-            // Verify user is registered (without deferring first)
+            // Verify user is registered
             const challenger = await User.findOne({ discordId: interaction.user.id });
             if (!challenger) {
-                // For error case, we defer and then edit
-                await interaction.deferUpdate();
+                // For error case, check if we need to defer
+                if (!interaction.deferred && !interaction.replied) {
+                    await interaction.deferUpdate();
+                }
                 return interaction.editReply('You need to be registered to issue challenges. Please contact an admin.');
             }
             
@@ -405,33 +407,64 @@ export default {
                 new ActionRowBuilder().addComponents(wagerInput)
             );
             
-            // Show the modal directly without deferring first
+            // Show the modal directly without deferring first IF the interaction hasn't been deferred yet
             try {
-                await interaction.showModal(modal);
+                // Check if interaction has already been acknowledged
+                if (!interaction.deferred && !interaction.replied) {
+                    await interaction.showModal(modal);
+                } else {
+                    // If already acknowledged, we need a fallback approach - create a new button
+                    const buttonRow = new ActionRowBuilder()
+                        .addComponents(
+                            new ButtonBuilder()
+                                .setCustomId('arena_show_challenge_modal')
+                                .setLabel('Create Challenge')
+                                .setStyle(ButtonStyle.Primary)
+                        );
+                    
+                    await interaction.editReply({
+                        content: 'Click the button below to create a challenge:',
+                        components: [buttonRow]
+                    });
+                    
+                    // Setup a collector for the button click to show the modal
+                    const message = await interaction.fetchReply();
+                    const filter = i => i.customId === 'arena_show_challenge_modal' && i.user.id === interaction.user.id;
+                    const collector = message.createMessageComponentCollector({ filter, time: 60000, max: 1 });
+                    
+                    collector.on('collect', async i => {
+                        await i.showModal(modal);
+                    });
+                }
             } catch (modalError) {
                 console.error('Error showing modal:', modalError);
                 // If the interaction was already replied to, try a different approach
-                if (modalError.message.includes('already been replied') || modalError.message.includes('already replied')) {
+                if (modalError.message.includes('already been replied') || modalError.message.includes('already replied') || modalError.message.includes('acknowledged')) {
                     // Try a different approach - reply with a button that shows the modal
-                    await interaction.reply({
-                        content: 'Click the button below to create a challenge:',
-                        components: [
-                            new ActionRowBuilder().addComponents(
-                                new ButtonBuilder()
-                                    .setCustomId('arena_show_challenge_modal')
-                                    .setLabel('Create Challenge')
-                                    .setStyle(ButtonStyle.Primary)
-                            )
-                        ],
-                        ephemeral: true
-                    });
+                    try {
+                        await interaction.editReply({
+                            content: 'Click the button below to create a challenge:',
+                            components: [
+                                new ActionRowBuilder().addComponents(
+                                    new ButtonBuilder()
+                                        .setCustomId('arena_show_challenge_modal')
+                                        .setLabel('Create Challenge')
+                                        .setStyle(ButtonStyle.Primary)
+                                )
+                            ]
+                        });
+                    } catch (replyError) {
+                        console.error('Error creating fallback button:', replyError);
+                    }
                 }
             }
         } catch (error) {
             console.error('Error showing challenge creation modal:', error);
-            // For error handling, defer and then edit
+            // For error handling, check if we need to defer
             try {
-                await interaction.deferUpdate();
+                if (!interaction.deferred && !interaction.replied) {
+                    await interaction.deferUpdate();
+                }
                 await interaction.editReply({
                     content: 'An error occurred while preparing the challenge form. Please try again.',
                     components: []
@@ -1051,13 +1084,28 @@ export default {
                 new ActionRowBuilder().addComponents(betDescription)
             );
             
-            // Show the modal
+            // Show the modal - check if interaction has already been acknowledged
             try {
-                await interaction.showModal(betModal);
+                if (!interaction.deferred && !interaction.replied) {
+                    await interaction.showModal(betModal);
+                } else {
+                    // If already acknowledged, create a fallback button
+                    await interaction.editReply({
+                        content: 'Click this button to place your bet:',
+                        components: [
+                            new ActionRowBuilder().addComponents(
+                                new ButtonBuilder()
+                                    .setCustomId(`arena_show_bet_modal_${challengeId}_${playerName}`)
+                                    .setLabel(`Bet on ${playerName}`)
+                                    .setStyle(ButtonStyle.Primary)
+                            )
+                        ]
+                    });
+                }
             } catch (modalError) {
                 console.error('Error showing bet modal:', modalError);
                 // If the interaction was already replied to, try a different approach
-                if (modalError.message.includes('already been replied') || modalError.message.includes('already replied')) {
+                if (modalError.message.includes('already been replied') || modalError.message.includes('already replied') || modalError.message.includes('acknowledged')) {
                     await interaction.update({
                         content: 'There was an issue showing the betting form. Please try again by selecting "Place a Bet" from the main menu.',
                         components: [
@@ -1843,6 +1891,127 @@ export default {
         else if (customId.startsWith('arena_refresh_leaderboard_')) {
             const challengeId = customId.replace('arena_refresh_leaderboard_', '');
             await this.handleRefreshLeaderboard(interaction, challengeId);
+        }
+        else if (customId === 'arena_show_challenge_modal') {
+            // Handle the new button for challenge modal
+            try {
+                // Verify user is registered
+                const challenger = await User.findOne({ discordId: interaction.user.id });
+                if (!challenger) {
+                    await interaction.reply({
+                        content: 'You need to be registered to issue challenges. Please contact an admin.',
+                        ephemeral: true
+                    });
+                    return;
+                }
+                
+                // Create modal for challenge creation
+                const modal = new ModalBuilder()
+                    .setCustomId('arena_create_challenge_modal')
+                    .setTitle('Challenge Another Player');
+                    
+                // Input for opponent's RA username
+                const usernameInput = new TextInputBuilder()
+                    .setCustomId('opponent_username')
+                    .setLabel('RetroAchievements Username to Challenge')
+                    .setPlaceholder('Enter opponent\'s RA username (leave blank for open challenge)')
+                    .setRequired(false) // Make it optional to allow for open challenges
+                    .setStyle(TextInputStyle.Short);
+
+                // Input for game ID
+                const gameIdInput = new TextInputBuilder()
+                    .setCustomId('game_id')
+                    .setLabel('RetroAchievements Game ID')
+                    .setPlaceholder('e.g. 14402')
+                    .setRequired(true)
+                    .setStyle(TextInputStyle.Short);
+                    
+                // Input for leaderboard ID
+                const leaderboardInput = new TextInputBuilder()
+                    .setCustomId('leaderboard_id')
+                    .setLabel('Leaderboard ID (from RetroAchievements)')
+                    .setPlaceholder('e.g. 9391')
+                    .setRequired(true)
+                    .setStyle(TextInputStyle.Short);
+                    
+                // Input for description (shorter placeholder)
+                const descriptionInput = new TextInputBuilder()
+                    .setCustomId('description')
+                    .setLabel('Challenge Description')
+                    .setPlaceholder('Specify: 1) Track/level 2) Competition type (time/score) 3) Rules')
+                    .setRequired(true)
+                    .setStyle(TextInputStyle.Paragraph);
+                    
+                // Input for wager amount
+                const wagerInput = new TextInputBuilder()
+                    .setCustomId('wager_amount')
+                    .setLabel(`GP to Wager (Current Balance: ${challenger.gp || 0} GP)`)
+                    .setPlaceholder('Enter amount (minimum 10 GP)')
+                    .setRequired(true)
+                    .setStyle(TextInputStyle.Short);
+                    
+                // Add inputs to modal
+                modal.addComponents(
+                    new ActionRowBuilder().addComponents(usernameInput),
+                    new ActionRowBuilder().addComponents(gameIdInput),
+                    new ActionRowBuilder().addComponents(leaderboardInput),
+                    new ActionRowBuilder().addComponents(descriptionInput),
+                    new ActionRowBuilder().addComponents(wagerInput)
+                );
+                
+                // Show the modal
+                await interaction.showModal(modal);
+            } catch (error) {
+                console.error('Error showing modal from button:', error);
+                await interaction.reply({
+                    content: 'An error occurred while showing the challenge form. Please try again.',
+                    ephemeral: true
+                });
+            }
+        }
+        else if (customId.startsWith('arena_show_bet_modal_')) {
+            // Handle showing bet modal from button
+            try {
+                const parts = customId.split('_');
+                const challengeId = parts[4];
+                const playerName = parts[5];
+                
+                // Get user
+                const user = await User.findOne({ discordId: interaction.user.id });
+                
+                // Create bet modal
+                const betModal = new ModalBuilder()
+                    .setCustomId(`arena_bet_amount_modal_${challengeId}_${playerName}`)
+                    .setTitle(`Place Bet on ${playerName}`);
+                    
+                const betAmountInput = new TextInputBuilder()
+                    .setCustomId('bet_amount')
+                    .setLabel(`GP to Bet (Max: 100 GP, Balance: ${user.gp || 0} GP)`)
+                    .setPlaceholder('Enter amount (10-100 GP)')
+                    .setRequired(true)
+                    .setStyle(TextInputStyle.Short);
+                    
+                const betDescription = new TextInputBuilder()
+                    .setCustomId('bet_description')
+                    .setLabel('Betting System Info')
+                    .setValue('Pot Betting: Win your bet back plus a proportional share of the losing bets')
+                    .setRequired(false)
+                    .setStyle(TextInputStyle.Short);
+                
+                betModal.addComponents(
+                    new ActionRowBuilder().addComponents(betAmountInput),
+                    new ActionRowBuilder().addComponents(betDescription)
+                );
+                
+                // Show the modal
+                await interaction.showModal(betModal);
+            } catch (error) {
+                console.error('Error showing bet modal from button:', error);
+                await interaction.reply({
+                    content: 'An error occurred while showing the betting form. Please try again.',
+                    ephemeral: true
+                });
+            }
         }
     },
     
