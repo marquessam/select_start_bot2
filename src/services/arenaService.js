@@ -560,6 +560,23 @@ class ArenaService {
             // Save the scores
             challenge.challengerScore = challengerScore.formattedScore;
             challenge.challengeeScore = challengeeScore.formattedScore;
+            
+            // Update participant scores for open challenges
+            if (challenge.isOpenChallenge && challenge.participants && challenge.participants.length > 0) {
+                // Get scores for each participant
+                for (const participant of challenge.participants) {
+                    try {
+                        // Fetch the participant's leaderboard entry
+                        const entry = await this.getParticipantScore(challenge, participant.username);
+                        
+                        // Update the participant's score in the challenge
+                        participant.score = entry.formattedScore;
+                    } catch (scoreError) {
+                        console.error(`Error getting score for participant ${participant.username}:`, scoreError);
+                    }
+                }
+            }
+            
             await challenge.save();
             
             // Check for position changes and notify if needed
@@ -901,14 +918,26 @@ class ArenaService {
                 endDate: { $gt: new Date() }
             });
             
+            // Get the count of open challenges awaiting participants
+            const openCount = await ArenaChallenge.countDocuments({
+                status: 'open',
+                isOpenChallenge: true
+            });
+            
             // Get current Unix timestamp for Discord formatting
             const unixTimestamp = Math.floor(Date.now() / 1000);
             
             // Create header content
-            const headerContent = 
+            let headerContent = 
                 `# 🏟️ The Arena - Active Challenges\n` +
-                `Currently there ${activeCount === 1 ? 'is' : 'are'} **${activeCount}** active challenge${activeCount === 1 ? '' : 's'} in the Arena.\n` +
-                `**Last Updated:** <t:${unixTimestamp}:f> | **Updates:** Every hour\n` +
+                `Currently there ${activeCount === 1 ? 'is' : 'are'} **${activeCount}** active challenge${activeCount === 1 ? '' : 's'} in the Arena.\n`;
+                
+            // Add open challenges count if any
+            if (openCount > 0) {
+                headerContent += `There ${openCount === 1 ? 'is' : 'are'} also **${openCount}** open challenge${openCount === 1 ? '' : 's'} awaiting participants.\n`;
+            }
+                
+            headerContent += `**Last Updated:** <t:${unixTimestamp}:f> | **Updates:** Every hour\n` +
                 `Use \`/arena\` to challenge others, place bets, or view your challenges`;
             
             try {
@@ -981,98 +1010,98 @@ class ArenaService {
         }
     }
 
- async updateGpLeaderboard() {
-    try {
-        const feedChannel = await this.getArenaFeedChannel();
-        if (!feedChannel) return;
-        
-        // Get top users by GP
-        const topUsers = await User.find({ gp: { $gt: 0 } })
-            .sort({ gp: -1 })
-            .limit(10);
-        
-        if (topUsers.length === 0) {
-            return; // No users to display
-        }
-        
-        // Get current Unix timestamp for Discord formatting
-        const unixTimestamp = Math.floor(Date.now() / 1000);
-        
-        // Create an embed for the leaderboard
-        const embed = new EmbedBuilder()
-            .setTitle('💰 GP Leaderboard')
-            .setColor('#FFD700')
-            .setDescription(
-                'These are the users with the most GP (Gold Points).\n' +
-                'Earn GP by winning Arena challenges and bets. Everyone receives 1,000 GP automatically each month.\n\n' +
-                `**Last Updated:** <t:${unixTimestamp}:R>` // Added Discord timestamp in relative format
-            )
-            .setFooter({ 
-                text: 'The user with the most GP at the end of the year will receive a special title and award points!' 
-            });
-        
-        let leaderboardText = '';
-        
-        topUsers.forEach((user, index) => {
-            const medal = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `${index + 1}.`;
-            leaderboardText += `${medal} **${user.raUsername}**: ${user.gp.toLocaleString()} GP\n`;
-            
-            // Add a visual divider after the top 3
-            if (index === 2) {
-                leaderboardText += '──────────────\n';
-            }
-        });
-        
-        embed.addFields({ name: 'Top 10 Rankings', value: leaderboardText });
-        
-        // Add a note about monthly GP
-        embed.addFields({ 
-            name: 'Monthly Allowance', 
-            value: 'You automatically receive 1,000 GP at the beginning of each month!' 
-        });
-        
-        // Update or create the message
+    async updateGpLeaderboard() {
         try {
-            if (this.gpLeaderboardMessageId) {
-                // Try to update existing leaderboard
-                try {
-                    const gpMessage = await feedChannel.messages.fetch(this.gpLeaderboardMessageId);
-                    await gpMessage.edit({ embeds: [embed] });
-                    console.log(`Updated GP leaderboard message`);
-                } catch (fetchError) {
-                    // If message not found, create a new one
-                    if (fetchError.message.includes('Unknown Message')) {
+            const feedChannel = await this.getArenaFeedChannel();
+            if (!feedChannel) return;
+            
+            // Get top users by GP
+            const topUsers = await User.find({ gp: { $gt: 0 } })
+                .sort({ gp: -1 })
+                .limit(10);
+            
+            if (topUsers.length === 0) {
+                return; // No users to display
+            }
+            
+            // Get current Unix timestamp for Discord formatting
+            const unixTimestamp = Math.floor(Date.now() / 1000);
+            
+            // Create an embed for the leaderboard
+            const embed = new EmbedBuilder()
+                .setTitle('💰 GP Leaderboard')
+                .setColor('#FFD700')
+                .setDescription(
+                    'These are the users with the most GP (Gold Points).\n' +
+                    'Earn GP by winning Arena challenges and bets. Everyone receives 1,000 GP automatically each month.\n\n' +
+                    `**Last Updated:** <t:${unixTimestamp}:R>` // Added Discord timestamp in relative format
+                )
+                .setFooter({ 
+                    text: 'The user with the most GP at the end of the year will receive a special title and award points!' 
+                });
+            
+            let leaderboardText = '';
+            
+            topUsers.forEach((user, index) => {
+                const medal = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `${index + 1}.`;
+                leaderboardText += `${medal} **${user.raUsername}**: ${user.gp.toLocaleString()} GP\n`;
+                
+                // Add a visual divider after the top 3
+                if (index === 2) {
+                    leaderboardText += '──────────────\n';
+                }
+            });
+            
+            embed.addFields({ name: 'Top 10 Rankings', value: leaderboardText });
+            
+            // Add a note about monthly GP
+            embed.addFields({ 
+                name: 'Monthly Allowance', 
+                value: 'You automatically receive 1,000 GP at the beginning of each month!' 
+            });
+            
+            // Update or create the message
+            try {
+                if (this.gpLeaderboardMessageId) {
+                    // Try to update existing leaderboard
+                    try {
+                        const gpMessage = await feedChannel.messages.fetch(this.gpLeaderboardMessageId);
+                        await gpMessage.edit({ embeds: [embed] });
+                        console.log(`Updated GP leaderboard message`);
+                    } catch (fetchError) {
+                        // If message not found, create a new one
+                        if (fetchError.message.includes('Unknown Message')) {
+                            const message = await feedChannel.send({ embeds: [embed] });
+                            this.gpLeaderboardMessageId = message.id;
+                            console.log(`Created new GP leaderboard after failed fetch`);
+                        } else {
+                            throw fetchError; // Re-throw if it's some other error
+                        }
+                    }
+                } else {
+                    // Create new leaderboard message
+                    const message = await feedChannel.send({ embeds: [embed] });
+                    this.gpLeaderboardMessageId = message.id;
+                    console.log(`Created new GP leaderboard message`);
+                }
+            } catch (error) {
+                console.error('Error updating GP leaderboard:', error);
+                
+                // If message not found, create a new one
+                if (error.message.includes('Unknown Message')) {
+                    try {
                         const message = await feedChannel.send({ embeds: [embed] });
                         this.gpLeaderboardMessageId = message.id;
-                        console.log(`Created new GP leaderboard after failed fetch`);
-                    } else {
-                        throw fetchError; // Re-throw if it's some other error
+                        console.log(`Created new GP leaderboard message after error`);
+                    } catch (sendError) {
+                        console.error('Error creating GP leaderboard after failed update:', sendError);
                     }
                 }
-            } else {
-                // Create new leaderboard message
-                const message = await feedChannel.send({ embeds: [embed] });
-                this.gpLeaderboardMessageId = message.id;
-                console.log(`Created new GP leaderboard message`);
             }
         } catch (error) {
             console.error('Error updating GP leaderboard:', error);
-            
-            // If message not found, create a new one
-            if (error.message.includes('Unknown Message')) {
-                try {
-                    const message = await feedChannel.send({ embeds: [embed] });
-                    this.gpLeaderboardMessageId = message.id;
-                    console.log(`Created new GP leaderboard message after error`);
-                } catch (sendError) {
-                    console.error('Error creating GP leaderboard after failed update:', sendError);
-                }
-            }
         }
-    } catch (error) {
-        console.error('Error updating GP leaderboard:', error);
     }
-}
 
     async getChallengersScores(challenge) {
         try {
@@ -1345,7 +1374,14 @@ class ArenaService {
                 if (winnerId) {
                     const winner = await User.findOne({ discordId: winnerId });
                     if (winner) {
-                        winner.gp = (winner.gp || 0) + totalWagered;
+                        await this.trackGpTransaction(
+                            winner,
+                            totalWagered,
+                            'Won open challenge',
+                            `Challenge ID: ${challenge._id}, Game: ${challenge.gameTitle}`
+                        );
+                        
+                        // Update stats
                         winner.arenaStats = winner.arenaStats || {};
                         winner.arenaStats.wins = (winner.arenaStats.wins || 0) + 1;
                         winner.arenaStats.gpWon = (winner.arenaStats.gpWon || 0) + totalWagered - challenge.wagerAmount;
@@ -1433,8 +1469,12 @@ class ArenaService {
             for (const bet of challenge.bets) {
                 const bettor = await User.findOne({ discordId: bet.userId });
                 if (bettor) {
-                    bettor.gp = (bettor.gp || 0) + bet.betAmount;
-                    await bettor.save();
+                    await this.trackGpTransaction(
+                        bettor,
+                        bet.betAmount,
+                        'Challenge ended with no winner - bet refund',
+                        `Challenge ID: ${challenge._id}, Game: ${challenge.gameTitle}`
+                    );
                 }
             }
             return;
@@ -1475,8 +1515,15 @@ class ArenaService {
                 // Track total house contribution
                 totalHouseContribution += houseContribution;
                 
-                // Add payout to user
-                bettor.gp = (bettor.gp || 0) + payoutAmount;
+                // Add payout to user with tracking
+                await this.trackGpTransaction(
+                    bettor,
+                    payoutAmount,
+                    'Won bet',
+                    `Challenge ID: ${challenge._id}, Bet on: ${winnerUsername}, Profit: ${payoutAmount - bet.betAmount} GP`
+                );
+                
+                // Update stats
                 bettor.arenaStats = bettor.arenaStats || {};
                 bettor.arenaStats.betsWon = (bettor.arenaStats.betsWon || 0) + 1;
                 bettor.arenaStats.gpWon = (bettor.arenaStats.gpWon || 0) + (payoutAmount - bet.betAmount);
@@ -1519,7 +1566,14 @@ class ArenaService {
             // Transfer wager amount from loser to winner
             if (winnerId === challenge.challengerId) {
                 // Challenger won
-                challenger.gp = (challenger.gp || 0) + challenge.wagerAmount;
+                await this.trackGpTransaction(
+                    challenger,
+                    challenge.wagerAmount,
+                    'Won challenge',
+                    `Challenge ID: ${challenge._id}, Game: ${challenge.gameTitle}`
+                );
+                
+                // Update stats
                 challenger.arenaStats = challenger.arenaStats || {};
                 challenger.arenaStats.wins = (challenger.arenaStats.wins || 0) + 1;
                 challenger.arenaStats.gpWon = (challenger.arenaStats.gpWon || 0) + challenge.wagerAmount;
@@ -1532,7 +1586,14 @@ class ArenaService {
                 await challengee.save();
             } else {
                 // Challengee won
-                challengee.gp = (challengee.gp || 0) + challenge.wagerAmount;
+                await this.trackGpTransaction(
+                    challengee,
+                    challenge.wagerAmount,
+                    'Won challenge',
+                    `Challenge ID: ${challenge._id}, Game: ${challenge.gameTitle}`
+                );
+                
+                // Update stats
                 challengee.arenaStats = challengee.arenaStats || {};
                 challengee.arenaStats.wins = (challengee.arenaStats.wins || 0) + 1;
                 challengee.arenaStats.gpWon = (challengee.arenaStats.gpWon || 0) + challenge.wagerAmount;
@@ -1585,8 +1646,15 @@ class ArenaService {
                             // Track total house contribution
                             totalHouseContribution += houseContribution;
                             
-                            // Add payout to user
-                            bettor.gp = (bettor.gp || 0) + payoutAmount;
+                            // Add payout to user with tracking
+                            await this.trackGpTransaction(
+                                bettor,
+                                payoutAmount,
+                                'Won bet',
+                                `Challenge ID: ${challenge._id}, Bet on: ${winnerUsername}, Profit: ${payoutAmount - bet.betAmount} GP`
+                            );
+                            
+                            // Update stats
                             bettor.arenaStats = bettor.arenaStats || {};
                             bettor.arenaStats.betsWon = (bettor.arenaStats.betsWon || 0) + 1;
                             bettor.arenaStats.gpWon = (bettor.arenaStats.gpWon || 0) + (payoutAmount - bet.betAmount);
@@ -1853,6 +1921,81 @@ class ArenaService {
             }
         } catch (error) {
             console.error(`Error updating completed feed for challenge ${challenge._id}:`, error);
+        }
+    }
+
+    /**
+     * Utility method to track GP changes with detailed logging
+     * @param {Object} user - User document from database
+     * @param {Number} amount - Amount of GP to add (positive) or deduct (negative)
+     * @param {String} reason - Description of why GP is being added/deducted
+     * @param {String} context - Additional context (e.g., challengeId)
+     * @returns {Promise<boolean>} - Success or failure
+     */
+    async trackGpTransaction(user, amount, reason, context = '') {
+        try {
+            if (!user || !user.discordId) {
+                console.error(`[ARENA] Cannot track GP transaction: Invalid user`, { amount, reason, context });
+                return false;
+            }
+
+            // Ensure we're working with fresh data
+            const freshUser = await User.findOne({ discordId: user.discordId });
+            if (!freshUser) {
+                console.error(`[ARENA] Cannot track GP transaction: User not found`, { 
+                    userId: user.discordId, 
+                    amount, 
+                    reason, 
+                    context 
+                });
+                return false;
+            }
+
+            // Record previous balance
+            const oldBalance = freshUser.gp || 0;
+            
+            // Update GP
+            freshUser.gp = oldBalance + amount;
+            
+            // Add to transaction history if it doesn't exist
+            if (!freshUser.gpTransactions) {
+                freshUser.gpTransactions = [];
+            }
+            
+            // Add transaction record
+            freshUser.gpTransactions.push({
+                amount,
+                oldBalance,
+                newBalance: freshUser.gp,
+                reason,
+                context,
+                timestamp: new Date()
+            });
+            
+            // Keep only the last 10 transactions to prevent document size issues
+            if (freshUser.gpTransactions.length > 10) {
+                freshUser.gpTransactions = freshUser.gpTransactions.slice(-10);
+            }
+            
+            // Save changes
+            await freshUser.save();
+            
+            // Log the transaction
+            console.log(`[ARENA] GP Transaction: ${amount > 0 ? '+' : ''}${amount} GP to ${freshUser.raUsername} (${reason}) - Old: ${oldBalance} GP, New: ${freshUser.gp} GP ${context ? '| ' + context : ''}`);
+            
+            // Update the original user object
+            user.gp = freshUser.gp;
+            
+            return true;
+        } catch (error) {
+            console.error(`[ARENA] Error tracking GP transaction:`, error, { 
+                userId: user?.discordId, 
+                username: user?.raUsername,
+                amount, 
+                reason, 
+                context 
+            });
+            return false;
         }
     }
 
