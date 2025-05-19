@@ -1,5 +1,7 @@
+// src/models/ArenaChallenge.js
 import mongoose from 'mongoose';
 
+// Schema for bets placed on challenges
 const betSchema = new mongoose.Schema({
     userId: {
         type: String,
@@ -36,7 +38,7 @@ const betSchema = new mongoose.Schema({
     }
 });
 
-// Define participant schema for open challenges
+// Schema for participants in open challenges
 const participantSchema = new mongoose.Schema({
     userId: {
         type: String,
@@ -68,6 +70,7 @@ const participantSchema = new mongoose.Schema({
     }
 });
 
+// Main ArenaChallenge schema
 const arenaChallengeSchema = new mongoose.Schema({
     challengerId: {
         type: String, 
@@ -90,10 +93,12 @@ const arenaChallengeSchema = new mongoose.Schema({
         required: true
     },
     gameTitle: {
-        type: String
+        type: String,
+        required: true
     },
     gameId: {
-        type: Number // Changed from String to Number to match our updated implementation
+        type: Number, // Changed from String to Number to match our updated implementation
+        required: true
     },
     iconUrl: {
         type: String
@@ -121,7 +126,7 @@ const arenaChallengeSchema = new mongoose.Schema({
         type: Number,
         required: true,
         min: 1,
-        max: 336 // Max 2 weeks (increased from 1 week)
+        max: 336 // Max 2 weeks (14 days)
     },
     status: {
         type: String,
@@ -152,7 +157,8 @@ const arenaChallengeSchema = new mongoose.Schema({
         type: Number,
         default: 0 // Total house contribution for this challenge
     },
-    // New fields for open challenges
+    
+    // Open challenge fields
     isOpenChallenge: {
         type: Boolean,
         default: false
@@ -166,4 +172,51 @@ const arenaChallengeSchema = new mongoose.Schema({
     timestamps: true
 });
 
+// Add index for more efficient queries
+arenaChallengeSchema.index({ status: 1 });
+arenaChallengeSchema.index({ challengerId: 1, status: 1 });
+arenaChallengeSchema.index({ challengeeId: 1, status: 1 });
+arenaChallengeSchema.index({ 'participants.userId': 1, status: 1 });
+arenaChallengeSchema.index({ endDate: 1 });
+arenaChallengeSchema.index({ isOpenChallenge: 1, status: 1 });
+
+// Virtuals and methods
+arenaChallengeSchema.virtual('isActive').get(function() {
+    return this.status === 'active';
+});
+
+arenaChallengeSchema.virtual('isPending').get(function() {
+    return this.status === 'pending';
+});
+
+arenaChallengeSchema.virtual('isOpen').get(function() {
+    return this.status === 'open';
+});
+
+arenaChallengeSchema.virtual('isCompleted').get(function() {
+    return this.status === 'completed';
+});
+
+arenaChallengeSchema.virtual('participantCount').get(function() {
+    if (!this.isOpenChallenge) {
+        return 2; // Standard challenge has 2 participants
+    }
+    return (this.participants?.length || 0) + 1; // +1 for creator
+});
+
+// Calculate total pot (wagers + bets)
+arenaChallengeSchema.virtual('totalPrizePool').get(function() {
+    // Calculate wager pool
+    let wagerPool = 0;
+    if (this.isOpenChallenge) {
+        wagerPool = this.wagerAmount * this.participantCount;
+    } else {
+        wagerPool = this.wagerAmount * 2;
+    }
+    
+    // Add betting pool
+    return wagerPool + (this.totalPool || 0);
+});
+
+// Export the model
 export const ArenaChallenge = mongoose.model('ArenaChallenge', arenaChallengeSchema);
