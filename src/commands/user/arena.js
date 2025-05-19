@@ -59,7 +59,9 @@ export default {
         const activeCount = await ArenaChallenge.countDocuments({
             $or: [
                 { challengerId: user.discordId, status: 'active' },
-                { challengeeId: user.discordId, status: 'active' }
+                { challengeeId: user.discordId, status: 'active' },
+                // Add check for participant in open challenges
+                { 'participants.userId': user.discordId, status: 'active' }
             ]
         });
         
@@ -121,6 +123,12 @@ export default {
                             description: 'View the top GP earners',
                             value: 'leaderboard',
                             emoji: '📊'
+                        },
+                        {
+                            label: 'Browse Open Challenges',
+                            description: 'View and join open challenges',
+                            value: 'open_challenges',
+                            emoji: '🌐'
                         }
                     ])
             );
@@ -472,7 +480,7 @@ export default {
                 .setPlaceholder('Enter amount (minimum 10 GP)')
                 .setRequired(true)
                 .setStyle(TextInputStyle.Short);
-                
+            
             // Add inputs to modal - now with 5 inputs (removed duration)
             modal.addComponents(
                 new ActionRowBuilder().addComponents(usernameInput),
@@ -684,6 +692,13 @@ export default {
                     status: isOpenChallenge ? 'open' : 'pending'
                 });
                 
+                // Initialize participants array for open challenges
+                if (isOpenChallenge) {
+                    challenge.participants = [];
+                    // You can also add maxParticipants field if you want to limit the number of participants
+                    // challenge.maxParticipants = 10; // Example: limit to 10 participants
+                }
+                
                 // Save the challenge
                 await challenge.save();
                 
@@ -845,7 +860,19 @@ export default {
             
             // Filter out challenges the user is participating in
             const bettableChallenges = activeChallengers.filter(
-                challenge => challenge.challengerId !== user.discordId && challenge.challengeeId !== user.discordId
+                challenge => {
+                    // Check if user is challenger or challengee
+                    if (challenge.challengerId === user.discordId || challenge.challengeeId === user.discordId) {
+                        return false;
+                    }
+                    
+                    // Check if user is a participant in an open challenge
+                    if (challenge.isOpenChallenge && challenge.participants) {
+                        return !challenge.participants.some(p => p.userId === user.discordId);
+                    }
+                    
+                    return true;
+                }
             );
             
             if (bettableChallenges.length === 0) {
@@ -936,6 +963,14 @@ export default {
                 return interaction.editReply('You cannot bet on a challenge you are participating in.');
             }
             
+            // Check if user is a participant in an open challenge
+            if (challenge.isOpenChallenge && challenge.participants) {
+                const isParticipant = challenge.participants.some(p => p.userId === user.discordId);
+                if (isParticipant) {
+                    return interaction.editReply('You cannot bet on a challenge you are participating in.');
+                }
+            }
+            
             // Check if user has already bet on this challenge
             const existingBet = challenge.bets.find(bet => bet.userId === user.discordId);
             if (existingBet) {
@@ -966,11 +1001,34 @@ export default {
                 embed.setThumbnail(`https://retroachievements.org${challenge.iconUrl}`);
             }
             
-            // Create select menu for player selection
+            // Create select menu for player selection - modified for open challenges
             const selectMenu = new StringSelectMenuBuilder()
                 .setCustomId('arena_bet_player_select')
-                .setPlaceholder('Select a player to bet on')
-                .addOptions([
+                .setPlaceholder('Select a player to bet on');
+                
+            // If open challenge with participants, show all options
+            if (challenge.isOpenChallenge && challenge.participants && challenge.participants.length > 0) {
+                // Add creator as option
+                selectMenu.addOptions({
+                    label: challenge.challengerUsername,
+                    description: `Creator (${challengerBets.length} bets)`,
+                    value: `${selectedChallengeId}_${challenge.challengerUsername}`
+                });
+                
+                // Add each participant as option
+                challenge.participants.forEach(participant => {
+                    const participantBets = challenge.bets.filter(bet => bet.targetPlayer === participant.username);
+                    
+                    selectMenu.addOptions({
+                        label: participant.username,
+                        description: `Participant (${participantBets.length} bets)`,
+                        value: `${selectedChallengeId}_${participant.username}`
+                    });
+                });
+            } 
+            // Regular 1v1 challenge
+            else {
+                selectMenu.addOptions([
                     {
                         label: challenge.challengerUsername,
                         description: `Challenger (${challengerBets.length} bets)`,
@@ -982,6 +1040,7 @@ export default {
                         value: `${selectedChallengeId}_${challenge.challengeeUsername}`
                     }
                 ]);
+            }
             
             const selectRow = new ActionRowBuilder().addComponents(selectMenu);
             
@@ -1087,6 +1146,14 @@ export default {
                 return interaction.editReply('You cannot bet on a challenge you are participating in.');
             }
             
+            // Check if user is a participant in an open challenge
+            if (challenge.isOpenChallenge && challenge.participants) {
+                const isParticipant = challenge.participants.some(p => p.userId === user.discordId);
+                if (isParticipant) {
+                    return interaction.editReply('You cannot bet on a challenge you are participating in.');
+                }
+            }
+            
             // Check if user has enough GP
             if ((user.gp || 0) < betAmount) {
                 return interaction.editReply(`You don't have enough GP. Your balance: ${user.gp || 0} GP`);
@@ -1112,8 +1179,16 @@ export default {
                 const challengerBets = challenge.bets.filter(bet => bet.targetPlayer === challenge.challengerUsername);
                 const challengeeBets = challenge.bets.filter(bet => bet.targetPlayer === challenge.challengeeUsername);
                 
-                const targetPlayerBets = playerName === challenge.challengerUsername ? challengerBets : challengeeBets;
-                const opposingPlayerBets = playerName === challenge.challengerUsername ? challengeeBets : challengerBets;
+                // For open challenges, determine which bets are on the same player as the user's bet
+                let targetPlayerBets, opposingPlayerBets;
+                
+                if (challenge.isOpenChallenge && challenge.participants && challenge.participants.length > 0) {
+                    targetPlayerBets = challenge.bets.filter(bet => bet.targetPlayer === playerName);
+                    opposingPlayerBets = challenge.bets.filter(bet => bet.targetPlayer !== playerName);
+                } else {
+                    targetPlayerBets = playerName === challenge.challengerUsername ? challengerBets : challengeeBets;
+                    opposingPlayerBets = playerName === challenge.challengerUsername ? challengeeBets : challengerBets;
+                }
                 
                 const targetPlayerPool = targetPlayerBets.reduce((sum, bet) => sum + bet.betAmount, 0) + betAmount;
                 const opposingPlayerPool = opposingPlayerBets.reduce((sum, bet) => sum + bet.betAmount, 0);
@@ -1122,7 +1197,7 @@ export default {
                     const estimatedShare = Math.floor((betAmount / targetPlayerPool) * opposingPlayerPool);
                     potDescription = `If ${playerName} wins, you'd get your ${betAmount} GP back plus about ${estimatedShare} GP from the pot (proportional share of ${opposingPlayerPool} GP).`;
                 } else {
-                    potDescription = `Currently all bets are on ${playerName}. If more users bet on the opposing player, you'll receive a proportional share of those bets if ${playerName} wins.`;
+                    potDescription = `Currently all bets are on ${playerName}. If more users bet on the opposing player(s), you'll receive a proportional share of those bets if ${playerName} wins.`;
                 }
             }
             
@@ -1184,13 +1259,13 @@ export default {
                 return interaction.editReply('You need to be registered to view your challenges.');
             }
             
-            // Find user's challenges
+            // Find user's challenges - updated to include open challenges they've joined
             const challenges = await ArenaChallenge.find({
                 $or: [
-                    { challengerId: user.discordId },
-                    { challengeeId: user.discordId }
-                ],
-                status: { $in: ['pending', 'active'] }
+                    { challengerId: user.discordId, status: { $in: ['pending', 'active'] } },
+                    { challengeeId: user.discordId, status: { $in: ['pending', 'active'] } },
+                    { 'participants.userId': user.discordId, status: 'active' }
+                ]
             }).sort({ createdAt: -1 });
             
             if (challenges.length === 0) {
@@ -1203,9 +1278,10 @@ export default {
                 .setTitle('My Arena Challenges')
                 .setDescription(`Here are your active and pending challenges, ${user.raUsername}:`);
             
-            // Group challenges by status
+            // Group challenges by status and type
             const pendingChallenges = challenges.filter(c => c.status === 'pending');
-            const activeChallenges = challenges.filter(c => c.status === 'active');
+            const activeDirectChallenges = challenges.filter(c => c.status === 'active' && !c.isOpenChallenge);
+            const activeOpenChallenges = challenges.filter(c => c.status === 'active' && c.isOpenChallenge);
             
             // Add pending challenges
             if (pendingChallenges.length > 0) {
@@ -1223,11 +1299,11 @@ export default {
                 embed.addFields({ name: '🕒 Pending Challenges', value: pendingText || 'None' });
             }
             
-            // Add active challenges
-            if (activeChallenges.length > 0) {
+            // Add active direct challenges
+            if (activeDirectChallenges.length > 0) {
                 let activeText = '';
                 
-                activeChallenges.forEach((challenge, index) => {
+                activeDirectChallenges.forEach((challenge, index) => {
                     const isChallenger = challenge.challengerId === user.discordId;
                     const opponent = isChallenger ? challenge.challengeeUsername : challenge.challengerUsername;
                     const timeRemaining = this.formatTimeRemaining(challenge.endDate);
@@ -1237,7 +1313,25 @@ export default {
                                 `**Total Pool:** ${(challenge.totalPool || 0) + (challenge.wagerAmount * 2)} GP\n\n`;
                 });
                 
-                embed.addFields({ name: '⚔️ Active Challenges', value: activeText || 'None' });
+                embed.addFields({ name: '⚔️ Active Direct Challenges', value: activeText || 'None' });
+            }
+            
+            // Add active open challenges
+            if (activeOpenChallenges.length > 0) {
+                let openText = '';
+                
+                activeOpenChallenges.forEach((challenge, index) => {
+                    const isCreator = challenge.challengerId === user.discordId;
+                    const timeRemaining = this.formatTimeRemaining(challenge.endDate);
+                    const participantCount = (challenge.participants?.length || 0) + 1; // +1 for creator
+                    
+                    openText += `**${index + 1}. ${challenge.gameTitle}** (${isCreator ? 'You created' : 'You joined'})\n` +
+                               `**Wager:** ${challenge.wagerAmount} GP | **Ends:** ${timeRemaining}\n` +
+                               `**Participants:** ${participantCount} | ` +
+                               `**Total Pool:** ${(challenge.totalPool || 0) + (challenge.wagerAmount * participantCount)} GP\n\n`;
+                });
+                
+                embed.addFields({ name: '🌐 Active Open Challenges', value: openText || 'None' });
             }
             
             await interaction.editReply({
@@ -1247,6 +1341,192 @@ export default {
         } catch (error) {
             console.error('Error showing user challenges:', error);
             await interaction.editReply('An error occurred while loading your challenges.');
+        }
+    },
+    
+    // Show open challenges for joining
+    async showOpenChallenges(interaction) {
+        await interaction.deferUpdate();
+        
+        try {
+            // Find open challenges
+            const openChallenges = await ArenaChallenge.find({
+                isOpenChallenge: true,
+                status: 'open',
+                endDate: { $gt: new Date() }
+            }).sort({ createdAt: -1 });
+            
+            if (openChallenges.length === 0) {
+                return interaction.editReply('There are no open challenges available right now.');
+            }
+            
+            // Get user
+            const user = await User.findOne({ discordId: interaction.user.id });
+            if (!user) {
+                return interaction.editReply('You need to be registered to join challenges.');
+            }
+            
+            // Create embed showing available open challenges
+            const embed = new EmbedBuilder()
+                .setColor('#9B59B6')
+                .setTitle('Open Arena Challenges')
+                .setDescription('Join these open challenges by clicking the "Join Challenge" button:');
+            
+            // Add challenge info to embed
+            openChallenges.forEach((challenge, index) => {
+                const participantCount = challenge.participants?.length || 0; // Count of participants (not including creator)
+                const participantLimit = challenge.maxParticipants ? 
+                    `${participantCount + 1}/${challenge.maxParticipants}` : 
+                    `${participantCount + 1} (unlimited)`; // +1 to include creator
+                
+                embed.addFields({
+                    name: `${index + 1}. ${challenge.gameTitle}`,
+                    value: `**Creator:** ${challenge.challengerUsername}\n` +
+                           `**Description:** ${challenge.description || 'No description provided'}\n` +
+                           `**Wager:** ${challenge.wagerAmount} GP\n` +
+                           `**Participants:** ${participantLimit}\n` +
+                           `**Challenge ID:** \`${challenge._id}\``
+                });
+            });
+            
+            // Create action buttons for first 5 challenges (Discord limit)
+            const rows = [];
+            const buttonsPerRow = 5;
+            const maxButtons = Math.min(openChallenges.length, 25); // Discord limit of 25 buttons total
+            
+            for (let i = 0; i < maxButtons; i += buttonsPerRow) {
+                const row = new ActionRowBuilder();
+                
+                for (let j = 0; j < buttonsPerRow && (i + j) < maxButtons; j++) {
+                    const challenge = openChallenges[i + j];
+                    row.addComponents(
+                        new ButtonBuilder()
+                            .setCustomId(`arena_join_challenge_${challenge._id}`)
+                            .setLabel(`Join #${i + j + 1}`)
+                            .setStyle(ButtonStyle.Primary)
+                    );
+                }
+                
+                rows.push(row);
+            }
+            
+            // Add back button
+            const backRow = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('arena_back_to_main')
+                        .setLabel('Back to Arena')
+                        .setStyle(ButtonStyle.Secondary)
+                );
+            
+            rows.push(backRow);
+            
+            await interaction.editReply({
+                embeds: [embed],
+                components: rows
+            });
+        } catch (error) {
+            console.error('Error showing open challenges:', error);
+            await interaction.editReply('An error occurred while loading open challenges.');
+        }
+    },
+    
+    // Handle joining an open challenge
+    async handleJoinChallenge(interaction) {
+        await interaction.deferReply({ ephemeral: true });
+        
+        const customId = interaction.customId;
+        const challengeId = customId.replace('arena_join_challenge_', '');
+        
+        try {
+            // Get the challenge
+            const challenge = await ArenaChallenge.findById(challengeId);
+            
+            if (!challenge || challenge.status !== 'open' || !challenge.isOpenChallenge) {
+                return interaction.editReply('This challenge is no longer available to join.');
+            }
+            
+            // Get user
+            const user = await User.findOne({ discordId: interaction.user.id });
+            if (!user) {
+                return interaction.editReply('You need to be registered to join challenges.');
+            }
+            
+            // Check if user has already joined
+            const alreadyJoined = challenge.participants?.some(p => p.userId === user.discordId);
+            if (alreadyJoined) {
+                return interaction.editReply('You have already joined this challenge.');
+            }
+            
+            // Check if user is the creator
+            if (challenge.challengerId === user.discordId) {
+                return interaction.editReply('You cannot join your own challenge.');
+            }
+            
+            // Check if at max participants
+            if (challenge.maxParticipants && 
+                challenge.participants && 
+                challenge.participants.length >= challenge.maxParticipants) {
+                return interaction.editReply('This challenge has reached its maximum number of participants.');
+            }
+            
+            // Check if user has enough GP
+            if ((user.gp || 0) < challenge.wagerAmount) {
+                return interaction.editReply(`You don't have enough GP to join. Required: ${challenge.wagerAmount} GP, Your balance: ${user.gp || 0} GP`);
+            }
+            
+            // Deduct GP from user
+            user.gp -= challenge.wagerAmount;
+            await user.save();
+            
+            // Add user to participants
+            if (!challenge.participants) {
+                challenge.participants = [];
+            }
+            
+            challenge.participants.push({
+                userId: user.discordId,
+                username: user.raUsername,
+                joinedAt: new Date(),
+                score: 'No score yet',
+                rank: 0,
+                wagerPaid: true,
+                completed: false
+            });
+            
+            // Update status if this is the first participant (and challenge is 'open')
+            if (challenge.status === 'open' && challenge.participants.length === 1) {
+                challenge.status = 'active';
+                challenge.startDate = new Date();
+                // Set end date to 1 week from now
+                challenge.endDate = new Date(challenge.startDate.getTime() + (challenge.durationHours * 60 * 60 * 1000));
+            }
+            
+            await challenge.save();
+            
+            // Notify about the new participant
+            await arenaService.notifyParticipantJoined(challenge, user.raUsername);
+            
+            // Create response embed
+            const embed = new EmbedBuilder()
+                .setColor('#00FF00')
+                .setTitle('Joined Open Challenge!')
+                .setDescription(
+                    `You've successfully joined the open challenge for **${challenge.gameTitle}**!\n\n` +
+                    `**Description:** ${challenge.description || 'No description provided'}\n` +
+                    `**Wager:** ${challenge.wagerAmount} GP\n` +
+                    `**Your new GP balance:** ${user.gp} GP\n\n` +
+                    `Good luck! Updates will be posted in the Arena channel.`
+                );
+            
+            if (challenge.iconUrl) {
+                embed.setThumbnail(`https://retroachievements.org${challenge.iconUrl}`);
+            }
+            
+            return interaction.editReply({ embeds: [embed] });
+        } catch (error) {
+            console.error('Error joining challenge:', error);
+            return interaction.editReply('An error occurred while joining the challenge.');
         }
     },
     
@@ -1270,6 +1550,9 @@ export default {
         else if (customId === 'arena_help') {
             await interaction.deferUpdate();
             await this.showArenaHelp(interaction);
+        }
+        else if (customId.startsWith('arena_join_challenge_')) {
+            await this.handleJoinChallenge(interaction);
         }
     },
     
@@ -1295,6 +1578,9 @@ export default {
                     break;
                 case 'leaderboard':
                     await this.handleLeaderboard(interaction);
+                    break;
+                case 'open_challenges':
+                    await this.showOpenChallenges(interaction);
                     break;
                 default:
                     await interaction.deferUpdate();
@@ -1326,6 +1612,11 @@ export default {
                     name: '⚔️ Challenges',
                     value: 'Challenge another player to compete on a RetroAchievements leaderboard for 1 week. ' +
                            'Both players wager GP, and the winner takes all!'
+                },
+                {
+                    name: '🌐 Open Challenges',
+                    value: 'Create an open challenge that anyone can join. All participants wager the same amount, ' +
+                           'and the winner at the end takes the entire pot!'
                 },
                 {
                     name: '🎲 Pot Betting',
@@ -1523,17 +1814,49 @@ export default {
             
             activeChallengers.forEach((challenge, index) => {
                 const timeRemaining = this.formatTimeRemaining(challenge.endDate);
-                const totalPool = (challenge.totalPool || 0) + (challenge.wagerAmount * 2);
                 
-                embed.addFields({
-                    name: `${index + 1}. ${challenge.challengerUsername} vs ${challenge.challengeeUsername}`,
-                    value: `**Game:** ${challenge.gameTitle}\n` +
-                           (challenge.description ? `**Description:** ${challenge.description}\n` : '') +
-                           `**Wager:** ${challenge.wagerAmount} GP each\n` +
-                           `**Total Pool:** ${totalPool} GP\n` +
-                           `**Ends:** ${challenge.endDate.toLocaleDateString()} (${timeRemaining})\n` +
-                           `**Bets:** ${challenge.bets.length} bets placed`
-                });
+                if (challenge.isOpenChallenge && challenge.participants && challenge.participants.length > 0) {
+                    // For open challenges with participants
+                    const participantCount = challenge.participants.length + 1; // +1 for creator
+                    const wagerPool = challenge.wagerAmount * participantCount;
+                    const totalPool = (challenge.totalPool || 0) + wagerPool;
+                    
+                    // Create a list of participants (creator + joined users)
+                    let participantsText = `${challenge.challengerUsername} (Creator)`;
+                    challenge.participants.forEach((participant, pIndex) => {
+                        if (pIndex < 3) { // Show max 3 participants directly
+                            participantsText += `, ${participant.username}`;
+                        }
+                    });
+                    
+                    if (challenge.participants.length > 3) {
+                        participantsText += ` and ${challenge.participants.length - 3} more`;
+                    }
+                    
+                    embed.addFields({
+                        name: `${index + 1}. ${challenge.gameTitle} (Open Challenge)`,
+                        value: `**Creator:** ${challenge.challengerUsername}\n` +
+                               (challenge.description ? `**Description:** ${challenge.description}\n` : '') +
+                               `**Participants:** ${participantCount} (${participantsText})\n` +
+                               `**Wager:** ${challenge.wagerAmount} GP per player\n` +
+                               `**Total Pool:** ${totalPool} GP\n` +
+                               `**Ends:** ${challenge.endDate.toLocaleDateString()} (${timeRemaining})\n` +
+                               `**Bets:** ${challenge.bets.length} bets placed`
+                    });
+                } else {
+                    // For regular 1v1 challenges
+                    const totalPool = (challenge.totalPool || 0) + (challenge.wagerAmount * 2);
+                    
+                    embed.addFields({
+                        name: `${index + 1}. ${challenge.challengerUsername} vs ${challenge.challengeeUsername}`,
+                        value: `**Game:** ${challenge.gameTitle}\n` +
+                               (challenge.description ? `**Description:** ${challenge.description}\n` : '') +
+                               `**Wager:** ${challenge.wagerAmount} GP each\n` +
+                               `**Total Pool:** ${totalPool} GP\n` +
+                               `**Ends:** ${challenge.endDate.toLocaleDateString()} (${timeRemaining})\n` +
+                               `**Bets:** ${challenge.bets.length} bets placed`
+                    });
+                }
             });
             
             // Add back button
