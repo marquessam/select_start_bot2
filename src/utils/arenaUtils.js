@@ -570,31 +570,92 @@ function createOpenChallengeEmbed(challenge, challengerScore, participantScores,
                `**Participants:** ${challenge.participants.length + 1}` // +1 for the creator
     });
     
-    // Add participants with scores using medal notation
-    let participantsText = '';
+    // Sort participants by rank first, then by score
+    const allParticipants = [];
     
     // Add creator with rank
-    const creatorRankDisplay = challengerScore.rank ? ` (Rank: #${challengerScore.rank})` : '';
-    participantsText += `${challengerScore.rank === 1 ? '🥇 ' : challengerScore.rank === 2 ? '🥈 ' : challengerScore.rank === 3 ? '🥉 ' : ''}` +
-                      `**${challenge.challengerUsername}** (Creator): ${challengerScore.formattedScore}${creatorRankDisplay}\n`;
+    allParticipants.push({
+        username: challenge.challengerUsername,
+        isCreator: true,
+        score: challengerScore.formattedScore,
+        rank: challengerScore.rank || 999999,
+        exists: challengerScore.exists
+    });
     
-    // Add each participant with rank
+    // Add each participant
     if (challenge.participants) {
         challenge.participants.forEach(participant => {
             const scoreInfo = participantScores?.get?.(participant.username.toLowerCase());
             const score = scoreInfo?.formattedScore || participant.score || 'No score yet';
             const rank = scoreInfo?.rank || 0;
-            const rankDisplay = rank ? ` (Rank: #${rank})` : '';
             
-            participantsText += `${rank === 1 ? '🥇 ' : rank === 2 ? '🥈 ' : rank === 3 ? '🥉 ' : ''}` +
-                              `**${participant.username}**: ${score}${rankDisplay}\n`;
+            allParticipants.push({
+                username: participant.username,
+                isCreator: false,
+                score: score,
+                rank: rank || 999999,
+                exists: !!scoreInfo?.exists
+            });
         });
     }
     
-    embed.addFields({
-        name: 'Current Standings', 
-        value: participantsText
+    // Determine if time-based for sorting
+    const isTimeBased = isTimeBasedLeaderboard(challenge);
+    
+    // Sort participants by:
+    // 1. First by who has scores (exists flag)
+    // 2. Then by global rank or score value
+    allParticipants.sort((a, b) => {
+        // Put participants with scores first
+        if (a.exists && !b.exists) return -1;
+        if (!a.exists && b.exists) return 1;
+        
+        // If both have scores, sort by rank or score
+        if (a.exists && b.exists) {
+            if (a.rank !== 999999 && b.rank !== 999999) {
+                return a.rank - b.rank; // Lower rank is better
+            } else if (isTimeBased) {
+                const aValue = parseTimeToSeconds(a.score);
+                const bValue = parseTimeToSeconds(b.score);
+                return aValue - bValue; // Lower time is better
+            } else {
+                const aValue = parseScoreString(a.score);
+                const bValue = parseScoreString(b.score);
+                return bValue - aValue; // Higher score is better
+            }
+        }
+        
+        return 0; // No preference if neither has scores
     });
+    
+    // Create standings field with consistent medal emoji formatting
+    let participantsText = '';
+    
+    allParticipants.forEach((participant, index) => {
+        if (participant.exists) {
+            // Add medal emoji for top 3 positions
+            const medalEmoji = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `${index + 1}.`;
+            const creatorTag = participant.isCreator ? ' (Creator)' : '';
+            const rankDisplay = participant.rank < 999999 ? ` (Rank: #${participant.rank})` : '';
+            
+            participantsText += `${medalEmoji} **${participant.username}${creatorTag}**: ${participant.score}${rankDisplay}\n`;
+        } else {
+            const creatorTag = participant.isCreator ? ' (Creator)' : '';
+            participantsText += `• **${participant.username}${creatorTag}**: ${participant.score}\n`;
+        }
+    });
+    
+    if (participantsText) {
+        embed.addFields({
+            name: 'Current Standings', 
+            value: participantsText
+        });
+    } else {
+        embed.addFields({
+            name: 'Current Standings',
+            value: 'No participants have scores yet.'
+        });
+    }
     
     // Calculate total pot (more concise)
     const wagerPool = challenge.wagerAmount * (challenge.participants.length + 1); // all participants + creator
@@ -638,7 +699,8 @@ function createDirectChallengeEmbed(challenge, challengerScore, challengeeScore,
     // Calculate status text based on correct leader
     const statusText = leader === 'Tie' ? 'Challenge is tied!'
                      : leader === challenge.challengerUsername ? `${challenge.challengerUsername} leads`
-                     : `${challenge.challengeeUsername} leads`;
+                     : leader === challenge.challengeeUsername ? `${challenge.challengeeUsername} leads` 
+                     : 'No leader yet';
     
     // Add challenge details in more concise format
     embed.addFields({
@@ -649,15 +711,51 @@ function createDirectChallengeEmbed(challenge, challengerScore, challengeeScore,
     });
     
     // Add current scores with medal notation
+    // Sort challenger and challengee by rank or score
+    const participants = [
+        {
+            username: challenge.challengerUsername,
+            score: challengerScore.formattedScore,
+            rank: challengerScore.rank || 999999,
+            exists: challengerScore.exists,
+            isLeader: leader === challenge.challengerUsername
+        },
+        {
+            username: challenge.challengeeUsername,
+            score: challengeeScore.formattedScore,
+            rank: challengeeScore.rank || 999999,
+            exists: challengeeScore.exists,
+            isLeader: leader === challenge.challengeeUsername
+        }
+    ];
+    
+    // Sort by rank first (lower is better)
+    participants.sort((a, b) => {
+        if (a.exists && !b.exists) return -1;
+        if (!a.exists && b.exists) return 1;
+        
+        if (a.exists && b.exists) {
+            if (a.rank !== 999999 && b.rank !== 999999) {
+                return a.rank - b.rank;
+            }
+        }
+        
+        // Default to showing the leader first
+        return (a.isLeader === b.isLeader) ? 0 : (a.isLeader ? -1 : 1);
+    });
+    
+    let scoresText = '';
+    participants.forEach((participant, index) => {
+        // Add medal emoji for 1st and 2nd place
+        const medalEmoji = index === 0 ? '🥇' : '🥈';
+        const rankDisplay = participant.rank < 999999 ? ` (Rank: #${participant.rank})` : '';
+        
+        scoresText += `${medalEmoji} **${participant.username}:** ${participant.score}${rankDisplay}\n`;
+    });
+    
     embed.addFields({
         name: '📊 Current Scores',
-        value: 
-            `${challengerScore.rank === 1 ? '🥇 ' : challengerScore.rank === 2 ? '🥈 ' : challengerScore.rank === 3 ? '🥉 ' : ''}` +
-            `**${challenge.challengerUsername}:** ${challengerScore.formattedScore}` + 
-            (challengerScore.rank ? ` (Rank: #${challengerScore.rank})` : '') + `\n` +
-            `${challengeeScore.rank === 1 ? '🥇 ' : challengeeScore.rank === 2 ? '🥈 ' : challengeeScore.rank === 3 ? '🥉 ' : ''}` +
-            `**${challenge.challengeeUsername}:** ${challengeeScore.formattedScore}` +
-            (challengeeScore.rank ? ` (Rank: #${challengeeScore.rank})` : '')
+        value: scoresText
     });
     
     // Calculate bets for each player
@@ -796,6 +894,175 @@ export function createArenaOverviewEmbed(EmbedBuilder, stats) {
     return embed;
 }
 
+/**
+ * Create an embed for completed challenge results
+ * @param {Object} challenge - The challenge object
+ * @param {Object} EmbedBuilder - Discord.js EmbedBuilder class
+ * @param {number} durationDays - Duration in days for display
+ * @returns {Object} - Discord embed object
+ */
+export function createCompletedChallengeEmbed(challenge, EmbedBuilder, durationDays) {
+    const embed = new EmbedBuilder()
+        .setColor('#27AE60'); // Green for completed challenges
+        
+    if (challenge.isOpenChallenge && challenge.participants && challenge.participants.length > 0) {
+        createCompletedOpenChallengeEmbed(challenge, embed, durationDays);
+    } else {
+        createCompletedDirectChallengeEmbed(challenge, embed, durationDays);
+    }
+    
+    embed.setTimestamp();
+    
+    // Add betting results using the existing function
+    addBettingResultsToEmbed(challenge, embed);
+    
+    return embed;
+}
+
+/**
+ * Helper to create embed for completed open challenges
+ * @private
+ */
+function createCompletedOpenChallengeEmbed(challenge, embed, durationDays) {
+    // Set title for open challenge
+    embed.setTitle(`🏁 Completed Open Challenge: ${challenge.gameTitle}`);
+    embed.setDescription(`**Creator:** ${challenge.challengerUsername}`);
+    
+    // Add description if available
+    if (challenge.description) {
+        embed.addFields({ name: 'Description', value: challenge.description });
+    }
+    
+    // Calculate participant count and total pot
+    const participantCount = challenge.participants.length + 1; // +1 for creator
+    const wagerPool = challenge.wagerAmount * participantCount;
+    
+    // Add challenge details
+    embed.addFields({
+        name: 'Challenge Details',
+        value: `**Wager:** ${challenge.wagerAmount} GP per player\n` +
+            `**Total Participants:** ${participantCount}\n` +
+            `**Duration:** ${durationDays} days\n` +
+            `**Started:** ${challenge.startDate.toLocaleString()}\n` +
+            `**Ended:** ${challenge.endDate.toLocaleString()}\n\n` +
+            `**Result:** ${challenge.winnerUsername === 'Tie' || !challenge.winnerUsername ? 
+                'No clear winner determined.' : 
+                `${challenge.winnerUsername} won!`}`
+    });
+    
+    // Add thumbnail if available
+    if (challenge.iconUrl) {
+        embed.setThumbnail(`https://retroachievements.org${challenge.iconUrl}`);
+    }
+    
+    // Add final scores for all participants
+    let scoresText = '';
+    
+    // Get all participants and add the creator
+    const allParticipants = [
+        {
+            username: challenge.challengerUsername,
+            score: challenge.challengerScore || 'No score',
+            isCreator: true,
+            isWinner: challenge.winnerUsername === challenge.challengerUsername
+        }
+    ];
+    
+    // Add all participants
+    if (challenge.participants) {
+        challenge.participants.forEach(participant => {
+            allParticipants.push({
+                username: participant.username,
+                score: participant.score || 'No score',
+                isCreator: false,
+                isWinner: challenge.winnerUsername === participant.username
+            });
+        });
+    }
+    
+    // Sort with winner first, then creator, then others
+    allParticipants.sort((a, b) => {
+        if (a.isWinner !== b.isWinner) return a.isWinner ? -1 : 1;
+        if (a.isCreator !== b.isCreator) return a.isCreator ? -1 : 1;
+        return a.username.localeCompare(b.username);
+    });
+    
+    // Format scores with medal emojis for top 3
+    allParticipants.forEach((participant, index) => {
+        const creatorTag = participant.isCreator ? ' (Creator)' : '';
+        const medalEmoji = participant.isWinner ? '🏆 ' : 
+                         (index === 0 ? '🥇 ' : index === 1 ? '🥈 ' : index === 2 ? '🥉 ' : '');
+        
+        scoresText += `${medalEmoji}**${participant.username}${creatorTag}**: ${participant.score}\n`;
+    });
+    
+    embed.addFields({
+        name: '📊 Final Scores',
+        value: scoresText
+    });
+}
+
+/**
+ * Helper to create embed for completed direct challenges
+ * @private
+ */
+function createCompletedDirectChallengeEmbed(challenge, embed, durationDays) {
+    // Regular 1v1 challenge completion
+    embed.setTitle(`🏁 Completed Challenge: ${challenge.challengerUsername} vs ${challenge.challengeeUsername}`);
+    embed.setDescription(`**Game:** ${challenge.gameTitle}`);
+    
+    // Add description if available
+    if (challenge.description) {
+        embed.addFields({ name: 'Description', value: challenge.description });
+    }
+    
+    // Add challenge details
+    embed.addFields({
+        name: 'Challenge Details',
+        value: `**Wager:** ${challenge.wagerAmount} GP each\n` +
+            `**Duration:** ${durationDays} days\n` +
+            `**Started:** ${challenge.startDate.toLocaleString()}\n` +
+            `**Ended:** ${challenge.endDate.toLocaleString()}\n\n` +
+            `**Result:** ${challenge.winnerUsername === 'Tie' ? 'The challenge ended in a tie!' : `${challenge.winnerUsername} won!`}`
+    });
+    
+    // Add thumbnail if available
+    if (challenge.iconUrl) {
+        embed.setThumbnail(`https://retroachievements.org${challenge.iconUrl}`);
+    }
+    
+    // Format participants with the winner first
+    const participants = [
+        {
+            username: challenge.challengerUsername,
+            score: challenge.challengerScore || 'No score',
+            isWinner: challenge.winnerUsername === challenge.challengerUsername
+        },
+        {
+            username: challenge.challengeeUsername,
+            score: challenge.challengeeScore || 'No score',
+            isWinner: challenge.winnerUsername === challenge.challengeeUsername
+        }
+    ];
+    
+    // Sort with winner first
+    participants.sort((a, b) => a.isWinner === b.isWinner ? 0 : (a.isWinner ? -1 : 1));
+    
+    // Add final scores with medal emojis
+    let scoresText = '';
+    participants.forEach((participant, index) => {
+        const medalEmoji = participant.isWinner ? '🏆 ' : 
+                         (index === 0 ? '🥇 ' : '🥈 ');
+                         
+        scoresText += `${medalEmoji}**${participant.username}**: ${participant.score}\n`;
+    });
+    
+    embed.addFields({
+        name: '📊 Final Scores',
+        value: scoresText
+    });
+}
+
 // Export all functions as a default object as well
 export default {
     formatTimeRemaining,
@@ -811,5 +1078,6 @@ export default {
     checkPositionChanges,
     createChallengeEmbed,
     addBettingResultsToEmbed,
-    createArenaOverviewEmbed
+    createArenaOverviewEmbed,
+    createCompletedChallengeEmbed
 };
