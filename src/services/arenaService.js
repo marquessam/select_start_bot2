@@ -5,7 +5,8 @@ import { ArenaChallenge } from '../models/ArenaChallenge.js';
 import { config } from '../config/config.js';
 import { 
     formatTimeRemaining, getLeaderboardEntries, processLeaderboardEntries, 
-    isTimeBasedLeaderboard, createChallengeEmbed, checkPositionChanges 
+    isTimeBasedLeaderboard, createChallengeEmbed, checkPositionChanges,
+    findUserInLeaderboard, createArenaOverviewEmbed
 } from '../utils/arenaUtils.js';
 
 // Update interval (every hour)
@@ -20,6 +21,7 @@ class ArenaService {
         this.feedMessageIds = new Map(); // Map of challengeId -> messageId
         this.headerMessageId = null;
         this.gpLeaderboardMessageId = null;
+        this.overviewEmbedId = null; // Added for the overview embed
     }
 
     setClient(client) {
@@ -135,6 +137,7 @@ class ArenaService {
             this.feedMessageIds.clear();
             this.headerMessageId = null;
             this.gpLeaderboardMessageId = null;
+            this.overviewEmbedId = null;
             
             return true;
         } catch (error) {
@@ -440,9 +443,11 @@ class ArenaService {
     // Arena feed updates
     async updateArenaFeeds() {
         try {
-            // Update header and leaderboard
+            // Update header first
             await this.updateArenaHeader();
-            await this.updateGpLeaderboard();
+            
+            // Update overview embed
+            await this.updateArenaOverview();
             
             // Update active challenge feeds
             const activeChallengers = await ArenaChallenge.find({
@@ -454,6 +459,9 @@ class ArenaService {
                 await this.createOrUpdateArenaFeed(challenge);
                 await new Promise(resolve => setTimeout(resolve, 1000));
             }
+            
+            // Update GP leaderboard LAST (moved to the end)
+            await this.updateGpLeaderboard();
         } catch (error) {
             console.error('Error updating arena feeds:', error);
         }
@@ -608,92 +616,168 @@ class ArenaService {
         }
     }
 
-async updateGpLeaderboard() {
-    try {
-        const feedChannel = await this.getArenaFeedChannel();
-        if (!feedChannel) return;
-        
-        // Get top users by GP
-        const topUsers = await User.find({ gp: { $gt: 0 } })
-            .sort({ gp: -1 })
-            .limit(10);
-        
-        if (topUsers.length === 0) return;
-        
-        // Create leaderboard embed with exact timestamp
-        const formattedDate = new Date().toLocaleString();
-        
-        const embed = new EmbedBuilder()
-            .setTitle('💰 GP Leaderboard')
-            .setColor('#FFD700')
-            .setDescription(
-                'These are the users with the most GP (Gold Points).\n' +
-                'Earn GP by winning Arena challenges and bets. Everyone receives 1,000 GP automatically each month.\n\n' +
-                `**Last Updated:** ${formattedDate}`
-            )
-            .setFooter({ 
-                text: 'Updates hourly | Year-end champion receives a special title and award!' 
-            });
-        
-        // Build leaderboard text with medals
-        let leaderboardText = '';
-        
-        topUsers.forEach((user, index) => {
-            const medal = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `${index + 1}.`;
-            leaderboardText += `${medal} **${user.raUsername}**: ${user.gp.toLocaleString()} GP\n`;
+    // New method for Arena overview
+    async updateArenaOverview() {
+        try {
+            const feedChannel = await this.getArenaFeedChannel();
+            if (!feedChannel) return;
             
-            if (index === 2) {
-                leaderboardText += '──────────────\n';
-            }
-        });
-        
-        embed.addFields({ name: 'Top 10 Rankings', value: leaderboardText });
-        embed.addFields({ 
-            name: 'Monthly Allowance', 
-            value: 'You automatically receive 1,000 GP at the beginning of each month!' 
-        });
-        
-        // Update or create the leaderboard message
-        if (this.gpLeaderboardMessageId) {
-            try {
-                const gpMessage = await feedChannel.messages.fetch(this.gpLeaderboardMessageId);
-                await gpMessage.edit({ embeds: [embed] });
-            } catch (error) {
-                if (error.message.includes('Unknown Message')) {
-                    const message = await feedChannel.send({ embeds: [embed] });
-                    this.gpLeaderboardMessageId = message.id;
+            // Collect stats for the overview
+            const activeCount = await ArenaChallenge.countDocuments({
+                status: 'active',
+                endDate: { $gt: new Date() }
+            });
+            
+            const openCount = await ArenaChallenge.countDocuments({
+                status: 'open',
+                isOpenChallenge: true
+            });
+            
+            // Get total prize pool and bet counts
+            let totalPrizePool = 0;
+            let totalBets = 0;
+            
+            const activeChallengers = await ArenaChallenge.find({
+                status: 'active',
+                endDate: { $gt: new Date() }
+            });
+            
+            for (const challenge of activeChallengers) {
+                // Wager pool
+                if (challenge.isOpenChallenge) {
+                    const participantCount = challenge.participants?.length + 1 || 1;
+                    totalPrizePool += challenge.wagerAmount * participantCount;
+                } else {
+                    totalPrizePool += challenge.wagerAmount * 2;
+                }
+                
+                // Add bet amounts
+                if (challenge.bets && challenge.bets.length > 0) {
+                    totalBets += challenge.bets.length;
+                    totalPrizePool += challenge.bets.reduce((sum, bet) => sum + bet.betAmount, 0);
                 }
             }
-        } else {
-            const message = await feedChannel.send({ embeds: [embed] });
-            this.gpLeaderboardMessageId = message.id;
+            
+            // Stats object
+            const stats = {
+                activeCount,
+                openCount,
+                totalPrizePool,
+                totalBets
+            };
+            
+            // Create the embed
+            const embed = createArenaOverviewEmbed(EmbedBuilder, stats);
+            
+            // Send or update
+            if (this.overviewEmbedId) {
+                try {
+                    const overviewMessage = await feedChannel.messages.fetch(this.overviewEmbedId);
+                    await overviewMessage.edit({ embeds: [embed] });
+                } catch (error) {
+                    if (error.message.includes('Unknown Message')) {
+                        const message = await feedChannel.send({ embeds: [embed] });
+                        this.overviewEmbedId = message.id;
+                    } else {
+                        throw error;
+                    }
+                }
+            } else {
+                const message = await feedChannel.send({ embeds: [embed] });
+                this.overviewEmbedId = message.id;
+            }
+        } catch (error) {
+            console.error('Error updating arena overview:', error);
         }
-    } catch (error) {
-        console.error('Error updating GP leaderboard:', error);
     }
-}
+
+    async updateGpLeaderboard() {
+        try {
+            const feedChannel = await this.getArenaFeedChannel();
+            if (!feedChannel) return;
+            
+            // Get top users by GP
+            const topUsers = await User.find({ gp: { $gt: 0 } })
+                .sort({ gp: -1 })
+                .limit(10);
+            
+            if (topUsers.length === 0) return;
+            
+            // Create leaderboard embed with exact timestamp
+            const formattedDate = new Date().toLocaleString();
+            
+            const embed = new EmbedBuilder()
+                .setTitle('💰 GP Leaderboard')
+                .setColor('#FFD700')
+                .setDescription(
+                    'These are the users with the most GP (Gold Points).\n' +
+                    'Earn GP by winning Arena challenges and bets. Everyone receives 1,000 GP automatically each month.\n\n' +
+                    `**Last Updated:** ${formattedDate}`
+                )
+                .setFooter({ 
+                    text: 'Updates hourly | Year-end champion receives a special title and award!' 
+                });
+            
+            // Build leaderboard text with medals
+            let leaderboardText = '';
+            
+            topUsers.forEach((user, index) => {
+                const medal = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `${index + 1}.`;
+                leaderboardText += `${medal} **${user.raUsername}**: ${user.gp.toLocaleString()} GP\n`;
+                
+                if (index === 2) {
+                    leaderboardText += '──────────────\n';
+                }
+            });
+            
+            embed.addFields({ name: 'Top 10 Rankings', value: leaderboardText });
+            embed.addFields({ 
+                name: 'Monthly Allowance', 
+                value: 'You automatically receive 1,000 GP at the beginning of each month!' 
+            });
+            
+            // Update or create the leaderboard message
+            if (this.gpLeaderboardMessageId) {
+                try {
+                    const gpMessage = await feedChannel.messages.fetch(this.gpLeaderboardMessageId);
+                    await gpMessage.edit({ embeds: [embed] });
+                } catch (error) {
+                    if (error.message.includes('Unknown Message')) {
+                        const message = await feedChannel.send({ embeds: [embed] });
+                        this.gpLeaderboardMessageId = message.id;
+                    }
+                }
+            } else {
+                const message = await feedChannel.send({ embeds: [embed] });
+                this.gpLeaderboardMessageId = message.id;
+            }
+        } catch (error) {
+            console.error('Error updating GP leaderboard:', error);
+        }
+    }
 
     // Challenge score management
     async getChallengersScores(challenge) {
         try {
-            // Get leaderboard entries
+            // Get leaderboard entries with our improved function
             const rawEntries = await getLeaderboardEntries(challenge.leaderboardId);
             
             // Process entries based on whether this is a time-based leaderboard
             const isTimeBased = isTimeBasedLeaderboard(challenge);
             const leaderboardEntries = processLeaderboardEntries(rawEntries, isTimeBased);
             
-            // Find challenger entry
-            const challengerEntry = leaderboardEntries.find(entry => 
-                entry.User.toLowerCase() === challenge.challengerUsername.toLowerCase()
-            );
+            // Find challenger entry using the improved user matching function
+            const challengerEntry = findUserInLeaderboard(leaderboardEntries, challenge.challengerUsername);
             
-            // Find challengee entry
-            const challengeeEntry = leaderboardEntries.find(entry => 
-                entry.User.toLowerCase() === challenge.challengeeUsername.toLowerCase()
-            );
+            // Find challengee entry using the improved user matching function
+            const challengeeEntry = findUserInLeaderboard(leaderboardEntries, challenge.challengeeUsername);
             
-            // Format challenger score - UPDATED to include ApiRank
+            // Log for debugging
+            console.log(`Found entries for challenge ${challenge._id}:`);
+            console.log(`- Challenger ${challenge.challengerUsername}: ${challengerEntry ? 'Found' : 'Not found'}`);
+            console.log(`- Challengee ${challenge.challengeeUsername}: ${challengeeEntry ? 'Found' : 'Not found'}`);
+            
+            // Format challenger score
             const challengerScore = {
                 value: challengerEntry ? challengerEntry.Value : 0,
                 formattedScore: challengerEntry ? challengerEntry.FormattedScore : 'No score yet',
@@ -701,7 +785,7 @@ async updateGpLeaderboard() {
                 rank: challengerEntry ? challengerEntry.ApiRank : 0
             };
             
-            // Format challengee score - UPDATED to include ApiRank
+            // Format challengee score
             const challengeeScore = {
                 value: challengeeEntry ? challengeeEntry.Value : 0,
                 formattedScore: challengeeEntry ? challengeeEntry.FormattedScore : 'No score yet',
@@ -721,19 +805,20 @@ async updateGpLeaderboard() {
 
     async getParticipantScore(challenge, participantUsername) {
         try {
-            // Get leaderboard entries
+            // Get leaderboard entries with our improved function
             const rawEntries = await getLeaderboardEntries(challenge.leaderboardId);
             
             // Process entries based on whether this is a time-based leaderboard
             const isTimeBased = isTimeBasedLeaderboard(challenge);
             const leaderboardEntries = processLeaderboardEntries(rawEntries, isTimeBased);
             
-            // Find entry for this participant
-            const participantEntry = leaderboardEntries.find(entry => 
-                entry.User.toLowerCase() === participantUsername.toLowerCase()
-            );
+            // Find entry for this participant using the improved user matching function
+            const participantEntry = findUserInLeaderboard(leaderboardEntries, participantUsername);
             
-            // Format score - UPDATED to preserve ApiRank
+            // Log for debugging
+            console.log(`Looking up participant ${participantUsername}: ${participantEntry ? 'Found' : 'Not found'}`);
+            
+            // Format score
             return {
                 exists: !!participantEntry,
                 formattedScore: participantEntry ? participantEntry.FormattedScore : 'No entry',
@@ -1456,7 +1541,7 @@ async updateGpLeaderboard() {
                 const bettingStatus = bettingOpen ? 'Open' : 'Closed';
                 
                 // Add leaderboard link
-                const leaderboardLink = `[View Leaderboard](https://retroachievements.org/leaderboardinfo.php?i=${challenge.leaderboardId})`;
+                const leaderboardUrl = `https://retroachievements.org/leaderboardinfo.php?i=${challenge.leaderboardId}`;
                 
                 if (challenge.isOpenChallenge && challenge.participants && challenge.participants.length > 0) {
                     // For open challenges with participants
@@ -1485,7 +1570,7 @@ async updateGpLeaderboard() {
                                `**Total Pool:** ${totalPool} GP\n` +
                                `**Ends:** ${challenge.endDate.toLocaleDateString()} (${timeRemaining})\n` +
                                `**Betting:** ${bettingStatus} | **Bets:** ${challenge.bets?.length || 0}\n` +
-                               `${leaderboardLink}`
+                               `${leaderboardUrl}`
                     });
                 } else {
                     // For regular 1v1 challenges
@@ -1497,7 +1582,7 @@ async updateGpLeaderboard() {
                                `**Total Pool:** ${(challenge.totalPool || 0) + (challenge.wagerAmount * 2)} GP\n` +
                                `**Ends:** ${challenge.endDate.toLocaleDateString()} (${timeRemaining})\n` +
                                `**Betting:** ${bettingStatus} | **Bets:** ${challenge.bets?.length || 0}\n` +
-                               `${leaderboardLink}`
+                               `${leaderboardUrl}`
                     });
                 }
             });
@@ -1595,9 +1680,7 @@ async updateGpLeaderboard() {
             const processedEntries = processLeaderboardEntries(rawEntries, isTimeBased);
             
             // Look up creator's score
-            const creatorEntry = processedEntries.find(entry => 
-                entry.User.toLowerCase() === challenge.challengerUsername.toLowerCase()
-            );
+            const creatorEntry = findUserInLeaderboard(processedEntries, challenge.challengerUsername);
             
             if (creatorEntry) {
                 creatorScore.exists = true;
@@ -1608,9 +1691,7 @@ async updateGpLeaderboard() {
             
             // Look up each participant's score
             for (const participant of challenge.participants) {
-                const participantEntry = processedEntries.find(entry => 
-                    entry.User.toLowerCase() === participant.username.toLowerCase()
-                );
+                const participantEntry = findUserInLeaderboard(processedEntries, participant.username);
                 
                 const participantScore = {
                     userId: participant.userId,
