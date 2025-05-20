@@ -175,10 +175,15 @@ export function isTimeBasedLeaderboard(challenge) {
  * Get estimated winner based on current scores
  * @param {Object} challenge - Challenge object
  * @param {Object} challengerScore - Challenger's score info
- * @param {Object} challengeeScore - Challengee's score info
+ * @param {Object|null} challengeeScore - Challengee's score info (may be null for open challenges)
  * @returns {string|null} - Username of estimated winner or null if can't determine
  */
 export function getEstimatedWinner(challenge, challengerScore, challengeeScore) {
+    // For open challenges, we don't determine a winner this way
+    if (challenge.isOpenChallenge || !challengeeScore) {
+        return null;
+    }
+    
     // Add usernames if needed
     challengerScore.username = challenge.challengerUsername;
     challengeeScore.username = challenge.challengeeUsername;
@@ -512,7 +517,7 @@ export function checkPositionChanges(challenge, challengerScore, challengeeScore
  * Create a challenge embed for Discord
  * @param {Object} challenge - The challenge object
  * @param {Object} challengerScore - Challenger's score info
- * @param {Object} challengeeScore - Challengee's score info
+ * @param {Object|null} challengeeScore - Challengee's score info (may be null for open challenges)
  * @param {Map} participantScores - Map of participant scores (for open challenges)
  * @param {Object} EmbedBuilder - Discord.js EmbedBuilder class
  * @returns {Object} - Discord embed object
@@ -534,12 +539,42 @@ export function createChallengeEmbed(challenge, challengerScore, challengeeScore
     // Handle open challenges with participants separately
     if (challenge.isOpenChallenge && challenge.participants && challenge.participants.length > 0) {
         createOpenChallengeEmbed(challenge, challengerScore, participantScores, embed, timeLeft);
-    } else {
+    } else if (!challenge.isOpenChallenge && challengeeScore) {
         createDirectChallengeEmbed(challenge, challengerScore, challengeeScore, embed, timeLeft);
+    } else {
+        // Fallback for any edge cases (like empty open challenges)
+        createBasicChallengeEmbed(challenge, challengerScore, embed, timeLeft);
     }
     
     embed.setTimestamp();
     return embed;
+}
+
+/**
+ * Create a basic fallback embed for edge cases
+ * @private
+ */
+function createBasicChallengeEmbed(challenge, challengerScore, embed, timeLeft) {
+    // Build leaderboard URL
+    const leaderboardUrl = `https://retroachievements.org/leaderboardinfo.php?i=${challenge.leaderboardId}`;
+    
+    // Set title
+    embed.setTitle(challenge.gameTitle);
+    
+    // Description with basic info
+    embed.setDescription(`**Challenge** created by ${challenge.challengerUsername}\n[View Leaderboard](${leaderboardUrl})`);
+    
+    // Add description if available
+    if (challenge.description) {
+        embed.addFields({ name: 'Challenge', value: challenge.description });
+    }
+    
+    // Add challenge details
+    embed.addFields({
+        name: 'Details', 
+        value: `**Wager:** ${challenge.wagerAmount} GP\n` +
+               `**Ends:** ${timeLeft}`
+    });
 }
 
 /**
