@@ -116,6 +116,12 @@ export default {
                             emoji: '🔥'
                         },
                         {
+                            label: 'View Live Leaderboards',
+                            description: 'Get real-time updates of current challenges',
+                            value: 'view_live_leaderboard',
+                            emoji: '🔄'
+                        },
+                        {
                             label: 'GP Leaderboard',
                             description: 'View the top GP earners',
                             value: 'leaderboard',
@@ -1060,6 +1066,20 @@ export default {
             // Get user
             const user = await User.findOne({ discordId: interaction.user.id });
             
+            // Additional validation for open challenges
+            if (challenge.isOpenChallenge) {
+                // Verify that the selected player is either the creator or a participant
+                const isCreator = playerName === challenge.challengerUsername;
+                const isParticipant = challenge.participants?.some(p => 
+                    p.username.toLowerCase() === playerName.toLowerCase()
+                );
+                
+                if (!isCreator && !isParticipant) {
+                    await interaction.deferUpdate();
+                    return interaction.editReply(`Invalid player selection. ${playerName} is not a participant in this challenge.`);
+                }
+            }
+
             // Show bet amount modal without deferring first
             const betModal = new ModalBuilder()
                 .setCustomId(`arena_bet_amount_modal_${challengeId}_${playerName}`)
@@ -1930,6 +1950,70 @@ export default {
             await interaction.editReply('An error occurred while declining the challenge.');
         }
     },
+
+    // Show live leaderboards to view real-time updates
+    async showLiveLeaderboards(interaction) {
+        await interaction.deferUpdate();
+        
+        try {
+            // Find active challenges
+            const activeChallengers = await ArenaChallenge.find({
+                status: 'active',
+                endDate: { $gt: new Date() }
+            }).sort({ gameTitle: 1 }); // Sort alphabetically by game title
+            
+            if (activeChallengers.length === 0) {
+                return interaction.editReply('There are no active challenges to view.');
+            }
+            
+            // Create embed
+            const embed = new EmbedBuilder()
+                .setColor('#FF5722')
+                .setTitle('Live Arena Leaderboards')
+                .setDescription('Select a challenge to view real-time leaderboard data:');
+            
+            // Create selection menu for challenges
+            const selectMenu = new StringSelectMenuBuilder()
+                .setCustomId('arena_live_leaderboard_select')
+                .setPlaceholder('Select a challenge to view');
+                
+            // Add each challenge as an option
+            activeChallengers.forEach(challenge => {
+                if (challenge.isOpenChallenge) {
+                    selectMenu.addOptions({
+                        label: `${challenge.gameTitle} (Open Challenge)`,
+                        description: `Creator: ${challenge.challengerUsername}`,
+                        value: challenge._id.toString()
+                    });
+                } else {
+                    selectMenu.addOptions({
+                        label: `${challenge.challengerUsername} vs ${challenge.challengeeUsername}`,
+                        description: challenge.gameTitle,
+                        value: challenge._id.toString()
+                    });
+                }
+            });
+            
+            const selectRow = new ActionRowBuilder().addComponents(selectMenu);
+            
+            // Add back button
+            const backRow = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('arena_back_to_main')
+                        .setLabel('Back to Arena')
+                        .setStyle(ButtonStyle.Secondary)
+                );
+            
+            await interaction.editReply({
+                embeds: [embed],
+                components: [selectRow, backRow]
+            });
+        } catch (error) {
+            console.error('Error showing live leaderboards:', error);
+            return interaction.editReply('An error occurred while loading the leaderboards.');
+        }
+    },
     
     // Handle button interactions
     async handleButtonInteraction(interaction) {
@@ -2081,51 +2165,3 @@ export default {
                 });
             }
         }
-        // Add handlers for additional navigation buttons
-        else if (customId === 'arena_my_challenges') {
-            await this.showMyChallenges(interaction);
-        }
-        else if (customId === 'arena_open_challenges') {
-            await this.showOpenChallenges(interaction);
-        }
-    },
-    
-    // Handle select menu interactions
-    async handleSelectMenuInteraction(interaction) {
-        const customId = interaction.customId;
-        
-        if (customId === 'arena_main_action') {
-            const selectedValue = interaction.values[0];
-            
-            switch (selectedValue) {
-                case 'create_challenge':
-                    await this.showCreateChallengeModal(interaction);
-                    break;
-                case 'place_bet':
-                    await this.showActiveChallengesForBetting(interaction);
-                    break;
-                case 'my_challenges':
-                    await this.showMyChallenges(interaction);
-                    break;
-                case 'active_challenges':
-                    await arenaService.showActiveChallengesToUser(interaction);
-                    break;
-                case 'leaderboard':
-                    await arenaService.showGpLeaderboard(interaction);
-                    break;
-                case 'open_challenges':
-                    await this.showOpenChallenges(interaction);
-                    break;
-                default:
-                    await interaction.deferUpdate();
-                    await interaction.editReply('Invalid selection. Please try again.');
-            }
-        } else if (customId === 'arena_pending_challenge_select') {
-            await this.handlePendingChallengeSelect(interaction);
-        } else if (customId === 'arena_bet_challenge_select') {
-            await this.handleBetChallengeSelect(interaction);
-        } else if (customId === 'arena_bet_player_select') {
-            await this.handleBetPlayerSelect(interaction);
-        }
-    }
-};
