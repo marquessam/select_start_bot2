@@ -303,6 +303,7 @@ export function parseScoreString(scoreString) {
 export async function getLeaderboardEntries(leaderboardId) {
     try {
         // Fetch leaderboard entries to verify the leaderboard exists
+        // Only fetch up to rank 1000 as requested
         const batch1 = await retroAPI.getLeaderboardEntriesDirect(leaderboardId, 0, 500);
         const batch2 = await retroAPI.getLeaderboardEntriesDirect(leaderboardId, 500, 500);
         
@@ -315,6 +316,14 @@ export async function getLeaderboardEntries(leaderboardId) {
                 rawEntries = [...rawEntries, ...batch1];
             } else if (batch1.Results && Array.isArray(batch1.Results)) {
                 rawEntries = [...rawEntries, ...batch1.Results];
+            } else if (batch1.data && Array.isArray(batch1.data)) {
+                rawEntries = [...rawEntries, ...batch1.data];
+            } else if (typeof batch1 === 'object') {
+                // Try to extract entries from unknown format
+                const possibleEntries = Object.values(batch1).find(val => Array.isArray(val));
+                if (possibleEntries) {
+                    rawEntries = [...rawEntries, ...possibleEntries];
+                }
             }
         }
         
@@ -324,8 +333,19 @@ export async function getLeaderboardEntries(leaderboardId) {
                 rawEntries = [...rawEntries, ...batch2];
             } else if (batch2.Results && Array.isArray(batch2.Results)) {
                 rawEntries = [...rawEntries, ...batch2.Results];
+            } else if (batch2.data && Array.isArray(batch2.data)) {
+                rawEntries = [...rawEntries, ...batch2.data];
+            } else if (typeof batch2 === 'object') {
+                // Try to extract entries from unknown format
+                const possibleEntries = Object.values(batch2).find(val => Array.isArray(val));
+                if (possibleEntries) {
+                    rawEntries = [...rawEntries, ...possibleEntries];
+                }
             }
         }
+        
+        // Debug log the count of entries
+        console.log(`Retrieved ${rawEntries.length} entries for leaderboard ${leaderboardId}`);
         
         return rawEntries;
     } catch (error) {
@@ -335,33 +355,73 @@ export async function getLeaderboardEntries(leaderboardId) {
 }
 
 /**
+ * Find a user in leaderboard entries with improved matching
+ * @param {Array} entries - Leaderboard entries
+ * @param {string} username - Username to find
+ * @returns {Object|null} - Found entry or null
+ */
+export function findUserInLeaderboard(entries, username) {
+    if (!entries || !Array.isArray(entries) || entries.length === 0 || !username) {
+        return null;
+    }
+    
+    // Try exact match first (case insensitive)
+    const exactMatch = entries.find(entry => {
+        const entryUser = entry.User || entry.user || '';
+        return entryUser.toLowerCase() === username.toLowerCase();
+    });
+    
+    if (exactMatch) return exactMatch;
+    
+    // If no exact match, try fuzzy matching (for usernames with spaces or special chars)
+    const fuzzyMatch = entries.find(entry => {
+        const entryUser = entry.User || entry.user || '';
+        // Replace spaces and special chars for comparison
+        const normalizedEntry = entryUser.toLowerCase().replace(/[_\s-]+/g, '');
+        const normalizedUsername = username.toLowerCase().replace(/[_\s-]+/g, '');
+        return normalizedEntry === normalizedUsername;
+    });
+    
+    return fuzzyMatch;
+}
+
+/**
  * Process raw leaderboard entries into a consistent format
  * @param {Array} rawEntries - Raw entries from RetroAchievements API
  * @param {boolean} isTimeBased - Whether the leaderboard is time-based (lower is better)
  * @returns {Array} - Processed entries
  */
 export function processLeaderboardEntries(rawEntries, isTimeBased = false) {
-    // Process the entries with appropriate handling for different formats
+    if (!rawEntries || !Array.isArray(rawEntries)) {
+        console.error('Invalid leaderboard entries received:', rawEntries);
+        return [];
+    }
+    
+    // Process the entries with improved handling for different formats
     const entries = rawEntries.map(entry => {
-        // Standard properties that most entries have
-        const user = entry.User || entry.user || '';
+        if (!entry) return null;
+        
+        // Handle different field names that might be used
+        const user = entry.User || entry.user || entry.username || '';
         const score = entry.Score || entry.score || entry.Value || entry.value || 0;
-        const formattedScore = entry.FormattedScore || entry.formattedScore || entry.ScoreFormatted || score.toString();
-        const rank = entry.Rank || entry.rank || 0;
+        const formattedScore = entry.FormattedScore || entry.formattedScore || 
+                             entry.ScoreFormatted || entry.scoreFormatted || score.toString();
+        const rank = entry.Rank || entry.rank || entry.ApiRank || entry.apiRank || 0;
         
         return {
-            ApiRank: parseInt(rank, 10),
+            ApiRank: parseInt(rank, 10) || 0,
             User: user.trim(),
             RawScore: score,
             FormattedScore: formattedScore.toString().trim() || score.toString(),
             Value: parseFloat(score) || 0
         };
-    });
+    }).filter(entry => entry !== null); // Remove any null entries
     
     // Sort entries based on their original API Rank (global rank)
     entries.sort((a, b) => a.ApiRank - b.ApiRank);
     
-    // IMPORTANT: We no longer reassign ranks here, preserving the original ApiRank from RA
+    // Log the number of processed entries
+    console.log(`Processed ${entries.length} valid leaderboard entries`);
     
     return entries;
 }
@@ -487,9 +547,15 @@ export function createChallengeEmbed(challenge, challengerScore, challengeeScore
  * @private
  */
 function createOpenChallengeEmbed(challenge, challengerScore, participantScores, embed, timeLeft) {
-    // Set title for open challenge - more concise
-    embed.setTitle(`${challenge.gameTitle}`);
-    embed.setDescription(`**Creator:** ${challenge.challengerUsername} | [View Leaderboard](https://retroachievements.org/leaderboardinfo.php?i=${challenge.leaderboardId})`);
+    // Build leaderboard URL
+    const leaderboardUrl = `https://retroachievements.org/leaderboardinfo.php?i=${challenge.leaderboardId}`;
+    
+    // Set title for open challenge with game info including platform
+    const platformText = challenge.platform ? ` (${challenge.platform})` : '';
+    embed.setTitle(`${challenge.gameTitle}${platformText}`);
+    
+    // Description now just shows creator info
+    embed.setDescription(`**Creator:** ${challenge.challengerUsername} | [View Leaderboard](${leaderboardUrl})`);
     
     // Add description if available
     if (challenge.description) {
@@ -555,8 +621,14 @@ function createDirectChallengeEmbed(challenge, challengerScore, challengeeScore,
     // More concise title
     embed.setTitle(`${challenge.challengerUsername} vs ${challenge.challengeeUsername}`);
     
-    // Add game info with direct leaderboard link
-    embed.setDescription(`**Game:** ${challenge.gameTitle} | [View Leaderboard](https://retroachievements.org/leaderboardinfo.php?i=${challenge.leaderboardId})`);
+    // Build leaderboard URL
+    const leaderboardUrl = `https://retroachievements.org/leaderboardinfo.php?i=${challenge.leaderboardId}`;
+    
+    // Add platform information if available
+    const platformText = challenge.platform ? ` (${challenge.platform})` : '';
+    
+    // Add game info with the game title as a link to the leaderboard
+    embed.setDescription(`**Game:** [${challenge.gameTitle}${platformText}](${leaderboardUrl})`);
     
     // Add description if available
     if (challenge.description) {
@@ -673,6 +745,57 @@ export function addBettingResultsToEmbed(challenge, embed) {
     }
 }
 
+/**
+ * Create an overview embed for the Arena system
+ * @param {Object} EmbedBuilder - Discord.js EmbedBuilder class
+ * @param {Object} stats - Stats about active challenges and bets
+ * @returns {Object} - Discord embed object
+ */
+export function createArenaOverviewEmbed(EmbedBuilder, stats) {
+    const embed = new EmbedBuilder()
+        .setColor('#9B59B6')
+        .setTitle('🏟️ Arena System - Quick Guide')
+        .setDescription(
+            'The Arena lets you challenge other members to competitions on RetroAchievements leaderboards. ' +
+            'Win GP by beating your opponents or betting on winners!'
+        );
+        
+    // Add command information
+    embed.addFields({
+        name: '📋 How to Participate',
+        value: 
+            '• **Challenge:** Use `/arena` and select "Challenge User"\n' +
+            '• **Browse Challenges:** Use `/arena` and select "Browse Open Challenges"\n' +
+            '• **Place Bets:** Use `/arena` and select "Place a Bet"\n' +
+            '• **View Challenges:** Check out the Arena Feed channel'
+    });
+    
+    // Add betting information
+    embed.addFields({
+        name: '💰 Betting System',
+        value: 
+            '• All bets go into the prize pool\n' +
+            '• If your player wins, you get your bet back plus a share of losing bets\n' +
+            '• Your share is proportional to how much you bet\n' +
+            '• Betting closes 72 hours after a challenge starts\n' +
+            '• Max bet: 100 GP per challenge'
+    });
+    
+    // Add stats if provided
+    if (stats) {
+        embed.addFields({
+            name: '📊 Current Activity',
+            value: 
+                `• **Active Challenges:** ${stats.activeCount || 0}\n` +
+                `• **Total Prize Pool:** ${stats.totalPrizePool || 0} GP\n` +
+                `• **Open Challenges:** ${stats.openCount || 0}\n` +
+                `• **Active Bets:** ${stats.totalBets || 0}`
+        });
+    }
+    
+    return embed;
+}
+
 // Export all functions as a default object as well
 export default {
     formatTimeRemaining,
@@ -683,8 +806,10 @@ export default {
     parseTimeToSeconds,
     parseScoreString,
     getLeaderboardEntries,
+    findUserInLeaderboard,
     processLeaderboardEntries,
     checkPositionChanges,
     createChallengeEmbed,
-    addBettingResultsToEmbed
+    addBettingResultsToEmbed,
+    createArenaOverviewEmbed
 };
