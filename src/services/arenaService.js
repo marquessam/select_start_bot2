@@ -642,8 +642,9 @@ class ArenaService {
             }
             
             // Create embed for the challenge using our improved utility function
+            // IMPORTANT: For open challenges, explicitly pass null for challengeeScore
             const embed = createChallengeEmbed(
-                challenge, challengerScore, null, // No challengee for open challenges
+                challenge, challengerScore, null, // Explicitly pass null for challengeeScore
                 participantScores, EmbedBuilder
             );
             
@@ -659,7 +660,7 @@ class ArenaService {
                 embed.setFooter({ text: 'Betting is now closed for this challenge' });
             }
             
-            // Add how to join instructions at the bottom
+            // Add how to join instructions at the bottom if the challenge is still open
             if (challenge.status === 'open') {
                 embed.addFields({
                     name: 'How to Join', 
