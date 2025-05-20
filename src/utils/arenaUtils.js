@@ -663,17 +663,17 @@ function createOpenChallengeEmbed(challenge, challengerScore, participantScores,
         return 0; // No preference if neither has scores
     });
     
-    // Create standings field with consistent medal emoji formatting
+    // Create standings field with crown for the leader
     let participantsText = '';
     
     allParticipants.forEach((participant, index) => {
         if (participant.exists) {
-            // Add medal emoji for top 3 positions
-            const medalEmoji = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `${index + 1}.`;
+            // Add crown emoji only for the top position (leader)
+            const prefixEmoji = index === 0 ? '👑 ' : '';
             const creatorTag = participant.isCreator ? ' (Creator)' : '';
             const rankDisplay = participant.rank < 999999 ? ` (Rank: #${participant.rank})` : '';
             
-            participantsText += `${medalEmoji} **${participant.username}${creatorTag}**: ${participant.score}${rankDisplay}\n`;
+            participantsText += `${prefixEmoji}**${participant.username}${creatorTag}**: ${participant.score}${rankDisplay}\n`;
         } else {
             const creatorTag = participant.isCreator ? ' (Creator)' : '';
             participantsText += `• **${participant.username}${creatorTag}**: ${participant.score}\n`;
@@ -745,7 +745,7 @@ function createDirectChallengeEmbed(challenge, challengerScore, challengeeScore,
                `**Status:** ${statusText}`
     });
     
-    // Add current scores with medal notation
+    // Add current scores with crown notation
     // Sort challenger and challengee by rank or score
     const participants = [
         {
@@ -781,11 +781,11 @@ function createDirectChallengeEmbed(challenge, challengerScore, challengeeScore,
     
     let scoresText = '';
     participants.forEach((participant, index) => {
-        // Add medal emoji for 1st and 2nd place
-        const medalEmoji = index === 0 ? '🥇' : '🥈';
+        // Use crown for leader, nothing for others
+        const prefixEmoji = participant.isLeader ? '👑 ' : '';
         const rankDisplay = participant.rank < 999999 ? ` (Rank: #${participant.rank})` : '';
         
-        scoresText += `${medalEmoji} **${participant.username}:** ${participant.score}${rankDisplay}\n`;
+        scoresText += `${prefixEmoji}**${participant.username}:** ${participant.score}${rankDisplay}\n`;
     });
     
     embed.addFields({
