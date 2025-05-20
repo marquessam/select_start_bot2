@@ -2165,3 +2165,75 @@ export default {
                 });
             }
         }
+}
+    },
+    
+    // Handle select menu interactions
+    async handleSelectMenuInteraction(interaction) {
+        const customId = interaction.customId;
+        
+        if (customId === 'arena_main_action') {
+            const selectedValue = interaction.values[0];
+            
+            if (selectedValue === 'create_challenge') {
+                await this.showCreateChallengeModal(interaction);
+            }
+            else if (selectedValue === 'place_bet') {
+                await this.showActiveChallengesForBetting(interaction);
+            }
+            else if (selectedValue === 'my_challenges') {
+                await this.showMyChallenges(interaction);
+            }
+            else if (selectedValue === 'active_challenges') {
+                await this.showActiveChallengesForBetting(interaction);
+            }
+            else if (selectedValue === 'view_live_leaderboard') {
+                await this.showLiveLeaderboards(interaction);
+            }
+            else if (selectedValue === 'leaderboard') {
+                await arenaService.showGpLeaderboard(interaction);
+            }
+            else if (selectedValue === 'open_challenges') {
+                await this.showOpenChallenges(interaction);
+            }
+        }
+        else if (customId === 'arena_pending_challenge_select') {
+            await this.handlePendingChallengeSelect(interaction);
+        }
+        else if (customId === 'arena_bet_challenge_select') {
+            await this.handleBetChallengeSelect(interaction);
+        }
+        else if (customId === 'arena_bet_player_select') {
+            await this.handleBetPlayerSelect(interaction);
+        }
+        else if (customId === 'arena_live_leaderboard_select') {
+            await this.handleLiveLeaderboardSelect(interaction);
+        }
+    },
+    
+    // Handle live leaderboard selection
+    async handleLiveLeaderboardSelect(interaction) {
+        try {
+            await interaction.deferUpdate();
+            
+            const selectedChallengeId = interaction.values[0];
+            
+            // Get the challenge
+            const challenge = await ArenaChallenge.findById(selectedChallengeId);
+            if (!challenge || challenge.status !== 'active') {
+                return interaction.editReply('This challenge is no longer active.');
+            }
+            
+            if (challenge.isOpenChallenge) {
+                // For open challenges with multiple participants
+                await arenaService.refreshOpenChallengeLeaderboard(interaction, challenge);
+            } else {
+                // For regular 1v1 challenges
+                await arenaService.refreshDirectChallengeLeaderboard(interaction, challenge);
+            }
+        } catch (error) {
+            console.error('Error showing live leaderboard:', error);
+            return interaction.editReply('An error occurred while loading the leaderboard data.');
+        }
+    }
+};
