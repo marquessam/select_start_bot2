@@ -2014,8 +2014,7 @@ export default {
             return interaction.editReply('An error occurred while loading the leaderboards.');
         }
     },
-    
-    // Handle button interactions
+// Handle button interactions
     async handleButtonInteraction(interaction) {
         const customId = interaction.customId;
         
@@ -2165,7 +2164,6 @@ export default {
                 });
             }
         }
-}
     },
     
     // Handle select menu interactions
