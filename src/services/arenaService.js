@@ -460,6 +460,17 @@ class ArenaService {
                 await new Promise(resolve => setTimeout(resolve, 1000));
             }
             
+            // ADDED: Update open challenge feeds too
+            const openChallenges = await ArenaChallenge.find({
+                status: 'open',
+                isOpenChallenge: true
+            });
+            
+            for (const challenge of openChallenges) {
+                await this.createOrUpdateOpenChallengeFeed(challenge);
+                await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+            
             // Update GP leaderboard LAST (moved to the end)
             await this.updateGpLeaderboard();
         } catch (error) {
@@ -541,6 +552,98 @@ class ArenaService {
             }
         } catch (error) {
             console.error('Error creating/updating arena feed:', error);
+        }
+    }
+
+    // New method for open challenge feeds
+    async createOrUpdateOpenChallengeFeed(challenge) {
+        try {
+            const feedChannel = await this.getArenaFeedChannel();
+            if (!feedChannel) return;
+            
+            // Create embed for the open challenge
+            const embed = new EmbedBuilder()
+                .setColor('#3498DB') // Blue color for open challenges
+                .setTitle(`${challenge.gameTitle}${challenge.platform ? ` (${challenge.platform})` : ''}`)
+                .setDescription(`**Open Challenge** created by **${challenge.challengerUsername}**`);
+            
+            // Add leaderboard link
+            const leaderboardUrl = `https://retroachievements.org/leaderboardinfo.php?i=${challenge.leaderboardId}`;
+            
+            // Add description if available
+            if (challenge.description) {
+                embed.addFields({ name: 'Challenge', value: challenge.description });
+            }
+            
+            // Calculate time remaining
+            const timeRemaining = formatTimeRemaining(challenge.endDate);
+            
+            // Add challenge details
+            embed.addFields({
+                name: 'Details', 
+                value: `**Wager:** ${challenge.wagerAmount} GP per player\n` +
+                     `**Duration:** ${Math.floor(challenge.durationHours / 24)} days\n` +
+                     `**Created:** ${challenge.createdAt.toLocaleDateString()}\n` +
+                     `**Expires:** In ${timeRemaining}`
+            });
+            
+            // If there are participants already (shouldn't be for open challenges, but just in case)
+            if (challenge.participants && challenge.participants.length > 0) {
+                let participantsText = '';
+                challenge.participants.forEach(participant => {
+                    participantsText += `• **${participant.username}**\n`;
+                });
+                
+                embed.addFields({
+                    name: 'Current Participants', 
+                    value: participantsText || 'No participants yet'
+                });
+            } else {
+                embed.addFields({
+                    name: 'Current Participants', 
+                    value: 'No participants yet. Be the first to join!'
+                });
+            }
+            
+            // Add how to join instructions
+            embed.addFields({
+                name: 'How to Join', 
+                value: `Use \`/arena\` and select "Browse Open Challenges" to join this challenge.`
+            });
+            
+            // Add thumbnail if available
+            if (challenge.iconUrl) {
+                embed.setThumbnail(`https://retroachievements.org${challenge.iconUrl}`);
+            }
+            
+            embed.setTimestamp();
+            
+            // Send or update the message
+            const challengeId = challenge._id.toString();
+            
+            if (this.feedMessageIds.has(challengeId)) {
+                try {
+                    const messageId = this.feedMessageIds.get(challengeId);
+                    const message = await feedChannel.messages.fetch(messageId);
+                    await message.edit({ embeds: [embed] });
+                } catch (error) {
+                    if (error.message.includes('Unknown Message')) {
+                        const message = await feedChannel.send({ embeds: [embed] });
+                        this.feedMessageIds.set(challengeId, message.id);
+                        challenge.messageId = message.id;
+                        await challenge.save();
+                    } else {
+                        throw error;
+                    }
+                }
+            } else {
+                const message = await feedChannel.send({ embeds: [embed] });
+                this.feedMessageIds.set(challengeId, message.id);
+                challenge.messageId = message.id;
+                await challenge.save();
+            }
+        } catch (error) {
+            console.error('Error creating/updating open challenge feed:', error);
         }
     }
 
@@ -666,8 +769,43 @@ class ArenaService {
                 totalBets
             };
             
-            // Create the embed
-            const embed = createArenaOverviewEmbed(EmbedBuilder, stats);
+            // Create simplified overview embed
+            const embed = new EmbedBuilder()
+                .setColor('#F1C40F') // Yellow color for info embeds
+                .setTitle('🏟️ Arena System - Quick Guide')
+                .setDescription(
+                    'The Arena lets you challenge other members to competitions on RetroAchievements leaderboards. ' +
+                    'Win GP by beating your opponents or betting on winners!'
+                );
+                
+            // Add simplified command information
+            embed.addFields({
+                name: '📋 How to Participate',
+                value: 'Use `/arena` to get started'
+            });
+            
+            // Add betting information
+            embed.addFields({
+                name: '💰 Betting System',
+                value: 
+                    '• All bets go into the prize pool\n' +
+                    '• If your player wins, you get your bet back plus a share of losing bets\n' +
+                    '• Your share is proportional to how much you bet\n' +
+                    '• Betting closes 72 hours after a challenge starts\n' +
+                    '• Max bet: 100 GP per challenge'
+            });
+            
+            // Add stats if provided
+            if (stats) {
+                embed.addFields({
+                    name: '📊 Current Activity',
+                    value: 
+                        `• **Active Challenges:** ${stats.activeCount || 0}\n` +
+                        `• **Total Prize Pool:** ${stats.totalPrizePool || 0} GP\n` +
+                        `• **Open Challenges:** ${stats.openCount || 0}\n` +
+                        `• **Active Bets:** ${stats.totalBets || 0}`
+                });
+            }
             
             // Send or update
             if (this.overviewEmbedId) {
@@ -699,7 +837,7 @@ class ArenaService {
             // Get top users by GP
             const topUsers = await User.find({ gp: { $gt: 0 } })
                 .sort({ gp: -1 })
-                .limit(10);
+                .limit(5); // Reduced to top 5
             
             if (topUsers.length === 0) return;
             
@@ -708,14 +846,14 @@ class ArenaService {
             
             const embed = new EmbedBuilder()
                 .setTitle('💰 GP Leaderboard')
-                .setColor('#FFD700')
+                .setColor('#F1C40F') // Yellow color for info embeds
                 .setDescription(
                     'These are the users with the most GP (Gold Points).\n' +
-                    'Earn GP by winning Arena challenges and bets. Everyone receives 1,000 GP automatically each month.\n\n' +
+                    'Earn GP by winning Arena challenges and bets.\n\n' +
                     `**Last Updated:** ${formattedDate}`
                 )
                 .setFooter({ 
-                    text: 'Updates hourly | Year-end champion receives a special title and award!' 
+                    text: 'Updates hourly | Everyone receives 1,000 GP automatically each month!' 
                 });
             
             // Build leaderboard text with medals
@@ -724,17 +862,9 @@ class ArenaService {
             topUsers.forEach((user, index) => {
                 const medal = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `${index + 1}.`;
                 leaderboardText += `${medal} **${user.raUsername}**: ${user.gp.toLocaleString()} GP\n`;
-                
-                if (index === 2) {
-                    leaderboardText += '──────────────\n';
-                }
             });
             
-            embed.addFields({ name: 'Top 10 Rankings', value: leaderboardText });
-            embed.addFields({ 
-                name: 'Monthly Allowance', 
-                value: 'You automatically receive 1,000 GP at the beginning of each month!' 
-            });
+            embed.addFields({ name: 'Top 5 Rankings', value: leaderboardText });
             
             // Update or create the leaderboard message
             if (this.gpLeaderboardMessageId) {
@@ -1613,7 +1743,7 @@ class ArenaService {
             // Get top users by GP
             const topUsers = await User.find({ gp: { $gt: 0 } })
                 .sort({ gp: -1 })
-                .limit(10);
+                .limit(5); // Reduced to top 5
             
             if (topUsers.length === 0) {
                 return interaction.editReply('No users with GP found.');
@@ -1622,13 +1752,13 @@ class ArenaService {
             // Create leaderboard embed
             const embed = new EmbedBuilder()
                 .setTitle('💰 GP Leaderboard')
-                .setColor('#FFD700')
+                .setColor('#F1C40F')
                 .setDescription(
                     'These are the users with the most GP (Gold Points).\n' +
-                    'Earn GP by winning Arena challenges and bets. Everyone receives 1,000 GP automatically each month.'
+                    'Earn GP by winning Arena challenges and bets.'
                 )
                 .setFooter({ 
-                    text: 'The user with the most GP at the end of the year will receive a special title and award points!' 
+                    text: 'Everyone receives 1,000 GP automatically each month!' 
                 });
             
             // Build leaderboard text
@@ -1637,17 +1767,9 @@ class ArenaService {
             topUsers.forEach((user, index) => {
                 const medal = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `${index + 1}.`;
                 leaderboardText += `${medal} **${user.raUsername}**: ${user.gp.toLocaleString()} GP\n`;
-                
-                if (index === 2) {
-                    leaderboardText += '──────────────\n';
-                }
             });
             
-            embed.addFields({ name: 'Top 10 Rankings', value: leaderboardText });
-            embed.addFields({ 
-                name: 'Monthly Allowance', 
-                value: 'You automatically receive 1,000 GP at the beginning of each month!' 
-            });
+            embed.addFields({ name: 'Top 5 Rankings', value: leaderboardText });
             
             // Add back button
             const backRow = new ActionRowBuilder()
@@ -1721,17 +1843,47 @@ class ArenaService {
             // Add leaderboard link
             const leaderboardLink = `[View on RetroAchievements](https://retroachievements.org/leaderboardinfo.php?i=${challenge.leaderboardId})`;
             
-            // Create leaderboard table
+            // Create array of all participants including creator for sorting
+            const allParticipants = [];
+            
+            // Add creator
+            allParticipants.push({
+                username: challenge.challengerUsername,
+                isCreator: true,
+                score: creatorScore.formattedScore,
+                rank: creatorScore.rank || 999999,
+                exists: creatorScore.exists
+            });
+            
+            // Add participants
+            for (const score of participantScores) {
+                allParticipants.push({
+                    username: score.username,
+                    isCreator: false,
+                    score: score.formattedScore,
+                    rank: score.rank || 999999,
+                    exists: score.exists
+                });
+            }
+            
+            // Sort by rank
+            allParticipants.sort((a, b) => a.rank - b.rank);
+            
+            // Create leaderboard table with updated format
             let leaderboardText = `**Current Rankings (Refreshed at ${new Date().toLocaleTimeString()}):**\n\n`;
             
-            // Add creator's score with global rank
-            leaderboardText += `1. **${challenge.challengerUsername} (Creator):** ${creatorScore.exists ? creatorScore.formattedScore : 'No score yet'}` + 
-                             (creatorScore.rank ? ` (Global Rank: #${creatorScore.rank})` : '') + `\n`;
-            
-            // Add participants' scores with global ranks
-            participantScores.forEach((score, index) => {
-                leaderboardText += `${index + 2}. **${score.username}:** ${score.exists ? score.formattedScore : 'No score yet'}` + 
-                                 (score.rank ? ` (Global Rank: #${score.rank})` : '') + `\n`;
+            allParticipants.forEach((participant, index) => {
+                if (participant.exists) {
+                    // Format: Local rank + Username - Score (Global rank)
+                    const rankPrefix = index === 0 ? '👑 ' : `${index + 1}. `;
+                    const creatorTag = participant.isCreator ? ' (Creator)' : '';
+                    const globalRank = participant.rank < 999999 ? ` (Global Rank: #${participant.rank})` : '';
+                    
+                    leaderboardText += `${rankPrefix}**${participant.username}${creatorTag}** - ${participant.score}${globalRank}\n`;
+                } else {
+                    const creatorTag = participant.isCreator ? ' (Creator)' : '';
+                    leaderboardText += `• **${participant.username}${creatorTag}:** No score yet\n`;
+                }
             });
             
             leaderboardText += `\n**Leaderboard:** ${leaderboardLink}`;
@@ -1791,24 +1943,39 @@ class ArenaService {
             // Add leaderboard link
             const leaderboardLink = `[View on RetroAchievements](https://retroachievements.org/leaderboardinfo.php?i=${challenge.leaderboardId})`;
             
-            // Create leaderboard table
+            // Create participants array for sorting
+            const participants = [
+                {
+                    username: challenge.challengerUsername,
+                    score: challengerScore.formattedScore,
+                    rank: challengerScore.rank || 999999,
+                    exists: challengerScore.exists
+                },
+                {
+                    username: challenge.challengeeUsername,
+                    score: challengeeScore.formattedScore,
+                    rank: challengeeScore.rank || 999999,
+                    exists: challengeeScore.exists
+                }
+            ];
+            
+            // Sort by rank (lowest first)
+            participants.sort((a, b) => a.rank - b.rank);
+            
+            // Create leaderboard table with updated format
             let leaderboardText = `**Current Standings (Refreshed at ${new Date().toLocaleTimeString()}):**\n\n`;
             
-            // Add challenger with global rank
-            if (challengerScore.exists) {
-                leaderboardText += `• **${challenge.challengerUsername}:** ${challengerScore.formattedScore}` + 
-                                 (challengerScore.rank ? ` (Global Rank: #${challengerScore.rank})` : '') + `\n`;
-            } else {
-                leaderboardText += `• **${challenge.challengerUsername}:** No score yet\n`;
-            }
-            
-            // Add challengee with global rank
-            if (challengeeScore.exists) {
-                leaderboardText += `• **${challenge.challengeeUsername}:** ${challengeeScore.formattedScore}` + 
-                                 (challengeeScore.rank ? ` (Global Rank: #${challengeeScore.rank})` : '') + `\n`;
-            } else {
-                leaderboardText += `• **${challenge.challengeeUsername}:** No score yet\n`;
-            }
+            participants.forEach((participant, index) => {
+                if (participant.exists) {
+                    // Format: Local rank + Username - Score (Global rank)
+                    const rankPrefix = index === 0 ? '👑 ' : `${index + 1}. `;
+                    const globalRank = participant.rank < 999999 ? ` (Global Rank: #${participant.rank})` : '';
+                    
+                    leaderboardText += `${rankPrefix}**${participant.username}** - ${participant.score}${globalRank}\n`;
+                } else {
+                    leaderboardText += `• **${participant.username}:** No score yet\n`;
+                }
+            });
             
             leaderboardText += `\n**Leaderboard:** ${leaderboardLink}`;
             
