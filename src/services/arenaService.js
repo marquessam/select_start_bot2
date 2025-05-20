@@ -520,11 +520,64 @@ class ArenaService {
                 await this.notifyStandingsChange(challenge, positionChange);
             }
             
+            // Determine who's leading for status updates
+            let leader = null;
+            if (challenge.isOpenChallenge) {
+                // For open challenges, determine leader from all participants
+                // This will be handled in the createChallengeEmbed function
+            } else {
+                // For direct challenges, determine leader between challenger and challengee
+                const isTimeBased = challenge.description && challenge.description.toLowerCase().includes('time');
+                
+                // Only determine a leader if both users have scores
+                if (challengerScore.exists && challengeeScore.exists) {
+                    // First try to compare global ranks (lower is better)
+                    if (challengerScore.rank && challengeeScore.rank) {
+                        leader = challengerScore.rank < challengeeScore.rank 
+                            ? challenge.challengerUsername 
+                            : challenge.challengeeUsername;
+                    }
+                    // Otherwise compare score values
+                    else if (isTimeBased) {
+                        leader = challengerScore.value < challengeeScore.value 
+                            ? challenge.challengerUsername 
+                            : challenge.challengeeUsername;
+                    } else {
+                        leader = challengerScore.value > challengeeScore.value 
+                            ? challenge.challengerUsername 
+                            : challenge.challengeeUsername;
+                    }
+                } else if (challengerScore.exists) {
+                    leader = challenge.challengerUsername;
+                } else if (challengeeScore.exists) {
+                    leader = challenge.challengeeUsername;
+                }
+                
+                // Update the status field
+                challenge.status = 'active'; // Ensure status is active
+                if (leader) {
+                    challenge.currentLeader = leader; // Store the current leader
+                }
+                await challenge.save();
+            }
+            
             // Create embed for the challenge
             const embed = createChallengeEmbed(
                 challenge, challengerScore, challengeeScore, 
                 participantScores, EmbedBuilder
             );
+            
+            // Add betting information to footer
+            const startTime = challenge.startDate || challenge.createdAt;
+            const bettingEndsAt = new Date(startTime.getTime() + (72 * 60 * 60 * 1000)); // 72 hours after start
+            const now = new Date();
+            
+            if (now < bettingEndsAt) {
+                const hoursLeft = Math.max(0, Math.floor((bettingEndsAt - now) / (60 * 60 * 1000)));
+                embed.setFooter({ text: `Betting closes in ${hoursLeft} hours` });
+            } else {
+                embed.setFooter({ text: 'Betting is now closed for this challenge' });
+            }
             
             // Send or update the message
             const challengeId = challenge._id.toString();
@@ -555,20 +608,53 @@ class ArenaService {
         }
     }
 
-    // New method for open challenge feeds
     async createOrUpdateOpenChallengeFeed(challenge) {
         try {
             const feedChannel = await this.getArenaFeedChannel();
             if (!feedChannel) return;
             
+            // Get the most up-to-date scores for all participants
+            const participantScores = new Map();
+            const challengerScore = { exists: false, formattedScore: 'No score yet', rank: 0, value: 0 };
+            
+            // Try to get challenger's score
+            try {
+                const [creatorScore, _] = await this.getChallengersScores({ 
+                    ...challenge, 
+                    challengeeUsername: challenge.challengerUsername // Just a trick to get only creator's score
+                });
+                
+                if (creatorScore.exists) {
+                    // Update with real score
+                    challengerScore.exists = true;
+                    challengerScore.formattedScore = creatorScore.formattedScore;
+                    challengerScore.rank = creatorScore.rank;
+                    challengerScore.value = creatorScore.value;
+                }
+            } catch (error) {
+                console.error(`Error getting score for creator ${challenge.challengerUsername}:`, error);
+            }
+            
+            // Get scores for existing participants
+            if (challenge.participants && challenge.participants.length > 0) {
+                for (const participant of challenge.participants) {
+                    try {
+                        const entry = await this.getParticipantScore(challenge, participant.username);
+                        participantScores.set(participant.username.toLowerCase(), entry);
+                    } catch (error) {
+                        console.error(`Error getting score for participant ${participant.username}:`, error);
+                    }
+                }
+            }
+            
+            // Build leaderboard URL
+            const leaderboardUrl = `https://retroachievements.org/leaderboardinfo.php?i=${challenge.leaderboardId}`;
+            
             // Create embed for the open challenge
             const embed = new EmbedBuilder()
                 .setColor('#3498DB') // Blue color for open challenges
                 .setTitle(`${challenge.gameTitle}${challenge.platform ? ` (${challenge.platform})` : ''}`)
-                .setDescription(`**Open Challenge** created by **${challenge.challengerUsername}**`);
-            
-            // Add leaderboard link
-            const leaderboardUrl = `https://retroachievements.org/leaderboardinfo.php?i=${challenge.leaderboardId}`;
+                .setDescription(`**Open Challenge** created by **${challenge.challengerUsername}**\n[View Leaderboard](${leaderboardUrl})`);
             
             // Add description if available
             if (challenge.description) {
@@ -582,22 +668,91 @@ class ArenaService {
             embed.addFields({
                 name: 'Details', 
                 value: `**Wager:** ${challenge.wagerAmount} GP per player\n` +
-                     `**Duration:** ${Math.floor(challenge.durationHours / 24)} days\n` +
-                     `**Created:** ${challenge.createdAt.toLocaleDateString()}\n` +
-                     `**Expires:** In ${timeRemaining}`
+                       `**Duration:** ${Math.floor(challenge.durationHours / 24)} days\n` +
+                       `**Created:** ${challenge.createdAt.toLocaleDateString()}\n` +
+                       `**Expires:** In ${timeRemaining}`
             });
             
-            // If there are participants already (shouldn't be for open challenges, but just in case)
+            // Create array of all participants including creator for proper sorting
+            const allParticipants = [];
+            
+            // Add creator with rank
+            allParticipants.push({
+                username: challenge.challengerUsername,
+                isCreator: true,
+                score: challengerScore.formattedScore,
+                scoreValue: challengerScore.value,
+                rank: challengerScore.rank || 999999,
+                exists: challengerScore.exists
+            });
+            
+            // Add participants with scores
             if (challenge.participants && challenge.participants.length > 0) {
-                let participantsText = '';
-                challenge.participants.forEach(participant => {
-                    participantsText += `• **${participant.username}**\n`;
+                for (const participant of challenge.participants) {
+                    const scoreInfo = participantScores.get(participant.username.toLowerCase());
+                    const score = scoreInfo?.formattedScore || 'No score yet';
+                    const rank = scoreInfo?.rank || 999999;
+                    const value = scoreInfo?.value || 0;
+                    
+                    allParticipants.push({
+                        username: participant.username,
+                        isCreator: false,
+                        score: score,
+                        scoreValue: value,
+                        rank: rank,
+                        exists: !!scoreInfo?.exists
+                    });
+                }
+                
+                // Determine if time-based for sorting
+                const isTimeBased = challenge.description && challenge.description.toLowerCase().includes('time');
+                
+                // Sort participants by:
+                // 1. First by who has scores (exists flag)
+                // 2. Then by global rank or score value
+                allParticipants.sort((a, b) => {
+                    // Put participants with scores first
+                    if (a.exists && !b.exists) return -1;
+                    if (!a.exists && b.exists) return 1;
+                    
+                    // If both have scores, sort by rank or score
+                    if (a.exists && b.exists) {
+                        if (a.rank !== 999999 && b.rank !== 999999) {
+                            return a.rank - b.rank; // Lower rank is better
+                        } else if (isTimeBased) {
+                            return a.scoreValue - b.scoreValue; // Lower time is better
+                        } else {
+                            return b.scoreValue - a.scoreValue; // Higher score is better
+                        }
+                    }
+                    
+                    return 0; // No preference if neither has scores
                 });
                 
-                embed.addFields({
-                    name: 'Current Participants', 
-                    value: participantsText || 'No participants yet'
+                // Build participants text with proper ranking
+                let participantsText = '';
+                
+                allParticipants.forEach((participant, index) => {
+                    const creatorTag = participant.isCreator ? ' (Creator)' : '';
+                    
+                    if (participant.exists) {
+                        // Format: Local rank + Username - Score (Global rank)
+                        const rankPrefix = index === 0 ? '👑 ' : `${index + 1}. `;
+                        const globalRank = participant.rank < 999999 ? ` (Global Rank: #${participant.rank})` : '';
+                        
+                        participantsText += `${rankPrefix}**${participant.username}${creatorTag}** - ${participant.score}${globalRank}\n`;
+                    } else {
+                        // For users with no score yet
+                        participantsText += `• **${participant.username}${creatorTag}** - No score yet\n`;
+                    }
                 });
+                
+                if (participantsText) {
+                    embed.addFields({
+                        name: 'Current Standings',
+                        value: participantsText
+                    });
+                }
             } else {
                 embed.addFields({
                     name: 'Current Participants', 
@@ -614,6 +769,18 @@ class ArenaService {
             // Add thumbnail if available
             if (challenge.iconUrl) {
                 embed.setThumbnail(`https://retroachievements.org${challenge.iconUrl}`);
+            }
+            
+            // Add betting information to footer
+            const startTime = challenge.startDate || challenge.createdAt;
+            const bettingEndsAt = new Date(startTime.getTime() + (72 * 60 * 60 * 1000)); // 72 hours after start
+            const now = new Date();
+            
+            if (now < bettingEndsAt) {
+                const hoursLeft = Math.max(0, Math.floor((bettingEndsAt - now) / (60 * 60 * 1000)));
+                embed.setFooter({ text: `Betting closes in ${hoursLeft} hours` });
+            } else {
+                embed.setFooter({ text: 'Betting is now closed for this challenge' });
             }
             
             embed.setTimestamp();
