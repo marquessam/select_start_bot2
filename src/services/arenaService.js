@@ -2,6 +2,7 @@
 import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 import { User } from '../models/User.js';
 import { ArenaChallenge } from '../models/ArenaChallenge.js';
+import { TemporaryMessage } from '../models/TemporaryMessage.js'; // Added import
 import { config } from '../config/config.js';
 import { 
     formatTimeRemaining, getLeaderboardEntries, processLeaderboardEntries, 
@@ -28,6 +29,7 @@ class ArenaService {
         this.arenaChannelId = config.discord.arenaChannelId || '1373570850912997476';
         this.arenaFeedChannelId = config.discord.arenaFeedChannelId || '1373570913882214410';
         this.updateInterval = null;
+        this.tempMessageCleanupInterval = null; // Added for temp message cleanup
         this.feedMessageIds = new Map(); // Map of challengeId -> messageId
         this.headerMessageId = null;
         this.gpLeaderboardMessageId = null;
@@ -67,6 +69,9 @@ class ArenaService {
                 });
             }, 15 * 60 * 1000); // Every 15 minutes
             
+            // Start the temporary message cleanup service
+            await this.startTempMessageCleanup(); // Added temporary message cleanup
+            
             console.log(`Arena service started. Updates will occur every ${UPDATE_INTERVAL / 60000} minutes.`);
         } catch (error) {
             console.error('Error starting arena service:', error);
@@ -77,8 +82,15 @@ class ArenaService {
         if (this.updateInterval) {
             clearInterval(this.updateInterval);
             this.updateInterval = null;
-            console.log('Arena service stopped.');
         }
+        
+        // Clear the temporary message cleanup interval
+        if (this.tempMessageCleanupInterval) {
+            clearInterval(this.tempMessageCleanupInterval);
+            this.tempMessageCleanupInterval = null;
+        }
+        
+        console.log('Arena service stopped.');
     }
 
     // Get Discord channels
@@ -156,6 +168,92 @@ class ArenaService {
         }
     }
 
+    // Temporary message management
+    /**
+     * Send a message that will auto-delete after specified hours
+     * @param {Object} channel - Discord channel to send message to
+     * @param {Object} options - Message options (content, embeds, etc.)
+     * @param {number} hoursUntilDelete - Hours after which to delete
+     * @param {string} type - Message type identifier
+     * @returns {Promise<Object>} - Sent message
+     */
+    async sendTemporaryMessage(channel, options, hoursUntilDelete = 3, type = 'notification') {
+        try {
+            if (!channel) return null;
+            
+            const sentMessage = await channel.send(options);
+            const deleteAt = new Date(Date.now() + hoursUntilDelete * 60 * 60 * 1000);
+            
+            // Store in database for persistence
+            await TemporaryMessage.create({
+                messageId: sentMessage.id,
+                channelId: channel.id,
+                deleteAt,
+                type
+            });
+            
+            console.log(`Temporary message ${sentMessage.id} scheduled for deletion at ${deleteAt.toLocaleString()}`);
+            
+            return sentMessage;
+        } catch (error) {
+            console.error('Error sending temporary message:', error);
+            return null;
+        }
+    }
+
+    /**
+     * Start the temporary message cleanup service
+     * Runs every 15 minutes to check for and delete expired messages
+     */
+    async startTempMessageCleanup() {
+        this.tempMessageCleanupInterval = setInterval(() => {
+            this.cleanupExpiredMessages().catch(error => {
+                console.error('Error in temporary message cleanup:', error);
+            });
+        }, 15 * 60 * 1000); // Run every 15 minutes
+        
+        console.log('Temporary message cleanup service started');
+        
+        // Run once at startup
+        await this.cleanupExpiredMessages();
+    }
+
+    /**
+     * Clean up any expired temporary messages
+     */
+    async cleanupExpiredMessages() {
+        try {
+            const now = new Date();
+            const expiredMessages = await TemporaryMessage.find({
+                deleteAt: { $lte: now }
+            });
+            
+            if (expiredMessages.length === 0) return;
+            
+            console.log(`Found ${expiredMessages.length} expired temporary messages to delete`);
+            
+            for (const msg of expiredMessages) {
+                try {
+                    const channel = await this.client.channels.fetch(msg.channelId).catch(() => null);
+                    if (channel) {
+                        const message = await channel.messages.fetch(msg.messageId).catch(() => null);
+                        if (message) {
+                            await message.delete();
+                            console.log(`Deleted temporary message ${msg.messageId}`);
+                        }
+                    }
+                } catch (error) {
+                    console.error(`Error deleting message ${msg.messageId}:`, error);
+                }
+                
+                // Delete from database regardless of whether the message was found
+                await TemporaryMessage.findByIdAndDelete(msg._id);
+            }
+        } catch (error) {
+            console.error('Error in cleanupExpiredMessages:', error);
+        }
+    }
+
     // Notification methods
     async notifyNewChallenge(challenge) {
         try {
@@ -212,7 +310,8 @@ class ArenaService {
             
             embed.setTimestamp();
             
-            await channel.send({ embeds: [embed] });
+            // Send as a temporary message that will auto-delete after 4 hours
+            await this.sendTemporaryMessage(channel, { embeds: [embed] }, 4, 'newChallenge');
         } catch (error) {
             console.error('Error sending new challenge notification:', error);
         }
@@ -316,17 +415,29 @@ class ArenaService {
                             .setEmoji('💰')
                     );
                 
-                // Send with button and follow-up instructions
-                const message = await channel.send({ 
-                    embeds: [embed],
-                    components: [buttonsRow],
-                    content: `A new Arena challenge has begun!`
-                });
+                // Determine how long to keep the message based on status
+                let hoursUntilDelete = 6; // Keep active notifications longer
                 
-                await channel.send({
-                    content: 'To place a bet, use the `/arena` command and select "Place a Bet". Pot Betting System: Your bet joins the total prize pool. If your chosen player wins, you get your bet back plus a share of the losing bets proportional to your bet amount!',
-                    reply: { messageReference: message.id }
-                });
+                // Send with button and follow-up instructions using temp message
+                const message = await this.sendTemporaryMessage(
+                    channel,
+                    { embeds: [embed], components: [buttonsRow], content: `A new Arena challenge has begun!` },
+                    hoursUntilDelete,
+                    'challengeUpdate'
+                );
+                
+                if (message) {
+                    // Follow-up message with same timer
+                    await this.sendTemporaryMessage(
+                        channel,
+                        {
+                            content: 'To place a bet, use the `/arena` command and select "Place a Bet". Pot Betting System: Your bet joins the total prize pool. If your chosen player wins, you get your bet back plus a share of the losing bets proportional to your bet amount!',
+                            reply: { messageReference: message.id }
+                        },
+                        hoursUntilDelete,
+                        'bettingInfo'
+                    );
+                }
                 
                 return;
             } else if (challenge.status === 'completed') {
@@ -370,8 +481,16 @@ class ArenaService {
             
             embed.setTimestamp();
             
-            // Send notification without button for non-active statuses
-            await channel.send({ embeds: [embed] });
+            // Send notification with appropriate duration based on status
+            let hoursUntilDelete = 3; // Default
+            if (challenge.status === 'completed') {
+                hoursUntilDelete = 12; // Keep completed challenges longer
+            } else if (challenge.status === 'declined' || challenge.status === 'cancelled') {
+                hoursUntilDelete = 2; // Remove declined/cancelled faster
+            }
+            
+            // Send as a temporary message
+            await this.sendTemporaryMessage(channel, { embeds: [embed] }, hoursUntilDelete, 'challengeUpdate');
         } catch (error) {
             console.error('Error sending challenge update notification:', error);
         }
@@ -399,7 +518,8 @@ class ArenaService {
                 embed.setThumbnail(`https://retroachievements.org${challenge.iconUrl}`);
             }
             
-            await channel.send({ embeds: [embed] });
+            // Send as a temporary message that will auto-delete after 3 hours
+            await this.sendTemporaryMessage(channel, { embeds: [embed] }, 3, 'participantJoined');
         } catch (error) {
             console.error('Error sending participant joined notification:', error);
         }
@@ -444,7 +564,9 @@ class ArenaService {
                 embed.setThumbnail(`https://retroachievements.org${challenge.iconUrl}`);
             }
             
-            await channel.send({ embeds: [embed] });
+            // Send as a temporary message that will auto-delete after 6 hours
+            // Position changes are more noteworthy, so keep them longer
+            await this.sendTemporaryMessage(channel, { embeds: [embed] }, 6, 'standingsChange');
         } catch (error) {
             console.error('Error sending standings change notification:', error);
         }
