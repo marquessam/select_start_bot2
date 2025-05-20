@@ -6,7 +6,8 @@ import { config } from '../config/config.js';
 import { 
     formatTimeRemaining, getLeaderboardEntries, processLeaderboardEntries, 
     isTimeBasedLeaderboard, createChallengeEmbed, checkPositionChanges,
-    findUserInLeaderboard, createArenaOverviewEmbed
+    findUserInLeaderboard, createArenaOverviewEmbed, getEstimatedWinner,
+    parseTimeToSeconds, parseScoreString, createCompletedChallengeEmbed
 } from '../utils/arenaUtils.js';
 
 // Update interval (every hour)
@@ -460,7 +461,7 @@ class ArenaService {
                 await new Promise(resolve => setTimeout(resolve, 1000));
             }
             
-            // ADDED: Update open challenge feeds too
+            // Update open challenge feeds too
             const openChallenges = await ArenaChallenge.find({
                 status: 'open',
                 isOpenChallenge: true
@@ -471,7 +472,7 @@ class ArenaService {
                 await new Promise(resolve => setTimeout(resolve, 1000));
             }
             
-            // Update GP leaderboard LAST (moved to the end)
+            // Update GP leaderboard LAST
             await this.updateGpLeaderboard();
         } catch (error) {
             console.error('Error updating arena feeds:', error);
@@ -526,42 +527,18 @@ class ArenaService {
                 // For open challenges, determine leader from all participants
                 // This will be handled in the createChallengeEmbed function
             } else {
-                // For direct challenges, determine leader between challenger and challengee
-                const isTimeBased = challenge.description && challenge.description.toLowerCase().includes('time');
-                
-                // Only determine a leader if both users have scores
-                if (challengerScore.exists && challengeeScore.exists) {
-                    // First try to compare global ranks (lower is better)
-                    if (challengerScore.rank && challengeeScore.rank) {
-                        leader = challengerScore.rank < challengeeScore.rank 
-                            ? challenge.challengerUsername 
-                            : challenge.challengeeUsername;
-                    }
-                    // Otherwise compare score values
-                    else if (isTimeBased) {
-                        leader = challengerScore.value < challengeeScore.value 
-                            ? challenge.challengerUsername 
-                            : challenge.challengeeUsername;
-                    } else {
-                        leader = challengerScore.value > challengeeScore.value 
-                            ? challenge.challengerUsername 
-                            : challenge.challengeeUsername;
-                    }
-                } else if (challengerScore.exists) {
-                    leader = challenge.challengerUsername;
-                } else if (challengeeScore.exists) {
-                    leader = challenge.challengeeUsername;
-                }
+                // For direct challenges, determine leader using our improved function
+                leader = getEstimatedWinner(challenge, challengerScore, challengeeScore);
                 
                 // Update the status field
                 challenge.status = 'active'; // Ensure status is active
-                if (leader) {
+                if (leader && leader !== 'Tie') {
                     challenge.currentLeader = leader; // Store the current leader
                 }
                 await challenge.save();
             }
             
-            // Create embed for the challenge
+            // Create embed for the challenge using our improved utility function
             const embed = createChallengeEmbed(
                 challenge, challengerScore, challengeeScore, 
                 participantScores, EmbedBuilder
@@ -617,159 +594,58 @@ class ArenaService {
             const participantScores = new Map();
             const challengerScore = { exists: false, formattedScore: 'No score yet', rank: 0, value: 0 };
             
-            // Try to get challenger's score
+            // Try to get challenger's score using our improved utility functions
             try {
-                const [creatorScore, _] = await this.getChallengersScores({ 
-                    ...challenge, 
-                    challengeeUsername: challenge.challengerUsername // Just a trick to get only creator's score
-                });
+                const rawEntries = await getLeaderboardEntries(challenge.leaderboardId);
+                const isTimeBased = isTimeBasedLeaderboard(challenge);
+                const processedEntries = processLeaderboardEntries(rawEntries, isTimeBased);
                 
-                if (creatorScore.exists) {
-                    // Update with real score
+                const creatorEntry = findUserInLeaderboard(processedEntries, challenge.challengerUsername);
+                
+                if (creatorEntry) {
                     challengerScore.exists = true;
-                    challengerScore.formattedScore = creatorScore.formattedScore;
-                    challengerScore.rank = creatorScore.rank;
-                    challengerScore.value = creatorScore.value;
-                }
-            } catch (error) {
-                console.error(`Error getting score for creator ${challenge.challengerUsername}:`, error);
-            }
-            
-            // Get scores for existing participants
-            if (challenge.participants && challenge.participants.length > 0) {
-                for (const participant of challenge.participants) {
-                    try {
-                        const entry = await this.getParticipantScore(challenge, participant.username);
-                        participantScores.set(participant.username.toLowerCase(), entry);
-                    } catch (error) {
-                        console.error(`Error getting score for participant ${participant.username}:`, error);
-                    }
-                }
-            }
-            
-            // Build leaderboard URL
-            const leaderboardUrl = `https://retroachievements.org/leaderboardinfo.php?i=${challenge.leaderboardId}`;
-            
-            // Create embed for the open challenge
-            const embed = new EmbedBuilder()
-                .setColor('#3498DB') // Blue color for open challenges
-                .setTitle(`${challenge.gameTitle}${challenge.platform ? ` (${challenge.platform})` : ''}`)
-                .setDescription(`**Open Challenge** created by **${challenge.challengerUsername}**\n[View Leaderboard](${leaderboardUrl})`);
-            
-            // Add description if available
-            if (challenge.description) {
-                embed.addFields({ name: 'Challenge', value: challenge.description });
-            }
-            
-            // Calculate time remaining
-            const timeRemaining = formatTimeRemaining(challenge.endDate);
-            
-            // Add challenge details
-            embed.addFields({
-                name: 'Details', 
-                value: `**Wager:** ${challenge.wagerAmount} GP per player\n` +
-                       `**Duration:** ${Math.floor(challenge.durationHours / 24)} days\n` +
-                       `**Created:** ${challenge.createdAt.toLocaleDateString()}\n` +
-                       `**Expires:** In ${timeRemaining}`
-            });
-            
-            // Create array of all participants including creator for proper sorting
-            const allParticipants = [];
-            
-            // Add creator with rank
-            allParticipants.push({
-                username: challenge.challengerUsername,
-                isCreator: true,
-                score: challengerScore.formattedScore,
-                scoreValue: challengerScore.value,
-                rank: challengerScore.rank || 999999,
-                exists: challengerScore.exists
-            });
-            
-            // Add participants with scores
-            if (challenge.participants && challenge.participants.length > 0) {
-                for (const participant of challenge.participants) {
-                    const scoreInfo = participantScores.get(participant.username.toLowerCase());
-                    const score = scoreInfo?.formattedScore || 'No score yet';
-                    const rank = scoreInfo?.rank || 999999;
-                    const value = scoreInfo?.value || 0;
-                    
-                    allParticipants.push({
-                        username: participant.username,
-                        isCreator: false,
-                        score: score,
-                        scoreValue: value,
-                        rank: rank,
-                        exists: !!scoreInfo?.exists
-                    });
+                    challengerScore.formattedScore = creatorEntry.FormattedScore;
+                    challengerScore.rank = creatorEntry.ApiRank;
+                    challengerScore.value = creatorEntry.Value;
                 }
                 
-                // Determine if time-based for sorting
-                const isTimeBased = challenge.description && challenge.description.toLowerCase().includes('time');
-                
-                // Sort participants by:
-                // 1. First by who has scores (exists flag)
-                // 2. Then by global rank or score value
-                allParticipants.sort((a, b) => {
-                    // Put participants with scores first
-                    if (a.exists && !b.exists) return -1;
-                    if (!a.exists && b.exists) return 1;
-                    
-                    // If both have scores, sort by rank or score
-                    if (a.exists && b.exists) {
-                        if (a.rank !== 999999 && b.rank !== 999999) {
-                            return a.rank - b.rank; // Lower rank is better
-                        } else if (isTimeBased) {
-                            return a.scoreValue - b.scoreValue; // Lower time is better
+                // Get scores for participants too
+                if (challenge.participants && challenge.participants.length > 0) {
+                    for (const participant of challenge.participants) {
+                        const participantEntry = findUserInLeaderboard(processedEntries, participant.username);
+                        
+                        if (participantEntry) {
+                            participantScores.set(participant.username.toLowerCase(), {
+                                exists: true,
+                                formattedScore: participantEntry.FormattedScore,
+                                rank: participantEntry.ApiRank,
+                                value: participantEntry.Value
+                            });
+                            
+                            // Update the participant's score in the challenge
+                            participant.score = participantEntry.FormattedScore;
                         } else {
-                            return b.scoreValue - a.scoreValue; // Higher score is better
+                            participantScores.set(participant.username.toLowerCase(), {
+                                exists: false,
+                                formattedScore: 'No score yet',
+                                rank: 0,
+                                value: 0
+                            });
                         }
                     }
-                    
-                    return 0; // No preference if neither has scores
-                });
-                
-                // Build participants text with proper ranking
-                let participantsText = '';
-                
-                allParticipants.forEach((participant, index) => {
-                    const creatorTag = participant.isCreator ? ' (Creator)' : '';
-                    
-                    if (participant.exists) {
-                        // Format: Local rank + Username - Score (Global rank)
-                        const rankPrefix = index === 0 ? '👑 ' : `${index + 1}. `;
-                        const globalRank = participant.rank < 999999 ? ` (Global Rank: #${participant.rank})` : '';
-                        
-                        participantsText += `${rankPrefix}**${participant.username}${creatorTag}** - ${participant.score}${globalRank}\n`;
-                    } else {
-                        // For users with no score yet
-                        participantsText += `• **${participant.username}${creatorTag}** - No score yet\n`;
-                    }
-                });
-                
-                if (participantsText) {
-                    embed.addFields({
-                        name: 'Current Standings',
-                        value: participantsText
-                    });
                 }
-            } else {
-                embed.addFields({
-                    name: 'Current Participants', 
-                    value: 'No participants yet. Be the first to join!'
-                });
+                
+                // Save updated scores
+                await challenge.save();
+            } catch (error) {
+                console.error(`Error getting scores for open challenge:`, error);
             }
             
-            // Add how to join instructions
-            embed.addFields({
-                name: 'How to Join', 
-                value: `Use \`/arena\` and select "Browse Open Challenges" to join this challenge.`
-            });
-            
-            // Add thumbnail if available
-            if (challenge.iconUrl) {
-                embed.setThumbnail(`https://retroachievements.org${challenge.iconUrl}`);
-            }
+            // Create embed for the challenge using our improved utility function
+            const embed = createChallengeEmbed(
+                challenge, challengerScore, null, // No challengee for open challenges
+                participantScores, EmbedBuilder
+            );
             
             // Add betting information to footer
             const startTime = challenge.startDate || challenge.createdAt;
@@ -783,7 +659,13 @@ class ArenaService {
                 embed.setFooter({ text: 'Betting is now closed for this challenge' });
             }
             
-            embed.setTimestamp();
+            // Add how to join instructions at the bottom
+            if (challenge.status === 'open') {
+                embed.addFields({
+                    name: 'How to Join', 
+                    value: `Use \`/arena\` and select "Browse Open Challenges" to join this challenge.`
+                });
+            }
             
             // Send or update the message
             const challengeId = challenge._id.toString();
@@ -886,7 +768,7 @@ class ArenaService {
         }
     }
 
-    // New method for Arena overview
+    // Arena overview
     async updateArenaOverview() {
         try {
             const feedChannel = await this.getArenaFeedChannel();
@@ -936,43 +818,8 @@ class ArenaService {
                 totalBets
             };
             
-            // Create simplified overview embed
-            const embed = new EmbedBuilder()
-                .setColor('#F1C40F') // Yellow color for info embeds
-                .setTitle('🏟️ Arena System - Quick Guide')
-                .setDescription(
-                    'The Arena lets you challenge other members to competitions on RetroAchievements leaderboards. ' +
-                    'Win GP by beating your opponents or betting on winners!'
-                );
-                
-            // Add simplified command information
-            embed.addFields({
-                name: '📋 How to Participate',
-                value: 'Use `/arena` to get started'
-            });
-            
-            // Add betting information
-            embed.addFields({
-                name: '💰 Betting System',
-                value: 
-                    '• All bets go into the prize pool\n' +
-                    '• If your player wins, you get your bet back plus a share of losing bets\n' +
-                    '• Your share is proportional to how much you bet\n' +
-                    '• Betting closes 72 hours after a challenge starts\n' +
-                    '• Max bet: 100 GP per challenge'
-            });
-            
-            // Add stats if provided
-            if (stats) {
-                embed.addFields({
-                    name: '📊 Current Activity',
-                    value: 
-                        `• **Active Challenges:** ${stats.activeCount || 0}\n` +
-                        `• **Total Prize Pool:** ${stats.totalPrizePool || 0} GP\n` +
-                        `• **Open Challenges:** ${stats.openCount || 0}\n` +
-                        `• **Active Bets:** ${stats.totalBets || 0}`
-                });
-            }
+            // Create overview embed using the utility function
+            const embed = createArenaOverviewEmbed(EmbedBuilder, stats);
             
             // Send or update
             if (this.overviewEmbedId) {
@@ -1504,7 +1351,7 @@ class ArenaService {
             await challenger.save();
         }
         
-        // Process bets - UPDATED FOR POT BETTING SYSTEM
+        // Process bets
         if (challenge.bets && challenge.bets.length > 0) {
             await this.processBetsForOpenChallenge(challenge, winnerId, winnerUsername);
         }
@@ -1522,18 +1369,8 @@ class ArenaService {
                 // Calculate days from hours for display
                 const durationDays = Math.floor(challenge.durationHours / 24);
                 
-                // Create a completed challenge embed
-                const embed = new EmbedBuilder()
-                    .setColor('#27AE60');
-                
-                // Handle open challenges differently
-                if (challenge.isOpenChallenge && challenge.participants && challenge.participants.length > 0) {
-                    this.createCompletedOpenChallengeEmbed(challenge, embed, durationDays);
-                } else {
-                    this.createCompletedDirectChallengeEmbed(challenge, embed, durationDays);
-                }
-                
-                embed.setTimestamp();
+                // Use the utility function to create the completed challenge embed
+                const embed = createCompletedChallengeEmbed(challenge, EmbedBuilder, durationDays);
                 
                 // Update the message
                 await message.edit({ embeds: [embed], components: [] });
@@ -1545,151 +1382,6 @@ class ArenaService {
             }
         } catch (error) {
             console.error(`Error updating completed feed for challenge ${challenge._id}:`, error);
-        }
-    }
-
-    createCompletedOpenChallengeEmbed(challenge, embed, durationDays) {
-        // Set title for open challenge
-        embed.setTitle(`🏁 Completed Open Challenge: ${challenge.gameTitle}`);
-        embed.setDescription(`**Creator:** ${challenge.challengerUsername}`);
-        
-        // Add description if available
-        if (challenge.description) {
-            embed.addFields({ name: 'Description', value: challenge.description });
-        }
-        
-        // Calculate participant count and total pot
-        const participantCount = challenge.participants.length + 1; // +1 for creator
-        const wagerPool = challenge.wagerAmount * participantCount;
-        
-        // Add challenge details
-        embed.addFields({
-            name: 'Challenge Details',
-            value: `**Wager:** ${challenge.wagerAmount} GP per player\n` +
-                `**Total Participants:** ${participantCount}\n` +
-                `**Duration:** ${durationDays} days\n` +
-                `**Started:** ${challenge.startDate.toLocaleString()}\n` +
-                `**Ended:** ${challenge.endDate.toLocaleString()}\n\n` +
-                `**Result:** ${challenge.winnerUsername === 'Tie' || !challenge.winnerUsername ? 
-                    'No clear winner determined.' : 
-                    `${challenge.winnerUsername} won!`}`
-        });
-        
-        // Add thumbnail if available
-        if (challenge.iconUrl) {
-            embed.setThumbnail(`https://retroachievements.org${challenge.iconUrl}`);
-        }
-        
-        // Add final scores for all participants
-        let scoresText = `**${challenge.challengerUsername}** (Creator): ${challenge.challengerScore || 'No score'}\n`;
-        
-        challenge.participants.forEach(participant => {
-            scoresText += `**${participant.username}**: ${participant.score || 'No score'}\n`;
-        });
-        
-        embed.addFields({
-            name: '📊 Final Scores',
-            value: scoresText
-        });
-        
-        // Add betting results
-        this.addBettingResultsToEmbed(challenge, embed);
-    }
-
-    createCompletedDirectChallengeEmbed(challenge, embed, durationDays) {
-        // Regular 1v1 challenge completion
-        embed.setTitle(`🏁 Completed Challenge: ${challenge.challengerUsername} vs ${challenge.challengeeUsername}`);
-        embed.setDescription(`**Game:** ${challenge.gameTitle}`);
-        
-        // Add description if available
-        if (challenge.description) {
-            embed.addFields({ name: 'Description', value: challenge.description });
-        }
-        
-        // Add challenge details
-        embed.addFields({
-            name: 'Challenge Details',
-            value: `**Wager:** ${challenge.wagerAmount} GP each\n` +
-                `**Duration:** ${durationDays} days\n` +
-                `**Started:** ${challenge.startDate.toLocaleString()}\n` +
-                `**Ended:** ${challenge.endDate.toLocaleString()}\n\n` +
-                `**Result:** ${challenge.winnerUsername === 'Tie' ? 'The challenge ended in a tie!' : `${challenge.winnerUsername} won!`}`
-        });
-        
-        // Add thumbnail if available
-        if (challenge.iconUrl) {
-            embed.setThumbnail(`https://retroachievements.org${challenge.iconUrl}`);
-        }
-        
-        // Add final scores
-        embed.addFields({
-            name: '📊 Final Scores',
-            value: 
-                `**${challenge.challengerUsername}:** ${challenge.challengerScore}\n` +
-                `**${challenge.challengeeUsername}:** ${challenge.challengeeScore}`
-        });
-        
-        // Add betting results
-        this.addBettingResultsToEmbed(challenge, embed);
-    }
-
-    addBettingResultsToEmbed(challenge, embed) {
-        if (!challenge.bets || challenge.bets.length === 0) return;
-        
-        if (challenge.winnerUsername && challenge.winnerUsername !== 'Tie' && challenge.winnerUsername !== 'No Winner') {
-            // Get winning and losing bets
-            const winningBets = challenge.bets.filter(bet => bet.targetPlayer === challenge.winnerUsername);
-            const losingBets = challenge.bets.filter(bet => bet.targetPlayer !== challenge.winnerUsername);
-            
-            // Calculate total amounts
-            const totalWinningBetsAmount = winningBets.reduce((total, bet) => total + bet.betAmount, 0);
-            const totalLosingBetsAmount = losingBets.reduce((total, bet) => total + bet.betAmount, 0);
-            
-            // Show house contribution if any
-            const houseContribution = challenge.houseContribution || 0;
-            
-            // Create betting results text
-            let bettingText = `**Total Bets:** ${challenge.bets.length} (${challenge.bets.reduce((sum, bet) => sum + bet.betAmount, 0)} GP)\n` +
-                            `**Winning Bets:** ${winningBets.length} bets totaling ${totalWinningBetsAmount} GP\n` +
-                            `**Losing Bets:** ${losingBets.length} bets totaling ${totalLosingBetsAmount} GP\n`;
-            
-            if (houseContribution > 0) {
-                bettingText += `**House Contribution:** ${houseContribution} GP (50% profit for sole bettors)\n`;
-            }
-            
-            bettingText += '\n';
-            
-            // List top bet winners
-            if (winningBets.length > 0) {
-                bettingText += '**Top Bet Winners:**\n';
-                
-                // Sort by payout amount (highest first)
-                const sortedBets = [...winningBets]
-                    .sort((a, b) => (b.payout || 0) - (a.payout || 0));
-                
-                // Show top 3 or fewer
-                const topBets = sortedBets.slice(0, 3);
-                topBets.forEach((bet, index) => {
-                    // Use the saved payout amount
-                    const payoutAmount = bet.payout || 0;
-                    const profit = payoutAmount - bet.betAmount;
-                    
-                    bettingText += `${index + 1}. ${bet.raUsername}: Bet ${bet.betAmount} GP, won ${payoutAmount} GP (profit: ${profit} GP)\n`;
-                });
-            } else {
-                bettingText += 'No winning bets were placed.';
-            }
-            
-            embed.addFields({
-                name: '💰 Betting Results',
-                value: bettingText
-            });
-        } else {
-            // For ties or no winner
-            embed.addFields({
-                name: '💰 Betting Results',
-                value: `Since there was no clear winner, all ${challenge.bets.length} bets (${challenge.bets.reduce((sum, bet) => sum + bet.betAmount, 0)} GP) were returned to their owners.`
-            });
         }
     }
 
@@ -1802,7 +1494,7 @@ class ArenaService {
         });
     }
 
-    // UI Methods
+    // UI Methods for user interactions
     async showActiveChallengesToUser(interaction) {
         await interaction.deferUpdate();
         
@@ -1957,6 +1649,96 @@ class ArenaService {
         }
     }
 
+    async refreshDirectChallengeLeaderboard(interaction, challenge) {
+        try {
+            // Get fresh scores
+            const [challengerScore, challengeeScore] = await this.getChallengersScores(challenge);
+            
+            // Create embed
+            const embed = new EmbedBuilder()
+                .setColor('#00FF00')
+                .setTitle(`${challenge.gameTitle} - Leaderboard Refreshed`)
+                .setDescription(`**Challenge:** ${challenge.challengerUsername} vs ${challenge.challengeeUsername}\n**Description:** ${challenge.description || 'No description provided'}`);
+            
+            // Add leaderboard link
+            const leaderboardLink = `[View on RetroAchievements](https://retroachievements.org/leaderboardinfo.php?i=${challenge.leaderboardId})`;
+            
+            // Create participants array for sorting
+            const participants = [
+                {
+                    username: challenge.challengerUsername,
+                    score: challengerScore.formattedScore,
+                    rank: challengerScore.rank || 999999,
+                    exists: challengerScore.exists
+                },
+                {
+                    username: challenge.challengeeUsername,
+                    score: challengeeScore.formattedScore,
+                    rank: challengeeScore.rank || 999999,
+                    exists: challengeeScore.exists
+                }
+            ];
+            
+            // Sort by rank (lowest first)
+            participants.sort((a, b) => a.rank - b.rank);
+            
+            // Create leaderboard table with updated format
+            let leaderboardText = `**Current Standings (Refreshed at ${new Date().toLocaleTimeString()}):**\n\n`;
+            
+            participants.forEach((participant, index) => {
+                if (participant.exists) {
+                    // Format: Medal emoji + Username - Score (Global rank)
+                    const medalEmoji = index === 0 ? '🥇 ' : index === 1 ? '🥈 ' : index === 2 ? '🥉 ' : `${index + 1}. `;
+                    const globalRank = participant.rank < 999999 ? ` (Global Rank: #${participant.rank})` : '';
+                    
+                    leaderboardText += `${medalEmoji}**${participant.username}** - ${participant.score}${globalRank}\n`;
+                } else {
+                    leaderboardText += `• **${participant.username}:** No score yet\n`;
+                }
+            });
+            
+            leaderboardText += `\n**Leaderboard:** ${leaderboardLink}`;
+            
+            embed.addFields({ name: 'Current Standings', value: leaderboardText });
+            
+            // Add time remaining
+            const timeRemaining = formatTimeRemaining(challenge.endDate);
+            embed.addFields({ 
+                name: 'Challenge Info', 
+                value: `**Wager:** ${challenge.wagerAmount} GP each\n` +
+                       `**Total Pool:** ${(challenge.totalPool || 0) + (challenge.wagerAmount * 2)} GP\n` +
+                       `**Ends:** ${timeRemaining}`
+            });
+            
+            // Add thumbnail if available
+            if (challenge.iconUrl) {
+                embed.setThumbnail(`https://retroachievements.org${challenge.iconUrl}`);
+            }
+            
+            // Add action buttons
+            const buttonsRow = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId(`arena_refresh_leaderboard_${challenge._id}`)
+                        .setLabel('Refresh Again')
+                        .setStyle(ButtonStyle.Primary)
+                        .setEmoji('🔄'),
+                    new ButtonBuilder()
+                        .setCustomId('arena_back_to_main')
+                        .setLabel('Back to Arena')
+                        .setStyle(ButtonStyle.Secondary)
+                );
+            
+            return interaction.editReply({
+                embeds: [embed],
+                components: [buttonsRow]
+            });
+        } catch (error) {
+            console.error('Error refreshing leaderboard:', error);
+            return interaction.editReply('An error occurred while refreshing the leaderboard data.');
+        }
+    }
+
     async refreshOpenChallengeLeaderboard(interaction, challenge) {
         try {
             // For open challenges, we need to check all participants
@@ -2033,20 +1815,41 @@ class ArenaService {
                 });
             }
             
-            // Sort by rank
-            allParticipants.sort((a, b) => a.rank - b.rank);
+            // Sort by rank or score value appropriately
+            allParticipants.sort((a, b) => {
+                // Put participants with scores first
+                if (a.exists && !b.exists) return -1;
+                if (!a.exists && b.exists) return 1;
+                
+                // If both have scores, sort by rank primarily
+                if (a.exists && b.exists) {
+                    if (a.rank !== 999999 && b.rank !== 999999) {
+                        return a.rank - b.rank; // Lower rank is better
+                    } else if (isTimeBased) {
+                        const aValue = parseTimeToSeconds(a.score);
+                        const bValue = parseTimeToSeconds(b.score);
+                        return aValue - bValue; // For time, lower is better
+                    } else {
+                        const aValue = parseScoreString(a.score);
+                        const bValue = parseScoreString(b.score);
+                        return bValue - aValue; // For scores, higher is better
+                    }
+                }
+                
+                return 0;
+            });
             
             // Create leaderboard table with updated format
             let leaderboardText = `**Current Rankings (Refreshed at ${new Date().toLocaleTimeString()}):**\n\n`;
             
             allParticipants.forEach((participant, index) => {
                 if (participant.exists) {
-                    // Format: Local rank + Username - Score (Global rank)
-                    const rankPrefix = index === 0 ? '👑 ' : `${index + 1}. `;
+                    // Format: Medal emoji + Username - Score (Global rank)
+                    const medalEmoji = index === 0 ? '🥇 ' : index === 1 ? '🥈 ' : index === 2 ? '🥉 ' : `${index + 1}. `;
                     const creatorTag = participant.isCreator ? ' (Creator)' : '';
                     const globalRank = participant.rank < 999999 ? ` (Global Rank: #${participant.rank})` : '';
                     
-                    leaderboardText += `${rankPrefix}**${participant.username}${creatorTag}** - ${participant.score}${globalRank}\n`;
+                    leaderboardText += `${medalEmoji}**${participant.username}${creatorTag}** - ${participant.score}${globalRank}\n`;
                 } else {
                     const creatorTag = participant.isCreator ? ' (Creator)' : '';
                     leaderboardText += `• **${participant.username}${creatorTag}:** No score yet\n`;
@@ -2092,96 +1895,6 @@ class ArenaService {
             });
         } catch (error) {
             console.error('Error refreshing open challenge leaderboard:', error);
-            return interaction.editReply('An error occurred while refreshing the leaderboard data.');
-        }
-    }
-
-    async refreshDirectChallengeLeaderboard(interaction, challenge) {
-        try {
-            // Get fresh scores
-            const [challengerScore, challengeeScore] = await this.getChallengersScores(challenge);
-            
-            // Create embed
-            const embed = new EmbedBuilder()
-                .setColor('#00FF00')
-                .setTitle(`${challenge.gameTitle} - Leaderboard Refreshed`)
-                .setDescription(`**Challenge:** ${challenge.challengerUsername} vs ${challenge.challengeeUsername}\n**Description:** ${challenge.description || 'No description provided'}`);
-            
-            // Add leaderboard link
-            const leaderboardLink = `[View on RetroAchievements](https://retroachievements.org/leaderboardinfo.php?i=${challenge.leaderboardId})`;
-            
-            // Create participants array for sorting
-            const participants = [
-                {
-                    username: challenge.challengerUsername,
-                    score: challengerScore.formattedScore,
-                    rank: challengerScore.rank || 999999,
-                    exists: challengerScore.exists
-                },
-                {
-                    username: challenge.challengeeUsername,
-                    score: challengeeScore.formattedScore,
-                    rank: challengeeScore.rank || 999999,
-                    exists: challengeeScore.exists
-                }
-            ];
-            
-            // Sort by rank (lowest first)
-            participants.sort((a, b) => a.rank - b.rank);
-            
-            // Create leaderboard table with updated format
-            let leaderboardText = `**Current Standings (Refreshed at ${new Date().toLocaleTimeString()}):**\n\n`;
-            
-            participants.forEach((participant, index) => {
-                if (participant.exists) {
-                    // Format: Local rank + Username - Score (Global rank)
-                    const rankPrefix = index === 0 ? '👑 ' : `${index + 1}. `;
-                    const globalRank = participant.rank < 999999 ? ` (Global Rank: #${participant.rank})` : '';
-                    
-                    leaderboardText += `${rankPrefix}**${participant.username}** - ${participant.score}${globalRank}\n`;
-                } else {
-                    leaderboardText += `• **${participant.username}:** No score yet\n`;
-                }
-            });
-            
-            leaderboardText += `\n**Leaderboard:** ${leaderboardLink}`;
-            
-            embed.addFields({ name: 'Current Standings', value: leaderboardText });
-            
-            // Add time remaining
-            const timeRemaining = formatTimeRemaining(challenge.endDate);
-            embed.addFields({ 
-                name: 'Challenge Info', 
-                value: `**Wager:** ${challenge.wagerAmount} GP each\n` +
-                       `**Total Pool:** ${(challenge.totalPool || 0) + (challenge.wagerAmount * 2)} GP\n` +
-                       `**Ends:** ${timeRemaining}`
-            });
-            
-            // Add thumbnail if available
-            if (challenge.iconUrl) {
-                embed.setThumbnail(`https://retroachievements.org${challenge.iconUrl}`);
-            }
-            
-            // Add action buttons
-            const buttonsRow = new ActionRowBuilder()
-                .addComponents(
-                    new ButtonBuilder()
-                        .setCustomId(`arena_refresh_leaderboard_${challenge._id}`)
-                        .setLabel('Refresh Again')
-                        .setStyle(ButtonStyle.Primary)
-                        .setEmoji('🔄'),
-                    new ButtonBuilder()
-                        .setCustomId('arena_back_to_main')
-                        .setLabel('Back to Arena')
-                        .setStyle(ButtonStyle.Secondary)
-                );
-            
-            return interaction.editReply({
-                embeds: [embed],
-                components: [buttonsRow]
-            });
-        } catch (error) {
-            console.error('Error refreshing leaderboard:', error);
             return interaction.editReply('An error occurred while refreshing the leaderboard data.');
         }
     }
