@@ -92,8 +92,8 @@ export default {
                     .setPlaceholder('Select an action')
                     .addOptions([
                         {
-                            label: 'Challenge a Player',
-                            description: 'Create a new challenge against another player',
+                            label: 'Issue a Challenge',
+                            description: 'Issue a challenge (to a specific user or open to everyone)',
                             value: 'create_challenge',
                             emoji: '⚔️'
                         },
