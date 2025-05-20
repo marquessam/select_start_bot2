@@ -6,6 +6,16 @@ import {
 import { User } from '../../models/User.js';
 import retroAPI from '../../services/retroAPI.js';
 
+// Award points constants - matching yearlyLeaderboard.js exactly
+const POINTS = {
+    MASTERY: 7,          // Mastery (3+3+1)
+    BEATEN: 4,           // Beaten (3+1)
+    PARTICIPATION: 1     // Participation
+};
+
+// Shadow games are limited to beaten status maximum (4 points)
+const SHADOW_MAX_POINTS = POINTS.BEATEN;
+
 export default {
     data: new SlashCommandBuilder()
         .setName('profile')
@@ -42,14 +52,15 @@ export default {
             // Get user's RA info
             const raUserInfo = await retroAPI.getUserInfo(raUsername);
             
-            // Get total community points
-            const totalPoints = this.calculateTotalPoints(user);
+            // Calculate points using the same method as yearlyLeaderboard
+            const pointsData = this.calculateTotalPoints(user);
             
-            // Get total community awards
-            const totalAwards = this.countTotalAwards(user);
+            // Get current year community awards
+            const currentYear = new Date().getFullYear();
+            const communityAwards = user.getCommunityAwardsForYear(currentYear);
             
             // Create and send the profile embed
-            const profileEmbed = this.createProfileEmbed(user, raUserInfo, totalPoints, totalAwards);
+            const profileEmbed = this.createProfileEmbed(user, raUserInfo, pointsData, communityAwards);
             return interaction.editReply({ embeds: [profileEmbed] });
 
         } catch (error) {
@@ -59,39 +70,63 @@ export default {
     },
     
     calculateTotalPoints(user) {
-        // Calculate total points (simplified from original)
-        let totalPoints = 0;
+        // Calculate totals for each category exactly like yearlyLeaderboard.js
+        let challengePoints = 0;
+        let masteryCount = 0;
+        let beatenCount = 0;
+        let participationCount = 0;
+        let shadowBeatenCount = 0;
+        let shadowParticipationCount = 0;
         
-        // Add points from monthly challenges
-        for (const [key, challenge] of user.monthlyChallenges.entries()) {
-            totalPoints += challenge.progress || 0;
+        // Process monthly challenges
+        for (const [dateStr, data] of user.monthlyChallenges.entries()) {
+            if (data.progress === 3) {
+                // Mastery (7 points)
+                masteryCount++;
+                challengePoints += POINTS.MASTERY;
+            } else if (data.progress === 2) {
+                // Beaten (4 points)
+                beatenCount++;
+                challengePoints += POINTS.BEATEN;
+            } else if (data.progress === 1) {
+                // Participation (1 point)
+                participationCount++;
+                challengePoints += POINTS.PARTICIPATION;
+            }
         }
-        
-        // Add points from shadow challenges
-        for (const [key, shadow] of user.shadowChallenges.entries()) {
-            totalPoints += shadow.progress || 0;
+
+        // Process shadow challenges
+        for (const [dateStr, data] of user.shadowChallenges.entries()) {
+            if (data.progress === 2) {
+                // Beaten for shadow (4 points max)
+                shadowBeatenCount++;
+                challengePoints += SHADOW_MAX_POINTS;
+            } else if (data.progress === 1) {
+                // Participation (1 point)
+                shadowParticipationCount++;
+                challengePoints += POINTS.PARTICIPATION;
+            }
         }
-        
-        // Add points from community awards
+
+        // Get community awards points for current year
         const currentYear = new Date().getFullYear();
-        totalPoints += user.getCommunityPointsForYear(currentYear);
-        
-        return totalPoints;
+        const communityPoints = user.getCommunityPointsForYear(currentYear);
+
+        return {
+            totalPoints: challengePoints + communityPoints,
+            challengePoints,
+            communityPoints,
+            stats: {
+                mastery: masteryCount,
+                beaten: beatenCount,
+                participation: participationCount,
+                shadowBeaten: shadowBeatenCount,
+                shadowParticipation: shadowParticipationCount
+            }
+        };
     },
     
-    countTotalAwards(user) {
-        // Count all community awards
-        let totalAwards = 0;
-        
-        // Only count for current year
-        const currentYear = new Date().getFullYear();
-        const communityAwards = user.getCommunityAwardsForYear(currentYear);
-        totalAwards = communityAwards.length;
-        
-        return totalAwards;
-    },
-    
-    createProfileEmbed(user, raUserInfo, totalPoints, totalAwards) {
+    createProfileEmbed(user, raUserInfo, pointsData, communityAwards) {
         const embed = new EmbedBuilder()
             .setTitle(`Profile: ${user.raUsername}`)
             .setURL(`https://retroachievements.org/user/${user.raUsername}`)
@@ -120,12 +155,24 @@ export default {
                    `**Rank:** ${rankInfo}`
         });
         
-        // Community Stats
+        // Community Stats with detailed point breakdown
         embed.addFields({
             name: 'Community Stats',
-            value: `**Points:** ${totalPoints}\n` +
-                   `**Awards:** ${totalAwards}\n` +
+            value: `**Total Points:** ${pointsData.totalPoints}\n` + 
+                   `• Challenge Points: ${pointsData.challengePoints}\n` +
+                   `• Community Points: ${pointsData.communityPoints}\n` +
                    `**GP Balance:** ${(user.gp || 0).toLocaleString()} GP`
+        });
+        
+        // Point Breakdown
+        const stats = pointsData.stats;
+        embed.addFields({
+            name: 'Point Details',
+            value: `✨ Mastery: ${stats.mastery} (${stats.mastery * POINTS.MASTERY} pts)\n` +
+                   `⭐ Beaten: ${stats.beaten} (${stats.beaten * POINTS.BEATEN} pts)\n` +
+                   `🏁 Participation: ${stats.participation} (${stats.participation * POINTS.PARTICIPATION} pts)\n` +
+                   `👥 Shadow Beaten: ${stats.shadowBeaten} (${stats.shadowBeaten * SHADOW_MAX_POINTS} pts)\n` +
+                   `👥 Shadow Participation: ${stats.shadowParticipation} (${stats.shadowParticipation * POINTS.PARTICIPATION} pts)`
         });
         
         // Arena Stats (if available)
@@ -144,7 +191,41 @@ export default {
             });
         }
         
-        embed.setFooter({ text: 'Use /help for more information' })
+        // Community Awards
+        if (communityAwards && communityAwards.length > 0) {
+            // Format awards neatly with emojis
+            let awardsText = '';
+            
+            // Show up to 5 most recent awards to keep it manageable
+            const recentAwards = communityAwards.slice(0, 5);
+            
+            recentAwards.forEach(award => {
+                // Format date in a concise way
+                const awardDate = new Date(award.awardedAt).toLocaleDateString('en-US', {
+                    month: 'short',
+                    day: 'numeric'
+                });
+                
+                awardsText += `🏆 **${award.title}** (${award.points} pts) - ${awardDate}\n`;
+            });
+            
+            // If there are more awards, show a count
+            if (communityAwards.length > 5) {
+                awardsText += `\n...and ${communityAwards.length - 5} more awards`;
+            }
+            
+            embed.addFields({
+                name: `Community Awards (${communityAwards.length})`,
+                value: awardsText || 'No awards yet'
+            });
+        } else {
+            embed.addFields({
+                name: 'Community Awards',
+                value: 'No awards yet'
+            });
+        }
+        
+        embed.setFooter({ text: 'Use /yearlyboard to see the full leaderboard' })
              .setTimestamp();
         
         return embed;
