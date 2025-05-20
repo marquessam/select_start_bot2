@@ -13,6 +13,15 @@ import {
 // Update interval (every hour)
 const UPDATE_INTERVAL = 60 * 60 * 1000;
 
+// Define standard colors for consistency
+const COLORS = {
+    OPEN_CHALLENGE: '#3498DB',    // Blue for open challenges
+    DIRECT_CHALLENGE: '#E74C3C',  // Red for direct challenges
+    INFO: '#F1C40F',              // Yellow for info/GP embeds
+    SUCCESS: '#2ECC71',           // Green for success messages
+    NEUTRAL: '#95A5A6'            // Gray for neutral messages
+};
+
 class ArenaService {
     constructor() {
         this.client = null;
@@ -156,7 +165,7 @@ class ArenaService {
             // Create an embed for the new challenge
             const embed = new EmbedBuilder()
                 .setTitle('🏟️ New Arena Challenge Issued!')
-                .setColor('#3498DB');
+                .setColor(challenge.isOpenChallenge ? COLORS.OPEN_CHALLENGE : COLORS.DIRECT_CHALLENGE);
             
             // Set description based on challenge type
             if (challenge.isOpenChallenge) {
@@ -223,17 +232,17 @@ class ArenaService {
                     case 'active':
                         title = '🏟️ Open Arena Challenge Started!';
                         description = `The open challenge created by **${challenge.challengerUsername}** has begun!`;
-                        color = '#2ECC71';
+                        color = COLORS.OPEN_CHALLENGE;
                         break;
                     case 'cancelled':
                         title = '🏟️ Open Arena Challenge Cancelled';
                         description = `The open challenge created by **${challenge.challengerUsername}** has been cancelled.`;
-                        color = '#95A5A6';
+                        color = COLORS.NEUTRAL;
                         break;
                     case 'completed':
                         title = '🏟️ Open Arena Challenge Completed!';
                         description = `The open challenge created by **${challenge.challengerUsername}** has ended!`;
-                        color = '#F1C40F';
+                        color = COLORS.INFO;
                         break;
                     default:
                         return; // Don't notify for other statuses
@@ -243,22 +252,22 @@ class ArenaService {
                     case 'active':
                         title = '🏟️ Arena Challenge Accepted!';
                         description = `**${challenge.challengeeUsername}** has accepted the challenge from **${challenge.challengerUsername}**!`;
-                        color = '#2ECC71';
+                        color = COLORS.DIRECT_CHALLENGE;
                         break;
                     case 'declined':
                         title = '🏟️ Arena Challenge Declined';
                         description = `**${challenge.challengeeUsername}** has declined the challenge from **${challenge.challengerUsername}**.`;
-                        color = '#E74C3C';
+                        color = COLORS.DIRECT_CHALLENGE;
                         break;
                     case 'cancelled':
                         title = '🏟️ Arena Challenge Cancelled';
                         description = `The challenge between **${challenge.challengerUsername}** and **${challenge.challengeeUsername}** has been cancelled.`;
-                        color = '#95A5A6';
+                        color = COLORS.NEUTRAL;
                         break;
                     case 'completed':
                         title = '🏟️ Arena Challenge Completed!';
                         description = `The challenge between **${challenge.challengerUsername}** and **${challenge.challengeeUsername}** has ended!`;
-                        color = '#F1C40F';
+                        color = COLORS.INFO;
                         break;
                     default:
                         return; // Don't notify for other statuses
@@ -375,7 +384,7 @@ class ArenaService {
             
             const embed = new EmbedBuilder()
                 .setTitle('🏟️ New Participant Joined Challenge!')
-                .setColor('#3498DB')
+                .setColor(COLORS.OPEN_CHALLENGE)
                 .setDescription(
                     `**${participantUsername}** has joined the open challenge for **${challenge.gameTitle}**!`
                 )
@@ -405,7 +414,7 @@ class ArenaService {
             
             const embed = new EmbedBuilder()
                 .setTitle('🏟️ Arena Standings Update!')
-                .setColor('#9B59B6')
+                .setColor(challenge.isOpenChallenge ? COLORS.OPEN_CHALLENGE : COLORS.DIRECT_CHALLENGE)
                 .setDescription(
                     `There's been a change in the leaderboard for the active challenge between **${challenge.challengerUsername}** and **${challenge.challengeeUsername}**!`
                 )
@@ -450,22 +459,22 @@ class ArenaService {
             // Update overview embed
             await this.updateArenaOverview();
             
-            // Update active challenge feeds
+            // Update active challenge feeds - sort alphabetically by game title
             const activeChallengers = await ArenaChallenge.find({
                 status: 'active',
                 endDate: { $gt: new Date() }
-            });
+            }).sort({ gameTitle: 1 }); // Sort alphabetically
             
             for (const challenge of activeChallengers) {
                 await this.createOrUpdateArenaFeed(challenge);
                 await new Promise(resolve => setTimeout(resolve, 1000));
             }
             
-            // Update open challenge feeds too
+            // Update open challenge feeds too - also sort alphabetically
             const openChallenges = await ArenaChallenge.find({
                 status: 'open',
                 isOpenChallenge: true
-            });
+            }).sort({ gameTitle: 1 }); // Sort alphabetically
             
             for (const challenge of openChallenges) {
                 await this.createOrUpdateOpenChallengeFeed(challenge);
@@ -543,6 +552,9 @@ class ArenaService {
                 challenge, challengerScore, challengeeScore, 
                 participantScores, EmbedBuilder
             );
+            
+            // Ensure the embed has the correct color
+            embed.setColor(challenge.isOpenChallenge ? COLORS.OPEN_CHALLENGE : COLORS.DIRECT_CHALLENGE);
             
             // Add betting information to footer
             const startTime = challenge.startDate || challenge.createdAt;
@@ -647,6 +659,9 @@ class ArenaService {
                 challenge, challengerScore, null, // Explicitly pass null for challengeeScore
                 participantScores, EmbedBuilder
             );
+            
+            // Ensure the embed has the correct color
+            embed.setColor(COLORS.OPEN_CHALLENGE);
             
             // Add betting information to footer
             const startTime = challenge.startDate || challenge.createdAt;
@@ -822,6 +837,9 @@ class ArenaService {
             // Create overview embed using the utility function
             const embed = createArenaOverviewEmbed(EmbedBuilder, stats);
             
+            // Ensure correct color
+            embed.setColor(COLORS.INFO);
+            
             // Send or update
             if (this.overviewEmbedId) {
                 try {
@@ -861,7 +879,7 @@ class ArenaService {
             
             const embed = new EmbedBuilder()
                 .setTitle('💰 GP Leaderboard')
-                .setColor('#F1C40F') // Yellow color for info embeds
+                .setColor(COLORS.INFO) // Yellow color for info embeds
                 .setDescription(
                     'These are the users with the most GP (Gold Points).\n' +
                     'Earn GP by winning Arena challenges and bets.\n\n' +
@@ -1314,7 +1332,7 @@ class ArenaService {
             // Challenger won
             await this.trackGpTransaction(
                 challenger,
-                challenge.wagerAmount,
+                challenge.wagerAmount * 2,
                 'Won challenge',
                 `Challenge ID: ${challenge._id}, Game: ${challenge.gameTitle}`
             );
@@ -1334,7 +1352,7 @@ class ArenaService {
             // Challengee won
             await this.trackGpTransaction(
                 challengee,
-                challenge.wagerAmount,
+                challenge.wagerAmount * 2,
                 'Won challenge',
                 `Challenge ID: ${challenge._id}, Game: ${challenge.gameTitle}`
             );
@@ -1372,6 +1390,9 @@ class ArenaService {
                 
                 // Use the utility function to create the completed challenge embed
                 const embed = createCompletedChallengeEmbed(challenge, EmbedBuilder, durationDays);
+                
+                // Set the color based on challenge type
+                embed.setColor(challenge.isOpenChallenge ? COLORS.OPEN_CHALLENGE : COLORS.DIRECT_CHALLENGE);
                 
                 // Update the message
                 await message.edit({ embeds: [embed], components: [] });
@@ -1500,11 +1521,11 @@ class ArenaService {
         await interaction.deferUpdate();
         
         try {
-            // Get active challenges
+            // Get active challenges sorted alphabetically
             const activeChallengers = await ArenaChallenge.find({
                 status: 'active',
                 endDate: { $gt: new Date() }
-            }).sort({ endDate: 1 }); // Sort by end date (earliest first)
+            }).sort({ gameTitle: 1 }); // Sort alphabetically
             
             if (activeChallengers.length === 0) {
                 return interaction.editReply('There are no active challenges right now.');
@@ -1513,7 +1534,7 @@ class ArenaService {
             // Create embed
             const embed = new EmbedBuilder()
                 .setTitle('Active Arena Challenges')
-                .setColor('#FF5722')
+                .setColor(COLORS.INFO)
                 .setDescription(
                     'These are the currently active challenges in the Arena.\n' +
                     'Use `/arena` and select "Place Bet" to bet on these challenges.\n\n' +
@@ -1612,7 +1633,7 @@ class ArenaService {
             // Create leaderboard embed
             const embed = new EmbedBuilder()
                 .setTitle('💰 GP Leaderboard')
-                .setColor('#F1C40F')
+                .setColor(COLORS.INFO)
                 .setDescription(
                     'These are the users with the most GP (Gold Points).\n' +
                     'Earn GP by winning Arena challenges and bets.'
@@ -1657,7 +1678,7 @@ class ArenaService {
             
             // Create embed
             const embed = new EmbedBuilder()
-                .setColor('#00FF00')
+                .setColor(COLORS.DIRECT_CHALLENGE)
                 .setTitle(`${challenge.gameTitle} - Leaderboard Refreshed`)
                 .setDescription(`**Challenge:** ${challenge.challengerUsername} vs ${challenge.challengeeUsername}\n**Description:** ${challenge.description || 'No description provided'}`);
             
@@ -1687,12 +1708,12 @@ class ArenaService {
             let leaderboardText = `**Current Standings (Refreshed at ${new Date().toLocaleTimeString()}):**\n\n`;
             
             participants.forEach((participant, index) => {
+                // Use crown for the leader (index 0), nothing for others
+                const prefixEmoji = index === 0 ? '👑 ' : '';
+                
                 if (participant.exists) {
-                    // Format: Medal emoji + Username - Score (Global rank)
-                    const medalEmoji = index === 0 ? '🥇 ' : index === 1 ? '🥈 ' : index === 2 ? '🥉 ' : `${index + 1}. `;
                     const globalRank = participant.rank < 999999 ? ` (Global Rank: #${participant.rank})` : '';
-                    
-                    leaderboardText += `${medalEmoji}**${participant.username}** - ${participant.score}${globalRank}\n`;
+                    leaderboardText += `${prefixEmoji}**${participant.username}** - ${participant.score}${globalRank}\n`;
                 } else {
                     leaderboardText += `• **${participant.username}:** No score yet\n`;
                 }
@@ -1786,7 +1807,7 @@ class ArenaService {
             
             // Create embed
             const embed = new EmbedBuilder()
-                .setColor('#00FF00')
+                .setColor(COLORS.OPEN_CHALLENGE)
                 .setTitle(`${challenge.gameTitle} - Leaderboard Refreshed`)
                 .setDescription(`**Open Challenge** created by ${challenge.challengerUsername}\n**Description:** ${challenge.description || 'No description provided'}`);
             
@@ -1844,13 +1865,14 @@ class ArenaService {
             let leaderboardText = `**Current Rankings (Refreshed at ${new Date().toLocaleTimeString()}):**\n\n`;
             
             allParticipants.forEach((participant, index) => {
+                // Use crown for the leader (index 0), nothing for others
+                const prefixEmoji = index === 0 ? '👑 ' : '';
+                
                 if (participant.exists) {
-                    // Format: Medal emoji + Username - Score (Global rank)
-                    const medalEmoji = index === 0 ? '🥇 ' : index === 1 ? '🥈 ' : index === 2 ? '🥉 ' : `${index + 1}. `;
                     const creatorTag = participant.isCreator ? ' (Creator)' : '';
                     const globalRank = participant.rank < 999999 ? ` (Global Rank: #${participant.rank})` : '';
                     
-                    leaderboardText += `${medalEmoji}**${participant.username}${creatorTag}** - ${participant.score}${globalRank}\n`;
+                    leaderboardText += `${prefixEmoji}**${participant.username}${creatorTag}** - ${participant.score}${globalRank}\n`;
                 } else {
                     const creatorTag = participant.isCreator ? ' (Creator)' : '';
                     leaderboardText += `• **${participant.username}${creatorTag}:** No score yet\n`;
