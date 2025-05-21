@@ -5,12 +5,12 @@ import {
     formatTimeRemaining, 
     parseTimeToSeconds, 
     parseScoreString, 
-    isTimeBasedLeaderboard as isTimeBased 
+    isTimeBasedLeaderboard 
 } from './FeedUtils.js';
 import RetroAPIUtils from './RetroAPIUtils.js';
 
 // Re-export functions from FeedUtils for backward compatibility
-export { formatTimeRemaining, parseTimeToSeconds, parseScoreString, isTimeBased as isTimeBasedLeaderboard };
+export { formatTimeRemaining, parseTimeToSeconds, parseScoreString, isTimeBasedLeaderboard };
 
 /**
  * Get leaderboard entries - re-export for compatibility
@@ -95,7 +95,7 @@ export function getEstimatedWinner(challenge, challengerScore, challengeeScore) 
     }
     
     // Fallback to value-based comparison if ranks aren't available
-    const isTimeBasedChallenge = isTimeBased(challenge);
+    const isTimeBasedChallenge = isTimeBasedLeaderboard(challenge);
     
     // For time-based leaderboards, lower value is better
     if (isTimeBasedChallenge) {
@@ -145,7 +145,7 @@ export function checkPositionChanges(challenge, challengerScore, challengeeScore
         // This would only work if we stored ranks earlier, but we'll improve it gradually
         
         // Fall back to checking if the leader changed based on score values        
-        const isTimeBasedChallenge = isTimeBased(challenge);
+        const isTimeBasedChallenge = isTimeBasedLeaderboard(challenge);
         
         // Parse the numerical values for comparison
         let previousChallengerValue, previousChallengeeValue, currentChallengerValue, currentChallengeeValue;
@@ -336,7 +336,7 @@ function createOpenChallengeEmbed(challenge, challengerScore, participantScores,
     }
     
     // Determine if time-based for sorting
-    const isTimeBasedChallenge = isTimeBased(challenge);
+    const isTimeBasedChallenge = isTimeBasedLeaderboard(challenge);
     
     // Sort participants
     allParticipants.sort((a, b) => {
