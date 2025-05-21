@@ -14,8 +14,9 @@ import leaderboardFeedService from './services/leaderboardFeedService.js';
 import arcadeAlertService from './services/arcadeAlertService.js';
 import arcadeFeedService from './services/arcadeFeedService.js';
 import membershipCheckService from './services/membershipCheckService.js';
-import arenaService from './services/arenaService.js'; // Add the new arenaService import
-import { User } from './models/User.js'; // Import User model for GP reset
+import arenaService from './services/arenaService.js';
+import gameAwardService from './services/gameAwardService.js'; // NEW: Import the game award service
+import { User } from './models/User.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -223,7 +224,8 @@ client.once(Events.ClientReady, async () => {
         arcadeAlertService.setClient(client);
         arcadeFeedService.setClient(client);
         membershipCheckService.setClient(client);
-        arenaService.setClient(client); // Set client for the new arena service
+        arenaService.setClient(client);
+        gameAwardService.setClient(client); // NEW: Set client for game award service
 
         // Schedule stats updates every 30 minutes
         cron.schedule('*/30 * * * *', () => {
@@ -436,6 +438,10 @@ client.once(Events.ClientReady, async () => {
         
         // Start the arena service
         await arenaService.start();
+        
+        // NEW: Initialize the game award service
+        await gameAwardService.initialize();
+        console.log('Game Award Service initialized');
         
         // Check if monthly GP allowance should be handled on startup
         await handleMonthlyGpAllowance();
