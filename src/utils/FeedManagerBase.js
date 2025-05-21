@@ -102,7 +102,20 @@ export class FeedManagerBase {
             const channel = await this.getChannel();
             if (!channel) return false;
             
-            console.log(`Clearing channel ${this.channelId}...`);
+            // Define allowed feed channels that can be safely cleared
+            const ALLOWED_FEED_CHANNELS = [
+                '1371350718505811989', // leaderboard feed
+                '1371363491130114098', // arcade feed
+                '1373570913882214410'  // arena feed
+            ];
+            
+            // Check if this channel is allowed to be cleared
+            if (!ALLOWED_FEED_CHANNELS.includes(this.channelId)) {
+                console.warn(`Attempted to clear channel ${this.channelId} which is not in the allowed feed channels list. Clearing skipped for safety.`);
+                return false;
+            }
+            
+            console.log(`Clearing feed channel ${this.channelId}...`);
             
             let messagesDeleted = 0;
             let messages;
@@ -133,7 +146,7 @@ export class FeedManagerBase {
             this.messageIds.clear();
             this.headerMessageId = null;
             
-            console.log(`Cleared ${messagesDeleted} messages from channel`);
+            console.log(`Cleared ${messagesDeleted} messages from feed channel ${this.channelId}`);
             return true;
         } catch (error) {
             console.error('Error clearing channel:', error);
