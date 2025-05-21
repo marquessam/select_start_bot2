@@ -581,8 +581,9 @@ class AchievementFeedService {
         const awardBaseIdentifier = `${user.raUsername}:${awardIdentifierPrefix}:${gameIdString}:${currentAward}`;
         
         // Generate award identifier with timestamp
-        const now = Date.now();
-        const awardIdentifier = `${awardBaseIdentifier}:${now}`;
+        // FIXED: Renamed 'now' to 'timestamp' to avoid variable conflict
+        const timestamp = Date.now();
+        const awardIdentifier = `${awardBaseIdentifier}:${timestamp}`;
         
         console.log(`Announcing ${currentAward} award for ${user.raUsername} in ${isShadow ? 'shadow' : 'monthly'} challenge`);
         
