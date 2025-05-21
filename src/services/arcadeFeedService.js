@@ -12,6 +12,7 @@ class ArcadeFeedService extends FeedManagerBase {
         super(null, config.discord.arcadeFeedChannelId || '1371363491130114098');
         this.headerMessageId = null;
         this.summaryMessageId = null;
+        this.overviewEmbedId = null;
     }
 
     // Override the update method from base class
@@ -29,6 +30,21 @@ class ArcadeFeedService extends FeedManagerBase {
             
             // Update header first
             await this.updateArenaHeader();
+            
+            // Update overview embed
+            await this.updateArcadeOverview();
+            
+            // Update racing board if there is one - we want this at the top
+            const now = new Date();
+            const racingBoard = await ArcadeBoard.findOne({
+                boardType: 'racing',
+                startDate: { $lte: now },
+                endDate: { $gte: now }
+            });
+            
+            if (racingBoard) {
+                await this.updateRacingBoardEmbed(channel, racingBoard);
+            }
             
             // Update active challenge feeds - sort alphabetically by game title
             const activeChallengers = await ArcadeBoard.find({
@@ -52,18 +68,6 @@ class ArcadeFeedService extends FeedManagerBase {
                 await new Promise(resolve => setTimeout(resolve, 1000));
             }
             
-            // Update racing board if there is one
-            const now = new Date();
-            const racingBoard = await ArcadeBoard.findOne({
-                boardType: 'racing',
-                startDate: { $lte: now },
-                endDate: { $gte: now }
-            });
-            
-            if (racingBoard) {
-                await this.updateRacingBoardEmbed(channel, racingBoard);
-            }
-            
             // Update GP leaderboard LAST
             await this.updatePointsSummaryEmbed(channel);
         } catch (error) {
@@ -85,6 +89,91 @@ class ArcadeFeedService extends FeedManagerBase {
         
         // Use the base class method to update the header
         this.headerMessageId = await this.updateHeader({ content: headerContent });
+    }
+
+    /**
+     * Create or update the arcade overview embed at the top of the feed
+     */
+    async updateArcadeOverview() {
+        try {
+            const channel = await this.getChannel();
+            if (!channel) return;
+
+            // Get stats for the overview
+            const now = new Date();
+            
+            // Count active arcade boards
+            const arcadeBoardCount = await ArcadeBoard.countDocuments({
+                boardType: 'arcade',
+                endDate: { $gt: now }
+            });
+            
+            // Check if there's an active racing board
+            const hasRacingBoard = await ArcadeBoard.exists({
+                boardType: 'racing',
+                startDate: { $lte: now },
+                endDate: { $gte: now }
+            });
+            
+            // Get the month and year for racing display
+            const currentMonth = now.toLocaleString('default', { month: 'long' });
+            const currentYear = now.getFullYear();
+            
+            // Create embed
+            const embed = new EmbedBuilder()
+                .setColor(COLORS.WARNING)
+                .setTitle(`${EMOJIS.ARCADE} Arcade System Overview`)
+                .setDescription(
+                    'The **Arcade System** tracks various RetroAchievements leaderboards and awards points to top performers.\n\n' +
+                    '**How Points Are Awarded:**\n' +
+                    `• **Racing Challenges:** Monthly competitions. Top 3 finishers earn ${EMOJIS.RANK_1} 3pts / ${EMOJIS.RANK_2} 2pts / ${EMOJIS.RANK_3} 1pt\n` +
+                    `• **Arcade Boards:** Year-long competitions. Top 3 finishers earn ${EMOJIS.RANK_1} 3pts / ${EMOJIS.RANK_2} 2pts / ${EMOJIS.RANK_3} 1pt at year end\n\n` +
+                    '**Current Status:**'
+                );
+                
+            // Add active boards info
+            let contentField = '';
+            
+            if (hasRacingBoard) {
+                contentField += `• **Active Racing Challenge:** ${currentMonth} ${currentYear} Racing (see below)\n`;
+            }
+            
+            contentField += `• **Active Arcade Boards:** ${arcadeBoardCount} permanent boards\n`;
+            contentField += `• **Points Summary:** See bottom of feed for current projected standings`;
+            
+            embed.addFields({ name: 'Current Content', value: contentField });
+            
+            // Add participation info
+            embed.addFields({ 
+                name: 'How to Participate', 
+                value: 'Simply play the games listed below and get on their leaderboards! Only members who have registered their RetroAchievements username with the bot will be tracked.'
+            });
+            
+            // Add footer
+            embed.setFooter({ 
+                text: 'Points are awarded monthly for Racing and yearly for Arcade boards in December'
+            });
+            
+            // Send or update the overview embed
+            if (this.overviewEmbedId) {
+                try {
+                    const message = await channel.messages.fetch(this.overviewEmbedId);
+                    await message.edit({ embeds: [embed] });
+                } catch (error) {
+                    if (error.message.includes('Unknown Message')) {
+                        const message = await channel.send({ embeds: [embed] });
+                        this.overviewEmbedId = message.id;
+                    } else {
+                        throw error;
+                    }
+                }
+            } else {
+                const message = await channel.send({ embeds: [embed] });
+                this.overviewEmbedId = message.id;
+            }
+        } catch (error) {
+            console.error('Error updating arcade overview:', error);
+        }
     }
 
     async createOrUpdateArenaFeed(board) {
@@ -143,7 +232,7 @@ class ArcadeFeedService extends FeedManagerBase {
                 `${EMOJIS.ARCADE} ${board.gameTitle}`,
                 `${board.description || 'Arcade Leaderboard'}\n\n*Note: Only users ranked 999 or lower in the global leaderboard are shown.*`,
                 {
-                    color: COLORS.INFO,
+                    color: COLORS.PRIMARY, // Use blue for arcade boards
                     thumbnail: thumbnailUrl,
                     url: leaderboardUrl,
                     footer: { 
@@ -218,14 +307,16 @@ class ArcadeFeedService extends FeedManagerBase {
             // Create mapping of RA usernames (lowercase) to canonical usernames
             const registeredUsers = new Map();
             for (const user of users) {
-                registeredUsers.set(user.raUsername.toLowerCase(), user.raUsername);
+                if (user.raUsername) { // Add null check
+                    registeredUsers.set(user.raUsername.toLowerCase(), user.raUsername);
+                }
             }
             
             // Get leaderboard entries using our utility
             const rawEntries = await RetroAPIUtils.getLeaderboardEntries(challenge.leaderboardId, 1000);
             
             // Process participants and their scores
-            let participantScores = new Map();
+            const participantScores = new Map();
             let challengerScore = {
                 exists: false,
                 formattedScore: 'No score yet',
@@ -242,12 +333,14 @@ class ArcadeFeedService extends FeedManagerBase {
                 const lowerUsername = username.toLowerCase().trim();
                 
                 // Check if this is the challenger or a participant
-                const isChallenger = lowerUsername === challenge.challengerUsername.toLowerCase();
+                const isChallenger = challenge.challengerUsername && 
+                                    lowerUsername === challenge.challengerUsername.toLowerCase();
+                                    
                 let isParticipant = false;
                 
                 if (challenge.participants && challenge.participants.length > 0) {
                     isParticipant = challenge.participants.some(p => 
-                        p.username.toLowerCase() === lowerUsername
+                        p.username && p.username.toLowerCase() === lowerUsername
                     );
                 }
                 
@@ -304,7 +397,7 @@ class ArcadeFeedService extends FeedManagerBase {
             
             // Create embed
             const embed = new EmbedBuilder()
-                .setColor(challenge.endDate > now ? COLORS.PRIMARY : COLORS.DANGER)
+                .setColor(COLORS.WARNING) // Use yellow/orange for open challenges
                 .setTitle(`${EMOJIS.ARCADE} Open Challenge: ${challenge.gameTitle}`)
                 .setDescription(`**Creator:** ${challenge.challengerUsername} | [View Leaderboard](${leaderboardUrl})`)
                 .setTimestamp();
@@ -332,17 +425,21 @@ class ArcadeFeedService extends FeedManagerBase {
             const allParticipants = [];
             
             // Add challenger with rank
-            allParticipants.push({
-                username: challenge.challengerUsername,
-                isCreator: true,
-                score: challengerScore.formattedScore,
-                rank: challengerScore.rank || 999999,
-                exists: challengerScore.exists
-            });
+            if (challenge.challengerUsername) {
+                allParticipants.push({
+                    username: challenge.challengerUsername,
+                    isCreator: true,
+                    score: challengerScore.formattedScore,
+                    rank: challengerScore.rank || 999999,
+                    exists: challengerScore.exists
+                });
+            }
             
             // Add each participant
-            if (challenge.participants) {
+            if (challenge.participants && challenge.participants.length > 0) {
                 challenge.participants.forEach(participant => {
+                    if (!participant || !participant.username) return; // Skip invalid participants
+                    
                     const scoreInfo = participantScores.get(participant.username.toLowerCase());
                     const score = scoreInfo?.formattedScore || 'No score yet';
                     const rank = scoreInfo?.rank || 999999;
@@ -407,7 +504,7 @@ class ArcadeFeedService extends FeedManagerBase {
                 { embeds: [embed] }
             );
         } catch (error) {
-            console.error(`Error creating open challenge embed for ${challenge.gameTitle}:`, error);
+            console.error(`Error creating open challenge embed for ${challenge?.gameTitle || 'unknown game'}:`, error);
         }
     }
 
@@ -419,7 +516,9 @@ class ArcadeFeedService extends FeedManagerBase {
             // Create mapping of RA usernames (lowercase) to canonical usernames
             const registeredUsers = new Map();
             for (const user of users) {
-                registeredUsers.set(user.raUsername.toLowerCase(), user.raUsername);
+                if (user.raUsername) { // Add null check
+                    registeredUsers.set(user.raUsername.toLowerCase(), user.raUsername);
+                }
             }
             
             // Get leaderboard entries using our utility
@@ -483,7 +582,7 @@ class ArcadeFeedService extends FeedManagerBase {
                 `Top 3 players at the end of the month will receive award points (3/2/1)!\n\n` +
                 `*Note: Only users ranked 999 or lower in the global leaderboard are shown.*`,
                 {
-                    color: COLORS.DANGER, // Orange color for racing
+                    color: COLORS.DANGER, // Red color for racing
                     thumbnail: thumbnailUrl,
                     url: leaderboardUrl,
                     footer: { text: `Data from RetroAchievements.org` }
@@ -582,7 +681,7 @@ class ArcadeFeedService extends FeedManagerBase {
                 `**Last Updated:** ${timestamp} | **Updates:** Every hour\n\n` +
                 `*Use the </yearlyboard:1234567890> command to see complete point standings.*`,
                 {
-                    color: COLORS.GOLD,
+                    color: COLORS.WARNING, // Use yellow for summary
                     footer: { 
                         text: 'Points are only for arcade boards and will be awarded at year end. Racing points are awarded monthly and not included here.' 
                     }
@@ -642,7 +741,9 @@ class ArcadeFeedService extends FeedManagerBase {
             // Create mapping of RA usernames (lowercase) to canonical usernames
             const registeredUsers = new Map();
             for (const user of users) {
-                registeredUsers.set(user.raUsername.toLowerCase(), user.raUsername);
+                if (user.raUsername) { // Add null check
+                    registeredUsers.set(user.raUsername.toLowerCase(), user.raUsername);
+                }
             }
             
             // Get leaderboard entries using our utility
