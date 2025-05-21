@@ -1,3 +1,4 @@
+// src/models/User.js
 import mongoose from 'mongoose';
 
 const communityAwardSchema = new mongoose.Schema({
@@ -143,6 +144,32 @@ const userSchema = new mongoose.Schema({
             type: Number, 
             default: 0 
         }
+    },
+    // NEW: Field for tracking mastered games
+    masteredGames: {
+        type: [{
+            gameId: {
+                type: String,
+                required: true
+            },
+            gameTitle: {
+                type: String,
+                required: true
+            },
+            consoleName: {
+                type: String,
+                default: 'Unknown'
+            },
+            totalAchievements: {
+                type: Number,
+                required: true
+            },
+            masteredAt: {
+                type: Date,
+                default: Date.now
+            }
+        }],
+        default: []
     }
 }, {
     timestamps: true,
@@ -248,6 +275,42 @@ userSchema.methods.claimMonthlyGp = function(amount = 1000) {
     
     this.gp = (this.gp || 0) + amount;
     this.lastMonthlyGpClaim = new Date();
+    return true;
+};
+
+// NEW: Method to check if a game is mastered
+userSchema.methods.isGameMastered = function(gameId) {
+    if (!this.masteredGames) return false;
+    
+    return this.masteredGames.some(game => game.gameId === String(gameId));
+};
+
+// NEW: Method to get all mastered games
+userSchema.methods.getMasteredGames = function() {
+    return this.masteredGames || [];
+};
+
+// NEW: Method to count mastered games
+userSchema.methods.getMasteredGameCount = function() {
+    return this.masteredGames?.length || 0;
+};
+
+// NEW: Method to add a mastered game
+userSchema.methods.addMasteredGame = function(gameId, gameTitle, consoleName, totalAchievements) {
+    if (this.isGameMastered(gameId)) return false;
+    
+    if (!this.masteredGames) {
+        this.masteredGames = [];
+    }
+    
+    this.masteredGames.push({
+        gameId: String(gameId),
+        gameTitle: gameTitle || `Game ${gameId}`,
+        consoleName: consoleName || 'Unknown',
+        totalAchievements: totalAchievements || 0,
+        masteredAt: new Date()
+    });
+    
     return true;
 };
 
