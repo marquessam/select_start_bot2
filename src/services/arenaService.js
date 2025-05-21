@@ -326,71 +326,77 @@ class ArenaService extends FeedManagerBase {
     }
 
     // Clear arena feed channel at startup
-    async clearArenaFeedChannel() {
-        try {
-            const channel = await this.getArenaFeedChannel();
-            if (!channel) return false;
-            
-            console.log(`Clearing arena feed channel...`);
-            
-            // Use the same approach as in FeedManagerBase.clearChannel()
-            let messagesDeleted = 0;
-            let messages;
-            
-            do {
-                messages = await channel.messages.fetch({ limit: 100 });
-                if (messages.size > 0) {
-                    try {
-                        await channel.bulkDelete(messages);
-                        messagesDeleted += messages.size;
-                    } catch (bulkError) {
-                        // Fall back to individual deletion for older messages
-                        for (const [id, message] of messages) {
-                            try {
-                                await message.delete();
-                                messagesDeleted++;
-                            } catch (error) {
-                                console.error(`Error deleting message ${id}`);
-                            }
-                            await new Promise(resolve => setTimeout(resolve, 500));
+async clearArenaFeedChannel() {
+    try {
+        const channel = await this.getArenaFeedChannel();
+        if (!channel) return false;
+        
+        console.log(`Clearing arena feed channel for clean rebuild...`);
+        
+        // Use the same approach as in FeedManagerBase.clearChannel()
+        let messagesDeleted = 0;
+        let messages;
+        
+        do {
+            messages = await channel.messages.fetch({ limit: 100 });
+            if (messages.size > 0) {
+                try {
+                    await channel.bulkDelete(messages);
+                    messagesDeleted += messages.size;
+                } catch (bulkError) {
+                    // Fall back to individual deletion for older messages
+                    for (const [id, message] of messages) {
+                        try {
+                            await message.delete();
+                            messagesDeleted++;
+                        } catch (error) {
+                            console.error(`Error deleting message ${id}`);
                         }
+                        await new Promise(resolve => setTimeout(resolve, 500));
                     }
                 }
-            } while (messages.size >= 100);
-            
-            // Reset state after clearing
-            this.feedMessageIds.clear();
-            this.gpLeaderboardMessageId = null;
-            this.overviewEmbedId = null;
-            
-            return true;
-        } catch (error) {
-            console.error('Error clearing arena feed channel:', error);
-            return false;
-        }
+            }
+        } while (messages.size >= 100);
+        
+        // Reset ALL state after clearing - this is crucial
+        this.feedMessageIds.clear();
+        this.gpLeaderboardMessageId = null;
+        this.overviewEmbedId = null;
+        this.headerMessageId = null; // Make sure this is reset too
+        
+        console.log(`Cleared ${messagesDeleted} messages from arena feed channel`);
+        return true;
+    } catch (error) {
+        console.error('Error clearing arena feed channel:', error);
+        return false;
     }
+}
 
     /**
      * Completely refreshes the entire feed by clearing and rebuilding it
      * This ensures all challenges are displayed in alphabetical order
      * and the GP leaderboard remains at the end
      */
-    async refreshEntireFeed() {
-        try {
-            console.log('Refreshing entire Arena feed to maintain alphabetical ordering...');
-            // Clear the feed channel first
-            await this.clearArenaFeedChannel();
-            
-            // Then update all feed components in the correct order
-            await this.updateArenaFeeds();
-            
-            console.log('Arena feed refresh completed successfully');
-            return true;
-        } catch (error) {
-            console.error('Error refreshing arena feed:', error);
-            return false;
-        }
+   async refreshEntireFeed() {
+    try {
+        console.log('Refreshing entire Arena feed to maintain proper ordering...');
+        
+        // Clear the feed channel first
+        await this.clearArenaFeedChannel();
+        
+        // Wait a moment to ensure channel is fully cleared
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+        // Then update all feed components in the correct order
+        await this.updateArenaFeeds();
+        
+        console.log('Arena feed refresh completed successfully with proper ordering');
+        return true;
+    } catch (error) {
+        console.error('Error refreshing arena feed:', error);
+        return false;
     }
+}
 
     // Temporary message management
     /**
@@ -805,42 +811,57 @@ class ArenaService extends FeedManagerBase {
     }
     
     // Arena feed updates
-    async updateArenaFeeds() {
-        try {
-            // Update header first
-            await this.updateArenaHeader();
-            
-            // Update overview embed
-            await this.updateArenaOverview();
-            
-            // Update active challenge feeds - sort alphabetically by game title
-            const activeChallengers = await ArenaChallenge.find({
-                status: 'active',
-                endDate: { $gt: new Date() }
-            }).sort({ gameTitle: 1 }); // Sort alphabetically
-            
-            for (const challenge of activeChallengers) {
-                await this.createOrUpdateArenaFeed(challenge);
-                await new Promise(resolve => setTimeout(resolve, 1000));
-            }
-            
-            // Update open challenge feeds too - also sort alphabetically
-            const openChallenges = await ArenaChallenge.find({
-                status: 'open',
-                isOpenChallenge: true
-            }).sort({ gameTitle: 1 }); // Sort alphabetically
-            
-            for (const challenge of openChallenges) {
-                await this.createOrUpdateOpenChallengeFeed(challenge);
-                await new Promise(resolve => setTimeout(resolve, 1000));
-            }
-            
-            // Update GP leaderboard LAST
-            await this.updateGpLeaderboard();
-        } catch (error) {
-            console.error('Error updating arena feeds:', error);
+async updateArenaFeeds() {
+    try {
+        console.log('Updating arena feeds in correct order...');
+        
+        // CRITICAL: Send messages in the order you want them to appear from TOP to BOTTOM
+        // Oldest messages appear at the top, newest at the bottom
+        
+        // 1. FIRST: Update header (will appear at TOP)
+        await this.updateArenaHeader();
+        
+        // Small delay to ensure proper ordering
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        // 2. SECOND: Update overview embed (appears below header)
+        await this.updateArenaOverview();
+        
+        // Small delay to ensure proper ordering
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        // 3. THIRD: Update active challenge feeds - sort alphabetically by game title
+        const activeChallengers = await ArenaChallenge.find({
+            status: 'active',
+            endDate: { $gt: new Date() }
+        }).sort({ gameTitle: 1 }); // Sort alphabetically
+        
+        for (const challenge of activeChallengers) {
+            await this.createOrUpdateArenaFeed(challenge);
+            // Delay between each challenge to ensure proper ordering
+            await new Promise(resolve => setTimeout(resolve, 800));
         }
+        
+        // 4. FOURTH: Update open challenge feeds - also sort alphabetically
+        const openChallenges = await ArenaChallenge.find({
+            status: 'open',
+            isOpenChallenge: true
+        }).sort({ gameTitle: 1 }); // Sort alphabetically
+        
+        for (const challenge of openChallenges) {
+            await this.createOrUpdateOpenChallengeFeed(challenge);
+            // Delay between each challenge to ensure proper ordering
+            await new Promise(resolve => setTimeout(resolve, 800));
+        }
+        
+        // 5. LAST: Update GP leaderboard (will appear at BOTTOM)
+        await this.updateGpLeaderboard();
+        
+        console.log('Arena feed update completed in correct order');
+    } catch (error) {
+        console.error('Error updating arena feeds:', error);
     }
+}
 
     async createOrUpdateArenaFeed(challenge) {
         try {
