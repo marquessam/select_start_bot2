@@ -1,44 +1,39 @@
 // src/services/arenaService.js
-import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 import { User } from '../models/User.js';
 import { ArenaChallenge } from '../models/ArenaChallenge.js';
-import { TemporaryMessage } from '../models/TemporaryMessage.js'; // Added import
+import { TemporaryMessage } from '../models/TemporaryMessage.js';
 import { config } from '../config/config.js';
+import { FeedManagerBase } from '../utils/FeedManagerBase.js';
+import { COLORS, EMOJIS, formatTimeRemaining, getDiscordTimestamp, createHeaderEmbed } from '../utils/FeedUtils.js';
+import RetroAPIUtils from '../utils/RetroAPIUtils.js';
+import AlertUtils from '../utils/AlertUtils.js';
 import { 
-    formatTimeRemaining, getLeaderboardEntries, processLeaderboardEntries, 
-    isTimeBasedLeaderboard, createChallengeEmbed, checkPositionChanges,
-    findUserInLeaderboard, createArenaOverviewEmbed, getEstimatedWinner,
-    parseTimeToSeconds, parseScoreString, createCompletedChallengeEmbed
+    getEstimatedWinner,
+    checkPositionChanges,
+    findUserInLeaderboard,
+    createChallengeEmbed,
+    createArenaOverviewEmbed,
+    createCompletedChallengeEmbed,
+    calculateBettingOdds,
+    processLeaderboardEntries,
+    isTimeBasedLeaderboard
 } from '../utils/arenaUtils.js';
 
 // Update interval (every hour)
 const UPDATE_INTERVAL = 60 * 60 * 1000;
 
-// Define standard colors for consistency
-const COLORS = {
-    OPEN_CHALLENGE: '#3498DB',    // Blue for open challenges
-    DIRECT_CHALLENGE: '#E74C3C',  // Red for direct challenges
-    INFO: '#F1C40F',              // Yellow for info/GP embeds
-    SUCCESS: '#2ECC71',           // Green for success messages
-    NEUTRAL: '#95A5A6'            // Gray for neutral messages
-};
-
-class ArenaService {
+class ArenaService extends FeedManagerBase {
     constructor() {
-        this.client = null;
-        this.arenaChannelId = config.discord.arenaChannelId || '1373570850912997476';
+        super(null, config.discord.arenaChannelId || '1373570850912997476');
         this.arenaFeedChannelId = config.discord.arenaFeedChannelId || '1373570913882214410';
-        this.updateInterval = null;
-        this.tempMessageCleanupInterval = null; // Added for temp message cleanup
+        this.tempMessageCleanupInterval = null;
         this.feedMessageIds = new Map(); // Map of challengeId -> messageId
-        this.headerMessageId = null;
+        this.overviewEmbedId = null;
         this.gpLeaderboardMessageId = null;
-        this.overviewEmbedId = null; // Added for the overview embed
-    }
-
-    setClient(client) {
-        this.client = client;
-        console.log('Discord client set for arena service');
+        
+        // Set the alerts channel for notifications
+        AlertUtils.setAlertsChannel(this.channelId);
     }
 
     async start() {
@@ -53,14 +48,11 @@ class ArenaService {
             // Clear the arena feed channel first
             await this.clearArenaFeedChannel();
             
-            // Set up recurring updates
-            await this.updateArenaFeeds();
+            // Start the temporary message cleanup service
+            await this.startTempMessageCleanup();
             
-            this.updateInterval = setInterval(() => {
-                this.updateArenaFeeds().catch(error => {
-                    console.error('Error updating arena feeds:', error);
-                });
-            }, UPDATE_INTERVAL);
+            // Run initial updates and set up intervals using the parent class method
+            await super.start(UPDATE_INTERVAL);
             
             // Also set up a check for completed challenges
             setInterval(() => {
@@ -68,46 +60,17 @@ class ArenaService {
                     console.error('Error checking completed challenges:', error);
                 });
             }, 15 * 60 * 1000); // Every 15 minutes
-            
-            // Start the temporary message cleanup service
-            await this.startTempMessageCleanup(); // Added temporary message cleanup
-            
-            console.log(`Arena service started. Updates will occur every ${UPDATE_INTERVAL / 60000} minutes.`);
         } catch (error) {
             console.error('Error starting arena service:', error);
         }
     }
 
-    stop() {
-        if (this.updateInterval) {
-            clearInterval(this.updateInterval);
-            this.updateInterval = null;
-        }
-        
-        // Clear the temporary message cleanup interval
-        if (this.tempMessageCleanupInterval) {
-            clearInterval(this.tempMessageCleanupInterval);
-            this.tempMessageCleanupInterval = null;
-        }
-        
-        console.log('Arena service stopped.');
+    // Override the update method from base class
+    async update() {
+        await this.updateArenaFeeds();
     }
 
-    // Get Discord channels
-    async getArenaChannel() {
-        if (!this.client) return null;
-
-        try {
-            const guild = await this.client.guilds.fetch(config.discord.guildId);
-            if (!guild) return null;
-            
-            return await guild.channels.fetch(this.arenaChannelId);
-        } catch (error) {
-            console.error('Error getting arena channel:', error);
-            return null;
-        }
-    }
-
+    // Get the arena feed channel
     async getArenaFeedChannel() {
         if (!this.client) return null;
 
@@ -130,7 +93,7 @@ class ArenaService {
             
             console.log(`Clearing arena feed channel...`);
             
-            // Fetch messages in batches (Discord API limitation)
+            // Use the same approach as in FeedManagerBase.clearChannel()
             let messagesDeleted = 0;
             let messages;
             
@@ -157,7 +120,6 @@ class ArenaService {
             
             // Reset state after clearing
             this.feedMessageIds.clear();
-            this.headerMessageId = null;
             this.gpLeaderboardMessageId = null;
             this.overviewEmbedId = null;
             
@@ -171,11 +133,6 @@ class ArenaService {
     // Temporary message management
     /**
      * Send a message that will auto-delete after specified hours
-     * @param {Object} channel - Discord channel to send message to
-     * @param {Object} options - Message options (content, embeds, etc.)
-     * @param {number} hoursUntilDelete - Hours after which to delete
-     * @param {string} type - Message type identifier
-     * @returns {Promise<Object>} - Sent message
      */
     async sendTemporaryMessage(channel, options, hoursUntilDelete = 3, type = 'notification') {
         try {
@@ -203,7 +160,6 @@ class ArenaService {
 
     /**
      * Start the temporary message cleanup service
-     * Runs every 15 minutes to check for and delete expired messages
      */
     async startTempMessageCleanup() {
         this.tempMessageCleanupInterval = setInterval(() => {
@@ -257,24 +213,20 @@ class ArenaService {
     // Notification methods
     async notifyNewChallenge(challenge) {
         try {
-            const channel = await this.getArenaChannel();
+            const channel = await this.getChannel();
             if (!channel) return;
             
-            // Create an embed for the new challenge
-            const embed = new EmbedBuilder()
-                .setTitle('🏟️ New Arena Challenge Issued!')
-                .setColor(challenge.isOpenChallenge ? COLORS.OPEN_CHALLENGE : COLORS.DIRECT_CHALLENGE);
-            
-            // Set description based on challenge type
-            if (challenge.isOpenChallenge) {
-                embed.setDescription(
-                    `**${challenge.challengerUsername}** has created an open challenge for anyone to join!`
-                );
-            } else {
-                embed.setDescription(
-                    `**${challenge.challengerUsername}** has challenged **${challenge.challengeeUsername}** to a competition!`
-                );
-            }
+            // Use our createHeaderEmbed utility
+            const embed = createHeaderEmbed(
+                '🏟️ New Arena Challenge Issued!',
+                challenge.isOpenChallenge
+                    ? `**${challenge.challengerUsername}** has created an open challenge for anyone to join!`
+                    : `**${challenge.challengerUsername}** has challenged **${challenge.challengeeUsername}** to a competition!`,
+                {
+                    color: challenge.isOpenChallenge ? COLORS.PRIMARY : COLORS.DANGER,
+                    timestamp: true
+                }
+            );
             
             // Add fields
             embed.addFields({ name: 'Game', value: challenge.gameTitle, inline: false });
@@ -308,8 +260,6 @@ class ArenaService {
                 embed.setThumbnail(`https://retroachievements.org${challenge.iconUrl}`);
             }
             
-            embed.setTimestamp();
-            
             // Send as a temporary message that will auto-delete after 4 hours
             await this.sendTemporaryMessage(channel, { embeds: [embed] }, 4, 'newChallenge');
         } catch (error) {
@@ -319,7 +269,7 @@ class ArenaService {
 
     async notifyChallengeUpdate(challenge) {
         try {
-            const channel = await this.getArenaChannel();
+            const channel = await this.getChannel();
             if (!channel) return;
             
             let title, description, color;
@@ -331,7 +281,7 @@ class ArenaService {
                     case 'active':
                         title = '🏟️ Open Arena Challenge Started!';
                         description = `The open challenge created by **${challenge.challengerUsername}** has begun!`;
-                        color = COLORS.OPEN_CHALLENGE;
+                        color = COLORS.PRIMARY;
                         break;
                     case 'cancelled':
                         title = '🏟️ Open Arena Challenge Cancelled';
@@ -351,12 +301,12 @@ class ArenaService {
                     case 'active':
                         title = '🏟️ Arena Challenge Accepted!';
                         description = `**${challenge.challengeeUsername}** has accepted the challenge from **${challenge.challengerUsername}**!`;
-                        color = COLORS.DIRECT_CHALLENGE;
+                        color = COLORS.DANGER;
                         break;
                     case 'declined':
                         title = '🏟️ Arena Challenge Declined';
                         description = `**${challenge.challengeeUsername}** has declined the challenge from **${challenge.challengerUsername}**.`;
-                        color = COLORS.DIRECT_CHALLENGE;
+                        color = COLORS.DANGER;
                         break;
                     case 'cancelled':
                         title = '🏟️ Arena Challenge Cancelled';
@@ -373,12 +323,17 @@ class ArenaService {
                 }
             }
             
-            // Create embed
-            const embed = new EmbedBuilder()
-                .setTitle(title)
-                .setColor(color)
-                .setDescription(description)
-                .addFields({ name: 'Game', value: challenge.gameTitle, inline: false });
+            // Use our createHeaderEmbed utility
+            const embed = createHeaderEmbed(
+                title,
+                description,
+                {
+                    color: color,
+                    timestamp: true
+                }
+            );
+            
+            embed.addFields({ name: 'Game', value: challenge.gameTitle, inline: false });
                 
             if (challenge.description) {
                 embed.addFields({ name: 'Description', value: challenge.description, inline: false });
@@ -479,8 +434,6 @@ class ArenaService {
                 embed.setThumbnail(`https://retroachievements.org${challenge.iconUrl}`);
             }
             
-            embed.setTimestamp();
-            
             // Send notification with appropriate duration based on status
             let hoursUntilDelete = 3; // Default
             if (challenge.status === 'completed') {
@@ -498,21 +451,25 @@ class ArenaService {
     
     async notifyParticipantJoined(challenge, participantUsername) {
         try {
-            const channel = await this.getArenaChannel();
+            const channel = await this.getChannel();
             if (!channel) return;
             
-            const embed = new EmbedBuilder()
-                .setTitle('🏟️ New Participant Joined Challenge!')
-                .setColor(COLORS.OPEN_CHALLENGE)
-                .setDescription(
-                    `**${participantUsername}** has joined the open challenge for **${challenge.gameTitle}**!`
-                )
-                .addFields(
-                    { name: 'Challenge Creator', value: challenge.challengerUsername, inline: true },
-                    { name: 'Wager', value: `${challenge.wagerAmount} GP`, inline: true },
-                    { name: 'Total Participants', value: `${challenge.participants.length + 1}`, inline: true },
-                    { name: 'Description', value: challenge.description || 'No description provided' }
-                );
+            // Use our createHeaderEmbed utility
+            const embed = createHeaderEmbed(
+                '🏟️ New Participant Joined Challenge!',
+                `**${participantUsername}** has joined the open challenge for **${challenge.gameTitle}**!`,
+                {
+                    color: COLORS.PRIMARY, // Blue for open challenges
+                    timestamp: true
+                }
+            );
+            
+            embed.addFields(
+                { name: 'Challenge Creator', value: challenge.challengerUsername, inline: true },
+                { name: 'Wager', value: `${challenge.wagerAmount} GP`, inline: true },
+                { name: 'Total Participants', value: `${challenge.participants.length + 1}`, inline: true },
+                { name: 'Description', value: challenge.description || 'No description provided' }
+            );
             
             if (challenge.iconUrl) {
                 embed.setThumbnail(`https://retroachievements.org${challenge.iconUrl}`);
@@ -527,20 +484,25 @@ class ArenaService {
     
     async notifyStandingsChange(challenge, changedPosition) {
         try {
-            const channel = await this.getArenaChannel();
+            const channel = await this.getChannel();
             if (!channel) return;
             
             const leaderboardUrl = `https://retroachievements.org/leaderboardinfo.php?i=${challenge.leaderboardId}`;
             
-            const embed = new EmbedBuilder()
-                .setTitle('🏟️ Arena Standings Update!')
-                .setColor(challenge.isOpenChallenge ? COLORS.OPEN_CHALLENGE : COLORS.DIRECT_CHALLENGE)
-                .setDescription(
-                    `There's been a change in the leaderboard for the active challenge between **${challenge.challengerUsername}** and **${challenge.challengeeUsername}**!`
-                )
-                .addFields(
-                    { name: 'Game', value: `[${challenge.gameTitle}](${leaderboardUrl})`, inline: false }
-                );
+            // Use our createHeaderEmbed utility
+            const embed = createHeaderEmbed(
+                '🏟️ Arena Standings Update!',
+                `There's been a change in the leaderboard for the active challenge between **${challenge.challengerUsername}** and **${challenge.challengeeUsername}**!`,
+                {
+                    color: challenge.isOpenChallenge ? COLORS.PRIMARY : COLORS.DANGER,
+                    timestamp: true,
+                    footer: { text: `Follow the challenge in the arena feed channel!` }
+                }
+            );
+            
+            embed.addFields(
+                { name: 'Game', value: `[${challenge.gameTitle}](${leaderboardUrl})`, inline: false }
+            );
             
             if (challenge.description) {
                 embed.addFields({ name: 'Description', value: challenge.description, inline: false });
@@ -557,15 +519,11 @@ class ArenaService {
                        `• **${challenge.challengeeUsername}**: ${challenge.challengeeScore}`
             });
             
-            embed.setFooter({ text: `Follow the challenge in the arena feed channel!` })
-                 .setTimestamp();
-            
             if (challenge.iconUrl) {
                 embed.setThumbnail(`https://retroachievements.org${challenge.iconUrl}`);
             }
             
             // Send as a temporary message that will auto-delete after 6 hours
-            // Position changes are more noteworthy, so keep them longer
             await this.sendTemporaryMessage(channel, { embeds: [embed] }, 6, 'standingsChange');
         } catch (error) {
             console.error('Error sending standings change notification:', error);
@@ -672,11 +630,8 @@ class ArenaService {
             // Create embed for the challenge using our improved utility function
             const embed = createChallengeEmbed(
                 challenge, challengerScore, challengeeScore, 
-                participantScores, EmbedBuilder
+                participantScores, this.client.options.EmbedBuilder || this.client.EmbedBuilder
             );
-            
-            // Ensure the embed has the correct color
-            embed.setColor(challenge.isOpenChallenge ? COLORS.OPEN_CHALLENGE : COLORS.DIRECT_CHALLENGE);
             
             // Add betting information to footer
             const startTime = challenge.startDate || challenge.createdAt;
@@ -690,28 +645,17 @@ class ArenaService {
                 embed.setFooter({ text: 'Betting is now closed for this challenge' });
             }
             
-            // Send or update the message
+            // Send or update the message using base class method
             const challengeId = challenge._id.toString();
             
-            if (this.feedMessageIds.has(challengeId)) {
-                try {
-                    const messageId = this.feedMessageIds.get(challengeId);
-                    const message = await feedChannel.messages.fetch(messageId);
-                    await message.edit({ embeds: [embed] });
-                } catch (error) {
-                    if (error.message.includes('Unknown Message')) {
-                        const message = await feedChannel.send({ embeds: [embed] });
-                        this.feedMessageIds.set(challengeId, message.id);
-                        challenge.messageId = message.id;
-                        await challenge.save();
-                    } else {
-                        throw error;
-                    }
-                }
-            } else {
-                const message = await feedChannel.send({ embeds: [embed] });
-                this.feedMessageIds.set(challengeId, message.id);
-                challenge.messageId = message.id;
+            const messageId = await this.updateArenaChallengeMessage(
+                feedChannel, 
+                challengeId, 
+                { embeds: [embed] }
+            );
+            
+            if (messageId && messageId !== challenge.messageId) {
+                challenge.messageId = messageId;
                 await challenge.save();
             }
         } catch (error) {
@@ -728,9 +672,9 @@ class ArenaService {
             const participantScores = new Map();
             const challengerScore = { exists: false, formattedScore: 'No score yet', rank: 0, value: 0 };
             
-            // Try to get challenger's score using our improved utility functions
+            // Try to get challenger's score using RetroAPIUtils
             try {
-                const rawEntries = await getLeaderboardEntries(challenge.leaderboardId);
+                const rawEntries = await RetroAPIUtils.getLeaderboardEntries(challenge.leaderboardId, 1000);
                 const isTimeBased = isTimeBasedLeaderboard(challenge);
                 const processedEntries = processLeaderboardEntries(rawEntries, isTimeBased);
                 
@@ -775,15 +719,12 @@ class ArenaService {
                 console.error(`Error getting scores for open challenge:`, error);
             }
             
-            // Create embed for the challenge using our improved utility function
-            // IMPORTANT: For open challenges, explicitly pass null for challengeeScore
+            // Create embed for the challenge using our utility function
+            // For open challenges, explicitly pass null for challengeeScore
             const embed = createChallengeEmbed(
                 challenge, challengerScore, null, // Explicitly pass null for challengeeScore
-                participantScores, EmbedBuilder
+                participantScores, this.client.options.EmbedBuilder || this.client.EmbedBuilder
             );
-            
-            // Ensure the embed has the correct color
-            embed.setColor(COLORS.OPEN_CHALLENGE);
             
             // Add betting information to footer
             const startTime = challenge.startDate || challenge.createdAt;
@@ -805,32 +746,49 @@ class ArenaService {
                 });
             }
             
-            // Send or update the message
+            // Send or update the message using our helper method
             const challengeId = challenge._id.toString();
             
-            if (this.feedMessageIds.has(challengeId)) {
-                try {
-                    const messageId = this.feedMessageIds.get(challengeId);
-                    const message = await feedChannel.messages.fetch(messageId);
-                    await message.edit({ embeds: [embed] });
-                } catch (error) {
-                    if (error.message.includes('Unknown Message')) {
-                        const message = await feedChannel.send({ embeds: [embed] });
-                        this.feedMessageIds.set(challengeId, message.id);
-                        challenge.messageId = message.id;
-                        await challenge.save();
-                    } else {
-                        throw error;
-                    }
-                }
-            } else {
-                const message = await feedChannel.send({ embeds: [embed] });
-                this.feedMessageIds.set(challengeId, message.id);
-                challenge.messageId = message.id;
+            const messageId = await this.updateArenaChallengeMessage(
+                feedChannel, 
+                challengeId, 
+                { embeds: [embed] }
+            );
+            
+            if (messageId && messageId !== challenge.messageId) {
+                challenge.messageId = messageId;
                 await challenge.save();
             }
         } catch (error) {
             console.error('Error creating/updating open challenge feed:', error);
+        }
+    }
+
+    // Helper method for updating arena challenge messages
+    async updateArenaChallengeMessage(channel, challengeId, content) {
+        try {
+            if (this.feedMessageIds.has(challengeId)) {
+                try {
+                    const messageId = this.feedMessageIds.get(challengeId);
+                    const message = await channel.messages.fetch(messageId);
+                    await message.edit(content);
+                    return messageId;
+                } catch (error) {
+                    if (error.message.includes('Unknown Message')) {
+                        this.feedMessageIds.delete(challengeId);
+                    } else {
+                        throw error;
+                    }
+                }
+            }
+            
+            // Create new message
+            const message = await channel.send(content);
+            this.feedMessageIds.set(challengeId, message.id);
+            return message.id;
+        } catch (error) {
+            console.error(`Error updating arena challenge message ${challengeId}:`, error);
+            return null;
         }
     }
 
@@ -851,8 +809,9 @@ class ArenaService {
                 isOpenChallenge: true
             });
             
-            // Create header content
-            const unixTimestamp = Math.floor(Date.now() / 1000);
+            // Create header content using Discord timestamp
+            const timestamp = getDiscordTimestamp(new Date());
+            
             let headerContent = 
                 `# 🏟️ The Arena - Active Challenges\n` +
                 `Currently there ${activeCount === 1 ? 'is' : 'are'} **${activeCount}** active challenge${activeCount === 1 ? '' : 's'} in the Arena.\n`;
@@ -861,10 +820,10 @@ class ArenaService {
                 headerContent += `There ${openCount === 1 ? 'is' : 'are'} also **${openCount}** open challenge${openCount === 1 ? '' : 's'} awaiting participants.\n`;
             }
                 
-            headerContent += `**Last Updated:** <t:${unixTimestamp}:f> | **Updates:** Every hour\n` +
+            headerContent += `**Last Updated:** ${timestamp} | **Updates:** Every hour\n` +
                 `Use \`/arena\` to challenge others, place bets, or view your challenges`;
             
-            // Update or create the header message
+            // Update or create the header message using base class method
             if (this.headerMessageId) {
                 try {
                     const headerMessage = await feedChannel.messages.fetch(this.headerMessageId);
@@ -956,13 +915,13 @@ class ArenaService {
                 totalBets
             };
             
-            // Create overview embed using the utility function
-            const embed = createArenaOverviewEmbed(EmbedBuilder, stats);
+            // Create overview embed using our utility function
+            const embed = createArenaOverviewEmbed(
+                this.client.options.EmbedBuilder || this.client.EmbedBuilder, 
+                stats
+            );
             
-            // Ensure correct color
-            embed.setColor(COLORS.INFO);
-            
-            // Send or update
+            // Send or update - using our helper method
             if (this.overviewEmbedId) {
                 try {
                     const overviewMessage = await feedChannel.messages.fetch(this.overviewEmbedId);
@@ -996,32 +955,30 @@ class ArenaService {
             
             if (topUsers.length === 0) return;
             
-            // Create leaderboard embed with exact timestamp
-            const formattedDate = new Date().toLocaleString();
-            
-            const embed = new EmbedBuilder()
-                .setTitle('💰 GP Leaderboard')
-                .setColor(COLORS.INFO) // Yellow color for info embeds
-                .setDescription(
-                    'These are the users with the most GP (Gold Points).\n' +
-                    'Earn GP by winning Arena challenges and bets.\n\n' +
-                    `**Last Updated:** ${formattedDate}`
-                )
-                .setFooter({ 
-                    text: 'Updates hourly | Everyone receives 1,000 GP automatically each month!' 
-                });
+            // Use our createHeaderEmbed utility
+            const embed = createHeaderEmbed(
+                '💰 GP Leaderboard',
+                'These are the users with the most GP (Gold Points).\n' +
+                'Earn GP by winning Arena challenges and bets.',
+                {
+                    color: COLORS.INFO,
+                    footer: { 
+                        text: 'Updates hourly | Everyone receives 1,000 GP automatically each month!' 
+                    }
+                }
+            );
             
             // Build leaderboard text with medals
             let leaderboardText = '';
             
             topUsers.forEach((user, index) => {
-                const medal = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `${index + 1}.`;
+                const medal = index <= 2 ? EMOJIS[`RANK_${index + 1}`] : `${index + 1}.`;
                 leaderboardText += `${medal} **${user.raUsername}**: ${user.gp.toLocaleString()} GP\n`;
             });
             
             embed.addFields({ name: 'Top 5 Rankings', value: leaderboardText });
             
-            // Update or create the leaderboard message
+            // Update or create the leaderboard message - using our helper method
             if (this.gpLeaderboardMessageId) {
                 try {
                     const gpMessage = await feedChannel.messages.fetch(this.gpLeaderboardMessageId);
@@ -1045,7 +1002,7 @@ class ArenaService {
     async getChallengersScores(challenge) {
         try {
             // Get leaderboard entries with our improved function
-            const rawEntries = await getLeaderboardEntries(challenge.leaderboardId);
+            const rawEntries = await RetroAPIUtils.getLeaderboardEntries(challenge.leaderboardId, 1000);
             
             // Process entries based on whether this is a time-based leaderboard
             const isTimeBased = isTimeBasedLeaderboard(challenge);
@@ -1056,11 +1013,6 @@ class ArenaService {
             
             // Find challengee entry using the improved user matching function
             const challengeeEntry = findUserInLeaderboard(leaderboardEntries, challenge.challengeeUsername);
-            
-            // Log for debugging
-            console.log(`Found entries for challenge ${challenge._id}:`);
-            console.log(`- Challenger ${challenge.challengerUsername}: ${challengerEntry ? 'Found' : 'Not found'}`);
-            console.log(`- Challengee ${challenge.challengeeUsername}: ${challengeeEntry ? 'Found' : 'Not found'}`);
             
             // Format challenger score
             const challengerScore = {
@@ -1091,7 +1043,7 @@ class ArenaService {
     async getParticipantScore(challenge, participantUsername) {
         try {
             // Get leaderboard entries with our improved function
-            const rawEntries = await getLeaderboardEntries(challenge.leaderboardId);
+            const rawEntries = await RetroAPIUtils.getLeaderboardEntries(challenge.leaderboardId, 1000);
             
             // Process entries based on whether this is a time-based leaderboard
             const isTimeBased = isTimeBasedLeaderboard(challenge);
@@ -1099,9 +1051,6 @@ class ArenaService {
             
             // Find entry for this participant using the improved user matching function
             const participantEntry = findUserInLeaderboard(leaderboardEntries, participantUsername);
-            
-            // Log for debugging
-            console.log(`Looking up participant ${participantUsername}: ${participantEntry ? 'Found' : 'Not found'}`);
             
             // Format score
             return {
@@ -1511,10 +1460,11 @@ class ArenaService {
                 const durationDays = Math.floor(challenge.durationHours / 24);
                 
                 // Use the utility function to create the completed challenge embed
-                const embed = createCompletedChallengeEmbed(challenge, EmbedBuilder, durationDays);
-                
-                // Set the color based on challenge type
-                embed.setColor(challenge.isOpenChallenge ? COLORS.OPEN_CHALLENGE : COLORS.DIRECT_CHALLENGE);
+                const embed = createCompletedChallengeEmbed(
+                    challenge, 
+                    this.client.options.EmbedBuilder || this.client.EmbedBuilder, 
+                    durationDays
+                );
                 
                 // Update the message
                 await message.edit({ embeds: [embed], components: [] });
@@ -1638,411 +1588,7 @@ class ArenaService {
         });
     }
 
-    // UI Methods for user interactions
-    async showActiveChallengesToUser(interaction) {
-        await interaction.deferUpdate();
-        
-        try {
-            // Get active challenges sorted alphabetically
-            const activeChallengers = await ArenaChallenge.find({
-                status: 'active',
-                endDate: { $gt: new Date() }
-            }).sort({ gameTitle: 1 }); // Sort alphabetically
-            
-            if (activeChallengers.length === 0) {
-                return interaction.editReply('There are no active challenges right now.');
-            }
-            
-            // Create embed
-            const embed = new EmbedBuilder()
-                .setTitle('Active Arena Challenges')
-                .setColor(COLORS.INFO)
-                .setDescription(
-                    'These are the currently active challenges in the Arena.\n' +
-                    'Use `/arena` and select "Place Bet" to bet on these challenges.\n\n' +
-                    '**Pot Betting System:** Your bet joins the total prize pool. ' +
-                    'If your chosen player wins, you get your bet back plus a share of the losing bets proportional to your bet amount.' +
-                    '\n**Note:** Betting is only available during the first 72 hours of a challenge. Maximum bet: 100 GP.'
-                )
-                .setFooter({ text: 'All challenge updates are posted in the Arena channel' });
-            
-            // Add each active challenge
-            activeChallengers.forEach((challenge, index) => {
-                const timeRemaining = formatTimeRemaining(challenge.endDate);
-                const now = new Date();
-                const bettingOpen = (now - challenge.startDate) / (1000 * 60 * 60) <= 72;
-                const bettingStatus = bettingOpen ? 'Open' : 'Closed';
-                
-                // Add leaderboard link
-                const leaderboardUrl = `https://retroachievements.org/leaderboardinfo.php?i=${challenge.leaderboardId}`;
-                
-                if (challenge.isOpenChallenge && challenge.participants && challenge.participants.length > 0) {
-                    // For open challenges with participants
-                    const participantCount = challenge.participants.length + 1; // +1 for creator
-                    const wagerPool = challenge.wagerAmount * participantCount;
-                    const totalPool = (challenge.totalPool || 0) + wagerPool;
-                    
-                    // Create a list of participants
-                    let participantsText = `${challenge.challengerUsername} (Creator)`;
-                    challenge.participants.forEach((participant, pIndex) => {
-                        if (pIndex < 3) { // Show max 3 participants directly
-                            participantsText += `, ${participant.username}`;
-                        }
-                    });
-                    
-                    if (challenge.participants.length > 3) {
-                        participantsText += ` and ${challenge.participants.length - 3} more`;
-                    }
-                    
-                    embed.addFields({
-                        name: `${index + 1}. ${challenge.gameTitle} (Open Challenge)`,
-                        value: `**Creator:** ${challenge.challengerUsername}\n` +
-                               (challenge.description ? `**Description:** ${challenge.description}\n` : '') +
-                               `**Participants:** ${participantCount} (${participantsText})\n` +
-                               `**Wager:** ${challenge.wagerAmount} GP per player\n` +
-                               `**Total Pool:** ${totalPool} GP\n` +
-                               `**Ends:** ${challenge.endDate.toLocaleDateString()} (${timeRemaining})\n` +
-                               `**Betting:** ${bettingStatus} | **Bets:** ${challenge.bets?.length || 0}\n` +
-                               `${leaderboardUrl}`
-                    });
-                } else {
-                    // For regular 1v1 challenges
-                    embed.addFields({
-                        name: `${index + 1}. ${challenge.challengerUsername} vs ${challenge.challengeeUsername}`,
-                        value: `**Game:** ${challenge.gameTitle}\n` +
-                               (challenge.description ? `**Description:** ${challenge.description}\n` : '') +
-                               `**Wager:** ${challenge.wagerAmount} GP each\n` +
-                               `**Total Pool:** ${(challenge.totalPool || 0) + (challenge.wagerAmount * 2)} GP\n` +
-                               `**Ends:** ${challenge.endDate.toLocaleDateString()} (${timeRemaining})\n` +
-                               `**Betting:** ${bettingStatus} | **Bets:** ${challenge.bets?.length || 0}\n` +
-                               `${leaderboardUrl}`
-                    });
-                }
-            });
-            
-            // Add back button
-            const backRow = new ActionRowBuilder()
-                .addComponents(
-                    new ButtonBuilder()
-                        .setCustomId('arena_back_to_main')
-                        .setLabel('Back to Arena')
-                        .setStyle(ButtonStyle.Secondary)
-                );
-            
-            await interaction.editReply({
-                embeds: [embed],
-                components: [backRow]
-            });
-        } catch (error) {
-            console.error('Error showing active challenges:', error);
-            await interaction.editReply('An error occurred while displaying active challenges.');
-        }
-    }
-
-    async showGpLeaderboard(interaction) {
-        await interaction.deferUpdate();
-        
-        try {
-            // Get top users by GP
-            const topUsers = await User.find({ gp: { $gt: 0 } })
-                .sort({ gp: -1 })
-                .limit(5); // Reduced to top 5
-            
-            if (topUsers.length === 0) {
-                return interaction.editReply('No users with GP found.');
-            }
-            
-            // Create leaderboard embed
-            const embed = new EmbedBuilder()
-                .setTitle('💰 GP Leaderboard')
-                .setColor(COLORS.INFO)
-                .setDescription(
-                    'These are the users with the most GP (Gold Points).\n' +
-                    'Earn GP by winning Arena challenges and bets.'
-                )
-                .setFooter({ 
-                    text: 'Everyone receives 1,000 GP automatically each month!' 
-                });
-            
-            // Build leaderboard text
-            let leaderboardText = '';
-            
-            topUsers.forEach((user, index) => {
-                const medal = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `${index + 1}.`;
-                leaderboardText += `${medal} **${user.raUsername}**: ${user.gp.toLocaleString()} GP\n`;
-            });
-            
-            embed.addFields({ name: 'Top 5 Rankings', value: leaderboardText });
-            
-            // Add back button
-            const backRow = new ActionRowBuilder()
-                .addComponents(
-                    new ButtonBuilder()
-                        .setCustomId('arena_back_to_main')
-                        .setLabel('Back to Arena')
-                        .setStyle(ButtonStyle.Secondary)
-                );
-            
-            await interaction.editReply({
-                embeds: [embed],
-                components: [backRow]
-            });
-        } catch (error) {
-            console.error('Error showing GP leaderboard:', error);
-            await interaction.editReply('An error occurred while displaying the GP leaderboard.');
-        }
-    }
-
-    async refreshDirectChallengeLeaderboard(interaction, challenge) {
-        try {
-            // Get fresh scores
-            const [challengerScore, challengeeScore] = await this.getChallengersScores(challenge);
-            
-            // Create embed
-            const embed = new EmbedBuilder()
-                .setColor(COLORS.DIRECT_CHALLENGE)
-                .setTitle(`${challenge.gameTitle} - Leaderboard Refreshed`)
-                .setDescription(`**Challenge:** ${challenge.challengerUsername} vs ${challenge.challengeeUsername}\n**Description:** ${challenge.description || 'No description provided'}`);
-            
-            // Add leaderboard link
-            const leaderboardLink = `[View on RetroAchievements](https://retroachievements.org/leaderboardinfo.php?i=${challenge.leaderboardId})`;
-            
-            // Create participants array for sorting
-            const participants = [
-                {
-                    username: challenge.challengerUsername,
-                    score: challengerScore.formattedScore,
-                    rank: challengerScore.rank || 999999,
-                    exists: challengerScore.exists
-                },
-                {
-                    username: challenge.challengeeUsername,
-                    score: challengeeScore.formattedScore,
-                    rank: challengeeScore.rank || 999999,
-                    exists: challengeeScore.exists
-                }
-            ];
-            
-            // Sort by rank (lowest first)
-            participants.sort((a, b) => a.rank - b.rank);
-            
-            // Create leaderboard table with updated format
-            let leaderboardText = `**Current Standings (Refreshed at ${new Date().toLocaleTimeString()}):**\n\n`;
-            
-            participants.forEach((participant, index) => {
-                // Use crown for the leader (index 0), nothing for others
-                const prefixEmoji = index === 0 ? '👑 ' : '';
-                
-                if (participant.exists) {
-                    const globalRank = participant.rank < 999999 ? ` (Global Rank: #${participant.rank})` : '';
-                    leaderboardText += `${prefixEmoji}**${participant.username}** - ${participant.score}${globalRank}\n`;
-                } else {
-                    leaderboardText += `• **${participant.username}:** No score yet\n`;
-                }
-            });
-            
-            leaderboardText += `\n**Leaderboard:** ${leaderboardLink}`;
-            
-            embed.addFields({ name: 'Current Standings', value: leaderboardText });
-            
-            // Add time remaining
-            const timeRemaining = formatTimeRemaining(challenge.endDate);
-            embed.addFields({ 
-                name: 'Challenge Info', 
-                value: `**Wager:** ${challenge.wagerAmount} GP each\n` +
-                       `**Total Pool:** ${(challenge.totalPool || 0) + (challenge.wagerAmount * 2)} GP\n` +
-                       `**Ends:** ${timeRemaining}`
-            });
-            
-            // Add thumbnail if available
-            if (challenge.iconUrl) {
-                embed.setThumbnail(`https://retroachievements.org${challenge.iconUrl}`);
-            }
-            
-            // Add action buttons
-            const buttonsRow = new ActionRowBuilder()
-                .addComponents(
-                    new ButtonBuilder()
-                        .setCustomId(`arena_refresh_leaderboard_${challenge._id}`)
-                        .setLabel('Refresh Again')
-                        .setStyle(ButtonStyle.Primary)
-                        .setEmoji('🔄'),
-                    new ButtonBuilder()
-                        .setCustomId('arena_back_to_main')
-                        .setLabel('Back to Arena')
-                        .setStyle(ButtonStyle.Secondary)
-                );
-            
-            return interaction.editReply({
-                embeds: [embed],
-                components: [buttonsRow]
-            });
-        } catch (error) {
-            console.error('Error refreshing leaderboard:', error);
-            return interaction.editReply('An error occurred while refreshing the leaderboard data.');
-        }
-    }
-
-    async refreshOpenChallengeLeaderboard(interaction, challenge) {
-        try {
-            // For open challenges, we need to check all participants
-            const creatorScore = { exists: false, formattedScore: 'No entry', rank: 0, value: 0 };
-            const participantScores = [];
-            
-            // Get leaderboard entries
-            const rawEntries = await getLeaderboardEntries(challenge.leaderboardId);
-            const isTimeBased = isTimeBasedLeaderboard(challenge);
-            const processedEntries = processLeaderboardEntries(rawEntries, isTimeBased);
-            
-            // Look up creator's score
-            const creatorEntry = findUserInLeaderboard(processedEntries, challenge.challengerUsername);
-            
-            if (creatorEntry) {
-                creatorScore.exists = true;
-                creatorScore.formattedScore = creatorEntry.FormattedScore;
-                creatorScore.rank = creatorEntry.ApiRank;
-                creatorScore.value = creatorEntry.Value;
-            }
-            
-            // Look up each participant's score
-            for (const participant of challenge.participants) {
-                const participantEntry = findUserInLeaderboard(processedEntries, participant.username);
-                
-                const participantScore = {
-                    userId: participant.userId,
-                    username: participant.username,
-                    exists: false,
-                    formattedScore: 'No entry',
-                    rank: 0,
-                    value: 0
-                };
-                
-                if (participantEntry) {
-                    participantScore.exists = true;
-                    participantScore.formattedScore = participantEntry.FormattedScore;
-                    participantScore.rank = participantEntry.ApiRank;
-                    participantScore.value = participantEntry.Value;
-                }
-                
-                participantScores.push(participantScore);
-            }
-            
-            // Create embed
-            const embed = new EmbedBuilder()
-                .setColor(COLORS.OPEN_CHALLENGE)
-                .setTitle(`${challenge.gameTitle} - Leaderboard Refreshed`)
-                .setDescription(`**Open Challenge** created by ${challenge.challengerUsername}\n**Description:** ${challenge.description || 'No description provided'}`);
-            
-            // Add leaderboard link
-            const leaderboardLink = `[View on RetroAchievements](https://retroachievements.org/leaderboardinfo.php?i=${challenge.leaderboardId})`;
-            
-            // Create array of all participants including creator for sorting
-            const allParticipants = [];
-            
-            // Add creator
-            allParticipants.push({
-                username: challenge.challengerUsername,
-                isCreator: true,
-                score: creatorScore.formattedScore,
-                rank: creatorScore.rank || 999999,
-                exists: creatorScore.exists
-            });
-            
-            // Add participants
-            for (const score of participantScores) {
-                allParticipants.push({
-                    username: score.username,
-                    isCreator: false,
-                    score: score.formattedScore,
-                    rank: score.rank || 999999,
-                    exists: score.exists
-                });
-            }
-            
-            // Sort by rank or score value appropriately
-            allParticipants.sort((a, b) => {
-                // Put participants with scores first
-                if (a.exists && !b.exists) return -1;
-                if (!a.exists && b.exists) return 1;
-                
-                // If both have scores, sort by rank primarily
-                if (a.exists && b.exists) {
-                    if (a.rank !== 999999 && b.rank !== 999999) {
-                        return a.rank - b.rank; // Lower rank is better
-                    } else if (isTimeBased) {
-                        const aValue = parseTimeToSeconds(a.score);
-                        const bValue = parseTimeToSeconds(b.score);
-                        return aValue - bValue; // For time, lower is better
-                    } else {
-                        const aValue = parseScoreString(a.score);
-                        const bValue = parseScoreString(b.score);
-                        return bValue - aValue; // For scores, higher is better
-                    }
-                }
-                
-                return 0;
-            });
-            
-            // Create leaderboard table with updated format
-            let leaderboardText = `**Current Rankings (Refreshed at ${new Date().toLocaleTimeString()}):**\n\n`;
-            
-            allParticipants.forEach((participant, index) => {
-                // Use crown for the leader (index 0), nothing for others
-                const prefixEmoji = index === 0 ? '👑 ' : '';
-                
-                if (participant.exists) {
-                    const creatorTag = participant.isCreator ? ' (Creator)' : '';
-                    const globalRank = participant.rank < 999999 ? ` (Global Rank: #${participant.rank})` : '';
-                    
-                    leaderboardText += `${prefixEmoji}**${participant.username}${creatorTag}** - ${participant.score}${globalRank}\n`;
-                } else {
-                    const creatorTag = participant.isCreator ? ' (Creator)' : '';
-                    leaderboardText += `• **${participant.username}${creatorTag}:** No score yet\n`;
-                }
-            });
-            
-            leaderboardText += `\n**Leaderboard:** ${leaderboardLink}`;
-            
-            embed.addFields({ name: 'Current Standings', value: leaderboardText });
-            
-            // Add time remaining
-            const timeRemaining = formatTimeRemaining(challenge.endDate);
-            embed.addFields({ 
-                name: 'Challenge Info', 
-                value: `**Wager:** ${challenge.wagerAmount} GP per player\n` +
-                       `**Participants:** ${challenge.participants.length + 1}\n` +
-                       `**Total Pool:** ${(challenge.totalPool || 0) + (challenge.wagerAmount * (challenge.participants.length + 1))} GP\n` +
-                       `**Ends:** ${timeRemaining}`
-            });
-            
-            // Add thumbnail if available
-            if (challenge.iconUrl) {
-                embed.setThumbnail(`https://retroachievements.org${challenge.iconUrl}`);
-            }
-            
-            // Add action buttons
-            const buttonsRow = new ActionRowBuilder()
-                .addComponents(
-                    new ButtonBuilder()
-                        .setCustomId(`arena_refresh_leaderboard_${challenge._id}`)
-                        .setLabel('Refresh Again')
-                        .setStyle(ButtonStyle.Primary)
-                        .setEmoji('🔄'),
-                    new ButtonBuilder()
-                        .setCustomId('arena_back_to_main')
-                        .setLabel('Back to Arena')
-                        .setStyle(ButtonStyle.Secondary)
-                );
-            
-            return interaction.editReply({
-                embeds: [embed],
-                components: [buttonsRow]
-            });
-        } catch (error) {
-            console.error('Error refreshing open challenge leaderboard:', error);
-            return interaction.editReply('An error occurred while refreshing the leaderboard data.');
-        }
-    }
+    // UI Methods for user interactions - should be handled by the command handler files
 }
 
 // Create singleton instance
