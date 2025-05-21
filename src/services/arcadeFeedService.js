@@ -13,6 +13,7 @@ class ArcadeFeedService extends FeedManagerBase {
         this.headerMessageId = null;
         this.summaryMessageId = null;
         this.overviewEmbedId = null;
+        this.tiebreakerMessageId = null;
     }
 
     // Override the update method from base class
@@ -31,11 +32,22 @@ class ArcadeFeedService extends FeedManagerBase {
             // Update header first
             await this.updateArenaHeader();
             
-            // Update overview embed
+            // Update overview embed (yellow)
             await this.updateArcadeOverview();
             
-            // Update racing board if there is one - we want this at the top
+            // Check for active tiebreaker and update if exists (purple)
             const now = new Date();
+            const tiebreaker = await ArcadeBoard.findOne({
+                boardType: 'tiebreaker',
+                startDate: { $lte: now },
+                endDate: { $gte: now }
+            });
+            
+            if (tiebreaker) {
+                await this.updateTiebreakerBoard(channel, tiebreaker);
+            }
+            
+            // Update racing board if there is one (red)
             const racingBoard = await ArcadeBoard.findOne({
                 boardType: 'racing',
                 startDate: { $lte: now },
@@ -46,29 +58,17 @@ class ArcadeFeedService extends FeedManagerBase {
                 await this.updateRacingBoardEmbed(channel, racingBoard);
             }
             
-            // Update active challenge feeds - sort alphabetically by game title
-            const activeChallengers = await ArcadeBoard.find({
-                status: 'active',
-                endDate: { $gt: new Date() }
+            // Update arcade boards (blue)
+            const arcadeBoards = await ArcadeBoard.find({
+                boardType: 'arcade'
             }).sort({ gameTitle: 1 }); // Sort alphabetically
             
-            for (const challenge of activeChallengers) {
-                await this.createOrUpdateArenaFeed(challenge);
+            for (const board of arcadeBoards) {
+                await this.createOrUpdateArcadeBoard(board);
                 await new Promise(resolve => setTimeout(resolve, 1000));
             }
             
-            // Update open challenge feeds too - also sort alphabetically
-            const openChallenges = await ArcadeBoard.find({
-                status: 'open',
-                isOpenChallenge: true
-            }).sort({ gameTitle: 1 }); // Sort alphabetically
-            
-            for (const challenge of openChallenges) {
-                await this.createOrUpdateOpenChallengeFeed(challenge);
-                await new Promise(resolve => setTimeout(resolve, 1000));
-            }
-            
-            // Update GP leaderboard LAST
+            // Update GP leaderboard LAST (yellow)
             await this.updatePointsSummaryEmbed(channel);
         } catch (error) {
             console.error('Error updating arcade feeds:', error);
@@ -104,8 +104,14 @@ class ArcadeFeedService extends FeedManagerBase {
             
             // Count active arcade boards
             const arcadeBoardCount = await ArcadeBoard.countDocuments({
-                boardType: 'arcade',
-                endDate: { $gt: now }
+                boardType: 'arcade'
+            });
+            
+            // Check if there's an active tiebreaker
+            const hasTiebreaker = await ArcadeBoard.exists({
+                boardType: 'tiebreaker',
+                startDate: { $lte: now },
+                endDate: { $gte: now }
             });
             
             // Check if there's an active racing board
@@ -121,7 +127,7 @@ class ArcadeFeedService extends FeedManagerBase {
             
             // Create embed
             const embed = new EmbedBuilder()
-                .setColor(COLORS.WARNING)
+                .setColor(COLORS.WARNING) // Yellow for overview
                 .setTitle(`${EMOJIS.ARCADE} Arcade System Overview`)
                 .setDescription(
                     'The **Arcade System** tracks various RetroAchievements leaderboards and awards points to top performers.\n\n' +
@@ -133,6 +139,10 @@ class ArcadeFeedService extends FeedManagerBase {
                 
             // Add active boards info
             let contentField = '';
+            
+            if (hasTiebreaker) {
+                contentField += `• **Active Tiebreaker:** ${currentMonth} tiebreaker (see below)\n`;
+            }
             
             if (hasRacingBoard) {
                 contentField += `• **Active Racing Challenge:** ${currentMonth} ${currentYear} Racing (see below)\n`;
@@ -146,7 +156,7 @@ class ArcadeFeedService extends FeedManagerBase {
             // Add participation info
             embed.addFields({ 
                 name: 'How to Participate', 
-                value: 'Simply play the games listed below and get on their leaderboards! Only members who have registered their RetroAchievements username with the bot will be tracked.'
+                value: 'Simply play the games listed below and get on their leaderboards! Only members who have registered their RetroAchievements username with the bot will be tracked.\n\nUse `/arcade` to view more details about each board.'
             });
             
             // Add footer
@@ -176,7 +186,136 @@ class ArcadeFeedService extends FeedManagerBase {
         }
     }
 
-    async createOrUpdateArenaFeed(board) {
+    /**
+     * Update the tiebreaker board embed
+     */
+    async updateTiebreakerBoard(channel, tiebreaker) {
+        try {
+            // Get all registered users
+            const users = await User.find({});
+            
+            // Create mapping of RA usernames (lowercase) to canonical usernames
+            const registeredUsers = new Map();
+            for (const user of users) {
+                if (user.raUsername) { // Add null check
+                    registeredUsers.set(user.raUsername.toLowerCase(), user.raUsername);
+                }
+            }
+            
+            // Get leaderboard entries using our utility
+            const rawEntries = await RetroAPIUtils.getLeaderboardEntries(tiebreaker.leaderboardId, 1000);
+            
+            // Get usernames of tied users (for highlighting)
+            const tiedUsernames = tiebreaker.tiedUsers || [];
+            
+            // Filter to only show registered users
+            const filteredEntries = [];
+            
+            for (const entry of rawEntries) {
+                const username = entry.User || '';
+                if (!username) continue;
+                
+                const lowerUsername = username.toLowerCase().trim();
+                if (registeredUsers.has(lowerUsername)) {
+                    filteredEntries.push({
+                        apiRank: entry.Rank,
+                        username: username,
+                        score: entry.FormattedScore || entry.Score?.toString() || '0',
+                        isTiedUser: tiedUsernames.some(name => name.toLowerCase() === lowerUsername)
+                    });
+                }
+            }
+            
+            // Sort by API rank to ensure correct ordering
+            filteredEntries.sort((a, b) => a.apiRank - b.apiRank);
+            
+            // Create clickable link to RetroAchievements leaderboard
+            const leaderboardUrl = `https://retroachievements.org/leaderboardinfo.php?i=${tiebreaker.leaderboardId}`;
+            
+            // Get current month for display
+            const now = new Date();
+            const monthName = now.toLocaleString('default', { month: 'long' });
+            
+            // Calculate end date timestamp for Discord formatting
+            const endTimestamp = getDiscordTimestamp(tiebreaker.endDate, 'F');
+            const endRelative = getDiscordTimestamp(tiebreaker.endDate, 'R');
+            
+            // Get game info for thumbnail
+            let thumbnailUrl = null;
+            try {
+                const gameInfo = await RetroAPIUtils.getGameInfo(tiebreaker.gameId);
+                if (gameInfo?.imageIcon) {
+                    thumbnailUrl = `https://retroachievements.org${gameInfo.imageIcon}`;
+                }
+            } catch (error) {
+                console.error(`Error fetching game info for tiebreaker ${tiebreaker.gameTitle}:`, error);
+            }
+            
+            // Create embed
+            const embed = createHeaderEmbed(
+                `⚔️ ${monthName} Tiebreaker Challenge`,
+                `**${tiebreaker.gameTitle}**\n${tiebreaker.description || ''}\n\n` +
+                `This tiebreaker is used to resolve ties in the ${monthName} challenge standings.\n` +
+                `End time: ${endTimestamp} (${endRelative})\n\n` +
+                `*Note: Only users ranked 999 or lower in the global leaderboard are shown.*`,
+                {
+                    color: '#9B59B6', // Purple color for tiebreaker
+                    thumbnail: thumbnailUrl,
+                    url: leaderboardUrl,
+                    footer: { text: `Data from RetroAchievements.org` }
+                }
+            );
+            
+            // Add tied users field if available
+            if (tiedUsernames.length > 0) {
+                embed.addFields({ 
+                    name: 'Tied Users', 
+                    value: tiedUsernames.join(', ') 
+                });
+            }
+            
+            // Create leaderboard field
+            if (filteredEntries.length > 0) {
+                // Display top 10 entries
+                const displayEntries = filteredEntries.slice(0, 10);
+                let leaderboardText = '';
+                
+                displayEntries.forEach((entry, index) => {
+                    const displayRank = index + 1;
+                    const medalEmoji = displayRank <= 3 ? EMOJIS[`RANK_${displayRank}`] : `${displayRank}.`;
+                    
+                    // Add special indicator for tied users
+                    const tiedIndicator = entry.isTiedUser ? ' 🔄' : '';
+                    
+                    leaderboardText += `${medalEmoji} **${entry.username}${tiedIndicator}**: ${entry.score} (Global Rank: #${entry.apiRank})\n`;
+                });
+                
+                if (tiedUsernames.length > 0) {
+                    leaderboardText += '\n🔄 = User involved in tiebreaker';
+                }
+                
+                embed.addFields({ name: 'Current Standings', value: leaderboardText });
+                
+                // Add total participants count
+                embed.addFields({ 
+                    name: 'Participants', 
+                    value: `${filteredEntries.length} registered members participating in this tiebreaker`
+                });
+            } else {
+                embed.addFields({ name: 'No Participants', value: 'No registered users have submitted scores for this tiebreaker yet.' });
+            }
+            
+            // Use our base class updateMessage method
+            this.tiebreakerMessageId = await this.updateMessage(
+                `tiebreaker_${tiebreaker.boardId}`, 
+                { embeds: [embed] }
+            );
+        } catch (error) {
+            console.error(`Error creating tiebreaker embed for ${tiebreaker.gameTitle}:`, error);
+        }
+    }
+
+    async createOrUpdateArcadeBoard(board) {
         try {
             const channel = await this.getChannel();
             if (!channel) return;
@@ -232,7 +371,7 @@ class ArcadeFeedService extends FeedManagerBase {
                 `${EMOJIS.ARCADE} ${board.gameTitle}`,
                 `${board.description || 'Arcade Leaderboard'}\n\n*Note: Only users ranked 999 or lower in the global leaderboard are shown.*`,
                 {
-                    color: COLORS.PRIMARY, // Use blue for arcade boards
+                    color: COLORS.PRIMARY, // Blue for arcade boards
                     thumbnail: thumbnailUrl,
                     url: leaderboardUrl,
                     footer: { 
@@ -288,223 +427,6 @@ class ArcadeFeedService extends FeedManagerBase {
         } catch (error) {
             console.error(`Error creating arcade board embed for ${board.gameTitle}:`, error);
             return [];
-        }
-    }
-
-    /**
-     * Create or update the open challenge feed for a specific challenge
-     * @param {Object} challenge - The open challenge data from ArcadeBoard
-     * @returns {Promise<void>}
-     */
-    async createOrUpdateOpenChallengeFeed(challenge) {
-        try {
-            const channel = await this.getChannel();
-            if (!channel) return;
-            
-            // Get all registered users
-            const users = await User.find({});
-            
-            // Create mapping of RA usernames (lowercase) to canonical usernames
-            const registeredUsers = new Map();
-            for (const user of users) {
-                if (user.raUsername) { // Add null check
-                    registeredUsers.set(user.raUsername.toLowerCase(), user.raUsername);
-                }
-            }
-            
-            // Get leaderboard entries using our utility
-            const rawEntries = await RetroAPIUtils.getLeaderboardEntries(challenge.leaderboardId, 1000);
-            
-            // Process participants and their scores
-            const participantScores = new Map();
-            let challengerScore = {
-                exists: false,
-                formattedScore: 'No score yet',
-                rank: null
-            };
-            
-            // Filter entries to include registered users
-            const filteredEntries = [];
-            
-            for (const entry of rawEntries) {
-                const username = entry.User || '';
-                if (!username) continue;
-                
-                const lowerUsername = username.toLowerCase().trim();
-                
-                // Check if this is the challenger or a participant
-                const isChallenger = challenge.challengerUsername && 
-                                    lowerUsername === challenge.challengerUsername.toLowerCase();
-                                    
-                let isParticipant = false;
-                
-                if (challenge.participants && challenge.participants.length > 0) {
-                    isParticipant = challenge.participants.some(p => 
-                        p.username && p.username.toLowerCase() === lowerUsername
-                    );
-                }
-                
-                // Only include challenger, participants, and other registered users
-                if (isChallenger || isParticipant || registeredUsers.has(lowerUsername)) {
-                    const scoreInfo = {
-                        exists: true,
-                        formattedScore: entry.FormattedScore || entry.Score?.toString() || '0',
-                        rank: entry.Rank,
-                        value: parseFloat(entry.Score) || 0
-                    };
-                    
-                    // Save challenger and participant scores separately
-                    if (isChallenger) {
-                        challengerScore = scoreInfo;
-                    }
-                    
-                    if (isParticipant) {
-                        participantScores.set(lowerUsername, scoreInfo);
-                    }
-                    
-                    // Add to filtered entries for display
-                    filteredEntries.push({
-                        apiRank: entry.Rank,
-                        username: username,
-                        score: entry.FormattedScore || entry.Score?.toString() || '0',
-                        isChallenger,
-                        isParticipant
-                    });
-                }
-            }
-            
-            // Sort by API rank 
-            filteredEntries.sort((a, b) => a.apiRank - b.apiRank);
-            
-            // Create clickable link to RetroAchievements leaderboard
-            const leaderboardUrl = `https://retroachievements.org/leaderboardinfo.php?i=${challenge.leaderboardId}`;
-            
-            // Get game info for thumbnail
-            let thumbnailUrl = null;
-            try {
-                const gameInfo = await RetroAPIUtils.getGameInfo(challenge.gameId);
-                if (gameInfo?.imageIcon) {
-                    thumbnailUrl = `https://retroachievements.org${gameInfo.imageIcon}`;
-                }
-            } catch (error) {
-                console.error(`Error fetching game info for challenge ${challenge.boardId}:`, error);
-            }
-            
-            // Calculate time remaining
-            const now = new Date();
-            const endDate = new Date(challenge.endDate);
-            const timeLeft = this.formatTimeRemaining(endDate);
-            
-            // Create embed
-            const embed = new EmbedBuilder()
-                .setColor(COLORS.WARNING) // Use yellow/orange for open challenges
-                .setTitle(`${EMOJIS.ARCADE} Open Challenge: ${challenge.gameTitle}`)
-                .setDescription(`**Creator:** ${challenge.challengerUsername} | [View Leaderboard](${leaderboardUrl})`)
-                .setTimestamp();
-            
-            if (thumbnailUrl) {
-                embed.setThumbnail(thumbnailUrl);
-            }
-            
-            // Add description if available
-            if (challenge.description) {
-                embed.addFields({ name: 'Challenge', value: challenge.description });
-            }
-            
-            // Add challenge details
-            const participantCount = (challenge.participants?.length || 0) + 1; // +1 for creator
-            
-            embed.addFields({
-                name: 'Details', 
-                value: `**Status:** Open Challenge\n` +
-                       `**Ends:** ${timeLeft}\n` +
-                       `**Participants:** ${participantCount} registered`
-            });
-            
-            // Sort participants for display: challenger first, then by rank
-            const allParticipants = [];
-            
-            // Add challenger with rank
-            if (challenge.challengerUsername) {
-                allParticipants.push({
-                    username: challenge.challengerUsername,
-                    isCreator: true,
-                    score: challengerScore.formattedScore,
-                    rank: challengerScore.rank || 999999,
-                    exists: challengerScore.exists
-                });
-            }
-            
-            // Add each participant
-            if (challenge.participants && challenge.participants.length > 0) {
-                challenge.participants.forEach(participant => {
-                    if (!participant || !participant.username) return; // Skip invalid participants
-                    
-                    const scoreInfo = participantScores.get(participant.username.toLowerCase());
-                    const score = scoreInfo?.formattedScore || 'No score yet';
-                    const rank = scoreInfo?.rank || 999999;
-                    
-                    allParticipants.push({
-                        username: participant.username,
-                        isCreator: false,
-                        score: score,
-                        rank: rank,
-                        exists: !!scoreInfo?.exists
-                    });
-                });
-            }
-            
-            // Sort participants by rank
-            allParticipants.sort((a, b) => {
-                // Put participants with scores first
-                if (a.exists && !b.exists) return -1;
-                if (!a.exists && b.exists) return 1;
-                
-                // If both have scores, sort by rank
-                if (a.exists && b.exists) {
-                    return a.rank - b.rank; // Lower rank is better
-                }
-                
-                // Default to creator first
-                return a.isCreator ? -1 : b.isCreator ? 1 : 0;
-            });
-            
-            // Create standings field
-            let participantsText = '';
-            
-            allParticipants.forEach((participant, index) => {
-                if (participant.exists) {
-                    // Add crown emoji for the top position
-                    const prefixEmoji = index === 0 ? `${EMOJIS.CROWN} ` : '';
-                    const creatorTag = participant.isCreator ? ' (Creator)' : '';
-                    const rankDisplay = participant.rank < 999999 ? ` (Rank: #${participant.rank})` : '';
-                    
-                    participantsText += `${prefixEmoji}**${participant.username}${creatorTag}**: ${participant.score}${rankDisplay}\n`;
-                } else {
-                    const creatorTag = participant.isCreator ? ' (Creator)' : '';
-                    participantsText += `• **${participant.username}${creatorTag}**: ${participant.score}\n`;
-                }
-            });
-            
-            if (participantsText) {
-                embed.addFields({
-                    name: 'Current Standings', 
-                    value: participantsText
-                });
-            } else {
-                embed.addFields({
-                    name: 'Current Standings',
-                    value: 'No participants have scores yet.'
-                });
-            }
-            
-            // Use our base class updateMessage method
-            await this.updateMessage(
-                `open_challenge_${challenge.boardId}`, 
-                { embeds: [embed] }
-            );
-        } catch (error) {
-            console.error(`Error creating open challenge embed for ${challenge?.gameTitle || 'unknown game'}:`, error);
         }
     }
 
@@ -679,7 +601,7 @@ class ArcadeFeedService extends FeedManagerBase {
                 `*These are theoretical points based on current standings and don't include other point sources. Final arcade points will be awarded in December.*\n\n` +
                 `Points scale: ${EMOJIS.RANK_1} 1st Place = 3 points | ${EMOJIS.RANK_2} 2nd Place = 2 points | ${EMOJIS.RANK_3} 3rd Place = 1 point\n\n` +
                 `**Last Updated:** ${timestamp} | **Updates:** Every hour\n\n` +
-                `*Use the </yearlyboard:1234567890> command to see complete point standings.*`,
+                `*Use the </arcade:1234567890> command to see detailed leaderboards.*`,
                 {
                     color: COLORS.WARNING, // Use yellow for summary
                     footer: { 
@@ -792,7 +714,7 @@ class ArcadeFeedService extends FeedManagerBase {
 
     /**
      * Format time remaining in a human-readable format
-     * (Added this helper method to avoid dependency on FeedUtils)
+     * (Helper method to avoid dependency on FeedUtils)
      */
     formatTimeRemaining(endDate) {
         if (!endDate) return 'Unknown';
