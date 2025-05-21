@@ -590,7 +590,7 @@ class LeaderboardFeedService extends FeedManagerBase {
             }
             
             // Create participant embeds (paginated)
-            const USERS_PER_PAGE = 10; // Show more users per page than in the command
+            const USERS_PER_PAGE = 5; // Reduced to stay within Discord's field character limits
             const yearlyParticipantEmbeds = [];
             const totalPages = Math.ceil(userPoints.length / USERS_PER_PAGE);
             
@@ -612,10 +612,10 @@ class LeaderboardFeedService extends FeedManagerBase {
                     }
                 );
                 
-                // Format leaderboard text for this page in a more compact way than the command
-                let leaderboardText = '';
-                
-                for (const user of usersOnPage) {
+                // Add users individually to avoid field length limits
+                for (let i = 0; i < usersOnPage.length; i++) {
+                    const user = usersOnPage[i];
+                    
                     // Get rank emoji
                     const rankEmoji = user.displayRank <= 3 ? EMOJIS[`RANK_${user.displayRank}`] : `#${user.displayRank}`;
                     
@@ -626,16 +626,17 @@ class LeaderboardFeedService extends FeedManagerBase {
                     const sb = user.stats.shadowBeaten;
                     const sp = user.stats.shadowParticipation;
                     
-                    // Add the main user entry to leaderboard
-                    leaderboardText += `${rankEmoji} **[${user.username}](https://retroachievements.org/user/${user.username})** - ${user.totalPoints} pts\n`;
-                    leaderboardText += `Challenges: ${user.challengePoints} pts | Community: ${user.communityPoints} pts\n`;
-                    leaderboardText += `Reg: ${m}✨ ${b}⭐ ${p}🏁 | Shadow: ${sb}⭐ ${sp}🏁\n\n`;
+                    // Format user stats
+                    const userStatsText = 
+                        `Challenges: ${user.challengePoints} pts | Community: ${user.communityPoints} pts\n` +
+                        `Reg: ${m}✨ ${b}⭐ ${p}🏁 | Shadow: ${sb}⭐ ${sp}🏁`;
+                    
+                    // Add each user as a separate field to avoid length limits
+                    participantEmbed.addFields({
+                        name: `${rankEmoji} ${user.username} - ${user.totalPoints} pts`,
+                        value: userStatsText
+                    });
                 }
-                
-                participantEmbed.addFields({
-                    name: `Rankings ${startIndex + 1}-${endIndex}`,
-                    value: leaderboardText || 'No rankings available.'
-                });
                 
                 // Add point system explanation to each page
                 participantEmbed.addFields({
