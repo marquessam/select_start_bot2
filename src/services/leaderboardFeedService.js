@@ -1,135 +1,47 @@
 // src/services/leaderboardFeedService.js
-import { EmbedBuilder } from 'discord.js';
 import { User } from '../models/User.js';
 import { Challenge } from '../models/Challenge.js';
 import { ArcadeBoard } from '../models/ArcadeBoard.js';
-import retroAPI from './retroAPI.js';
 import { config } from '../config/config.js';
+import { FeedManagerBase } from '../utils/FeedManagerBase.js';
+import { COLORS, EMOJIS, createHeaderEmbed, getDiscordTimestamp } from '../utils/FeedUtils.js';
+import RetroAPIUtils from '../utils/RetroAPIUtils.js';
+import AlertUtils from '../utils/AlertUtils.js';
 
-const UPDATE_INTERVAL = 15 * 60 * 1000; // 15 minutes in milliseconds
+const UPDATE_INTERVAL = 15 * 60 * 1000; // 15 minutes
 
-// Constants copied from leaderboard.js
+// Constants for awards and ranks - now using shared EMOJIS
 const AWARD_EMOJIS = {
-    MASTERY: '✨',
-    BEATEN: '⭐',
-    PARTICIPATION: '🏁'
+    MASTERY: EMOJIS.MASTERY,
+    BEATEN: EMOJIS.BEATEN,
+    PARTICIPATION: EMOJIS.PARTICIPATION
 };
 
-const RANK_EMOJIS = {
-    1: '🥇',
-    2: '🥈',
-    3: '🥉'
-};
-
-const TIEBREAKER_EMOJI = '⚔️'; // Emoji to indicate tiebreaker status
 const USERS_PER_EMBED = 10; // Number of users to display per embed
 
-class LeaderboardFeedService {
+class LeaderboardFeedService extends FeedManagerBase {
     constructor() {
-        this.client = null;
-        this.lastMessageIds = []; // Store all message IDs for updating
-        this.channelId = config.discord.leaderboardFeedChannelId || '1371350718505811989'; // Use provided channel ID as fallback
-        this.alertsChannelId = config.discord.rankAlertsChannelId || this.channelId;  // Channel for rank change alerts
-        this.updateInterval = null;
-        this.previousTopRanks = new Map(); // Store previous top positions for detecting changes
-    }
-
-    setClient(client) {
-        this.client = client;
-        console.log('Discord client set for leaderboard feed service');
+        super(null, config.discord.leaderboardFeedChannelId || '1371350718505811989');
+        this.alertsChannelId = config.discord.rankAlertsChannelId || this.channelId;
+        this.previousTopRanks = new Map(); // Store previous top positions
+        
+        // Set the alerts channel for notifications
+        AlertUtils.setAlertsChannel(this.alertsChannelId);
     }
 
     async start() {
-        if (!this.client) {
-            console.error('Discord client not set for leaderboard feed service');
-            return;
-        }
-
-        try {
-            console.log('Starting leaderboard feed service...');
-            
-            // Clear the channel first
-            await this.clearChannel();
-            
-            // Initial update
-            await this.updateLeaderboard();
-            
-            // Set up recurring updates
-            this.updateInterval = setInterval(() => {
-                this.updateLeaderboard().catch(error => {
-                    console.error('Error updating leaderboard feed:', error);
-                });
-            }, UPDATE_INTERVAL);
-            
-            console.log(`Leaderboard feed service started. Updates will occur every ${UPDATE_INTERVAL / 60000} minutes.`);
-        } catch (error) {
-            console.error('Error starting leaderboard feed service:', error);
-        }
+        // Call the parent class's start method with our interval
+        await super.start(UPDATE_INTERVAL);
     }
 
-    stop() {
-        if (this.updateInterval) {
-            clearInterval(this.updateInterval);
-            this.updateInterval = null;
-            console.log('Leaderboard feed service stopped.');
-        }
-    }
-
-    async clearChannel() {
-        try {
-            const channel = await this.getLeaderboardChannel();
-            if (!channel) {
-                console.error('Leaderboard feed channel not found or inaccessible');
-                return;
-            }
-            
-            console.log(`Clearing all messages in leaderboard feed channel (ID: ${this.channelId})...`);
-            
-            // Fetch messages in batches (Discord API limitation)
-            let messagesDeleted = 0;
-            let messages;
-            
-            do {
-                messages = await channel.messages.fetch({ limit: 100 });
-                if (messages.size > 0) {
-                    // Use bulk delete for messages less than 14 days old
-                    try {
-                        await channel.bulkDelete(messages);
-                        messagesDeleted += messages.size;
-                        console.log(`Bulk deleted ${messages.size} messages`);
-                    } catch (bulkError) {
-                        // If bulk delete fails (messages older than 14 days), delete one by one
-                        console.log(`Bulk delete failed, falling back to individual deletion: ${bulkError.message}`);
-                        for (const [id, message] of messages) {
-                            try {
-                                await message.delete();
-                                messagesDeleted++;
-                            } catch (deleteError) {
-                                console.error(`Error deleting message ${id}:`, deleteError.message);
-                            }
-                            
-                            // Add a small delay to avoid rate limits
-                            await new Promise(resolve => setTimeout(resolve, 500));
-                        }
-                    }
-                }
-            } while (messages.size >= 100); // Keep fetching until no more messages
-            
-            console.log(`Cleared ${messagesDeleted} messages from leaderboard feed channel`);
-            
-            // Reset state since we've cleared the channel
-            this.lastMessageIds = [];
-            
-            return true;
-        } catch (error) {
-            console.error('Error clearing leaderboard channel:', error);
-            return false;
-        }
+    // Override the update method from base class
+    async update() {
+        await this.updateLeaderboard();
     }
 
     async updateLeaderboard() {
         try {
-            const channel = await this.getLeaderboardChannel();
+            const channel = await this.getChannel();
             if (!channel) {
                 console.error('Leaderboard feed channel not found or inaccessible');
                 return;
@@ -147,10 +59,10 @@ class LeaderboardFeedService {
                 await this.checkForRankChanges(sortedUsers);
             }
 
-            // Get current Unix timestamp for Discord formatting
-            const unixTimestamp = Math.floor(Date.now() / 1000);
+            // Format timestamp using our utility
+            const timestamp = getDiscordTimestamp(new Date());
             
-            const headerContent = `**Monthly Challenge Leaderboard** • <t:${unixTimestamp}:f> • Updates every 15 minutes`;
+            const headerContent = `**Monthly Challenge Leaderboard** • ${timestamp} • Updates every 15 minutes`;
 
             // Calculate how many messages we need (1 for header + enough for all participant embeds)
             const totalMessagesNeeded = 1 + participantEmbeds.length;
@@ -173,61 +85,41 @@ class LeaderboardFeedService {
             }
 
             // Check if we need to update or create new messages
-            if (this.lastMessageIds.length === totalMessagesNeeded) {
+            if (this.messageIds.size === totalMessagesNeeded) {
                 // Update existing messages
                 try {
                     // Update header message
-                    const headerMessage = await channel.messages.fetch(this.lastMessageIds[0]);
-                    await headerMessage.edit({ content: headerContent, embeds: [headerEmbed] });
-                    console.log(`Header message updated (ID: ${this.lastMessageIds[0]})`);
+                    await this.updateMessage('header', { content: headerContent, embeds: [headerEmbed] }, true);
                     
                     // Update participant messages
                     for (let i = 0; i < participantEmbeds.length; i++) {
-                        const messageId = this.lastMessageIds[i + 1];
-                        const message = await channel.messages.fetch(messageId);
-                        await message.edit({ content: '', embeds: [participantEmbeds[i]] });
-                        console.log(`Participant message ${i+1} updated (ID: ${messageId})`);
+                        await this.updateMessage(
+                            `participants_${i}`, 
+                            { content: '', embeds: [participantEmbeds[i]] }
+                        );
                     }
-                } catch (editError) {
-                    console.log(`Could not edit leaderboard messages: ${editError.message}`);
-                    console.log('Recreating all leaderboard messages...');
-                    // If editing fails, recreate all messages
-                    this.lastMessageIds = [];
+                } catch (error) {
+                    console.error('Error updating leaderboard messages:', error);
+                    // If update fails, recreate all messages
+                    this.messageIds.clear();
                 }
             } 
             
-            // If message count doesn't match or we failed to edit, recreate all messages
-            if (this.lastMessageIds.length !== totalMessagesNeeded) {
+            // If message count doesn't match or we failed to update, recreate all messages
+            if (this.messageIds.size !== totalMessagesNeeded) {
                 // Delete any existing messages first
-                await this.deleteExistingMessages(channel);
+                await this.clearChannel();
                 
                 // Create new messages
-                this.lastMessageIds = [];
-                
                 // Create header message
-                const headerMessage = await channel.send({ content: headerContent, embeds: [headerEmbed] });
-                this.lastMessageIds.push(headerMessage.id);
-                console.log(`New header message posted (ID: ${headerMessage.id})`);
+                await this.updateHeader({ content: headerContent, embeds: [headerEmbed] });
                 
                 // Create participant messages
-                for (const embed of participantEmbeds) {
-                    const message = await channel.send({ content: '', embeds: [embed] });
-                    this.lastMessageIds.push(message.id);
-                    console.log(`New participant message posted (ID: ${message.id})`);
-                }
-                
-                // Try to pin the header message (unpinning old ones if needed)
-                try {
-                    const pinnedMessages = await channel.messages.fetchPinned();
-                    if (pinnedMessages.size >= 50) {
-                        // Unpin oldest if limit reached
-                        const oldestPinned = pinnedMessages.last();
-                        await oldestPinned.unpin();
-                    }
-                    await headerMessage.pin();
-                    console.log(`Pinned header message (ID: ${headerMessage.id})`);
-                } catch (pinError) {
-                    console.error(`Error pinning message: ${pinError.message}`);
+                for (let i = 0; i < participantEmbeds.length; i++) {
+                    await this.updateMessage(
+                        `participants_${i}`, 
+                        { content: '', embeds: [participantEmbeds[i]] }
+                    );
                 }
             }
         } catch (error) {
@@ -235,76 +127,7 @@ class LeaderboardFeedService {
         }
     }
 
-    // Delete all existing leaderboard messages in the channel
-    async deleteExistingMessages(channel) {
-        if (this.lastMessageIds.length === 0) return;
-        
-        for (const messageId of this.lastMessageIds) {
-            try {
-                const message = await channel.messages.fetch(messageId);
-                await message.delete();
-                console.log(`Deleted message ID: ${messageId}`);
-            } catch (error) {
-                console.log(`Could not delete message ${messageId}: ${error.message}`);
-            }
-        }
-        
-        this.lastMessageIds = [];
-    }
-
-    async getLeaderboardChannel() {
-        if (!this.client) {
-            console.error('Discord client not set');
-            return null;
-        }
-
-        try {
-            // Get the guild
-            const guildId = config.discord.guildId;
-            const guild = await this.client.guilds.fetch(guildId);
-            
-            if (!guild) {
-                console.error(`Guild not found: ${guildId}`);
-                return null;
-            }
-
-            // Get the channel
-            const channel = await guild.channels.fetch(this.channelId);
-            
-            if (!channel) {
-                console.error(`Channel not found: ${this.channelId}`);
-                return null;
-            }
-            
-            return channel;
-        } catch (error) {
-            console.error('Error getting leaderboard channel:', error);
-            return null;
-        }
-    }
-
-    // Get the alerts channel
-    async getAlertsChannel() {
-        if (!this.client || !this.alertsChannelId) {
-            return null;
-        }
-
-        try {
-            const guildId = config.discord.guildId;
-            const guild = await this.client.guilds.fetch(guildId);
-            
-            if (!guild) {
-                return null;
-            }
-
-            return await guild.channels.fetch(this.alertsChannelId);
-        } catch (error) {
-            console.error('Error getting alerts channel:', error);
-            return null;
-        }
-    }
-
-    // Helper function to check if date is in current month (copied from leaderboard.js)
+    // Helper function to check if date is in current month
     isDateInCurrentMonth(dateString) {
         // Parse the input date string more reliably
         const inputDate = new Date(dateString);
@@ -337,7 +160,7 @@ class LeaderboardFeedService {
         return isCurrentMonth || isLastDayOfPrevMonth;
     }
 
-    // Helper function to get month key from date (copied from leaderboard.js)
+    // Helper function to get month key from date
     getMonthKey(date) {
         const year = date.getFullYear();
         const month = (date.getMonth() + 1).toString().padStart(2, '0');
@@ -364,14 +187,14 @@ class LeaderboardFeedService {
                 return { headerEmbed: null, participantEmbeds: null, sortedUsers: null };
             }
 
-            // Get game info - use stored metadata if available
+            // Get game info using RetroAPIUtils
             let gameTitle = currentChallenge.monthly_game_title;
             let gameImageUrl = currentChallenge.monthly_game_icon_url;
             let gameInfo;
 
             if (!gameTitle || !gameImageUrl) {
                 try {
-                    gameInfo = await retroAPI.getGameInfo(currentChallenge.monthly_challange_gameid);
+                    gameInfo = await RetroAPIUtils.getGameInfo(currentChallenge.monthly_challange_gameid);
                     gameTitle = gameInfo.title;
                     gameImageUrl = gameInfo.imageIcon;
                     
@@ -396,87 +219,92 @@ class LeaderboardFeedService {
             // Get all registered users
             const users = await User.find({});
 
-            // Get progress for all users (reusing code from leaderboard.js)
+            // Get progress for all users
             const userProgress = await Promise.all(users.map(async (user) => {
-                const progress = await retroAPI.getUserGameProgress(
-                    user.raUsername,
-                    currentChallenge.monthly_challange_gameid
-                );
+                try {
+                    // Use RetroAPIUtils for caching
+                    const progress = await RetroAPIUtils.getUserGameProgress(
+                        user.raUsername,
+                        currentChallenge.monthly_challange_gameid
+                    );
 
-                // Only include users who have at least started the game
-                if (progress.numAwardedToUser > 0) {
-                    // EXACTLY MATCHING PROFILE.JS LOGIC FOR CALCULATING ACHIEVEMENTS
-                    // Get achievements earned during this month (including grace period)
-                    const achievementsEarnedThisMonth = Object.entries(progress.achievements)
-                        .filter(([id, data]) => data.hasOwnProperty('dateEarned') && this.isDateInCurrentMonth(data.dateEarned))
-                        .map(([id, data]) => id);
-                    
-                    // If no achievements were earned this month, skip this user
-                    if (achievementsEarnedThisMonth.length === 0) {
-                        return null;
-                    }
-
-                    // Check if user has all achievements in the game
-                    const hasAllAchievements = achievementsEarnedThisMonth.length === currentChallenge.monthly_challange_game_total;
-
-                    let award = '';
-                    let points = 0;
-
-                    // To get mastery points this month, user must have earned at least one achievement this month
-                    // AND have the game 100% completed now
-                    if (achievementsEarnedThisMonth.length > 0 && hasAllAchievements) {
-                        award = AWARD_EMOJIS.MASTERY;
-                        points = 7;
-                    } 
-                    // For beaten status, check progression and win achievements
-                    else {
-                        // Check for progression achievements earned this month
-                        const progressionAchievements = currentChallenge.monthly_challange_progression_achievements || [];
-                        const earnedProgressionInMonth = progressionAchievements.filter(id => 
-                            achievementsEarnedThisMonth.includes(id)
-                        );
+                    // Only include users who have at least started the game
+                    if (progress.numAwardedToUser > 0) {
+                        // EXACTLY MATCHING PROFILE.JS LOGIC FOR CALCULATING ACHIEVEMENTS
+                        // Get achievements earned during this month (including grace period)
+                        const achievementsEarnedThisMonth = Object.entries(progress.achievements)
+                            .filter(([id, data]) => data.hasOwnProperty('dateEarned') && this.isDateInCurrentMonth(data.dateEarned))
+                            .map(([id, data]) => id);
                         
-                        // Check for win achievements earned this month
-                        const winAchievements = currentChallenge.monthly_challange_win_achievements || [];
-                        const earnedWinInMonth = winAchievements.filter(id => 
-                            achievementsEarnedThisMonth.includes(id)
-                        );
-                        
-                        // Count total valid progression achievements
-                        const totalValidProgressionAchievements = progressionAchievements.filter(id => 
-                            achievementsEarnedThisMonth.includes(id)
-                        );
-                        
-                        // Count total valid win achievements
-                        const totalValidWinAchievements = winAchievements.filter(id => 
-                            achievementsEarnedThisMonth.includes(id)
-                        );
-
-                        // For beaten status, the user must have all progression achievements AND at least one win achievement (if any required)
-                        // AND at least one of those achievements must have been earned this month
-                        if (totalValidProgressionAchievements.length === progressionAchievements.length && 
-                            (winAchievements.length === 0 || totalValidWinAchievements.length > 0) &&
-                            (earnedProgressionInMonth.length > 0 || earnedWinInMonth.length > 0)) {
-                            award = AWARD_EMOJIS.BEATEN;
-                            points = 4;
+                        // If no achievements were earned this month, skip this user
+                        if (achievementsEarnedThisMonth.length === 0) {
+                            return null;
                         }
-                        // For participation, at least one achievement must be earned this month
-                        else if (achievementsEarnedThisMonth.length > 0) {
-                            award = AWARD_EMOJIS.PARTICIPATION;
-                            points = 1;
-                        }
-                    }
 
-                    return {
-                        user,
-                        username: user.raUsername,
-                        discordId: user.discordId,
-                        achieved: achievementsEarnedThisMonth.length,
-                        percentage: (achievementsEarnedThisMonth.length / currentChallenge.monthly_challange_game_total * 100).toFixed(2),
-                        award,
-                        points,
-                        earnedThisMonth: achievementsEarnedThisMonth.length
-                    };
+                        // Check if user has all achievements in the game
+                        const hasAllAchievements = achievementsEarnedThisMonth.length === currentChallenge.monthly_challange_game_total;
+
+                        let award = '';
+                        let points = 0;
+
+                        // To get mastery points this month, user must have earned at least one achievement this month
+                        // AND have the game 100% completed now
+                        if (achievementsEarnedThisMonth.length > 0 && hasAllAchievements) {
+                            award = AWARD_EMOJIS.MASTERY;
+                            points = 7;
+                        } 
+                        // For beaten status, check progression and win achievements
+                        else {
+                            // Check for progression achievements earned this month
+                            const progressionAchievements = currentChallenge.monthly_challange_progression_achievements || [];
+                            const earnedProgressionInMonth = progressionAchievements.filter(id => 
+                                achievementsEarnedThisMonth.includes(id)
+                            );
+                            
+                            // Check for win achievements earned this month
+                            const winAchievements = currentChallenge.monthly_challange_win_achievements || [];
+                            const earnedWinInMonth = winAchievements.filter(id => 
+                                achievementsEarnedThisMonth.includes(id)
+                            );
+                            
+                            // Count total valid progression achievements
+                            const totalValidProgressionAchievements = progressionAchievements.filter(id => 
+                                achievementsEarnedThisMonth.includes(id)
+                            );
+                            
+                            // Count total valid win achievements
+                            const totalValidWinAchievements = winAchievements.filter(id => 
+                                achievementsEarnedThisMonth.includes(id)
+                            );
+
+                            // For beaten status, the user must have all progression achievements AND at least one win achievement (if any required)
+                            // AND at least one of those achievements must have been earned this month
+                            if (totalValidProgressionAchievements.length === progressionAchievements.length && 
+                                (winAchievements.length === 0 || totalValidWinAchievements.length > 0) &&
+                                (earnedProgressionInMonth.length > 0 || earnedWinInMonth.length > 0)) {
+                                award = AWARD_EMOJIS.BEATEN;
+                                points = 4;
+                            }
+                            // For participation, at least one achievement must be earned this month
+                            else if (achievementsEarnedThisMonth.length > 0) {
+                                award = AWARD_EMOJIS.PARTICIPATION;
+                                points = 1;
+                            }
+                        }
+
+                        return {
+                            user,
+                            username: user.raUsername,
+                            discordId: user.discordId,
+                            achieved: achievementsEarnedThisMonth.length,
+                            percentage: (achievementsEarnedThisMonth.length / currentChallenge.monthly_challange_game_total * 100).toFixed(2),
+                            award,
+                            points,
+                            earnedThisMonth: achievementsEarnedThisMonth.length
+                        };
+                    }
+                } catch (error) {
+                    console.error(`Error processing user progress for ${user.raUsername}:`, error);
                 }
                 return null;
             }));
@@ -514,46 +342,9 @@ class LeaderboardFeedService {
             let tiebreakerEntries = [];
             if (activeTiebreaker) {
                 try {
-                    // Fetch multiple batches of leaderboard entries
-                    const batch1 = await retroAPI.getLeaderboardEntriesDirect(activeTiebreaker.leaderboardId, 0, 500);
-                    const batch2 = await retroAPI.getLeaderboardEntriesDirect(activeTiebreaker.leaderboardId, 500, 500);
-                    
-                    // Combine the batches
-                    let rawEntries = [];
-                    
-                    // Process first batch
-                    if (batch1) {
-                        if (Array.isArray(batch1)) {
-                            rawEntries = [...rawEntries, ...batch1];
-                        } else if (batch1.Results && Array.isArray(batch1.Results)) {
-                            rawEntries = [...rawEntries, ...batch1.Results];
-                        }
-                    }
-                    
-                    // Process second batch
-                    if (batch2) {
-                        if (Array.isArray(batch2)) {
-                            rawEntries = [...rawEntries, ...batch2];
-                        } else if (batch2.Results && Array.isArray(batch2.Results)) {
-                            rawEntries = [...rawEntries, ...batch2.Results];
-                        }
-                    }
-                    
-                    console.log(`Total tiebreaker entries fetched: ${rawEntries.length}`);
-                    
-                    // Process tiebreaker entries
-                    tiebreakerEntries = rawEntries.map(entry => {
-                        const user = entry.User || entry.user || '';
-                        const score = entry.Score || entry.score || entry.Value || entry.value || 0;
-                        const formattedScore = entry.FormattedScore || entry.formattedScore || entry.ScoreFormatted || score.toString();
-                        const rank = entry.Rank || entry.rank || 0;
-                        
-                        return {
-                            username: user.trim().toLowerCase(),
-                            score: formattedScore,
-                            apiRank: parseInt(rank, 10)
-                        };
-                    });
+                    // Use RetroAPIUtils to fetch leaderboard entries
+                    tiebreakerEntries = await RetroAPIUtils.getLeaderboardEntries(activeTiebreaker.leaderboardId, 1000);
+                    console.log(`Total tiebreaker entries fetched: ${tiebreakerEntries.length}`);
                 } catch (error) {
                     console.error('Error fetching tiebreaker leaderboard:', error);
                 }
@@ -565,47 +356,46 @@ class LeaderboardFeedService {
             // Get month name for the title
             const monthName = now.toLocaleString('default', { month: 'long' });
             
-            // Calculate challenge end date and time remaining
+            // Calculate challenge end date and time remaining using getDiscordTimestamp
             const challengeEndDate = new Date(nextMonthStart);
             challengeEndDate.setDate(challengeEndDate.getDate() - 1); // Last day of current month
             challengeEndDate.setHours(23, 59, 59);  // Set to 11:59 PM
             
-            // Convert to UNIX timestamp for Discord formatting
-            const endDateTimestamp = Math.floor(challengeEndDate.getTime() / 1000);
-            
-            // Format the end date for display (using Discord timestamps)
-            const endDateFormatted = `<t:${endDateTimestamp}:F>`;
-            
-            // Use Discord's relative time format
-            const timeRemaining = `<t:${endDateTimestamp}:R>`;
+            // Format dates using Discord timestamps
+            const endDateFormatted = getDiscordTimestamp(challengeEndDate, 'F');
+            const timeRemaining = getDiscordTimestamp(challengeEndDate, 'R');
+            const updateTimestamp = getDiscordTimestamp(new Date());
 
-            // Get current Unix timestamp for Discord formatting
-            const updateTimestamp = Math.floor(Date.now() / 1000);
-
-            // Create the header embed
-            const headerEmbed = new EmbedBuilder()
-                .setTitle(`${monthName} Challenge Leaderboard`)
-                .setColor('#FFD700')
-                .setThumbnail(`https://retroachievements.org${gameImageUrl}`);
-
-            // Add game details to description with update frequency
-            let description = `**Game:** [${gameTitle}](https://retroachievements.org/game/${currentChallenge.monthly_challange_gameid})\n` +
-                            `**Total Achievements:** ${currentChallenge.monthly_challange_game_total}\n` +
-                            `**Challenge Ends:** ${endDateFormatted}\n` +
-                            `**Time Remaining:** ${timeRemaining}\n` +
-                            `**Last Updated:** <t:${updateTimestamp}:f>\n\n` +
-                            `${AWARD_EMOJIS.MASTERY} Mastery (7pts) | ${AWARD_EMOJIS.BEATEN} Beaten (4pts) | ${AWARD_EMOJIS.PARTICIPATION} Part. (1pt)`;
+            // Create the header embed using our utility
+            const headerEmbed = createHeaderEmbed(
+                `${monthName} Challenge Leaderboard`,
+                `**Game:** [${gameTitle}](https://retroachievements.org/game/${currentChallenge.monthly_challange_gameid})\n` +
+                `**Total Achievements:** ${currentChallenge.monthly_challange_game_total}\n` +
+                `**Challenge Ends:** ${endDateFormatted}\n` +
+                `**Time Remaining:** ${timeRemaining}\n` +
+                `**Last Updated:** ${updateTimestamp}\n\n` +
+                `${AWARD_EMOJIS.MASTERY} Mastery (7pts) | ${AWARD_EMOJIS.BEATEN} Beaten (4pts) | ${AWARD_EMOJIS.PARTICIPATION} Part. (1pt)`,
+                {
+                    color: COLORS.GOLD,
+                    thumbnail: `https://retroachievements.org${gameImageUrl}`
+                }
+            );
 
             // Add tiebreaker info if active
             if (activeTiebreaker) {
-                description += `\n\n${TIEBREAKER_EMOJI} **Active Tiebreaker:** ${activeTiebreaker.gameTitle}\n` +
-                            `*Tiebreaker results are used to determine final ranking for tied users in top positions.*`;
+                headerEmbed.addFields({
+                    name: 'Active Tiebreaker',
+                    value: `⚔️ **${activeTiebreaker.gameTitle}**\n` +
+                           `*Tiebreaker results are used to determine final ranking for tied users in top positions.*`
+                });
             }
             
-            description += `\n\n*Note: Only achievements earned during ${monthName} **in Hardcore Mode** count toward challenge status.*`;
-            description += `\n⚠️ *Save states and rewind features are not allowed. Fast forward is permitted.*`;
-            
-            headerEmbed.setDescription(description);
+            // Add note about hardcore mode
+            headerEmbed.addFields({
+                name: 'Rules',
+                value: `*Note: Only achievements earned during ${monthName} **in Hardcore Mode** count toward challenge status.*\n` +
+                       `⚠️ *Save states and rewind features are not allowed. Fast forward is permitted.*`
+            });
 
             if (workingSorted.length === 0) {
                 headerEmbed.addFields({
@@ -627,19 +417,24 @@ class LeaderboardFeedService {
                 const usersOnPage = workingSorted.slice(startIndex, endIndex);
                 
                 // Create embed for this page
-                const participantEmbed = new EmbedBuilder()
-                    .setColor('#FFD700')
-                    .setFooter({ 
-                        text: `Group ${page + 1}/${totalPages} • Use /help points for more information`, 
-                        iconURL: `https://retroachievements.org${gameImageUrl}`
-                    });
+                const participantEmbed = createHeaderEmbed(
+                    `${monthName} Challenge - Participants (${startIndex + 1}-${endIndex})`,
+                    `This page shows participants ranked ${startIndex + 1} to ${endIndex} out of ${workingSorted.length} total.`,
+                    {
+                        color: COLORS.GOLD,
+                        thumbnail: `https://retroachievements.org${gameImageUrl}`,
+                        footer: { 
+                            text: `Group ${page + 1}/${totalPages} • Use /help points for more information`
+                        }
+                    }
+                );
                 
                 // Format leaderboard text for this page
                 let leaderboardText = '';
                 
                 for (const user of usersOnPage) {
                     // Use the pre-calculated displayRank
-                    const rankEmoji = user.displayRank <= 3 ? RANK_EMOJIS[user.displayRank] : `#${user.displayRank}`;
+                    const rankEmoji = user.displayRank <= 3 ? EMOJIS[`RANK_${user.displayRank}`] : `#${user.displayRank}`;
                     
                     // Add the main user entry to leaderboard with link to profile
                     leaderboardText += `${rankEmoji} **[${user.username}](https://retroachievements.org/user/${user.username})** ${user.award}\n`;
@@ -648,19 +443,15 @@ class LeaderboardFeedService {
                     if (user.hasTiebreaker && user.tiebreakerScore) {
                         // For users with tiebreaker scores, show both regular and tiebreaker stats
                         leaderboardText += `${user.achieved}/${currentChallenge.monthly_challange_game_total} (${user.percentage}%)\n`;
-                        leaderboardText += `${TIEBREAKER_EMOJI} ${user.tiebreakerScore} in ${user.tiebreakerGame}\n\n`;
+                        leaderboardText += `⚔️ ${user.tiebreakerScore} in ${user.tiebreakerGame}\n\n`;
                     } else {
                         // For users without tiebreaker scores, just show regular stats
                         leaderboardText += `${user.achieved}/${currentChallenge.monthly_challange_game_total} (${user.percentage}%)\n\n`;
                     }
                 }
                 
-                const startRank = startIndex + 1;
-                const endRank = endIndex;
-                const rankRange = startRank === endRank ? `#${startRank}` : `#${startRank}-${endRank}`;
-                
                 participantEmbed.addFields({
-                    name: `Rankings ${rankRange} (${workingSorted.length} total participants)`,
+                    name: `Rankings ${startIndex + 1}-${endIndex} (${workingSorted.length} total participants)`,
                     value: leaderboardText || 'No rankings available.'
                 });
                 
@@ -764,94 +555,86 @@ class LeaderboardFeedService {
         return null;
     }
 
-    // Send alerts for rank changes - STREAMLINED VERSION
+    // Send alerts for rank changes using AlertUtils
     async sendRankChangeAlerts(alerts) {
-        const alertsChannel = await this.getAlertsChannel();
-        if (!alertsChannel) {
-            console.log('No alerts channel configured, skipping rank change notifications');
-            return;
-        }
-
-        // Get current challenge game info for embedding
-        const now = new Date();
-        const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-        const nextMonthStart = new Date(now.getFullYear(), now.getMonth() + 1, 1);
-        const currentChallenge = await Challenge.findOne({
-            date: {
-                $gte: currentMonthStart,
-                $lt: nextMonthStart
-            }
-        });
-
-        if (!currentChallenge) {
-            console.log('No active challenge found for the current month.');
-            return;
-        }
-
-        // Create an embed for all alerts
-        const monthName = now.toLocaleString('default', { month: 'long' });
-        const unixTimestamp = Math.floor(Date.now() / 1000);
-        
-        const embed = new EmbedBuilder()
-            .setColor('#FFD700') // Gold color
-            .setTitle(`${monthName} Challenge Update!`)
-            .setDescription(`The leaderboard for the monthly challenge has been updated!\n**Time:** <t:${unixTimestamp}:f>`)
-            .setTimestamp()
-            .setFooter({ text: 'Data provided by RetroAchievements • Rankings update every 15 minutes' });
-
-        if (currentChallenge.monthly_game_icon_url) {
-            embed.setThumbnail(`https://retroachievements.org${currentChallenge.monthly_game_icon_url}`);
-        }
-
-        // Format position changes
-        let positionMessages = [];
-        for (const alert of alerts) {
-            let message = '';
+        try {
+            // Get current challenge game info for embedding
+            const now = new Date();
+            const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+            const nextMonthStart = new Date(now.getFullYear(), now.getMonth() + 1, 1);
             
-            if (alert.type === 'overtake') {
-                // User passed another user
-                const rankEmoji = RANK_EMOJIS[alert.newRank] || `#${alert.newRank}`;
-                message = `**@${alert.user.username}** is now in ${rankEmoji} place!`;
-            } else if (alert.type === 'newEntry') {
-                // User entered top 3
-                const rankEmoji = RANK_EMOJIS[alert.newRank] || `#${alert.newRank}`;
-                message = `**@${alert.user.username}** is now in ${rankEmoji} place!`;
-            }
-            
-            if (message && !positionMessages.includes(message)) {
-                positionMessages.push(message);
-            }
-        }
-
-        // Add position changes if any exist
-        if (positionMessages.length > 0) {
-            embed.addFields({ 
-                name: 'Position Changes', 
-                value: positionMessages.join('\n') 
+            const currentChallenge = await Challenge.findOne({
+                date: {
+                    $gte: currentMonthStart,
+                    $lt: nextMonthStart
+                }
             });
-        }
 
-        // Get current top standings
-        const { sortedUsers } = await this.generateLeaderboardEmbeds();
-        if (sortedUsers && sortedUsers.length > 0) {
-            // Get top 5
-            const topFive = sortedUsers.slice(0, 5);
+            if (!currentChallenge) {
+                console.log('No active challenge found for the current month.');
+                return;
+            }
+
+            // Get month name
+            const monthName = now.toLocaleString('default', { month: 'long' });
+
+            // Format position changes
+            const changes = [];
+            for (const alert of alerts) {
+                if (alert.type === 'overtake') {
+                    changes.push({
+                        username: alert.user.username,
+                        newRank: alert.newRank
+                    });
+                } else if (alert.type === 'newEntry') {
+                    changes.push({
+                        username: alert.user.username,
+                        newRank: alert.newRank
+                    });
+                }
+            }
+
+            // Get current top standings for the alert
+            const { sortedUsers } = await this.generateLeaderboardEmbeds();
+            const currentStandings = [];
             
-            let currentStandingsText = '';
-            topFive.forEach(user => {
-                const rankEmoji = RANK_EMOJIS[user.displayRank] || `#${user.displayRank}`;
-                currentStandingsText += `${rankEmoji} **@${user.username}**: ${user.achieved}/${currentChallenge.monthly_challange_game_total} achievements (${user.percentage}%)\n`;
+            if (sortedUsers && sortedUsers.length > 0) {
+                // Get top 5
+                const topFive = sortedUsers.slice(0, 5);
+                
+                for (const user of topFive) {
+                    currentStandings.push({
+                        username: user.username,
+                        rank: user.displayRank,
+                        score: `${user.achieved}/${currentChallenge.monthly_challange_game_total} achievements (${user.percentage}%)`
+                    });
+                }
+            }
+
+            // Get thumbnail URL
+            let thumbnailUrl = null;
+            if (currentChallenge.monthly_game_icon_url) {
+                thumbnailUrl = `https://retroachievements.org${currentChallenge.monthly_game_icon_url}`;
+            }
+
+            // Send alert using AlertUtils
+            await AlertUtils.sendPositionChangeAlert({
+                title: `${monthName} Challenge Update!`,
+                description: `The leaderboard for the monthly challenge has been updated!`,
+                changes: changes,
+                currentStandings: currentStandings,
+                thumbnail: thumbnailUrl,
+                color: COLORS.GOLD,
+                footer: { text: 'Data provided by RetroAchievements • Rankings update every 15 minutes' }
             });
             
-            embed.addFields({ name: 'Current Top 5', value: currentStandingsText });
+            console.log(`Sent streamlined leaderboard alert with ${changes.length} position changes`);
+        } catch (error) {
+            console.error('Error sending rank change alerts:', error);
         }
-
-        // Send the embed
-        await alertsChannel.send({ embeds: [embed] });
-        console.log(`Sent streamlined leaderboard alert with ${positionMessages.length} position changes`);
     }
 
-    // Code to assign ranks (copied from leaderboard.js with minimal changes)
+    // Code to assign ranks (mostly preserved from original)
     assignRanks(users, tiebreakerEntries, activeTiebreaker) {
         if (!users || users.length === 0) return;
 
@@ -859,12 +642,12 @@ class LeaderboardFeedService {
         if (tiebreakerEntries && tiebreakerEntries.length > 0) {
             for (const user of users) {
                 const entry = tiebreakerEntries.find(e => 
-                    e.username === user.username.toLowerCase()
+                    e.User?.toLowerCase() === user.username.toLowerCase()
                 );
                 
                 if (entry) {
-                    user.tiebreakerScore = entry.score;
-                    user.tiebreakerRank = entry.apiRank;
+                    user.tiebreakerScore = entry.FormattedScore;
+                    user.tiebreakerRank = entry.Rank;
                     user.tiebreakerGame = activeTiebreaker.gameTitle;
                     user.hasTiebreaker = true;
                 } else {
@@ -939,7 +722,7 @@ class LeaderboardFeedService {
         });
     }
 
-    // Helper method to process a tie group (copied from leaderboard.js with minimal changes)
+    // Helper method to process a tie group (preserved from original)
     processTieGroup(users, tieGroupIndices, startIdx) {
         // Only apply special tiebreaker logic to top 3 positions
         const isTopThree = startIdx < 3;
