@@ -47,12 +47,15 @@ class LeaderboardFeedService extends FeedManagerBase {
                 return;
             }
             
-            // Generate leaderboard embeds
+            // Generate monthly leaderboard embeds
             const { headerEmbed, participantEmbeds, sortedUsers } = await this.generateLeaderboardEmbeds();
             if (!headerEmbed || !participantEmbeds || participantEmbeds.length === 0 || !sortedUsers) {
-                console.error('Failed to generate leaderboard embeds');
+                console.error('Failed to generate monthly leaderboard embeds');
                 return;
             }
+
+            // Generate yearly leaderboard embeds
+            const { yearlyHeaderEmbed, yearlyParticipantEmbeds } = await this.generateYearlyLeaderboardEmbeds();
 
             // Check for rank changes before updating the message
             if (sortedUsers.length > 0) {
@@ -62,10 +65,12 @@ class LeaderboardFeedService extends FeedManagerBase {
             // Format timestamp using our utility
             const timestamp = getDiscordTimestamp(new Date());
             
-            const headerContent = `**Monthly Challenge Leaderboard** • ${timestamp} • Updates every 15 minutes`;
-
-            // Calculate how many messages we need (1 for header + enough for all participant embeds)
-            const totalMessagesNeeded = 1 + participantEmbeds.length;
+            const monthlyHeaderContent = `**Monthly Challenge Leaderboard** • ${timestamp} • Updates every 15 minutes`;
+            
+            // Calculate how many messages we need in total
+            const totalMessagesNeeded = 1 + participantEmbeds.length; // Monthly header + monthly participants
+            const yearlyMessagesNeeded = yearlyHeaderEmbed ? (1 + yearlyParticipantEmbeds.length) : 0; // Yearly header + yearly participants
+            const completeMessagesNeeded = totalMessagesNeeded + yearlyMessagesNeeded;
 
             // Add update frequency to the footer of the first and last participant embeds
             if (participantEmbeds.length > 0) {
@@ -83,20 +88,50 @@ class LeaderboardFeedService extends FeedManagerBase {
                     });
                 }
             }
+            
+            // Add update frequency to yearly embeds
+            if (yearlyParticipantEmbeds && yearlyParticipantEmbeds.length > 0) {
+                // First yearly embed
+                yearlyParticipantEmbeds[0].setFooter({
+                    text: `Group 1/${yearlyParticipantEmbeds.length} • Updates every 15 minutes • Use /help points for more information`
+                });
+                
+                // Last yearly embed (if different from first)
+                if (yearlyParticipantEmbeds.length > 1) {
+                    yearlyParticipantEmbeds[yearlyParticipantEmbeds.length - 1].setFooter({
+                        text: `Group ${yearlyParticipantEmbeds.length}/${yearlyParticipantEmbeds.length} • Updates every 15 minutes • Use /help points for more information`
+                    });
+                }
+            }
 
             // Check if we need to update or create new messages
-            if (this.messageIds.size === totalMessagesNeeded) {
+            if (this.messageIds.size === completeMessagesNeeded) {
                 // Update existing messages
                 try {
-                    // Update header message
-                    await this.updateMessage('header', { content: headerContent, embeds: [headerEmbed] }, true);
+                    // Update monthly header message
+                    await this.updateMessage('monthly_header', { content: monthlyHeaderContent, embeds: [headerEmbed] }, true);
                     
-                    // Update participant messages
+                    // Update monthly participant messages
                     for (let i = 0; i < participantEmbeds.length; i++) {
                         await this.updateMessage(
-                            `participants_${i}`, 
+                            `monthly_participants_${i}`, 
                             { content: '', embeds: [participantEmbeds[i]] }
                         );
+                    }
+                    
+                    // Update yearly messages if they exist
+                    if (yearlyHeaderEmbed) {
+                        await this.updateMessage(
+                            'yearly_header',
+                            { content: '**Yearly Leaderboard**', embeds: [yearlyHeaderEmbed] }
+                        );
+                        
+                        for (let i = 0; i < yearlyParticipantEmbeds.length; i++) {
+                            await this.updateMessage(
+                                `yearly_participants_${i}`,
+                                { content: '', embeds: [yearlyParticipantEmbeds[i]] }
+                            );
+                        }
                     }
                 } catch (error) {
                     console.error('Error updating leaderboard messages:', error);
@@ -106,20 +141,34 @@ class LeaderboardFeedService extends FeedManagerBase {
             } 
             
             // If message count doesn't match or we failed to update, recreate all messages
-            if (this.messageIds.size !== totalMessagesNeeded) {
+            if (this.messageIds.size !== completeMessagesNeeded) {
                 // Delete any existing messages first
                 await this.clearChannel();
                 
-                // Create new messages
-                // Create header message
-                await this.updateHeader({ content: headerContent, embeds: [headerEmbed] });
+                // Create new monthly messages
+                await this.updateMessage('monthly_header', { content: monthlyHeaderContent, embeds: [headerEmbed] }, true);
                 
-                // Create participant messages
+                // Create monthly participant messages
                 for (let i = 0; i < participantEmbeds.length; i++) {
                     await this.updateMessage(
-                        `participants_${i}`, 
+                        `monthly_participants_${i}`, 
                         { content: '', embeds: [participantEmbeds[i]] }
                     );
+                }
+                
+                // Create yearly messages if they exist
+                if (yearlyHeaderEmbed) {
+                    await this.updateMessage(
+                        'yearly_header',
+                        { content: '**Yearly Leaderboard**', embeds: [yearlyHeaderEmbed] }
+                    );
+                    
+                    for (let i = 0; i < yearlyParticipantEmbeds.length; i++) {
+                        await this.updateMessage(
+                            `yearly_participants_${i}`,
+                            { content: '', embeds: [yearlyParticipantEmbeds[i]] }
+                        );
+                    }
                 }
             }
         } catch (error) {
@@ -462,6 +511,145 @@ class LeaderboardFeedService extends FeedManagerBase {
         } catch (error) {
             console.error('Error generating leaderboard embeds:', error);
             return { headerEmbed: null, participantEmbeds: null, sortedUsers: null };
+        }
+    }
+
+    // New method to generate yearly leaderboard embeds
+    async generateYearlyLeaderboardEmbeds() {
+        try {
+            // Get current year
+            const currentYear = new Date().getFullYear();
+            
+            // Create the yearly header embed with a distinct color
+            const yearlyHeaderEmbed = createHeaderEmbed(
+                `${currentYear} Yearly Challenge Leaderboard`,
+                `Top players based on all monthly challenges in ${currentYear}. ` +
+                `Players earn points for each challenge completion: ` +
+                `${EMOJIS.MASTERY} Mastery (7pts), ${EMOJIS.BEATEN} Beaten (4pts), ${EMOJIS.PARTICIPATION} Part. (1pt)`,
+                {
+                    color: COLORS.INFO,  // Purple instead of gold for the monthly
+                    thumbnail: null,
+                    footer: { text: 'Updates every 15 minutes • Use /help points for more information' }
+                }
+            );
+
+            // Get all users to check for annual records
+            const users = await User.find();
+            
+            // Extract yearly data from users
+            const yearKey = `annual_${currentYear}`;
+            const userPoints = [];
+            
+            for (const user of users) {
+                if (user.annualRecords && user.annualRecords.has(yearKey)) {
+                    const annualData = user.annualRecords.get(yearKey);
+                    
+                    if (annualData && annualData.totalPoints > 0) {
+                        userPoints.push({
+                            username: user.raUsername,
+                            totalPoints: annualData.totalPoints,
+                            challengePoints: annualData.challengePoints,
+                            communityPoints: annualData.communityPoints,
+                            rank: annualData.rank,
+                            displayRank: annualData.rank, // Used for display
+                            stats: annualData.stats || {
+                                mastery: 0,
+                                beaten: 0,
+                                participation: 0,
+                                shadowBeaten: 0,
+                                shadowParticipation: 0
+                            }
+                        });
+                    }
+                }
+            }
+            
+            // If no users have annual data, return null
+            if (userPoints.length === 0) {
+                yearlyHeaderEmbed.addFields({
+                    name: 'No Participants',
+                    value: `No users have earned points for ${currentYear} yet.`
+                });
+                
+                return { yearlyHeaderEmbed, yearlyParticipantEmbeds: [] };
+            }
+            
+            // Sort by total points (descending)
+            userPoints.sort((a, b) => b.totalPoints - a.totalPoints);
+            
+            // Handle ties by assigning the same rank
+            let currentRank = 1;
+            let currentPoints = userPoints[0].totalPoints;
+            
+            for (let i = 0; i < userPoints.length; i++) {
+                if (userPoints[i].totalPoints < currentPoints) {
+                    currentRank = i + 1;
+                    currentPoints = userPoints[i].totalPoints;
+                }
+                userPoints[i].displayRank = currentRank;
+            }
+            
+            // Create participant embeds (paginated)
+            const USERS_PER_PAGE = 10; // Show more users per page than in the command
+            const yearlyParticipantEmbeds = [];
+            const totalPages = Math.ceil(userPoints.length / USERS_PER_PAGE);
+            
+            for (let page = 0; page < totalPages; page++) {
+                // Get users for this page
+                const startIndex = page * USERS_PER_PAGE;
+                const endIndex = Math.min((page + 1) * USERS_PER_PAGE, userPoints.length);
+                const usersOnPage = userPoints.slice(startIndex, endIndex);
+                
+                // Create embed for this page
+                const participantEmbed = createHeaderEmbed(
+                    `${currentYear} Yearly Challenge - Leaderboard`,
+                    `Top players ranked ${startIndex + 1} to ${endIndex} out of ${userPoints.length} total.`,
+                    {
+                        color: COLORS.INFO, // Purple to distinguish from monthly
+                        footer: { 
+                            text: `Group ${page + 1}/${totalPages} • Use /help points for more information`
+                        }
+                    }
+                );
+                
+                // Format leaderboard text for this page in a more compact way than the command
+                let leaderboardText = '';
+                
+                for (const user of usersOnPage) {
+                    // Get rank emoji
+                    const rankEmoji = user.displayRank <= 3 ? EMOJIS[`RANK_${user.displayRank}`] : `#${user.displayRank}`;
+                    
+                    // Get stats in compact format
+                    const m = user.stats.mastery;
+                    const b = user.stats.beaten;
+                    const p = user.stats.participation;
+                    const sb = user.stats.shadowBeaten;
+                    const sp = user.stats.shadowParticipation;
+                    
+                    // Add the main user entry to leaderboard
+                    leaderboardText += `${rankEmoji} **[${user.username}](https://retroachievements.org/user/${user.username})** - ${user.totalPoints} pts\n`;
+                    leaderboardText += `Challenges: ${user.challengePoints} pts | Community: ${user.communityPoints} pts\n`;
+                    leaderboardText += `Reg: ${m}✨ ${b}⭐ ${p}🏁 | Shadow: ${sb}⭐ ${sp}🏁\n\n`;
+                }
+                
+                participantEmbed.addFields({
+                    name: `Rankings ${startIndex + 1}-${endIndex}`,
+                    value: leaderboardText || 'No rankings available.'
+                });
+                
+                // Add point system explanation to each page
+                participantEmbed.addFields({
+                    name: 'Point System',
+                    value: '✨ Mastery: 7pts | ⭐ Beaten: 4pts | 🏁 Participation: 1pt | Shadow max: 4pts'
+                });
+                
+                yearlyParticipantEmbeds.push(participantEmbed);
+            }
+            
+            return { yearlyHeaderEmbed, yearlyParticipantEmbeds };
+        } catch (error) {
+            console.error('Error generating yearly leaderboard embeds:', error);
+            return { yearlyHeaderEmbed: null, yearlyParticipantEmbeds: null };
         }
     }
 
