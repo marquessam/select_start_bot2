@@ -1,31 +1,20 @@
 // src/services/arcadeAlertService.js
-import { EmbedBuilder } from 'discord.js';
 import { User } from '../models/User.js';
 import { ArcadeBoard } from '../models/ArcadeBoard.js';
-import retroAPI from './retroAPI.js';
 import { config } from '../config/config.js';
+import { FeedManagerBase } from '../utils/FeedManagerBase.js';
+import { COLORS, EMOJIS } from '../utils/FeedUtils.js';
+import RetroAPIUtils from '../utils/RetroAPIUtils.js';
+import AlertUtils from '../utils/AlertUtils.js';
 
-const CHECK_INTERVAL = 60 * 60 * 1000; // Check every hour (60 minutes * 60 seconds * 1000 ms)
-const MEDAL_EMOJIS = {
-    1: '🥇',
-    2: '🥈',
-    3: '🥉'
-};
-
-class ArcadeAlertService {
+class ArcadeAlertService extends FeedManagerBase {
     constructor() {
-        this.client = null;
-        this.alertsChannelId = config.discord.arcadeAlertsChannelId || '1300941091335438471'; // Channel for arcade alerts
-        this.updateInterval = null;
-        
+        super(null, config.discord.arcadeAlertsChannelId || '1300941091335438471');
         // Store previous arcade standings for comparison
-        // Structure: { boardId: { username: { rank: number, score: string } } }
         this.previousStandings = new Map();
-    }
-
-    setClient(client) {
-        this.client = client;
-        console.log('Discord client set for arcade alert service');
+        
+        // Configure AlertUtils
+        AlertUtils.setAlertsChannel(this.channelId);
     }
 
     async start() {
@@ -40,54 +29,24 @@ class ArcadeAlertService {
             // Initial check (without alerts, just to build baseline standings)
             await this.checkForRankChanges(false);
             
-            // Set up recurring checks
-            this.updateInterval = setInterval(() => {
-                this.checkForRankChanges(true).catch(error => {
-                    console.error('Error checking arcade standings:', error);
-                });
-            }, CHECK_INTERVAL);
-            
-            console.log(`Arcade alert service started. Checks will occur every ${CHECK_INTERVAL / 60000} minutes.`);
+            // Call the parent start method with our custom interval
+            await super.start(60 * 60 * 1000); // Check every hour
         } catch (error) {
             console.error('Error starting arcade alert service:', error);
         }
     }
 
-    stop() {
-        if (this.updateInterval) {
-            clearInterval(this.updateInterval);
-            this.updateInterval = null;
-            console.log('Arcade alert service stopped.');
-        }
-    }
-
-    // Get the alerts channel
-    async getAlertsChannel() {
-        if (!this.client || !this.alertsChannelId) {
-            return null;
-        }
-
-        try {
-            const guildId = config.discord.guildId;
-            const guild = await this.client.guilds.fetch(guildId);
-            
-            if (!guild) {
-                return null;
-            }
-
-            return await guild.channels.fetch(this.alertsChannelId);
-        } catch (error) {
-            console.error('Error getting arcade alerts channel:', error);
-            return null;
-        }
+    // Override the update method from base class
+    async update() {
+        await this.checkForRankChanges(true);
     }
 
     async checkForRankChanges(sendAlerts = true) {
         try {
             console.log(`Checking for arcade rank changes (sendAlerts=${sendAlerts})...`);
             
-            // Get alerts channel
-            const alertsChannel = sendAlerts ? await this.getAlertsChannel() : null;
+            // We can use the base class getChannel method
+            const alertsChannel = sendAlerts ? await this.getChannel() : null;
             if (sendAlerts && !alertsChannel) {
                 console.error('Arcade alerts channel not found or inaccessible');
                 return;
@@ -106,7 +65,7 @@ class ArcadeAlertService {
             // Get all registered users
             const users = await User.find({});
             
-            // Create mapping of RA usernames (lowercase) to user info
+            // Create mapping of RA usernames to user info
             const registeredUsers = new Map();
             for (const user of users) {
                 registeredUsers.set(user.raUsername.toLowerCase(), {
@@ -119,7 +78,7 @@ class ArcadeAlertService {
             const alerts = [];
             for (const board of boards) {
                 try {
-                    // Get the current standings for this board
+                    // Get the current standings for this board using our utility
                     const currentStandings = await this.getArcadeBoardStandings(board, registeredUsers);
                     
                     // Skip if no results
@@ -245,42 +204,15 @@ class ArcadeAlertService {
     // Get the current standings for a specific arcade board
     async getArcadeBoardStandings(board, registeredUsers) {
         try {
-            // Fetch leaderboard entries from RetroAchievements
-            const batch1 = await retroAPI.getLeaderboardEntriesDirect(board.leaderboardId, 0, 500);
-            const batch2 = await retroAPI.getLeaderboardEntriesDirect(board.leaderboardId, 500, 500);
-            
-            // Combine the batches
-            let rawEntries = [];
-            
-            // Process first batch
-            if (batch1) {
-                if (Array.isArray(batch1)) {
-                    rawEntries = [...rawEntries, ...batch1];
-                } else if (batch1.Results && Array.isArray(batch1.Results)) {
-                    rawEntries = [...rawEntries, ...batch1.Results];
-                }
-            }
-            
-            // Process second batch
-            if (batch2) {
-                if (Array.isArray(batch2)) {
-                    rawEntries = [...rawEntries, ...batch2];
-                } else if (batch2.Results && Array.isArray(batch2.Results)) {
-                    rawEntries = [...rawEntries, ...batch2.Results];
-                }
-            }
+            // Use our utility function to get leaderboard entries
+            const rawEntries = await RetroAPIUtils.getLeaderboardEntries(board.leaderboardId, 1000);
             
             // Process the entries
             const leaderboardEntries = rawEntries.map(entry => {
-                const user = entry.User || entry.user || '';
-                const score = entry.Score || entry.score || entry.Value || entry.value || 0;
-                const formattedScore = entry.FormattedScore || entry.formattedScore || entry.ScoreFormatted || score.toString();
-                const rank = entry.Rank || entry.rank || 0;
-                
                 return {
-                    apiRank: parseInt(rank, 10),
-                    username: user.trim(),
-                    score: formattedScore.toString().trim() || score.toString()
+                    apiRank: entry.Rank || 0,
+                    username: entry.User || '',
+                    score: entry.FormattedScore || entry.Score?.toString() || '0'
                 };
             });
             
@@ -312,7 +244,7 @@ class ArcadeAlertService {
         }
     }
 
-    // Send alerts for rank changes - STREAMLINED VERSION
+    // Send alerts for rank changes - using our AlertUtils
     async sendRankChangeAlerts(alertsChannel, alerts) {
         if (!alertsChannel) {
             console.log('No alerts channel configured, skipping arcade rank change notifications');
@@ -346,103 +278,60 @@ class ArcadeAlertService {
                 // Get game info for thumbnail
                 let thumbnailUrl = null;
                 try {
-                    const gameInfo = await retroAPI.getGameInfo(board.gameId);
+                    const gameInfo = await RetroAPIUtils.getGameInfo(board.gameId);
                     if (gameInfo?.imageIcon) {
                         thumbnailUrl = `https://retroachievements.org${gameInfo.imageIcon}`;
                     }
                 } catch (error) {
                     console.error('Error fetching game info for embed thumbnail:', error);
-                    // Continue without the thumbnail
                 }
                 
-                // Get current Unix timestamp for Discord formatting
-                const unixTimestamp = Math.floor(Date.now() / 1000);
-                
-                // Create leaderboard URL for the title link
-                const leaderboardUrl = `https://retroachievements.org/leaderboardinfo.php?i=${board.leaderboardId}`;
-                
-                // Create embed with streamlined format
-                const embed = new EmbedBuilder()
-                    .setColor('#9B59B6') // Purple color
-                    .setTitle(`🕹️ Arcade Alert!`)
-                    .setURL(leaderboardUrl)
-                    .setDescription(`The leaderboard for **[${boardName}](${leaderboardUrl})** has been updated!\n**Time:** <t:${unixTimestamp}:f>`)
-                    .setTimestamp()
-                    .setFooter({ text: 'Data provided by RetroAchievements • Rankings update hourly' });
-                    
-                if (thumbnailUrl) {
-                    embed.setThumbnail(thumbnailUrl);
-                }
-                
-                // Create simple position change messages
-                let positionMessages = [];
+                // Prepare the position changes
+                const changes = [];
                 
                 // Process various types of alerts to create simple messages
                 for (const alert of boardAlertsList) {
-                    let message = '';
-                    
                     if (alert.type === 'overtaken' && alert.passer) {
-                        // Someone passed another user
-                        const rankEmoji = MEDAL_EMOJIS[alert.prevRank] || `#${alert.prevRank}`;
-                        message = `**@${alert.passer.username}** is now in ${rankEmoji} place!`;
+                        changes.push({
+                            username: alert.passer.username,
+                            newRank: alert.prevRank
+                        });
                     } else if (alert.type === 'entered_top3') {
-                        // User entered top 3
-                        const rankEmoji = MEDAL_EMOJIS[alert.newRank] || `#${alert.newRank}`;
-                        message = `**@${alert.user.username}** is now in ${rankEmoji} place!`;
+                        changes.push({
+                            username: alert.user.username,
+                            newRank: alert.newRank
+                        });
                     }
+                }
+                
+                // Get current standings
+                const currentStandings = [];
+                const standings = await this.getArcadeBoardStandings(board, await this.getRegisteredUsers());
+                if (standings && standings.size > 0) {
+                    // Convert to array for sorting
+                    const standingsArray = Array.from(standings.entries())
+                        .map(([username, data]) => ({
+                            username,
+                            rank: data.rank,
+                            score: data.score
+                        }))
+                        .sort((a, b) => a.rank - b.rank);
                     
-                    if (message && !positionMessages.includes(message)) {
-                        positionMessages.push(message);
-                    }
+                    // Get top 5
+                    const topFive = standingsArray.filter(entry => entry.rank <= 5);
+                    currentStandings.push(...topFive);
                 }
                 
-                // Add position changes if any exist
-                if (positionMessages.length > 0) {
-                    embed.addFields({ 
-                        name: 'Position Changes', 
-                        value: positionMessages.join('\n') 
-                    });
-                }
-                
-                // Now get the current top 5 standings (increased from top 3)
-                try {
-                    const currentStandings = await this.getArcadeBoardStandings(board, await this.getRegisteredUsers());
-                    
-                    if (currentStandings && currentStandings.size > 0) {
-                        // Convert to array for sorting
-                        const standingsArray = Array.from(currentStandings.entries())
-                            .map(([username, data]) => ({
-                                username,
-                                rank: data.rank,
-                                score: data.score
-                            }))
-                            .sort((a, b) => a.rank - b.rank);
-                        
-                        // Get top 5 (increased from 3)
-                        const topFive = standingsArray.filter(entry => entry.rank <= 5);
-                        
-                        if (topFive.length > 0) {
-                            let currentStandingsText = '';
-                            topFive.forEach(entry => {
-                                const rankEmoji = MEDAL_EMOJIS[entry.rank] || `#${entry.rank}`;
-                                currentStandingsText += `${rankEmoji} **@${entry.username}**: ${entry.score}\n`;
-                            });
-                            
-                            embed.addFields({ name: 'Current Top 5', value: currentStandingsText });
-                        }
-                    }
-                } catch (error) {
-                    console.error(`Error fetching current standings for ${boardName}:`, error);
-                }
-                
-                // Send the embed if there are position changes
-                if (positionMessages.length > 0) {
-                    await alertsChannel.send({ embeds: [embed] });
-                    console.log(`Sent streamlined arcade alert for board: ${boardName}`);
-                }
-                
-                // Add a delay between sending embeds for different boards
-                await new Promise(resolve => setTimeout(resolve, 1000));
+                // Use our AlertUtils
+                await AlertUtils.sendPositionChangeAlert({
+                    title: '🕹️ Arcade Alert!',
+                    description: `The leaderboard for **${boardName}** has been updated!`,
+                    changes: changes,
+                    currentStandings: currentStandings,
+                    thumbnail: thumbnailUrl,
+                    color: COLORS.INFO,
+                    footer: { text: 'Data provided by RetroAchievements • Rankings update hourly' }
+                });
                 
             } catch (error) {
                 console.error(`Error sending arcade rank change alert for board ${boardId}:`, error);
