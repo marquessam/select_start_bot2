@@ -943,60 +943,64 @@ class ArenaService extends FeedManagerBase {
         }
     }
 
-    async updateGpLeaderboard() {
-        try {
-            const feedChannel = await this.getArenaFeedChannel();
-            if (!feedChannel) return;
-            
-            // Get top users by GP
-            const topUsers = await User.find({ gp: { $gt: 0 } })
-                .sort({ gp: -1 })
-                .limit(5); // Reduced to top 5
-            
-            if (topUsers.length === 0) return;
-            
-            // Use our createHeaderEmbed utility
-            const embed = createHeaderEmbed(
-                '💰 GP Leaderboard',
+// This is the updated updateGpLeaderboard method for arenaService.js
+
+async updateGpLeaderboard() {
+    try {
+        const feedChannel = await this.getArenaFeedChannel();
+        if (!feedChannel) return;
+        
+        // Get top users by GP
+        const topUsers = await User.find({ gp: { $gt: 0 } })
+            .sort({ gp: -1 })
+            .limit(5); // Reduced to top 5
+        
+        if (topUsers.length === 0) return;
+        
+        // Create leaderboard embed with exact timestamp
+        const formattedDate = new Date().toLocaleString();
+        
+        const embed = new EmbedBuilder()
+            .setTitle('💰 GP Leaderboard')
+            .setColor(COLORS.WARNING) // Yellow color for GP leaderboard
+            .setDescription(
                 'These are the users with the most GP (Gold Points).\n' +
-                'Earn GP by winning Arena challenges and bets.',
-                {
-                    color: COLORS.INFO,
-                    footer: { 
-                        text: 'Updates hourly | Everyone receives 1,000 GP automatically each month!' 
-                    }
-                }
-            );
-            
-            // Build leaderboard text with medals
-            let leaderboardText = '';
-            
-            topUsers.forEach((user, index) => {
-                const medal = index <= 2 ? EMOJIS[`RANK_${index + 1}`] : `${index + 1}.`;
-                leaderboardText += `${medal} **${user.raUsername}**: ${user.gp.toLocaleString()} GP\n`;
+                'Earn GP by winning Arena challenges and bets.\n\n' +
+                `**Last Updated:** ${formattedDate}`
+            )
+            .setFooter({ 
+                text: 'Updates hourly | Everyone receives 1,000 GP automatically each month!' 
             });
-            
-            embed.addFields({ name: 'Top 5 Rankings', value: leaderboardText });
-            
-            // Update or create the leaderboard message - using our helper method
-            if (this.gpLeaderboardMessageId) {
-                try {
-                    const gpMessage = await feedChannel.messages.fetch(this.gpLeaderboardMessageId);
-                    await gpMessage.edit({ embeds: [embed] });
-                } catch (error) {
-                    if (error.message.includes('Unknown Message')) {
-                        const message = await feedChannel.send({ embeds: [embed] });
-                        this.gpLeaderboardMessageId = message.id;
-                    }
+        
+        // Build leaderboard text with medals
+        let leaderboardText = '';
+        
+        topUsers.forEach((user, index) => {
+            const medal = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `${index + 1}.`;
+            leaderboardText += `${medal} **${user.raUsername}**: ${user.gp.toLocaleString()} GP\n`;
+        });
+        
+        embed.addFields({ name: 'Top 5 Rankings', value: leaderboardText });
+        
+        // Update or create the leaderboard message
+        if (this.gpLeaderboardMessageId) {
+            try {
+                const gpMessage = await feedChannel.messages.fetch(this.gpLeaderboardMessageId);
+                await gpMessage.edit({ embeds: [embed] });
+            } catch (error) {
+                if (error.message.includes('Unknown Message')) {
+                    const message = await feedChannel.send({ embeds: [embed] });
+                    this.gpLeaderboardMessageId = message.id;
                 }
-            } else {
-                const message = await feedChannel.send({ embeds: [embed] });
-                this.gpLeaderboardMessageId = message.id;
             }
-        } catch (error) {
-            console.error('Error updating GP leaderboard:', error);
+        } else {
+            const message = await feedChannel.send({ embeds: [embed] });
+            this.gpLeaderboardMessageId = message.id;
         }
+    } catch (error) {
+        console.error('Error updating GP leaderboard:', error);
     }
+}
 
     // Challenge score management
     async getChallengersScores(challenge) {
