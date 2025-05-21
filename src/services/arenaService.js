@@ -1,5 +1,5 @@
 // src/services/arenaService.js
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
+import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType } from 'discord.js';
 import { User } from '../models/User.js';
 import { ArenaChallenge } from '../models/ArenaChallenge.js';
 import { TemporaryMessage } from '../models/TemporaryMessage.js';
@@ -1001,7 +1001,6 @@ async updateGpLeaderboard() {
         console.error('Error updating GP leaderboard:', error);
     }
 }
-
     // Challenge score management
     async getChallengersScores(challenge) {
         try {
