@@ -575,6 +575,20 @@ function createBasicChallengeEmbed(challenge, challengerScore, embed, timeLeft) 
         value: `**Wager:** ${challenge.wagerAmount} GP\n` +
                `**Ends:** ${timeLeft}`
     });
+    
+    // Add creator's score information (this is the new code)
+    if (challengerScore.exists) {
+        const rankDisplay = challengerScore.rank ? ` (Rank: #${challengerScore.rank})` : '';
+        embed.addFields({
+            name: 'Creator\'s Score',
+            value: `**${challenge.challengerUsername}**: ${challengerScore.formattedScore}${rankDisplay}`
+        });
+    } else {
+        embed.addFields({
+            name: 'Creator\'s Score',
+            value: `**${challenge.challengerUsername}**: No score yet`
+        });
+    }
 }
 
 /**
