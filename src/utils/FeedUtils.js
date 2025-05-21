@@ -1,4 +1,5 @@
 // src/utils/FeedUtils.js
+import { EmbedBuilder } from 'discord.js';
 
 // Standard colors for embeds
 export const COLORS = {
