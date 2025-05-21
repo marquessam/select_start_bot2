@@ -4,6 +4,7 @@ import { ArcadeBoard } from '../models/ArcadeBoard.js';
 import { config } from '../config/config.js';
 import { FeedManagerBase } from '../utils/FeedManagerBase.js';
 import { COLORS, EMOJIS, createHeaderEmbed, createLeaderboardEmbed, getDiscordTimestamp } from '../utils/FeedUtils.js';
+import { EmbedBuilder } from 'discord.js';
 import RetroAPIUtils from '../utils/RetroAPIUtils.js';
 
 class ArcadeFeedService extends FeedManagerBase {
@@ -198,6 +199,215 @@ class ArcadeFeedService extends FeedManagerBase {
         } catch (error) {
             console.error(`Error creating arcade board embed for ${board.gameTitle}:`, error);
             return [];
+        }
+    }
+
+    /**
+     * Create or update the open challenge feed for a specific challenge
+     * @param {Object} challenge - The open challenge data from ArcadeBoard
+     * @returns {Promise<void>}
+     */
+    async createOrUpdateOpenChallengeFeed(challenge) {
+        try {
+            const channel = await this.getChannel();
+            if (!channel) return;
+            
+            // Get all registered users
+            const users = await User.find({});
+            
+            // Create mapping of RA usernames (lowercase) to canonical usernames
+            const registeredUsers = new Map();
+            for (const user of users) {
+                registeredUsers.set(user.raUsername.toLowerCase(), user.raUsername);
+            }
+            
+            // Get leaderboard entries using our utility
+            const rawEntries = await RetroAPIUtils.getLeaderboardEntries(challenge.leaderboardId, 1000);
+            
+            // Process participants and their scores
+            let participantScores = new Map();
+            let challengerScore = {
+                exists: false,
+                formattedScore: 'No score yet',
+                rank: null
+            };
+            
+            // Filter entries to include registered users
+            const filteredEntries = [];
+            
+            for (const entry of rawEntries) {
+                const username = entry.User || '';
+                if (!username) continue;
+                
+                const lowerUsername = username.toLowerCase().trim();
+                
+                // Check if this is the challenger or a participant
+                const isChallenger = lowerUsername === challenge.challengerUsername.toLowerCase();
+                let isParticipant = false;
+                
+                if (challenge.participants && challenge.participants.length > 0) {
+                    isParticipant = challenge.participants.some(p => 
+                        p.username.toLowerCase() === lowerUsername
+                    );
+                }
+                
+                // Only include challenger, participants, and other registered users
+                if (isChallenger || isParticipant || registeredUsers.has(lowerUsername)) {
+                    const scoreInfo = {
+                        exists: true,
+                        formattedScore: entry.FormattedScore || entry.Score?.toString() || '0',
+                        rank: entry.Rank,
+                        value: parseFloat(entry.Score) || 0
+                    };
+                    
+                    // Save challenger and participant scores separately
+                    if (isChallenger) {
+                        challengerScore = scoreInfo;
+                    }
+                    
+                    if (isParticipant) {
+                        participantScores.set(lowerUsername, scoreInfo);
+                    }
+                    
+                    // Add to filtered entries for display
+                    filteredEntries.push({
+                        apiRank: entry.Rank,
+                        username: username,
+                        score: entry.FormattedScore || entry.Score?.toString() || '0',
+                        isChallenger,
+                        isParticipant
+                    });
+                }
+            }
+            
+            // Sort by API rank 
+            filteredEntries.sort((a, b) => a.apiRank - b.apiRank);
+            
+            // Create clickable link to RetroAchievements leaderboard
+            const leaderboardUrl = `https://retroachievements.org/leaderboardinfo.php?i=${challenge.leaderboardId}`;
+            
+            // Get game info for thumbnail
+            let thumbnailUrl = null;
+            try {
+                const gameInfo = await RetroAPIUtils.getGameInfo(challenge.gameId);
+                if (gameInfo?.imageIcon) {
+                    thumbnailUrl = `https://retroachievements.org${gameInfo.imageIcon}`;
+                }
+            } catch (error) {
+                console.error(`Error fetching game info for challenge ${challenge.boardId}:`, error);
+            }
+            
+            // Calculate time remaining
+            const now = new Date();
+            const endDate = new Date(challenge.endDate);
+            const timeLeft = this.formatTimeRemaining(endDate);
+            
+            // Create embed
+            const embed = new EmbedBuilder()
+                .setColor(challenge.endDate > now ? COLORS.PRIMARY : COLORS.DANGER)
+                .setTitle(`${EMOJIS.ARCADE} Open Challenge: ${challenge.gameTitle}`)
+                .setDescription(`**Creator:** ${challenge.challengerUsername} | [View Leaderboard](${leaderboardUrl})`)
+                .setTimestamp();
+            
+            if (thumbnailUrl) {
+                embed.setThumbnail(thumbnailUrl);
+            }
+            
+            // Add description if available
+            if (challenge.description) {
+                embed.addFields({ name: 'Challenge', value: challenge.description });
+            }
+            
+            // Add challenge details
+            const participantCount = (challenge.participants?.length || 0) + 1; // +1 for creator
+            
+            embed.addFields({
+                name: 'Details', 
+                value: `**Status:** Open Challenge\n` +
+                       `**Ends:** ${timeLeft}\n` +
+                       `**Participants:** ${participantCount} registered`
+            });
+            
+            // Sort participants for display: challenger first, then by rank
+            const allParticipants = [];
+            
+            // Add challenger with rank
+            allParticipants.push({
+                username: challenge.challengerUsername,
+                isCreator: true,
+                score: challengerScore.formattedScore,
+                rank: challengerScore.rank || 999999,
+                exists: challengerScore.exists
+            });
+            
+            // Add each participant
+            if (challenge.participants) {
+                challenge.participants.forEach(participant => {
+                    const scoreInfo = participantScores.get(participant.username.toLowerCase());
+                    const score = scoreInfo?.formattedScore || 'No score yet';
+                    const rank = scoreInfo?.rank || 999999;
+                    
+                    allParticipants.push({
+                        username: participant.username,
+                        isCreator: false,
+                        score: score,
+                        rank: rank,
+                        exists: !!scoreInfo?.exists
+                    });
+                });
+            }
+            
+            // Sort participants by rank
+            allParticipants.sort((a, b) => {
+                // Put participants with scores first
+                if (a.exists && !b.exists) return -1;
+                if (!a.exists && b.exists) return 1;
+                
+                // If both have scores, sort by rank
+                if (a.exists && b.exists) {
+                    return a.rank - b.rank; // Lower rank is better
+                }
+                
+                // Default to creator first
+                return a.isCreator ? -1 : b.isCreator ? 1 : 0;
+            });
+            
+            // Create standings field
+            let participantsText = '';
+            
+            allParticipants.forEach((participant, index) => {
+                if (participant.exists) {
+                    // Add crown emoji for the top position
+                    const prefixEmoji = index === 0 ? `${EMOJIS.CROWN} ` : '';
+                    const creatorTag = participant.isCreator ? ' (Creator)' : '';
+                    const rankDisplay = participant.rank < 999999 ? ` (Rank: #${participant.rank})` : '';
+                    
+                    participantsText += `${prefixEmoji}**${participant.username}${creatorTag}**: ${participant.score}${rankDisplay}\n`;
+                } else {
+                    const creatorTag = participant.isCreator ? ' (Creator)' : '';
+                    participantsText += `• **${participant.username}${creatorTag}**: ${participant.score}\n`;
+                }
+            });
+            
+            if (participantsText) {
+                embed.addFields({
+                    name: 'Current Standings', 
+                    value: participantsText
+                });
+            } else {
+                embed.addFields({
+                    name: 'Current Standings',
+                    value: 'No participants have scores yet.'
+                });
+            }
+            
+            // Use our base class updateMessage method
+            await this.updateMessage(
+                `open_challenge_${challenge.boardId}`, 
+                { embeds: [embed] }
+            );
+        } catch (error) {
+            console.error(`Error creating open challenge embed for ${challenge.gameTitle}:`, error);
         }
     }
 
@@ -476,6 +686,52 @@ class ArcadeFeedService extends FeedManagerBase {
         } catch (error) {
             console.error(`Error getting top users for board ${board.gameTitle}:`, error);
             return [];
+        }
+    }
+
+    /**
+     * Format time remaining in a human-readable format
+     * (Added this helper method to avoid dependency on FeedUtils)
+     */
+    formatTimeRemaining(endDate) {
+        if (!endDate) return 'Unknown';
+        
+        const now = new Date();
+        const remainingMs = endDate - now;
+        
+        if (remainingMs <= 0) {
+            return 'Ended';
+        }
+        
+        const seconds = Math.floor(remainingMs / 1000);
+        const minutes = Math.floor(seconds / 60);
+        const hours = Math.floor(minutes / 60);
+        const days = Math.floor(hours / 24);
+        
+        if (days > 7) {
+            const weeks = Math.floor(days / 7);
+            const remainingDays = days % 7;
+            if (remainingDays === 0) {
+                return `${weeks} week${weeks !== 1 ? 's' : ''}`;
+            }
+            return `${weeks} week${weeks !== 1 ? 's' : ''}, ${remainingDays} day${remainingDays !== 1 ? 's' : ''}`;
+        } 
+        else if (days > 0) {
+            const remainingHours = hours % 24;
+            if (remainingHours === 0) {
+                return `${days} day${days !== 1 ? 's' : ''}`;
+            }
+            return `${days} day${days !== 1 ? 's' : ''}, ${remainingHours} hour${remainingHours !== 1 ? 's' : ''}`;
+        } 
+        else if (hours > 0) {
+            const remainingMinutes = minutes % 60;
+            if (remainingMinutes === 0) {
+                return `${hours} hour${hours !== 1 ? 's' : ''}`;
+            }
+            return `${hours} hour${hours !== 1 ? 's' : ''}, ${remainingMinutes} minute${remainingMinutes !== 1 ? 's' : ''}`;
+        } 
+        else {
+            return `${minutes} minute${minutes !== 1 ? 's' : ''}`;
         }
     }
 }
