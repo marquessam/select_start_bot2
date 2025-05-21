@@ -1,4 +1,5 @@
 // src/utils/arenaUtils.js
+import { EmbedBuilder } from 'discord.js';
 import { 
     COLORS, 
     EMOJIS, 
@@ -206,15 +207,14 @@ export function checkPositionChanges(challenge, challengerScore, challengeeScore
  * @param {Object} challengerScore - Challenger's score info
  * @param {Object|null} challengeeScore - Challengee's score info (may be null for open challenges)
  * @param {Map} participantScores - Map of participant scores (for open challenges)
- * @param {Object} EmbedBuilder - Discord.js EmbedBuilder class
  * @returns {Object} - Discord embed object
  */
-export function createChallengeEmbed(challenge, challengerScore, challengeeScore, participantScores, EmbedBuilder) {
+export function createChallengeEmbed(challenge, challengerScore, challengeeScore, participantScores) {
     // Calculate time remaining
     const now = new Date();
     const timeLeft = formatTimeRemaining(challenge.endDate);
     
-    // Create the embed
+    // Create the embed using EmbedBuilder directly
     const embed = new EmbedBuilder()
         .setColor(challenge.endDate > now ? COLORS.PRIMARY : COLORS.DANGER);
     
@@ -579,11 +579,10 @@ export function addBettingResultsToEmbed(challenge, embed) {
 
 /**
  * Create an overview embed for the Arena system
- * @param {Object} EmbedBuilder - Discord.js EmbedBuilder class
  * @param {Object} stats - Stats about active challenges and bets
  * @returns {Object} - Discord embed object
  */
-export function createArenaOverviewEmbed(EmbedBuilder, stats) {
+export function createArenaOverviewEmbed(stats) {
     const embed = new EmbedBuilder()
         .setColor(COLORS.INFO)
         .setTitle(`${EMOJIS.ARENA} Arena System - Quick Guide`)
@@ -631,11 +630,10 @@ export function createArenaOverviewEmbed(EmbedBuilder, stats) {
 /**
  * Create an embed for completed challenge results
  * @param {Object} challenge - The challenge object
- * @param {Object} EmbedBuilder - Discord.js EmbedBuilder class
  * @param {number} durationDays - Duration in days for display
  * @returns {Object} - Discord embed object
  */
-export function createCompletedChallengeEmbed(challenge, EmbedBuilder, durationDays) {
+export function createCompletedChallengeEmbed(challenge, durationDays) {
     const embed = new EmbedBuilder()
         .setColor(COLORS.SUCCESS); // Green for completed challenges
         
