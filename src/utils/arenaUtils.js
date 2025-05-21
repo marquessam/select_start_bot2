@@ -214,9 +214,15 @@ export function createChallengeEmbed(challenge, challengerScore, challengeeScore
     const now = new Date();
     const timeLeft = formatTimeRemaining(challenge.endDate);
     
-    // Create the embed using EmbedBuilder directly
-    const embed = new EmbedBuilder()
-        .setColor(challenge.endDate > now ? COLORS.PRIMARY : COLORS.DANGER);
+    // Create the embed with the correct color based on challenge type
+    const embed = new EmbedBuilder();
+    
+    // Set color based on challenge type - BLUE for open challenges, RED for direct challenges
+    if (challenge.isOpenChallenge) {
+        embed.setColor(COLORS.PRIMARY); // Blue for open challenges
+    } else {
+        embed.setColor(COLORS.DANGER);  // Red for direct challenges
+    }
     
     // Add thumbnail if available
     if (challenge.iconUrl) {
@@ -584,7 +590,7 @@ export function addBettingResultsToEmbed(challenge, embed) {
  */
 export function createArenaOverviewEmbed(stats) {
     const embed = new EmbedBuilder()
-        .setColor(COLORS.INFO)
+        .setColor(COLORS.WARNING) // YELLOW for overview
         .setTitle(`${EMOJIS.ARENA} Arena System - Quick Guide`)
         .setDescription(
             'The Arena lets you challenge other members to competitions on RetroAchievements leaderboards. ' +
@@ -634,8 +640,14 @@ export function createArenaOverviewEmbed(stats) {
  * @returns {Object} - Discord embed object
  */
 export function createCompletedChallengeEmbed(challenge, durationDays) {
-    const embed = new EmbedBuilder()
-        .setColor(COLORS.SUCCESS); // Green for completed challenges
+    const embed = new EmbedBuilder();
+    
+    // Set color based on challenge type
+    if (challenge.isOpenChallenge) {
+        embed.setColor(COLORS.PRIMARY); // Blue for open challenges
+    } else {
+        embed.setColor(COLORS.DANGER);  // Red for direct challenges
+    }
         
     if (challenge.isOpenChallenge && challenge.participants && challenge.participants.length > 0) {
         createCompletedOpenChallengeEmbed(challenge, embed, durationDays);
