@@ -1,6 +1,8 @@
 // src/services/achievementFeedService.js
 import { User } from '../models/User.js';
 import { Challenge } from '../models/Challenge.js';
+import { ArcadeBoard } from '../models/ArcadeBoard.js';
+import { ArenaChallenge } from '../models/ArenaChallenge.js';
 import retroAPI from './retroAPI.js';
 import { EmbedBuilder } from 'discord.js';
 import { config } from '../config/config.js';
@@ -34,6 +36,17 @@ class AchievementFeedService {
         this.sessionAnnouncementHistory = new Set();
         // Flag to track if this is the first run after a restart
         this.isFirstRunAfterRestart = true;
+        
+        // NEW: Cache mappings of game IDs to systems
+        this.gameSystemCache = {
+            arcade: new Set(),
+            arena: new Set(),
+            monthly: null, // Will store the current monthly game ID
+            shadow: null   // Will store the current shadow game ID
+        };
+        
+        // Cache refresh interval (every 30 minutes)
+        this.cacheRefreshInterval = 30 * 60 * 1000;
     }
 
     setClient(client) {
@@ -48,7 +61,14 @@ class AchievementFeedService {
         }
 
         try {
-            console.log('Starting achievement feed service check...');
+            console.log('Starting achievement feed service...');
+            
+            // NEW: Initialize game system mappings
+            await this.refreshGameSystemCache();
+            
+            // Set up periodic refresh of game mappings
+            setInterval(() => this.refreshGameSystemCache(), this.cacheRefreshInterval);
+            
             // Initialize session history from persistent storage
             await this.initializeSessionHistory();
             
@@ -61,6 +81,86 @@ class AchievementFeedService {
         } catch (error) {
             console.error('Error in achievement feed service:', error);
         }
+    }
+    
+    // NEW: Refresh the cache of game systems
+    async refreshGameSystemCache() {
+        console.log('Refreshing game system cache...');
+        
+        try {
+            // Clear current cache
+            this.gameSystemCache.arcade.clear();
+            this.gameSystemCache.arena.clear();
+            
+            // Get current monthly/shadow challenge
+            const now = new Date();
+            const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+            const nextMonthStart = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+            
+            const currentChallenge = await Challenge.findOne({
+                date: {
+                    $gte: currentMonthStart,
+                    $lt: nextMonthStart
+                }
+            });
+            
+            // Update monthly and shadow game IDs
+            if (currentChallenge) {
+                this.gameSystemCache.monthly = currentChallenge.monthly_challange_gameid ? 
+                    String(currentChallenge.monthly_challange_gameid) : null;
+                    
+                this.gameSystemCache.shadow = (currentChallenge.shadow_challange_revealed && 
+                    currentChallenge.shadow_challange_gameid) ? 
+                    String(currentChallenge.shadow_challange_gameid) : null;
+            }
+            
+            // Load all arcade boards (no need to filter by active/inactive)
+            const arcadeBoards = await ArcadeBoard.find({}, 'gameId');
+            arcadeBoards.forEach(board => {
+                if (board.gameId) {
+                    this.gameSystemCache.arcade.add(String(board.gameId));
+                }
+            });
+            
+            // Load all arena challenges (no need to filter by active/inactive)
+            const arenaChallenges = await ArenaChallenge.find({}, 'gameId');
+            arenaChallenges.forEach(challenge => {
+                if (challenge.gameId) {
+                    this.gameSystemCache.arena.add(String(challenge.gameId));
+                }
+            });
+            
+            console.log(`Game system cache refreshed. Monthly: ${this.gameSystemCache.monthly}, Shadow: ${this.gameSystemCache.shadow}, Arcade: ${this.gameSystemCache.arcade.size} games, Arena: ${this.gameSystemCache.arena.size} games`);
+            
+        } catch (error) {
+            console.error('Error refreshing game system cache:', error);
+        }
+    }
+    
+    // NEW: Get the system type for a game ID
+    getGameSystemType(gameId) {
+        if (!gameId) return 'regular';
+        
+        const gameIdStr = String(gameId);
+        
+        // Check systems in order of priority
+        if (gameIdStr === this.gameSystemCache.monthly) {
+            return 'monthly';
+        }
+        
+        if (gameIdStr === this.gameSystemCache.shadow) {
+            return 'shadow';
+        }
+        
+        if (this.gameSystemCache.arcade.has(gameIdStr)) {
+            return 'arcade';
+        }
+        
+        if (this.gameSystemCache.arena.has(gameIdStr)) {
+            return 'arena';
+        }
+        
+        return 'regular';
     }
 
     async testAchievementChannel() {
@@ -119,32 +219,6 @@ class AchievementFeedService {
 
     async checkForNewAchievements() {
         console.log('Checking for new achievements...');
-        
-        // Get current challenge
-        const now = new Date();
-        const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-        const nextMonthStart = new Date(now.getFullYear(), now.getMonth() + 1, 1);
-
-        const currentChallenge = await Challenge.findOne({
-            date: {
-                $gte: currentMonthStart,
-                $lt: nextMonthStart
-            }
-        });
-
-        // Store monthly and shadow game IDs for quick lookup
-        let monthlyGameId = null;
-        let shadowGameId = null;
-        
-        if (currentChallenge) {
-            monthlyGameId = currentChallenge.monthly_challange_gameid;
-            if (currentChallenge.shadow_challange_revealed) {
-                shadowGameId = currentChallenge.shadow_challange_gameid;
-            }
-            console.log(`Current monthly game: ${monthlyGameId}, shadow game: ${shadowGameId || 'Not revealed'}`);
-        } else {
-            console.log('No active challenge found for the current month.');
-        }
         
         // Get announcement channel
         const announcementChannel = await this.getAnnouncementChannel();
@@ -248,13 +322,9 @@ class AchievementFeedService {
                     // Enhanced logging for achievement details
                     console.log(`Processing achievement: ${achievementTitle} (ID: ${achievementId}) in game ${gameId}, earned at ${achievementDate.toISOString()}`);
                     
-                    // Determine achievement type (monthly, shadow, or regular)
-                    let achievementType = 'regular';
-                    if (gameId === String(monthlyGameId)) {
-                        achievementType = 'monthly';
-                    } else if (gameId === String(shadowGameId)) {
-                        achievementType = 'shadow';
-                    }
+                    // NEW: Determine achievement type using the cache
+                    const achievementType = this.getGameSystemType(gameId);
+                    console.log(`Game ${gameId} identified as ${achievementType} type`);
                     
                     // Create unique identifiers for this achievement - include username for per-user uniqueness
                     const achievementBaseIdentifier = `${user.raUsername}:${achievementType}:${gameId}:${achievementId}`;
@@ -373,14 +443,12 @@ class AchievementFeedService {
                 }
                 
                 // Also check for awards for monthly and shadow challenges
-                if (currentChallenge) {
-                    if (monthlyGameId) {
-                        await this.checkForGameAwards(user, announcementChannel, currentChallenge, monthlyGameId, false);
-                    }
-                    
-                    if (shadowGameId) {
-                        await this.checkForGameAwards(user, announcementChannel, currentChallenge, shadowGameId, true);
-                    }
+                if (this.gameSystemCache.monthly) {
+                    await this.checkForGameAwards(user, announcementChannel, this.gameSystemCache.monthly, false);
+                }
+                
+                if (this.gameSystemCache.shadow) {
+                    await this.checkForGameAwards(user, announcementChannel, this.gameSystemCache.shadow, true);
                 }
                 
                 // Add a delay between users to prevent rate limits
@@ -394,58 +462,27 @@ class AchievementFeedService {
         console.log('Finished checking for achievements');
     }
 
-    // Improved session history initialization with backward compatibility
-    async initializeSessionHistory() {
-        console.log('Initializing session announcement history from persistent storage...');
-        this.sessionAnnouncementHistory.clear();
-        
-        try {
-            // Get all users
-            const users = await User.find({});
-            
-            // Track how many entries we're adding to session history
-            let entriesAdded = 0;
-            
-            // Add all announced achievements to session history
-            for (const user of users) {
-                if (user.announcedAchievements && Array.isArray(user.announcedAchievements)) {
-                    for (const achievement of user.announcedAchievements) {
-                        // Extract the parts - expecting username:type:gameId:achievementId:timestamp
-                        // or older format: type:gameId:achievementId:timestamp
-                        const parts = achievement.split(':');
-                        
-                        // For backward compatibility, handle both formats
-                        if (parts.length >= 4) {
-                            // If username is not the first part (old format), construct with username
-                            if (parts[0] !== user.raUsername) {
-                                const baseIdentifier = `${user.raUsername}:${parts[0]}:${parts[1]}:${parts[2]}`;
-                                this.sessionAnnouncementHistory.add(baseIdentifier);
-                            } else {
-                                // New format already has username as first part
-                                const baseIdentifier = `${parts[0]}:${parts[1]}:${parts[2]}:${parts[3]}`;
-                                this.sessionAnnouncementHistory.add(baseIdentifier);
-                            }
-                            entriesAdded++;
-                        } else if (parts.length >= 3) {
-                            // Handle very old format
-                            const baseIdentifier = `${user.raUsername}:${parts[0]}:${parts[1]}:${parts[2]}`;
-                            this.sessionAnnouncementHistory.add(baseIdentifier);
-                            entriesAdded++;
-                        }
-                    }
-                }
-            }
-            
-            console.log(`Initialized session history with ${entriesAdded} entries from persistent storage`);
-            console.log(`Session history size: ${this.sessionAnnouncementHistory.size} entries`);
-        } catch (error) {
-            console.error('Error initializing session history:', error);
-        }
-    }
-
-    async checkForGameAwards(user, channel, challenge, gameId, isShadow) {
+    // Modified to take just the game ID instead of the full challenge
+    async checkForGameAwards(user, channel, gameId, isShadow) {
         const gameIdString = String(gameId);
         console.log(`Checking for awards for ${user.raUsername} in ${isShadow ? 'shadow' : 'monthly'} game ${gameIdString}`);
+        
+        // Get current challenge to access progression/win requirements
+        const now = new Date();
+        const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+        const nextMonthStart = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+        
+        const challenge = await Challenge.findOne({
+            date: {
+                $gte: currentMonthStart,
+                $lt: nextMonthStart
+            }
+        });
+        
+        if (!challenge) {
+            console.log('No active challenge found for award checks');
+            return;
+        }
         
         // CRITICAL FIX: Check if user has ANY award for this game already
         // This simple prefix check will catch all awards for this user/game combination
@@ -597,6 +634,55 @@ class AchievementFeedService {
         }
     }
 
+    // Initialize session history from persistent storage
+    async initializeSessionHistory() {
+        console.log('Initializing session announcement history from persistent storage...');
+        this.sessionAnnouncementHistory.clear();
+        
+        try {
+            // Get all users
+            const users = await User.find({});
+            
+            // Track how many entries we're adding to session history
+            let entriesAdded = 0;
+            
+            // Add all announced achievements to session history
+            for (const user of users) {
+                if (user.announcedAchievements && Array.isArray(user.announcedAchievements)) {
+                    for (const achievement of user.announcedAchievements) {
+                        // Extract the parts - expecting username:type:gameId:achievementId:timestamp
+                        // or older format: type:gameId:achievementId:timestamp
+                        const parts = achievement.split(':');
+                        
+                        // For backward compatibility, handle both formats
+                        if (parts.length >= 4) {
+                            // If username is not the first part (old format), construct with username
+                            if (parts[0] !== user.raUsername) {
+                                const baseIdentifier = `${user.raUsername}:${parts[0]}:${parts[1]}:${parts[2]}`;
+                                this.sessionAnnouncementHistory.add(baseIdentifier);
+                            } else {
+                                // New format already has username as first part
+                                const baseIdentifier = `${parts[0]}:${parts[1]}:${parts[2]}:${parts[3]}`;
+                                this.sessionAnnouncementHistory.add(baseIdentifier);
+                            }
+                            entriesAdded++;
+                        } else if (parts.length >= 3) {
+                            // Handle very old format
+                            const baseIdentifier = `${user.raUsername}:${parts[0]}:${parts[1]}:${parts[2]}`;
+                            this.sessionAnnouncementHistory.add(baseIdentifier);
+                            entriesAdded++;
+                        }
+                    }
+                }
+            }
+            
+            console.log(`Initialized session history with ${entriesAdded} entries from persistent storage`);
+            console.log(`Session history size: ${this.sessionAnnouncementHistory.size} entries`);
+        } catch (error) {
+            console.error('Error initializing session history:', error);
+        }
+    }
+
     // Get user's profile image URL with caching
     async getUserProfileImageUrl(username) {
         // Check if we have a cached entry
@@ -625,248 +711,228 @@ class AchievementFeedService {
         }
     }
 
-// Achievement announcement with proper logo URL
-// Achievement announcement with correct challenge labels and clickable game title
-// Achievement announcement with GitHub logo URL
-async announceAchievement(channel, user, gameInfo, achievement, achievementType, gameId) {
-    try {
-        console.log(`Creating embed for achievement announcement: ${achievement.Title || 'Unknown Achievement'} (${achievementType})`);
-        
-        // Set color based on achievement type
-        let color = '#4CAF50';  // Green for regular achievements
-        
-        if (achievementType === 'monthly') {
-            color = '#FFD700';  // Yellow for monthly
-        } else if (achievementType === 'shadow') {
-            color = '#9B59B6';  // Purple for shadow
-        } else if (achievementType === 'award') {
-            color = '#3498DB';  // Blue for awards
+    // UPDATED: Achievement announcement with proper system-specific icons and colors
+    async announceAchievement(channel, user, gameInfo, achievement, achievementType, gameId) {
+        try {
+            console.log(`Creating embed for achievement announcement: ${achievement.Title || 'Unknown Achievement'} (${achievementType})`);
+            
+            // Set color and icon based on achievement type
+            let color = '#808080';  // Default to grey for regular achievements
+            let authorName = 'Achievement Unlocked';
+            let iconURL = null;
+            
+            // Raw GitHub URL for logo
+            const logoUrl = 'https://raw.githubusercontent.com/marquessam/select_start_bot2/a58a4136ff0597217bb9fb181115de3f152b71e4/assets/logo_simple.png';
+            
+            if (achievementType === 'monthly') {
+                color = '#9B59B6';  // Purple for monthly challenge
+                authorName = 'Monthly Challenge';
+                iconURL = logoUrl; // Use logo for monthly
+            } else if (achievementType === 'shadow') {
+                color = '#000000';  // Black for shadow challenge
+                authorName = 'Shadow Challenge 👥';
+                iconURL = logoUrl; // Use logo for shadow
+            } else if (achievementType === 'arcade') {
+                color = '#3498DB';  // Blue for arcade
+                authorName = 'Arcade Challenge 🕹️';
+                iconURL = logoUrl;
+            } else if (achievementType === 'arena') {
+                color = '#FF5722';  // Red for arena
+                authorName = 'Arena Challenge ⚔️';
+                iconURL = logoUrl;
+            } else if (gameInfo?.imageIcon) {
+                // Use game icon for regular achievements
+                iconURL = `https://retroachievements.org${gameInfo.imageIcon}`;
+            }
+            
+            // Create embed
+            const embed = new EmbedBuilder()
+                .setColor(color)
+                .setTimestamp();
+            
+            // Set game name and platform as the title with clickable link to game page
+            const platformText = gameInfo?.consoleName ? ` • ${gameInfo.consoleName}` : '';
+            embed.setTitle(`${gameInfo?.title || 'Unknown Game'}${platformText}`);
+            embed.setURL(`https://retroachievements.org/game/${gameId}`);
+            
+            // Set author with appropriate icon
+            if (iconURL) {
+                embed.setAuthor({
+                    name: authorName,
+                    iconURL: iconURL
+                });
+            } else {
+                // Set text only with no icon if we don't have a valid URL
+                embed.setAuthor({
+                    name: authorName
+                });
+            }
+            
+            // Set the thumbnail (right side) to ALWAYS be the achievement badge
+            if (achievement.BadgeName) {
+                const badgeUrl = `https://media.retroachievements.org/Badge/${achievement.BadgeName}.png`;
+                embed.setThumbnail(badgeUrl);
+            }
+            
+            // Get user's profile image URL for footer
+            const profileImageUrl = await this.getUserProfileImageUrl(user.raUsername);
+            
+            // Create user link
+            const userLink = `[${user.raUsername}](https://retroachievements.org/user/${user.raUsername})`;
+            
+            // Build description
+            let description = '';
+            description += `${userLink} earned **${achievement.Title || 'Unknown Achievement'}**\n\n`;
+            
+            // Add achievement description if available (in italics)
+            if (achievement.Description) {
+                description += `*${achievement.Description}*`;
+            }
+            
+            embed.setDescription(description);
+
+            // Simplified footer - just points and user icon
+            let footerText = "";
+            if (achievement.Points) {
+                footerText = `Points: ${achievement.Points}`;
+            }
+            
+            embed.setFooter({
+                text: footerText,
+                iconURL: profileImageUrl
+            });
+
+            console.log(`Sending achievement announcement to channel`);
+            
+            // Send the announcement
+            try {
+                const sentMessage = await channel.send({ embeds: [embed] });
+                console.log(`Successfully sent achievement announcement, message ID: ${sentMessage.id}`);
+                return true;
+            } catch (sendError) {
+                console.error(`Failed to send announcement: ${sendError.message}`);
+                
+                // Try a plain text fallback
+                try {
+                    const fallbackText = `**${user.raUsername}** earned "${achievement.Title || 'an achievement'}" in ${gameInfo?.title || 'a game'}`;
+                    await channel.send(fallbackText);
+                    console.log('Sent plain text fallback message');
+                    return true;
+                } catch (fallbackError) {
+                    console.error(`Even fallback message failed: ${fallbackError.message}`);
+                    return false;
+                }
+            }
+
+        } catch (error) {
+            console.error('Error announcing achievement:', error);
+            return false;
         }
-        
-        // Create embed
-        const embed = new EmbedBuilder()
-            .setColor(color)
-            .setTimestamp();
-        
-        // Set game name and platform as the title with clickable link to game page
-        const platformText = gameInfo?.consoleName ? ` • ${gameInfo.consoleName}` : '';
-        embed.setTitle(`${gameInfo?.title || 'Unknown Game'}${platformText}`);
-        embed.setURL(`https://retroachievements.org/game/${gameId}`);
-        
-        // Set the appropriate text as the author (top line)
-        let authorName = 'Achievement Unlocked';
-        if (achievementType === 'monthly') {
-            authorName = 'Monthly Challenge';
-        } else if (achievementType === 'shadow') {
-            authorName = 'Shadow Challenge';
-        }
-        
-        // Raw GitHub URL for logo
-        const logoUrl = 'https://raw.githubusercontent.com/marquessam/select_start_bot2/a58a4136ff0597217bb9fb181115de3f152b71e4/assets/logo_simple.png';
-        
-        // Set author with appropriate icon
-        if (achievementType === 'monthly' || achievementType === 'shadow') {
-            // Use our logo for monthly/shadow challenges
+    }
+
+    // UPDATED: Award announcement with system-specific colors
+    async announceGameAward(channel, user, gameInfo, awardLevel, achieved, total, isShadow, hasAllProgression, hasWinCondition, gameId) {
+        try {
+            console.log(`Creating embed for ${awardLevel} award announcement for ${user.raUsername}`);
+            
+            // Get emoji for award level
+            const emoji = AWARD_EMOJIS[awardLevel] || '🏅';
+            
+            // Create embed
+            const embed = new EmbedBuilder()
+                .setColor(this.getColorForAward(awardLevel, isShadow))
+                .setTimestamp();
+
+            // Set game name and platform as the title with clickable link to game page
+            const platformText = gameInfo?.consoleName ? ` • ${gameInfo.consoleName}` : '';
+            embed.setTitle(`${gameInfo?.title || 'Unknown Game'}${platformText}`);
+            embed.setURL(`https://retroachievements.org/game/${gameId}`);
+            
+            // Raw GitHub URL for logo
+            const logoUrl = 'https://raw.githubusercontent.com/marquessam/select_start_bot2/a58a4136ff0597217bb9fb181115de3f152b71e4/assets/logo_simple.png';
+            
+            // Set challenge award type as the author (top line)
+            const challengeType = isShadow ? 'Shadow Challenge' : 'Monthly Challenge';
+            const authorEmoji = isShadow ? ' 👥' : ''; // Add busts in silhouette emoji for shadow
             embed.setAuthor({
-                name: authorName,
+                name: `${challengeType} Award${authorEmoji}`,
                 iconURL: logoUrl
             });
-        } else if (gameInfo?.imageIcon) {
-            // Use game icon for regular achievements
-            embed.setAuthor({
-                name: authorName,
-                iconURL: `https://retroachievements.org${gameInfo.imageIcon}`
-            });
-        } else {
-            // Set text only with no icon if we don't have a valid URL
-            embed.setAuthor({
-                name: authorName
-            });
-        }
-        
-        // Set the thumbnail (right side) to ALWAYS be the achievement badge
-        if (achievement.BadgeName) {
-            const badgeUrl = `https://media.retroachievements.org/Badge/${achievement.BadgeName}.png`;
-            embed.setThumbnail(badgeUrl);
-        }
-        
-        // Get user's profile image URL for footer
-        const profileImageUrl = await this.getUserProfileImageUrl(user.raUsername);
-        
-        // Create user link
-        const userLink = `[${user.raUsername}](https://retroachievements.org/user/${user.raUsername})`;
-        
-        // Build description
-        let description = '';
-        description += `${userLink} earned **${achievement.Title || 'Unknown Achievement'}**\n\n`;
-        
-        // Add achievement description if available (in italics)
-        if (achievement.Description) {
-            description += `*${achievement.Description}*`;
-        }
-        
-        embed.setDescription(description);
-
-        // Simplified footer - just points and user icon
-        let footerText = "";
-        if (achievement.Points) {
-            footerText = `Points: ${achievement.Points}`;
-        }
-        
-        embed.setFooter({
-            text: footerText,
-            iconURL: profileImageUrl
-        });
-
-        console.log(`Sending achievement announcement to channel`);
-        
-        // Send the announcement
-        try {
-            const sentMessage = await channel.send({ embeds: [embed] });
-            console.log(`Successfully sent achievement announcement, message ID: ${sentMessage.id}`);
-            return true;
-        } catch (sendError) {
-            console.error(`Failed to send announcement: ${sendError.message}`);
             
-            // Try a plain text fallback
-            try {
-                const fallbackText = `**${user.raUsername}** earned "${achievement.Title || 'an achievement'}" in ${gameInfo?.title || 'a game'}`;
-                await channel.send(fallbackText);
-                console.log('Sent plain text fallback message');
-                return true;
-            } catch (fallbackError) {
-                console.error(`Even fallback message failed: ${fallbackError.message}`);
-                return false;
+            // Set thumbnail (right side) - use game icon for awards
+            if (gameInfo?.imageIcon) {
+                const gameIconUrl = `https://retroachievements.org${gameInfo.imageIcon}`;
+                embed.setThumbnail(gameIconUrl);
             }
-        }
-
-    } catch (error) {
-        console.error('Error announcing achievement:', error);
-        return false;
-    }
-}
-
-// Award announcement with GitHub logo URL
-async announceGameAward(channel, user, gameInfo, awardLevel, achieved, total, isShadow, hasAllProgression, hasWinCondition, gameId) {
-    try {
-        console.log(`Creating embed for ${awardLevel} award announcement for ${user.raUsername}`);
-        
-        // Get emoji for award level
-        const emoji = AWARD_EMOJIS[awardLevel] || '🏅';
-        
-        // Create embed
-        const embed = new EmbedBuilder()
-            .setColor(this.getColorForAward(awardLevel, isShadow))
-            .setTimestamp();
-
-        // Set game name and platform as the title with clickable link to game page
-        const platformText = gameInfo?.consoleName ? ` • ${gameInfo.consoleName}` : '';
-        embed.setTitle(`${gameInfo?.title || 'Unknown Game'}${platformText}`);
-        embed.setURL(`https://retroachievements.org/game/${gameId}`);
-        
-        // Raw GitHub URL for logo
-        const logoUrl = 'https://raw.githubusercontent.com/marquessam/select_start_bot2/a58a4136ff0597217bb9fb181115de3f152b71e4/assets/logo_simple.png';
-        
-        // Set challenge award type as the author (top line)
-        const challengeType = isShadow ? 'Shadow Challenge' : 'Monthly Challenge';
-        embed.setAuthor({
-            name: `${challengeType} Award`,
-            iconURL: logoUrl
-        });
-        
-        // Set thumbnail (right side) - use game icon for awards
-        if (gameInfo?.imageIcon) {
-            const gameIconUrl = `https://retroachievements.org${gameInfo.imageIcon}`;
-            embed.setThumbnail(gameIconUrl);
-        }
-        
-        // Get user's profile image URL for footer
-        const profileImageUrl = await this.getUserProfileImageUrl(user.raUsername);
-        
-        // Create user link
-        const userLink = `[${user.raUsername}](https://retroachievements.org/user/${user.raUsername})`;
-        
-        // Build description
-        let description = '';
-        description += `${userLink} earned **${awardLevel}**\n\n`;
-        
-        // Add award explanation based on level
-        switch (awardLevel) {
-            case 'MASTERY':
-                description += `*All achievements completed!*\n`;
-                break;
-            case 'BEATEN':
-                description += `*Game beaten with all required achievements.*\n`;
-                break;
-            case 'PARTICIPATION':
-                description += `*Started participating in the challenge.*\n`;
-                break;
-        }
-        
-        embed.setDescription(description);
-
-        // Simplified footer - just progress info and user icon
-        const progressText = `Progress: ${achieved}/${total} (${Math.round(achieved/total*100)}%)`;
-        
-        embed.setFooter({
-            text: progressText,
-            iconURL: profileImageUrl
-        });
-
-        console.log(`Sending award announcement to channel`);
-        
-        // Send the announcement
-        try {
-            const sentMessage = await channel.send({ embeds: [embed] });
-            console.log(`Successfully sent award announcement, message ID: ${sentMessage.id}`);
-            return true;
-        } catch (sendError) {
-            console.error(`Failed to send award announcement: ${sendError.message}`);
             
-            // Try a plain text fallback
-            try {
-                const fallbackText = `${emoji} **${user.raUsername}** has earned ${awardLevel} award in ${gameInfo?.title || 'a game'}!`;
-                await channel.send(fallbackText);
-                console.log('Sent plain text fallback message for award');
-                return true;
-            } catch (fallbackError) {
-                console.error(`Even fallback message failed: ${fallbackError.message}`);
-                return false;
+            // Get user's profile image URL for footer
+            const profileImageUrl = await this.getUserProfileImageUrl(user.raUsername);
+            
+            // Create user link
+            const userLink = `[${user.raUsername}](https://retroachievements.org/user/${user.raUsername})`;
+            
+            // Build description
+            let description = '';
+            description += `${userLink} earned **${awardLevel}**\n\n`;
+            
+            // Add award explanation based on level
+            switch (awardLevel) {
+                case 'MASTERY':
+                    description += `*All achievements completed!*\n`;
+                    break;
+                case 'BEATEN':
+                    description += `*Game beaten with all required achievements.*\n`;
+                    break;
+                case 'PARTICIPATION':
+                    description += `*Started participating in the challenge.*\n`;
+                    break;
             }
-        }
+            
+            embed.setDescription(description);
 
-    } catch (error) {
-        console.error('Error announcing award:', error);
-        return false;
+            // Simplified footer - just progress info and user icon
+            const progressText = `Progress: ${achieved}/${total} (${Math.round(achieved/total*100)}%)`;
+            
+            embed.setFooter({
+                text: progressText,
+                iconURL: profileImageUrl
+            });
+
+            console.log(`Sending award announcement to channel`);
+            
+            // Send the announcement
+            try {
+                const sentMessage = await channel.send({ embeds: [embed] });
+                console.log(`Successfully sent award announcement, message ID: ${sentMessage.id}`);
+                return true;
+            } catch (sendError) {
+                console.error(`Failed to send award announcement: ${sendError.message}`);
+                
+                // Try a plain text fallback
+                try {
+                    const fallbackText = `${emoji} **${user.raUsername}** has earned ${awardLevel} award in ${gameInfo?.title || 'a game'}!`;
+                    await channel.send(fallbackText);
+                    console.log('Sent plain text fallback message for award');
+                    return true;
+                } catch (fallbackError) {
+                    console.error(`Even fallback message failed: ${fallbackError.message}`);
+                    return false;
+                }
+            }
+
+        } catch (error) {
+            console.error('Error announcing award:', error);
+            return false;
+        }
     }
-}
     
+    // UPDATED: Get appropriate color for each award type
     getColorForAward(awardLevel, isShadow) {
         // Use different colors based on if it's a shadow or monthly challenge
         if (isShadow) {
-            // Shadow challenge colors
-            switch (awardLevel) {
-                case 'MASTERY': // Not possible for shadow games, but included for completeness
-                    return '#9B59B6'; // Purple
-                case 'BEATEN':
-                    return '#9B59B6'; // Purple
-                case 'PARTICIPATION':
-                    return '#9B59B6'; // Purple
-                default:
-                    return '#9B59B6'; // Purple
-            }
+            return '#000000'; // Black for shadow challenges
         } else {
-            // Monthly challenge colors
-            switch (awardLevel) {
-                case 'MASTERY':
-                    return '#FFD700'; // Yellow/Gold
-                case 'BEATEN':
-                    return '#FFD700'; // Yellow/Gold
-                case 'PARTICIPATION':
-                    return '#FFD700'; // Yellow/Gold
-                default:
-                    return '#FFD700'; // Yellow/Gold
-            }
+            return '#9B59B6'; // Purple for monthly challenges
         }
     }
 
