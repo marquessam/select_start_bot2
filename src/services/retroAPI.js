@@ -59,7 +59,54 @@ class RetroAchievementsService {
     }
 
     /**
-     * Get user's progress for a specific game
+     * Get user's progress for a specific game with award metadata
+     * @param {string} username - RetroAchievements username
+     * @param {string} gameId - RetroAchievements game ID
+     * @returns {Promise<Object>} User's progress data including awards
+     */
+    async getUserGameProgressWithAwards(username, gameId) {
+        const cacheKey = `progress_awards_${username}_${gameId}`;
+        const cachedData = this.getCachedItem(cacheKey);
+        
+        if (cachedData) {
+            return cachedData;
+        }
+        
+        try {
+            // Make direct API request to get award metadata
+            const url = `https://retroachievements.org/API/API_GetGameInfoAndUserProgress.php?g=${gameId}&u=${username}&a=1&z=${process.env.RA_USERNAME}&y=${process.env.RA_API_KEY}`;
+            
+            const response = await this.rateLimiter.add(async () => {
+                const res = await fetch(url);
+                if (!res.ok) {
+                    throw new Error(`API request failed with status ${res.status}`);
+                }
+                return res.json();
+            });
+
+            // Cache the result
+            this.setCachedItem(cacheKey, response);
+
+            return response;
+        } catch (error) {
+            console.error(`Error fetching game progress with awards for ${username} in game ${gameId}:`, error);
+            
+            // Return a minimal valid response structure to prevent further errors
+            return {
+                NumAwardedToUser: 0,
+                NumAchievements: 0,
+                UserCompletion: '0%',
+                UserCompletionHardcore: '0%',
+                HighestAwardKind: null,
+                HighestAwardDate: null,
+                Achievements: {},
+                title: `Game ${gameId}`
+            };
+        }
+    }
+
+    /**
+     * Get user's progress for a specific game (standard method)
      * @param {string} username - RetroAchievements username
      * @param {string} gameId - RetroAchievements game ID
      * @returns {Promise<Object>} User's progress data
