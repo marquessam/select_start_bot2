@@ -189,36 +189,36 @@ class HistoricalDataService {
                 achievementsEarnedThisMonth.includes(id)
             );
 
-            let progress = 0;
+            let progressLevel = 0;
             
             // Check for mastery (all achievements earned during challenge month)
             if (achievementsEarnedThisMonth.length === challenge.monthly_challange_game_total) {
-                progress = 3; // Mastery
+                progressLevel = 3; // Mastery
             } 
             // Check for beaten (all progression + at least one win during challenge month)
             else if (totalValidProgressionAchievements.length === progressionAchievements.length && 
                      (winAchievements.length === 0 || totalValidWinAchievements.length > 0)) {
-                progress = 2; // Beaten
+                progressLevel = 2; // Beaten
             } 
             // Check for participation (at least one achievement during challenge month)
             else if (achievementsEarnedThisMonth.length > 0) {
-                progress = 1; // Participation
+                progressLevel = 1; // Participation
             }
 
             const result = {
                 gameId: challenge.monthly_challange_gameid,
                 gameTitle: gameProgress.title || gameInfo?.title || `Game ${challenge.monthly_challange_gameid}`,
-                progress,
+                progress: progressLevel,
                 achievementsEarned: achievementsEarnedThisMonth.length,
                 totalAchievements: challenge.monthly_challange_game_total,
                 percentage: parseFloat((achievementsEarnedThisMonth.length / challenge.monthly_challange_game_total * 100).toFixed(2))
             };
 
             // Update user data if not dry run
-            if (!dryRun && progress > 0) {
+            if (!dryRun && progressLevel > 0) {
                 const monthKey = User.formatDateKey(challenge.date);
                 user.monthlyChallenges.set(monthKey, {
-                    progress,
+                    progress: progressLevel,
                     achievements: achievementsEarnedThisMonth.length,
                     totalAchievements: challenge.monthly_challange_game_total,
                     percentage: result.percentage,
@@ -248,71 +248,71 @@ class HistoricalDataService {
             const shadowGameInfo = await retroAPI.getGameInfo(challenge.shadow_challange_gameid);
             
             // Get user's progress for shadow game
-            const shadowProgress = await retroAPI.getUserGameProgress(
+            const shadowGameData = await retroAPI.getUserGameProgress(
                 user.raUsername,
                 challenge.shadow_challange_gameid
             );
 
-            const userShadowAchievements = shadowProgress.achievements || {};
+            const shadowUserAchievements = shadowGameData.achievements || {};
             
             // Filter shadow achievements earned during the challenge month
-            const shadowAchievementsEarnedThisMonth = Object.entries(userShadowAchievements)
+            const earnedShadowAchievements = Object.entries(shadowUserAchievements)
                 .filter(([id, data]) => wasEarnedDuringChallengeMonth(data.dateEarned, challenge.date))
                 .map(([id]) => id);
 
             // Calculate shadow progress
-            const progressionShadowAchievements = challenge.shadow_challange_progression_achievements || [];
-            const winShadowAchievements = challenge.shadow_challange_win_achievements || [];
+            const shadowProgressionAchs = challenge.shadow_challange_progression_achievements || [];
+            const shadowWinAchs = challenge.shadow_challange_win_achievements || [];
             
-            const totalValidShadowProgressionAchievements = progressionShadowAchievements.filter(id => 
-                shadowAchievementsEarnedThisMonth.includes(id)
+            const validProgressionAchs = shadowProgressionAchs.filter(id => 
+                earnedShadowAchievements.includes(id)
             );
             
-            const totalValidShadowWinAchievements = winShadowAchievements.filter(id => 
-                shadowAchievementsEarnedThisMonth.includes(id)
+            const validWinAchs = shadowWinAchs.filter(id => 
+                earnedShadowAchievements.includes(id)
             );
 
-            let shadowProgress = 0;
+            let calculatedLevel = 0;
             
             // For shadow games, "Beaten" is the highest status (2 points)
-            const hasAllProgressionShadowAchievements = 
-                progressionShadowAchievements.length > 0 && 
-                progressionShadowAchievements.every(id => shadowAchievementsEarnedThisMonth.includes(id));
+            const hasAllProgressionAchs = 
+                shadowProgressionAchs.length > 0 && 
+                shadowProgressionAchs.every(id => earnedShadowAchievements.includes(id));
 
-            const hasWinShadowAchievement = 
-                winShadowAchievements.length === 0 || 
-                winShadowAchievements.some(id => shadowAchievementsEarnedThisMonth.includes(id));
+            const hasWinAch = 
+                shadowWinAchs.length === 0 || 
+                shadowWinAchs.some(id => earnedShadowAchievements.includes(id));
             
-            if (hasAllProgressionShadowAchievements && hasWinShadowAchievement) {
-                shadowProgress = 2; // Beaten
+            if (hasAllProgressionAchs && hasWinAch) {
+                calculatedLevel = 2; // Beaten
             } 
-            else if (shadowAchievementsEarnedThisMonth.length > 0) {
-                shadowProgress = 1; // Participation
+            else if (earnedShadowAchievements.length > 0) {
+                calculatedLevel = 1; // Participation
             }
 
-            const result = {
+            const shadowResult = {
                 gameId: challenge.shadow_challange_gameid,
-                gameTitle: shadowGameProgress.title || shadowGameInfo?.title || `Game ${challenge.shadow_challange_gameid}`,
-                progress: shadowProgress,
-                achievementsEarned: shadowAchievementsEarnedThisMonth.length,
+                gameTitle: shadowGameData.title || shadowGameInfo?.title || `Game ${challenge.shadow_challange_gameid}`,
+                progress: calculatedLevel,
+                achievementsEarned: earnedShadowAchievements.length,
                 totalAchievements: challenge.shadow_challange_game_total,
-                percentage: parseFloat((shadowAchievementsEarnedThisMonth.length / challenge.shadow_challange_game_total * 100).toFixed(2))
+                percentage: parseFloat((earnedShadowAchievements.length / challenge.shadow_challange_game_total * 100).toFixed(2))
             };
 
             // Update user data if not dry run
-            if (!dryRun && shadowProgress > 0) {
+            if (!dryRun && calculatedLevel > 0) {
                 const monthKey = User.formatDateKey(challenge.date);
                 user.shadowChallenges.set(monthKey, {
-                    progress: shadowProgress,
-                    achievements: shadowAchievementsEarnedThisMonth.length,
+                    progress: calculatedLevel,
+                    achievements: earnedShadowAchievements.length,
                     totalAchievements: challenge.shadow_challange_game_total,
-                    percentage: result.percentage,
-                    gameTitle: result.gameTitle,
+                    percentage: shadowResult.percentage,
+                    gameTitle: shadowResult.gameTitle,
                     gameIconUrl: shadowGameInfo?.imageIcon || null
                 });
             }
 
-            return result;
+            return shadowResult;
 
         } catch (error) {
             console.error(`Error processing shadow challenge for game ${challenge.shadow_challange_gameid}:`, error);
