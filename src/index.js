@@ -203,6 +203,97 @@ async function handleMonthlyGpAllowance() {
     }
 }
 
+// NEW: Function to handle weekly comprehensive yearly sync
+async function handleWeeklyComprehensiveSync() {
+    try {
+        console.log('🔄 Starting weekly comprehensive yearly sync...');
+        
+        const currentYear = new Date().getFullYear();
+        
+        // Find the yearlyboard command
+        const yearlyboardCommand = client.commands.get('yearlyboard');
+        if (!yearlyboardCommand) {
+            console.error('Yearlyboard command not found for weekly sync');
+            return;
+        }
+        
+        // Create a mock interaction for the comprehensive sync
+        const mockInteraction = {
+            deferReply: async () => {
+                console.log('Weekly sync: Deferring reply...');
+            },
+            editReply: async (message) => {
+                if (typeof message === 'string') {
+                    console.log('Weekly sync progress:', message);
+                } else if (message.embeds && message.embeds.length > 0) {
+                    const embed = message.embeds[0];
+                    if (embed.title) {
+                        console.log(`Weekly sync: ${embed.title}`);
+                        if (embed.description) {
+                            console.log(`Weekly sync: ${embed.description}`);
+                        }
+                    }
+                }
+            },
+            member: { 
+                roles: { 
+                    cache: { 
+                        has: () => true // Mock admin permissions
+                    } 
+                } 
+            },
+            options: {
+                getInteger: (option) => {
+                    if (option === 'year') return currentYear;
+                    return null;
+                },
+                getBoolean: (option) => {
+                    if (option === 'sync') return true; // Enable comprehensive sync
+                    if (option === 'debug') return false;
+                    return false;
+                },
+                getString: () => null // No specific username
+            }
+        };
+        
+        // Execute the comprehensive sync
+        await yearlyboardCommand.execute(mockInteraction);
+        
+        console.log('✅ Weekly comprehensive yearly sync completed successfully');
+        
+        // Optional: Send notification to admin log channel
+        try {
+            const adminLogChannel = await client.channels.fetch(config.discord.adminLogChannelId);
+            if (adminLogChannel) {
+                await adminLogChannel.send({
+                    content: `✅ **Weekly Comprehensive Sync Complete**\n` +
+                             `Updated all user data for ${currentYear} yearly leaderboard.\n` +
+                             `Next sync: ${new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toLocaleDateString()}`
+                });
+            }
+        } catch (notifyError) {
+            console.error('Error sending weekly sync notification:', notifyError);
+        }
+        
+    } catch (error) {
+        console.error('❌ Error in weekly comprehensive sync:', error);
+        
+        // Send error notification to admin log
+        try {
+            const adminLogChannel = await client.channels.fetch(config.discord.adminLogChannelId);
+            if (adminLogChannel) {
+                await adminLogChannel.send({
+                    content: `❌ **Weekly Comprehensive Sync Failed**\n` +
+                             `Error: ${error.message}\n` +
+                             `Please check logs and consider running manual sync.`
+                });
+            }
+        } catch (notifyError) {
+            console.error('Error sending sync error notification:', notifyError);
+        }
+    }
+}
+
 // Handle ready event
 client.once(Events.ClientReady, async () => {
     try {
@@ -240,6 +331,14 @@ client.once(Events.ClientReady, async () => {
             console.log('Running achievement feed check...');
             achievementFeedService.start().catch(error => {
                 console.error('Error in achievement feed check:', error);
+            });
+        });
+
+        // NEW: Schedule weekly comprehensive yearly sync (Sundays at 3:00 AM)
+        cron.schedule('0 3 * * 0', () => {
+            console.log('Running weekly comprehensive yearly sync...');
+            handleWeeklyComprehensiveSync().catch(error => {
+                console.error('Error in weekly comprehensive yearly sync:', error);
             });
         });
 
@@ -447,6 +546,14 @@ client.once(Events.ClientReady, async () => {
         await handleMonthlyGpAllowance();
 
         console.log('Bot is ready!');
+        console.log('📅 Scheduled tasks:');
+        console.log('  • Stats updates: Every 30 minutes');
+        console.log('  • Achievement feeds: Every 15 minutes');
+        console.log('  • 🆕 Weekly comprehensive yearly sync: Sundays at 3:00 AM');
+        console.log('  • Monthly tasks: 1st of each month');
+        console.log('  • Arcade service: Daily at 12:15 AM');
+        console.log('  • Various feeds: Hourly');
+        
     } catch (error) {
         console.error('Error during initialization:', error);
         process.exit(1);
