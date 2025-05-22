@@ -292,7 +292,7 @@ class HistoricalDataService {
 
             const result = {
                 gameId: challenge.shadow_challange_gameid,
-                gameTitle: shadowProgress.title || shadowGameInfo?.title || `Game ${challenge.shadow_challange_gameid}`,
+                gameTitle: shadowGameProgress.title || shadowGameInfo?.title || `Game ${challenge.shadow_challange_gameid}`,
                 progress: shadowProgress,
                 achievementsEarned: shadowAchievementsEarnedThisMonth.length,
                 totalAchievements: challenge.shadow_challange_game_total,
