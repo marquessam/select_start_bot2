@@ -27,7 +27,7 @@ class GameAwardService {
         // In-memory tracking to prevent duplicates
         this.sessionAnnouncementHistory = new Set();
         
-        // Cache to store user profile image URLs 
+        // Cache to store user profile image URLs
         this.profileImageCache = new Map();
         this.cacheTTL = 30 * 60 * 1000; // 30 minutes
         
@@ -170,6 +170,212 @@ class GameAwardService {
         }
     }
 
+    /**
+     * Get user's game progress with award metadata
+     */
+    async getUserGameProgressWithAwards(username, gameId) {
+        try {
+            // Use retroAPI's new method for getting progress with awards
+            return await retroAPI.getUserGameProgressWithAwards(username, gameId);
+        } catch (error) {
+            console.error(`Error getting game progress with awards for ${username} in game ${gameId}:`, error);
+            // Return minimal structure to prevent crashes
+            return {
+                NumAwardedToUser: 0,
+                NumAchievements: 0,
+                UserCompletion: '0%',
+                UserCompletionHardcore: '0%',
+                HighestAwardKind: null,
+                HighestAwardDate: null,
+                Achievements: {}
+            };
+        }
+    }
+
+    /**
+     * Determine award status using official RetroAchievements data
+     */
+    async checkAwardStatus(username, gameId, manualConfig = null) {
+        try {
+            // Get user's progress including official award status
+            const progress = await this.getUserGameProgressWithAwards(username, gameId);
+            
+            // Check for official award status first
+            if (progress.HighestAwardKind) {
+                return this.processOfficialAward(progress);
+            }
+            
+            // Fallback to manual config if no official award but some progress exists
+            if (manualConfig && progress.NumAwardedToUser > 0) {
+                return this.checkManualAward(progress, manualConfig);
+            }
+            
+            // Check for participation (any achievements earned)
+            if (progress.NumAwardedToUser > 0) {
+                return {
+                    currentAward: 'PARTICIPATION',
+                    isBeaten: false,
+                    isMastered: false,
+                    method: 'participation',
+                    details: {
+                        earned: progress.NumAwardedToUser,
+                        total: progress.NumAchievements,
+                        completion: progress.UserCompletion || '0%',
+                        hardcoreCompletion: progress.UserCompletionHardcore || '0%'
+                    }
+                };
+            }
+            
+            // No progress
+            return {
+                currentAward: null,
+                isBeaten: false,
+                isMastered: false,
+                method: 'no_progress',
+                details: {
+                    earned: 0,
+                    total: progress.NumAchievements || 0
+                }
+            };
+            
+        } catch (error) {
+            console.error(`Error checking award status for ${username} in game ${gameId}:`, error);
+            return {
+                currentAward: null,
+                isBeaten: false,
+                isMastered: false,
+                method: 'error',
+                details: { error: error.message }
+            };
+        }
+    }
+
+    /**
+     * Process official RetroAchievements award status
+     */
+    processOfficialAward(progress) {
+        const awardKind = progress.HighestAwardKind.toLowerCase();
+        let currentAward = null;
+        let isBeaten = false;
+        let isMastered = false;
+
+        // Map official award kinds to our award levels
+        switch (awardKind) {
+            case 'mastered':
+                currentAward = 'MASTERY';
+                isBeaten = true;
+                isMastered = true;
+                break;
+            case 'beaten':
+                currentAward = 'BEATEN';
+                isBeaten = true;
+                isMastered = false;
+                break;
+            case 'completed':
+                // Some games might use "completed" instead of "beaten"
+                currentAward = 'BEATEN';
+                isBeaten = true;
+                isMastered = false;
+                break;
+            default:
+                // Unknown award kind, but user has some progress
+                if (progress.NumAwardedToUser > 0) {
+                    currentAward = 'PARTICIPATION';
+                }
+                break;
+        }
+
+        return {
+            currentAward,
+            isBeaten,
+            isMastered,
+            method: 'official_retroachievements',
+            confidence: 1.0, // 100% confidence in official data
+            details: {
+                officialAward: progress.HighestAwardKind,
+                awardDate: progress.HighestAwardDate,
+                earned: progress.NumAwardedToUser,
+                total: progress.NumAchievements,
+                completion: progress.UserCompletion || '0%',
+                hardcoreCompletion: progress.UserCompletionHardcore || '0%',
+                earnedHardcore: progress.NumAwardedToUserHardcore || 0
+            }
+        };
+    }
+
+    /**
+     * Fallback to manual award detection (existing logic)
+     */
+    checkManualAward(progress, manualConfig) {
+        const userAchievements = progress.Achievements || {};
+        
+        // Get the user's earned achievements
+        const userEarnedAchievements = Object.entries(userAchievements)
+            .filter(([id, data]) => data.hasOwnProperty('DateEarned') || data.hasOwnProperty('dateEarned'))
+            .map(([id]) => id);
+        
+        const progressionAchievements = manualConfig.progressionAchievements || [];
+        const winAchievements = manualConfig.winAchievements || [];
+        
+        // Check if user has completed all progression achievements
+        const hasAllProgressionAchievements = progressionAchievements.every(id => 
+            userEarnedAchievements.includes(String(id))
+        );
+        
+        // Check if user has at least one win condition (if any exist)
+        const hasWinCondition = winAchievements.length === 0 || 
+            winAchievements.some(id => userEarnedAchievements.includes(String(id)));
+        
+        // Check for mastery (all achievements)
+        const hasAllAchievements = progress.NumAwardedToUser === progress.NumAchievements;
+        
+        let currentAward = null;
+        let isBeaten = false;
+        let isMastered = false;
+        
+        if (hasAllAchievements) {
+            currentAward = 'MASTERY';
+            isBeaten = true;
+            isMastered = true;
+        } else if (hasAllProgressionAchievements && hasWinCondition) {
+            currentAward = 'BEATEN';
+            isBeaten = true;
+            isMastered = false;
+        } else if (progress.NumAwardedToUser > 0) {
+            currentAward = 'PARTICIPATION';
+        }
+        
+        return {
+            currentAward,
+            isBeaten,
+            isMastered,
+            method: 'manual_config',
+            confidence: 0.9, // High confidence in manual config
+            details: {
+                hasAllProgression: hasAllProgressionAchievements,
+                hasWinCondition,
+                progressionCount: progressionAchievements.length,
+                winCount: winAchievements.length,
+                earned: progress.NumAwardedToUser,
+                total: progress.NumAchievements,
+                completion: progress.UserCompletion || '0%'
+            }
+        };
+    }
+
+    /**
+     * Check if user has achieved mastery for any game (for mastery announcements)
+     */
+    async checkGameMasteryStatus(username, gameId) {
+        try {
+            const result = await this.checkAwardStatus(username, gameId);
+            return result.isMastered;
+        } catch (error) {
+            console.error(`Error checking mastery for ${username} in game ${gameId}:`, error);
+            return false;
+        }
+    }
+
     // Process monthly and shadow game awards
     async checkForGameAwards(user, gameId, isShadow) {
         const gameIdString = String(gameId);
@@ -236,12 +442,12 @@ class GameAwardService {
         }
         
         // Get user's game progress
-        const progress = await retroAPI.getUserGameProgress(user.raUsername, gameId);
+        const progress = await this.getUserGameProgressWithAwards(user.raUsername, gameId);
         
         // Get game info
         const gameInfo = await retroAPI.getGameInfo(gameId);
         
-        // Get relevant achievement lists
+        // Get relevant achievement lists for manual configuration (if they exist)
         const progressionAchievements = isShadow 
             ? challenge.shadow_challange_progression_achievements 
             : challenge.monthly_challange_progression_achievements;
@@ -254,34 +460,35 @@ class GameAwardService {
             ? challenge.shadow_challange_game_total
             : challenge.monthly_challange_game_total;
         
-        // Get the user's earned achievements
-        const userEarnedAchievements = Object.entries(progress.achievements || {})
-            .filter(([id, data]) => data.hasOwnProperty('dateEarned'))
-            .map(([id]) => id);
-        
-        // Determine current award level
+        // Determine current award level using official RetroAchievements data
         let currentAward = null;
+        let awardDetails = null;
         
-        // Check if user has all achievements (Mastery) - only for monthly, not shadow
-        const hasAllAchievements = progress.numAwardedToUser === totalAchievements;
+        // Check award status using official RA data with manual config as fallback
+        const manualConfig = (progressionAchievements && progressionAchievements.length > 0) ? {
+            progressionAchievements,
+            winAchievements
+        } : null;
         
-        // Check if user has completed all progression achievements
-        const hasAllProgressionAchievements = progressionAchievements.every(id => 
-            userEarnedAchievements.includes(id)
+        const awardResult = await this.checkAwardStatus(
+            user.raUsername, 
+            gameId, 
+            manualConfig
         );
         
-        // Check if user has at least one win condition (if any exist)
-        const hasWinCondition = winAchievements.length === 0 || 
-            winAchievements.some(id => userEarnedAchievements.includes(id));
+        console.log(`Official award detection result for ${user.raUsername}:`, awardResult);
         
-        // Determine the award
-        if (hasAllAchievements && !isShadow) {
-            // Mastery is only for monthly challenges, not shadow
-            currentAward = 'MASTERY';
-        } else if (hasAllProgressionAchievements && hasWinCondition) {
+        // For shadow challenges, mastery is not available (beaten is the highest)
+        if (isShadow && awardResult.currentAward === 'MASTERY') {
             currentAward = 'BEATEN';
-        } else if (progress.numAwardedToUser > 0) {
-            currentAward = 'PARTICIPATION';
+            awardDetails = {
+                ...awardResult,
+                currentAward: 'BEATEN',
+                method: awardResult.method + '_shadow_adjusted'
+            };
+        } else {
+            currentAward = awardResult.currentAward;
+            awardDetails = awardResult;
         }
 
         // Skip if no award achieved
@@ -289,7 +496,7 @@ class GameAwardService {
             return;
         }
         
-        console.log(`Determined award level for ${user.raUsername}: ${currentAward}`);
+        console.log(`Determined award level for ${user.raUsername}: ${currentAward} (method: ${awardDetails.method})`);
         
         const awardIdentifierPrefix = isShadow ? 'shadow:award' : 'monthly:award';
         
@@ -310,11 +517,10 @@ class GameAwardService {
                     user,
                     gameInfo,
                     currentAward,
-                    progress.numAwardedToUser,
+                    progress.NumAwardedToUser,
                     totalAchievements,
                     isShadow,
-                    hasAllProgressionAchievements,
-                    hasWinCondition,
+                    awardDetails, // Pass the detection details
                     gameId
                 );
             } catch (error) {
@@ -349,7 +555,7 @@ class GameAwardService {
         }
     }
 
-    // Check if a game has been mastered
+    // Check if a game has been mastered using official RA data
     async checkForGameMastery(user, gameId, achievement) {
         const gameIdString = String(gameId);
         console.log(`Checking for game mastery for ${user.raUsername} in game ${gameIdString}`);
@@ -377,76 +583,80 @@ class GameAwardService {
         }
 
         try {
-            // Get game info and user progress
-            const gameInfo = await retroAPI.getGameInfo(gameId);
-            const progress = await retroAPI.getUserGameProgress(user.raUsername, gameId);
+            // Check mastery using official RA data
+            const hasMastery = await this.checkGameMasteryStatus(user.raUsername, gameId);
             
-            // Skip if game info is missing or has 0 achievements
+            if (!hasMastery) {
+                return false;
+            }
+            
+            // Get detailed award info for the announcement
+            const awardDetails = await this.checkAwardStatus(user.raUsername, gameId);
+            
+            // Get game info
+            const gameInfo = await retroAPI.getGameInfo(gameId);
+            
+            // Skip if game info is missing
             if (!gameInfo || !gameInfo.numAchievements || gameInfo.numAchievements <= 0) {
                 console.log(`Game ${gameIdString} has no achievements, skipping mastery check`);
                 return false;
             }
             
-            console.log(`Game ${gameIdString} has ${gameInfo.numAchievements} achievements, user has earned ${progress.numAwardedToUser}`);
+            console.log(`User ${user.raUsername} has mastered game ${gameInfo.title} with ${gameInfo.numAchievements} achievements!`);
             
-            // Check if user has earned all achievements
-            const allAchievements = gameInfo.numAchievements;
-            if (progress.numAwardedToUser === allAchievements) {
-                // Get mastery channel
-                const channel = await this.getChannel(this.channelIds.retroachievement);
-                if (!channel) {
-                    console.error(`Cannot find channel for game mastery announcements`);
+            // Get mastery channel
+            const channel = await this.getChannel(this.channelIds.retroachievement);
+            if (!channel) {
+                console.error(`Cannot find channel for game mastery announcements`);
+                return false;
+            }
+            
+            // Announce mastery
+            const announced = await this.announcementRateLimiter.add(async () => {
+                try {
+                    return await this.announceMastery(
+                        channel,
+                        user,
+                        gameInfo,
+                        gameInfo.numAchievements,
+                        gameIdString,
+                        awardDetails
+                    );
+                } catch (error) {
+                    console.error('Error in rate-limited mastery announcement:', error);
                     return false;
                 }
-                
-                console.log(`User ${user.raUsername} has mastered game ${gameInfo.title} with ${allAchievements} achievements!`);
-                
-                // Announce mastery
-                const announced = await this.announcementRateLimiter.add(async () => {
-                    try {
-                        return await this.announceMastery(
-                            channel,
-                            user,
-                            gameInfo,
-                            allAchievements,
-                            gameIdString
-                        );
-                    } catch (error) {
-                        console.error('Error in rate-limited mastery announcement:', error);
-                        return false;
-                    }
-                });
-                
-                if (announced) {
-                    try {
-                        // Add to session history first
-                        this.sessionAnnouncementHistory.add(masteryIdentifier);
-                        
-                        // Add to user's announced achievements
-                        const masteryIdentifierWithTimestamp = `${masteryIdentifier}:${Date.now()}`;
-                        
-                        // Update both fields atomically
-                        await User.findOneAndUpdate(
-                            { _id: user._id },
-                            { 
-                                $push: { 
-                                    announcedAchievements: masteryIdentifierWithTimestamp,
-                                    masteredGames: {
-                                        gameId: gameIdString,
-                                        gameTitle: gameInfo.title || `Game ${gameIdString}`,
-                                        consoleName: gameInfo.consoleName || 'Unknown',
-                                        totalAchievements: allAchievements
-                                    }
+            });
+            
+            if (announced) {
+                try {
+                    // Add to session history first
+                    this.sessionAnnouncementHistory.add(masteryIdentifier);
+                    
+                    // Add to user's announced achievements
+                    const masteryIdentifierWithTimestamp = `${masteryIdentifier}:${Date.now()}`;
+                    
+                    // Update both fields atomically
+                    await User.findOneAndUpdate(
+                        { _id: user._id },
+                        { 
+                            $push: { 
+                                announcedAchievements: masteryIdentifierWithTimestamp,
+                                masteredGames: {
+                                    gameId: gameIdString,
+                                    gameTitle: gameInfo.title || `Game ${gameIdString}`,
+                                    consoleName: gameInfo.consoleName || 'Unknown',
+                                    totalAchievements: gameInfo.numAchievements
                                 }
-                            },
-                            { new: true, runValidators: true }
-                        );
-                        
-                        console.log(`Successfully added mastery for ${gameInfo.title} to ${user.raUsername}'s record`);
-                        return true;
-                    } catch (updateError) {
-                        console.error(`Error updating user ${user.raUsername} with mastery:`, updateError);
-                    }
+                            }
+                        },
+                        { new: true, runValidators: true }
+                    );
+                    
+                    console.log(`Successfully added mastery for ${gameInfo.title} to ${user.raUsername}'s record`);
+                    return true;
+                } catch (updateError) {
+                    console.error(`Error updating user ${user.raUsername} with mastery:`, updateError);
                 }
             }
         } catch (error) {
@@ -456,8 +666,8 @@ class GameAwardService {
         return false;
     }
 
-    // Announce game award
-    async announceGameAward(channel, user, gameInfo, awardLevel, achieved, total, isShadow, hasAllProgression, hasWinCondition, gameId) {
+    // Announce game award with official detection details
+    async announceGameAward(channel, user, gameInfo, awardLevel, achieved, total, isShadow, awardDetails, gameId) {
         try {
             console.log(`Creating embed for ${awardLevel} award announcement for ${user.raUsername}`);
             
@@ -501,13 +711,25 @@ class GameAwardService {
             let description = '';
             description += `${userLink} earned **${awardLevel}**\n\n`;
             
-            // Add award explanation based on level
+            // Add award explanation based on level and detection method
             switch (awardLevel) {
                 case 'MASTERY':
-                    description += `*All achievements completed!*\n`;
+                    if (awardDetails.method === 'official_retroachievements') {
+                        description += `*Officially mastered by RetroAchievements!*\n`;
+                    } else {
+                        description += `*All achievements completed!*\n`;
+                    }
                     break;
                 case 'BEATEN':
-                    description += `*Game beaten with all required achievements.*\n`;
+                    if (awardDetails.method === 'official_retroachievements') {
+                        description += `*Officially beaten by RetroAchievements!*\n`;
+                    } else if (awardDetails.method.includes('shadow_adjusted')) {
+                        description += `*Game beaten (mastery adjusted for shadow challenge).*\n`;
+                    } else if (awardDetails.method === 'manual_config') {
+                        description += `*Game beaten with all required achievements.*\n`;
+                    } else {
+                        description += `*Game beaten!*\n`;
+                    }
                     break;
                 case 'PARTICIPATION':
                     description += `*Started participating in the challenge.*\n`;
@@ -516,11 +738,23 @@ class GameAwardService {
             
             embed.setDescription(description);
 
-            // Simplified footer - just progress info and user icon
-            const progressText = `Progress: ${achieved}/${total} (${Math.round(achieved/total*100)}%)`;
+            // Enhanced footer with detection details
+            let footerText = `Progress: ${achieved}/${total} (${Math.round(achieved/total*100)}%)`;
+            
+            if (awardDetails.method === 'official_retroachievements' && awardDetails.details.awardDate) {
+                const awardDate = new Date(awardDetails.details.awardDate);
+                footerText += ` • Achieved: ${awardDate.toLocaleDateString()}`;
+            } else if (awardDetails.method === 'manual_config') {
+                footerText += ` • Manual config`;
+            }
+            
+            // Show hardcore completion if different from regular completion
+            if (awardDetails.details?.hardcoreCompletion && awardDetails.details.hardcoreCompletion !== awardDetails.details.completion) {
+                footerText += ` • Hardcore: ${awardDetails.details.hardcoreCompletion}`;
+            }
             
             embed.setFooter({
-                text: progressText,
+                text: footerText,
                 iconURL: profileImageUrl
             });
 
@@ -552,8 +786,8 @@ class GameAwardService {
         }
     }
 
-    // Announce game mastery
-    async announceMastery(channel, user, gameInfo, totalAchievements, gameId) {
+    // Announce game mastery with official detection details
+    async announceMastery(channel, user, gameInfo, totalAchievements, gameId, awardDetails) {
         try {
             console.log(`Creating embed for game mastery: ${user.raUsername} mastered ${gameInfo.title}`);
             
@@ -587,13 +821,26 @@ class GameAwardService {
             // Build description
             let description = '';
             description += `${userLink} has **MASTERED** this game!\n\n`;
-            description += `*All ${totalAchievements} achievements completed!*`;
+            
+            // Add detection method info
+            if (awardDetails.method === 'official_retroachievements') {
+                description += `*Officially mastered by RetroAchievements!*`;
+            } else {
+                description += `*All ${totalAchievements} achievements completed!*`;
+            }
             
             embed.setDescription(description);
 
-            // Footer - just points and user icon
+            // Footer with achievement info and award date if available
+            let footerText = `Total Achievements: ${totalAchievements}`;
+            
+            if (awardDetails.method === 'official_retroachievements' && awardDetails.details.awardDate) {
+                const awardDate = new Date(awardDetails.details.awardDate);
+                footerText += ` • Mastered: ${awardDate.toLocaleDateString()}`;
+            }
+            
             embed.setFooter({
-                text: `Total Achievements: ${totalAchievements}`,
+                text: footerText,
                 iconURL: profileImageUrl
             });
 
@@ -609,7 +856,29 @@ class GameAwardService {
         }
     }
 
-    // Get color for award level
+    /**
+     * Clear progress cache
+     */
+    clearProgressCache() {
+        // Clear the retroAPI cache which handles progress caching
+        retroAPI.clearCache();
+        console.log('Game award service cleared retroAPI cache');
+    }
+
+    /**
+     * Get cache statistics
+     */
+    getProgressCacheStats() {
+        // Since we're using retroAPI's cache, return a placeholder
+        return {
+            size: 'Managed by retroAPI',
+            entries: ['Progress cache managed by retroAPI service']
+        };
+    }
+
+    /**
+     * Get color for award level
+     */
     getColorForAward(awardLevel, isShadow) {
         // Use different colors based on if it's a shadow or monthly challenge
         if (isShadow) {
