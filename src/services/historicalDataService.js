@@ -3,6 +3,7 @@ import { User } from '../models/User.js';
 import { Challenge } from '../models/Challenge.js';
 import { HistoricalLeaderboard } from '../models/HistoricalLeaderboard.js';
 import retroAPI from './retroAPI.js';
+import gameAwardService from './gameAwardService.js'; // NEW: Import gameAwardService
 
 // Helper function to check if an achievement was earned during its challenge month
 function wasEarnedDuringChallengeMonth(dateEarned, challengeDate) {
@@ -153,7 +154,7 @@ class HistoricalDataService {
     }
 
     /**
-     * Process monthly challenge for a user
+     * Process monthly challenge for a user using new gameAwardService
      */
     async processMonthlyChallenge(user, challenge, dryRun = false) {
         if (!challenge.monthly_challange_gameid) {
@@ -164,45 +165,56 @@ class HistoricalDataService {
             // Get game info
             const gameInfo = await retroAPI.getGameInfo(challenge.monthly_challange_gameid);
             
-            // Get user's progress for this game
-            const gameProgress = await retroAPI.getUserGameProgress(
+            // Get user's progress for this game (using the new method with awards)
+            const gameProgress = await retroAPI.getUserGameProgressWithAwards(
                 user.raUsername,
                 challenge.monthly_challange_gameid
             );
 
-            const userAchievements = gameProgress.achievements || {};
+            const userAchievements = gameProgress.Achievements || {};
             
             // Filter achievements earned during the challenge month
             const achievementsEarnedThisMonth = Object.entries(userAchievements)
-                .filter(([id, data]) => wasEarnedDuringChallengeMonth(data.dateEarned, challenge.date))
+                .filter(([id, data]) => {
+                    const dateEarned = data.DateEarned || data.dateEarned;
+                    return wasEarnedDuringChallengeMonth(dateEarned, challenge.date);
+                })
                 .map(([id]) => id);
 
-            // Calculate progress
-            const progressionAchievements = challenge.monthly_challange_progression_achievements || [];
-            const winAchievements = challenge.monthly_challange_win_achievements || [];
-            
-            const totalValidProgressionAchievements = progressionAchievements.filter(id => 
-                achievementsEarnedThisMonth.includes(id)
-            );
-            
-            const totalValidWinAchievements = winAchievements.filter(id => 
-                achievementsEarnedThisMonth.includes(id)
-            );
-
+            // UPDATED: Use gameAwardService for award detection
             let progressLevel = 0;
             
-            // Check for mastery (all achievements earned during challenge month)
+            // Create a historical snapshot for award detection
+            const historicalProgress = {
+                NumAwardedToUser: achievementsEarnedThisMonth.length,
+                NumAchievements: challenge.monthly_challange_game_total,
+                UserCompletion: `${(achievementsEarnedThisMonth.length / challenge.monthly_challange_game_total * 100).toFixed(1)}%`,
+                UserCompletionHardcore: '0%', // Historical data doesn't distinguish hardcore
+                HighestAwardKind: null, // We'll determine this manually for historical data
+                HighestAwardDate: null,
+                Achievements: userAchievements
+            };
+
+            // For historical data, we need to manually determine the award kind since it's based on a specific time period
             if (achievementsEarnedThisMonth.length === challenge.monthly_challange_game_total) {
-                progressLevel = 3; // Mastery
-            } 
-            // Check for beaten (all progression + at least one win during challenge month)
-            else if (totalValidProgressionAchievements.length === progressionAchievements.length && 
-                     (winAchievements.length === 0 || totalValidWinAchievements.length > 0)) {
-                progressLevel = 2; // Beaten
-            } 
-            // Check for participation (at least one achievement during challenge month)
-            else if (achievementsEarnedThisMonth.length > 0) {
-                progressLevel = 1; // Participation
+                // All achievements earned during challenge month = Mastery
+                historicalProgress.HighestAwardKind = 'mastered';
+                progressLevel = 3;
+            } else {
+                // Use manual config as fallback for historical determination
+                const manualConfig = {
+                    progressionAchievements: challenge.monthly_challange_progression_achievements || [],
+                    winAchievements: challenge.monthly_challange_win_achievements || []
+                };
+                
+                // Use gameAwardService's manual award checking
+                const awardResult = gameAwardService.checkManualAward(historicalProgress, manualConfig);
+                
+                if (awardResult.currentAward === 'BEATEN') {
+                    progressLevel = 2;
+                } else if (awardResult.currentAward === 'PARTICIPATION') {
+                    progressLevel = 1;
+                }
             }
 
             const result = {
@@ -236,7 +248,7 @@ class HistoricalDataService {
     }
 
     /**
-     * Process shadow challenge for a user
+     * Process shadow challenge for a user using new gameAwardService
      */
     async processShadowChallenge(user, challenge, dryRun = false) {
         if (!challenge.shadow_challange_gameid) {
@@ -247,46 +259,49 @@ class HistoricalDataService {
             // Get shadow game info
             const shadowGameInfo = await retroAPI.getGameInfo(challenge.shadow_challange_gameid);
             
-            // Get user's progress for shadow game
-            const shadowGameData = await retroAPI.getUserGameProgress(
+            // Get user's progress for shadow game (using the new method with awards)
+            const shadowGameData = await retroAPI.getUserGameProgressWithAwards(
                 user.raUsername,
                 challenge.shadow_challange_gameid
             );
 
-            const shadowUserAchievements = shadowGameData.achievements || {};
+            const shadowUserAchievements = shadowGameData.Achievements || {};
             
             // Filter shadow achievements earned during the challenge month
             const earnedShadowAchievements = Object.entries(shadowUserAchievements)
-                .filter(([id, data]) => wasEarnedDuringChallengeMonth(data.dateEarned, challenge.date))
+                .filter(([id, data]) => {
+                    const dateEarned = data.DateEarned || data.dateEarned;
+                    return wasEarnedDuringChallengeMonth(dateEarned, challenge.date);
+                })
                 .map(([id]) => id);
 
-            // Calculate shadow progress
-            const shadowProgressionAchs = challenge.shadow_challange_progression_achievements || [];
-            const shadowWinAchs = challenge.shadow_challange_win_achievements || [];
-            
-            const validProgressionAchs = shadowProgressionAchs.filter(id => 
-                earnedShadowAchievements.includes(id)
-            );
-            
-            const validWinAchs = shadowWinAchs.filter(id => 
-                earnedShadowAchievements.includes(id)
-            );
-
+            // UPDATED: Use gameAwardService for award detection
             let calculatedLevel = 0;
             
-            // For shadow games, "Beaten" is the highest status (2 points)
-            const hasAllProgressionAchs = 
-                shadowProgressionAchs.length > 0 && 
-                shadowProgressionAchs.every(id => earnedShadowAchievements.includes(id));
+            // Create a historical snapshot for award detection
+            const historicalProgress = {
+                NumAwardedToUser: earnedShadowAchievements.length,
+                NumAchievements: challenge.shadow_challange_game_total,
+                UserCompletion: `${(earnedShadowAchievements.length / challenge.shadow_challange_game_total * 100).toFixed(1)}%`,
+                UserCompletionHardcore: '0%', // Historical data doesn't distinguish hardcore
+                HighestAwardKind: null,
+                HighestAwardDate: null,
+                Achievements: shadowUserAchievements
+            };
 
-            const hasWinAch = 
-                shadowWinAchs.length === 0 || 
-                shadowWinAchs.some(id => earnedShadowAchievements.includes(id));
+            // For shadow challenges, use manual config since we're checking historical time periods
+            const manualConfig = {
+                progressionAchievements: challenge.shadow_challange_progression_achievements || [],
+                winAchievements: challenge.shadow_challange_win_achievements || []
+            };
             
-            if (hasAllProgressionAchs && hasWinAch) {
-                calculatedLevel = 2; // Beaten
-            } 
-            else if (earnedShadowAchievements.length > 0) {
+            // Use gameAwardService's manual award checking
+            const awardResult = gameAwardService.checkManualAward(historicalProgress, manualConfig);
+            
+            // For shadow games, "Beaten" is the highest status (2 points) - no mastery
+            if (awardResult.currentAward === 'MASTERY' || awardResult.currentAward === 'BEATEN') {
+                calculatedLevel = 2; // Beaten (highest for shadow)
+            } else if (awardResult.currentAward === 'PARTICIPATION') {
                 calculatedLevel = 1; // Participation
             }
 
