@@ -17,6 +17,13 @@ class ArcadeAlertService extends FeedManagerBase {
         AlertUtils.setAlertsChannel(this.channelId);
     }
 
+    setClient(client) {
+        super.setClient(client);
+        // CRITICAL: Also set the client for AlertUtils when the service gets its client
+        AlertUtils.setClient(client);
+        console.log('AlertUtils client configured for arcade alerts via setClient');
+    }
+
     async start() {
         if (!this.client) {
             console.error('Discord client not set for arcade alert service');
