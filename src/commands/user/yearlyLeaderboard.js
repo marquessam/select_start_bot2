@@ -29,6 +29,16 @@ const SHADOW_MAX_POINTS = POINTS.BEATEN;
 // Number of users to show per embed - Reduced to stay within Discord's field character limits
 const USERS_PER_PAGE = 5;
 
+// Comprehensive sync configuration
+const SYNC_CONFIG = {
+    // API rate limiting - be respectful to RetroAchievements
+    API_DELAY_MS: 1000,  // 1 second between API calls
+    BATCH_SIZE: 5,       // Process 5 users at a time
+    BATCH_DELAY_MS: 2000, // 2 second delay between batches
+    // Progress reporting
+    PROGRESS_UPDATE_INTERVAL: 10, // Update progress every 10 users
+};
+
 // Helper function to check if an achievement was earned during its challenge month
 function wasEarnedDuringChallengeMonth(dateEarned, challengeDate) {
     if (!dateEarned) return false;
@@ -68,7 +78,7 @@ export default {
                 .setMaxValue(2100))
         .addBooleanOption(option =>
             option.setName('sync')
-                .setDescription('Sync with RetroAchievements API (admin only, slower but more accurate)')
+                .setDescription('Sync ALL users with RetroAchievements API (admin only, very slow but most accurate)')
                 .setRequired(false))
         .addStringOption(option =>
             option.setName('username')
@@ -142,45 +152,51 @@ export default {
                 challengeMap.set(dateKey, challenge);
             }
 
-            // If synchronizing, let the user know it might take a while
-            if (shouldSync) {
-                await interaction.editReply('Syncing with RetroAchievements API. This may take a few minutes...');
+            // Determine which users to process
+            let usersToProcess = users;
+            if (shouldSync && targetUser) {
+                usersToProcess = [targetUser];
             }
 
-            // Calculate points and update database if needed
+            // If synchronizing, provide comprehensive warning
+            if (shouldSync) {
+                const estimatedTime = Math.ceil((usersToProcess.length * challenges.length * SYNC_CONFIG.API_DELAY_MS) / 60000);
+                await interaction.editReply(
+                    `🔄 **COMPREHENSIVE SYNC STARTING**\n\n` +
+                    `**Users to sync:** ${usersToProcess.length}\n` +
+                    `**Challenges:** ${challenges.length}\n` +
+                    `**Estimated time:** ${estimatedTime} minutes\n\n` +
+                    `This will sync ALL users with the RetroAchievements API for maximum accuracy. Please be patient...`
+                );
+            }
+
+            // Calculate points for all users
             const userPoints = [];
             const skippedUsers = []; // For debugging
+            const syncedUserCount = { value: 0 }; // Use object for reference
             
-            // If we're only syncing a specific user
-            if (shouldSync && targetUser) {
-                try {
-                    const points = await this.syncAndCalculatePoints(targetUser, challengeMap, selectedYear);
-                    if (points.totalPoints > 0) {
-                        userPoints.push(points);
-                    } else if (showDebug) {
-                        skippedUsers.push({ 
-                            username: targetUser.raUsername, 
-                            reason: `No points: ${JSON.stringify(points)}` 
-                        });
-                    }
-                } catch (error) {
-                    console.error(`Error syncing data for user ${targetUser.raUsername}:`, error);
-                    // Fallback to database approach
-                    const points = await this.calculatePointsFromDatabase(targetUser, challengeMap, selectedYear);
-                    if (points.totalPoints > 0) {
-                        userPoints.push(points);
-                    } else if (showDebug) {
-                        skippedUsers.push({ 
-                            username: targetUser.raUsername, 
-                            reason: `Error syncing, no points in DB: ${error.message}` 
-                        });
-                    }
-                }
+            // Process users in batches to avoid overwhelming the API
+            const batches = [];
+            for (let i = 0; i < usersToProcess.length; i += SYNC_CONFIG.BATCH_SIZE) {
+                batches.push(usersToProcess.slice(i, i + SYNC_CONFIG.BATCH_SIZE));
+            }
+            
+            console.log(`Processing ${usersToProcess.length} users in ${batches.length} batches`);
+            
+            for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+                const batch = batches[batchIndex];
                 
-                // Add all other users using database method
-                for (const user of users) {
-                    if (user.raUsername !== targetUser.raUsername) {
-                        const points = await this.calculatePointsFromDatabase(user, challengeMap, selectedYear);
+                // Process batch in parallel but with rate limiting
+                await Promise.all(batch.map(async (user) => {
+                    try {
+                        let points;
+                        if (shouldSync) {
+                            points = await this.syncAndCalculatePoints(user, challengeMap, selectedYear);
+                            syncedUserCount.value++;
+                        } else {
+                            points = await this.calculatePointsFromDatabase(user, challengeMap, selectedYear);
+                        }
+                        
                         if (points.totalPoints > 0) {
                             userPoints.push(points);
                         } else if (showDebug) {
@@ -189,62 +205,53 @@ export default {
                                 reason: `No points: ${JSON.stringify(points)}` 
                             });
                         }
-                    }
-                }
-            }
-            // Regular approach for all users
-            else {
-                let usersWithPoints = 0;
-                for (const user of users) {
-                    // Regular database approach for most users
-                    if (!shouldSync) {
-                        const points = await this.calculatePointsFromDatabase(user, challengeMap, selectedYear);
-                        if (points.totalPoints > 0) {
-                            userPoints.push(points);
-                            usersWithPoints++;
-                        } else if (showDebug) {
-                            // Check specific data to help debugging
-                            const monthlyPoints = this.getYearlyPointsFromMap(user.monthlyChallenges, selectedYear);
-                            const shadowPoints = this.getYearlyPointsFromMap(user.shadowChallenges, selectedYear);
-                            const communityPoints = user.getCommunityPointsForYear(selectedYear);
-                            
-                            skippedUsers.push({ 
-                                username: user.raUsername, 
-                                reason: `No points (monthly: ${monthlyPoints}, shadow: ${shadowPoints}, community: ${communityPoints})` 
-                            });
-                        }
-                        continue;
-                    }
-                    
-                    // For admins using sync option: recalculate directly from RetroAPI similar to profile.js
-                    try {
-                        const points = await this.syncAndCalculatePoints(user, challengeMap, selectedYear);
-                        if (points.totalPoints > 0) {
-                            userPoints.push(points);
-                            usersWithPoints++;
-                        } else if (showDebug) {
-                            skippedUsers.push({ 
-                                username: user.raUsername, 
-                                reason: `No points after sync` 
-                            });
-                        }
                     } catch (error) {
-                        console.error(`Error syncing data for user ${user.raUsername}:`, error);
-                        // Fallback to database approach if API sync fails
-                        const points = await this.calculatePointsFromDatabase(user, challengeMap, selectedYear);
-                        if (points.totalPoints > 0) {
-                            userPoints.push(points);
-                            usersWithPoints++;
-                        } else if (showDebug) {
-                            skippedUsers.push({ 
-                                username: user.raUsername, 
-                                reason: `Error syncing and no points in DB: ${error.message}` 
-                            });
+                        console.error(`Error processing user ${user.raUsername}:`, error);
+                        // Fallback to database approach
+                        try {
+                            const points = await this.calculatePointsFromDatabase(user, challengeMap, selectedYear);
+                            if (points.totalPoints > 0) {
+                                userPoints.push(points);
+                            } else if (showDebug) {
+                                skippedUsers.push({ 
+                                    username: user.raUsername, 
+                                    reason: `Error syncing, no DB points: ${error.message}` 
+                                });
+                            }
+                        } catch (dbError) {
+                            console.error(`Database fallback failed for ${user.raUsername}:`, dbError);
+                            if (showDebug) {
+                                skippedUsers.push({ 
+                                    username: user.raUsername, 
+                                    reason: `Complete failure: ${dbError.message}` 
+                                });
+                            }
                         }
                     }
+                }));
+                
+                // Progress update
+                const processedUsers = (batchIndex + 1) * SYNC_CONFIG.BATCH_SIZE;
+                const totalUsers = usersToProcess.length;
+                const actualProcessed = Math.min(processedUsers, totalUsers);
+                
+                if (shouldSync && actualProcessed % SYNC_CONFIG.PROGRESS_UPDATE_INTERVAL === 0) {
+                    const percentComplete = Math.round((actualProcessed / totalUsers) * 100);
+                    await interaction.editReply(
+                        `🔄 **COMPREHENSIVE SYNC IN PROGRESS**\n\n` +
+                        `**Progress:** ${actualProcessed}/${totalUsers} users (${percentComplete}%)\n` +
+                        `**Found participants:** ${userPoints.length}\n\n` +
+                        `Syncing with RetroAchievements API for maximum accuracy...`
+                    );
                 }
-                console.log(`Found ${usersWithPoints} users with points out of ${users.length} total`);
+                
+                // Delay between batches to avoid overwhelming the API
+                if (batchIndex < batches.length - 1) {
+                    await new Promise(resolve => setTimeout(resolve, SYNC_CONFIG.BATCH_DELAY_MS));
+                }
             }
+            
+            console.log(`Processed ${usersToProcess.length} users, found ${userPoints.length} with points`);
 
             // Sort users by total points (descending)
             userPoints.sort((a, b) => b.totalPoints - a.totalPoints);
@@ -316,7 +323,9 @@ export default {
                             challengePoints: points.challengePoints,
                             communityPoints: points.communityPoints,
                             rank: points.rank,
-                            stats: points.stats
+                            stats: points.stats,
+                            lastUpdated: new Date(),
+                            syncedWithAPI: shouldSync
                         });
                         
                         await user.save();
@@ -347,7 +356,15 @@ export default {
             }
 
             // Create embeds for all pages
-            const embeds = this.createPaginatedEmbeds(userPoints, selectedYear, challenges.length, shouldSync, showDebug, skippedUsers);
+            const embeds = this.createPaginatedEmbeds(
+                userPoints, 
+                selectedYear, 
+                challenges.length, 
+                shouldSync,
+                syncedUserCount.value,
+                showDebug, 
+                skippedUsers
+            );
 
             // Display the paginated leaderboard with navigation buttons
             await this.displayPaginatedLeaderboard(interaction, embeds);
@@ -481,7 +498,7 @@ export default {
         return updateButtons(currentPage);
     },
 
-    // Calculate points using database values but also check actual achievements
+    // Calculate points using database values - includes ALL points sources
     async calculatePointsFromDatabase(user, challengeMap, selectedYear) {
         let challengePoints = 0;
         let masteryCount = 0;
@@ -502,7 +519,7 @@ export default {
                 continue; // Skip if no matching challenge
             }
             
-            // First handle the mastery case which is simple
+            // Calculate points based on progress
             if (data.progress === 3) {
                 // Mastery (7 points)
                 masteryCount++;
@@ -518,7 +535,7 @@ export default {
             }
         }
 
-        // Process shadow challenges (similar approach)
+        // Process shadow challenges
         for (const [dateStr, data] of user.shadowChallenges.entries()) {
             const challengeDate = new Date(dateStr);
             if (challengeDate.getFullYear() !== selectedYear) {
@@ -539,7 +556,8 @@ export default {
             }
         }
 
-        // Get community awards points
+        // Get ALL community awards points for the year
+        // This includes racing points, arcade points, and other community awards
         const communityPoints = user.getCommunityPointsForYear(selectedYear);
 
         return {
@@ -557,7 +575,7 @@ export default {
         };
     },
 
-    // Calculate points by querying RetroAchievements API (slow but more accurate)
+    // Calculate points by querying RetroAchievements API (comprehensive but slow)
     async syncAndCalculatePoints(user, challengeMap, selectedYear) {
         let challengePoints = 0;
         let masteryCount = 0;
@@ -577,7 +595,7 @@ export default {
             if (challengeDate.getFullYear() !== selectedYear) continue;
             
             // Add rate limiting delay to prevent overwhelming the API
-            await new Promise(resolve => setTimeout(resolve, 1000)); // 1 second delay between API calls
+            await new Promise(resolve => setTimeout(resolve, SYNC_CONFIG.API_DELAY_MS));
             
             // Process monthly challenge
             if (challenge.monthly_challange_gameid) {
@@ -634,7 +652,12 @@ export default {
                         
                         // Check if we need to update database
                         if (adjustedProgress !== monthlyData.progress) {
-                            updatedMonthlyMap.set(dateStr, { progress: adjustedProgress });
+                            updatedMonthlyMap.set(dateStr, { 
+                                progress: adjustedProgress,
+                                achievements: earnedDuringChallenge.length,
+                                totalAchievements: challenge.monthly_challange_game_total,
+                                percentage: parseFloat((earnedDuringChallenge.length / challenge.monthly_challange_game_total * 100).toFixed(2))
+                            });
                             needDatabaseUpdate = true;
                         }
                     }
@@ -702,7 +725,12 @@ export default {
                         
                         // Check if we need to update database
                         if (adjustedProgress !== shadowData.progress) {
-                            updatedShadowMap.set(dateStr, { progress: adjustedProgress });
+                            updatedShadowMap.set(dateStr, { 
+                                progress: adjustedProgress,
+                                achievements: earnedShadowDuringChallenge.length,
+                                totalAchievements: challenge.shadow_challange_game_total,
+                                percentage: parseFloat((earnedShadowDuringChallenge.length / challenge.shadow_challange_game_total * 100).toFixed(2))
+                            });
                             needDatabaseUpdate = true;
                         }
                     }
@@ -730,7 +758,8 @@ export default {
             await user.save();
         }
 
-        // Get community awards points
+        // Get ALL community awards points for the year
+        // This includes racing points, arcade points, and other community awards
         const communityPoints = user.getCommunityPointsForYear(selectedYear);
 
         return {
@@ -748,7 +777,7 @@ export default {
         };
     },
 
-    createPaginatedEmbeds(userPoints, selectedYear, challengeCount, isSynced, showDebug, skippedUsers) {
+    createPaginatedEmbeds(userPoints, selectedYear, challengeCount, wasSynced, syncedCount, showDebug, skippedUsers) {
         const embeds = [];
 
         // Calculate how many pages we need
@@ -768,10 +797,14 @@ export default {
                 .setTimestamp();
             
             // Set description for all pages
-            let description = `Total Challenges: ${challengeCount}`;
-            if (isSynced) {
-                description += "\n*Synced with RetroAchievements API*";
+            let description = `Total Challenges: ${challengeCount}\n**Total Participants:** ${userPoints.length}`;
+            
+            if (wasSynced) {
+                description += `\n🔄 *Fully synced with RetroAchievements API (${syncedCount} users)*`;
+            } else {
+                description += "\n💾 *Using cached data - use sync:true for live data*";
             }
+            
             embed.setDescription(description);
             
             // Add each user as an individual field to avoid character limits
@@ -788,8 +821,8 @@ export default {
                 
                 // Create compact content for each user's field
                 const userContent = 
-                    `Challenge: ${user.challengePoints} pts | Community: ${user.communityPoints} pts\n` +
-                    `Reg: ${m}✨ ${b}⭐ ${p}🏁 | Shadow: ${sb}⭐ ${sp}🏁`;
+                    `**Challenge:** ${user.challengePoints} pts | **Community:** ${user.communityPoints} pts\n` +
+                    `Monthly: ${m}✨ ${b}⭐ ${p}🏁 | Shadow: ${sb}⭐ ${sp}🏁`;
                 
                 // Add field for each user with rank and points in the name
                 embed.addFields({ 
@@ -801,7 +834,8 @@ export default {
             // Add point system explanation to all pages for reference
             embed.addFields({
                 name: 'Point System',
-                value: '✨ Mastery: 7pts | ⭐ Beaten: 4pts | 🏁 Participation: 1pt | Shadow max: 4pts'
+                value: '**Monthly/Shadow:** ✨ Mastery: 7pts | ⭐ Beaten: 4pts | 🏁 Participation: 1pt\n' +
+                       '**Community:** Racing & Arcade awards, special community recognition'
             });
             
             // Add debug info if requested (admin only) - only on the last page
