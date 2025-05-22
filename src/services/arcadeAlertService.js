@@ -175,6 +175,33 @@ class ArcadeAlertService extends FeedManagerBase {
                                 }
                             }
                         }
+                        
+                        // NEW: Check for score improvements without rank changes (top 5 only)
+                        for (const [username, currentInfo] of currentStandings.entries()) {
+                            // Only check users in top 5 to keep alerts manageable
+                            if (currentInfo.rank > 5) continue;
+                            
+                            const prevInfo = prevStandings[username];
+                            if (prevInfo && currentInfo.rank === prevInfo.rank) {
+                                // Same rank, check if score improved
+                                const scoreImproved = this.hasScoreImproved(prevInfo.score, currentInfo.score, board);
+                                
+                                if (scoreImproved) {
+                                    const discordId = registeredUsers.get(username.toLowerCase())?.discordId;
+                                    if (discordId) {
+                                        alerts.push({
+                                            type: 'score_improved',
+                                            user: { username, discordId },
+                                            rank: currentInfo.rank,
+                                            prevScore: prevInfo.score,
+                                            newScore: currentInfo.score,
+                                            boardName: board.gameTitle,
+                                            boardId: board.boardId
+                                        });
+                                    }
+                                }
+                            }
+                        }
                     }
                     
                     // Update previous standings with current ones
@@ -191,14 +218,74 @@ class ArcadeAlertService extends FeedManagerBase {
             
             // Send alerts if any were found
             if (sendAlerts && alerts.length > 0) {
-                console.log(`Found ${alerts.length} arcade ranking changes to notify`);
+                console.log(`Found ${alerts.length} arcade ranking/score changes to notify`);
                 await this.sendRankChangeAlerts(alertsChannel, alerts);
             } else if (sendAlerts) {
-                console.log('No arcade rank changes detected');
+                console.log('No arcade rank/score changes detected');
             }
         } catch (error) {
             console.error('Error checking arcade rank changes:', error);
         }
+    }
+
+    // NEW: Helper method to determine if a score has improved
+    hasScoreImproved(prevScore, currentScore, board) {
+        try {
+            // For most arcade games, higher scores are better
+            // We'll need to parse the scores to compare them numerically
+            
+            const prevNumeric = this.parseScoreValue(prevScore);
+            const currentNumeric = this.parseScoreValue(currentScore);
+            
+            // Check if both scores are valid numbers
+            if (isNaN(prevNumeric) || isNaN(currentNumeric)) {
+                return false;
+            }
+            
+            // Check for improvement (higher is better for most arcade games)
+            // If we need to handle time-based scores (lower is better), we could check the board description
+            const isTimeBased = board.gameTitle?.toLowerCase().includes('time') || 
+                              board.gameTitle?.toLowerCase().includes('speed') ||
+                              board.gameTitle?.toLowerCase().includes('fast');
+            
+            if (isTimeBased) {
+                // For time-based games, lower is better
+                return currentNumeric < prevNumeric && currentNumeric > 0;
+            } else {
+                // For score-based games, higher is better
+                return currentNumeric > prevNumeric;
+            }
+        } catch (error) {
+            console.error('Error comparing scores:', error);
+            return false;
+        }
+    }
+
+    // NEW: Helper method to parse score strings into numeric values
+    parseScoreValue(scoreString) {
+        if (!scoreString || scoreString === 'No score yet') {
+            return 0;
+        }
+        
+        // Handle time formats like "1:23.45" or "12m34s567ms"
+        if (scoreString.includes(':')) {
+            // Time format MM:SS.ms or HH:MM:SS.ms
+            const parts = scoreString.split(':');
+            if (parts.length === 2) {
+                const minutes = parseInt(parts[0]) || 0;
+                const seconds = parseFloat(parts[1]) || 0;
+                return minutes * 60 + seconds;
+            } else if (parts.length === 3) {
+                const hours = parseInt(parts[0]) || 0;
+                const minutes = parseInt(parts[1]) || 0;
+                const seconds = parseFloat(parts[2]) || 0;
+                return hours * 3600 + minutes * 60 + seconds;
+            }
+        }
+        
+        // Handle formatted numbers like "1,234,567" or "1.234.567"
+        const cleanedScore = scoreString.replace(/[^\d.-]/g, '');
+        return parseFloat(cleanedScore) || 0;
     }
 
     // Get the current standings for a specific arcade board
@@ -286,56 +373,104 @@ class ArcadeAlertService extends FeedManagerBase {
                     console.error('Error fetching game info for embed thumbnail:', error);
                 }
                 
-                // Prepare the position changes
-                const changes = [];
+                // Separate rank changes from score improvements
+                const rankChanges = boardAlertsList.filter(alert => alert.type !== 'score_improved');
+                const scoreImprovements = boardAlertsList.filter(alert => alert.type === 'score_improved');
                 
-                // Process various types of alerts to create simple messages
-                for (const alert of boardAlertsList) {
-                    if (alert.type === 'overtaken' && alert.passer) {
-                        changes.push({
-                            username: alert.passer.username,
-                            newRank: alert.prevRank
-                        });
-                    } else if (alert.type === 'entered_top3') {
-                        changes.push({
-                            username: alert.user.username,
-                            newRank: alert.newRank
-                        });
+                // Send rank change alerts (existing logic)
+                if (rankChanges.length > 0) {
+                    // Prepare the position changes
+                    const changes = [];
+                    
+                    // Process various types of alerts to create simple messages
+                    for (const alert of rankChanges) {
+                        if (alert.type === 'overtaken' && alert.passer) {
+                            changes.push({
+                                username: alert.passer.username,
+                                newRank: alert.prevRank
+                            });
+                        } else if (alert.type === 'entered_top3') {
+                            changes.push({
+                                username: alert.user.username,
+                                newRank: alert.newRank
+                            });
+                        }
+                    }
+                    
+                    // Get current standings
+                    const currentStandings = [];
+                    const standings = await this.getArcadeBoardStandings(board, await this.getRegisteredUsers());
+                    if (standings && standings.size > 0) {
+                        // Convert to array for sorting
+                        const standingsArray = Array.from(standings.entries())
+                            .map(([username, data]) => ({
+                                username,
+                                rank: data.rank,
+                                score: data.score
+                            }))
+                            .sort((a, b) => a.rank - b.rank);
+                        
+                        // Get top 5
+                        const topFive = standingsArray.filter(entry => entry.rank <= 5);
+                        currentStandings.push(...topFive);
+                    }
+                    
+                    // Use our AlertUtils for rank changes
+                    await AlertUtils.sendPositionChangeAlert({
+                        title: '🕹️ Arcade Alert!',
+                        description: `The leaderboard for **${boardName}** has been updated!`,
+                        changes: changes,
+                        currentStandings: currentStandings,
+                        thumbnail: thumbnailUrl,
+                        color: COLORS.INFO,
+                        footer: { text: 'Data provided by RetroAchievements • Rankings update hourly' }
+                    });
+                }
+                
+                // NEW: Send score improvement alerts (separate, simpler notifications)
+                if (scoreImprovements.length > 0) {
+                    for (const alert of scoreImprovements) {
+                        await this.sendScoreImprovementAlert(alertsChannel, alert, board, thumbnailUrl);
+                        
+                        // Small delay between score improvement alerts
+                        await new Promise(resolve => setTimeout(resolve, 1000));
                     }
                 }
                 
-                // Get current standings
-                const currentStandings = [];
-                const standings = await this.getArcadeBoardStandings(board, await this.getRegisteredUsers());
-                if (standings && standings.size > 0) {
-                    // Convert to array for sorting
-                    const standingsArray = Array.from(standings.entries())
-                        .map(([username, data]) => ({
-                            username,
-                            rank: data.rank,
-                            score: data.score
-                        }))
-                        .sort((a, b) => a.rank - b.rank);
-                    
-                    // Get top 5
-                    const topFive = standingsArray.filter(entry => entry.rank <= 5);
-                    currentStandings.push(...topFive);
-                }
-                
-                // Use our AlertUtils
-                await AlertUtils.sendPositionChangeAlert({
-                    title: '🕹️ Arcade Alert!',
-                    description: `The leaderboard for **${boardName}** has been updated!`,
-                    changes: changes,
-                    currentStandings: currentStandings,
-                    thumbnail: thumbnailUrl,
-                    color: COLORS.INFO,
-                    footer: { text: 'Data provided by RetroAchievements • Rankings update hourly' }
-                });
-                
             } catch (error) {
-                console.error(`Error sending arcade rank change alert for board ${boardId}:`, error);
+                console.error(`Error sending arcade alerts for board ${boardId}:`, error);
             }
+        }
+    }
+
+    // NEW: Send individual score improvement alerts
+    async sendScoreImprovementAlert(channel, alert, board, thumbnailUrl) {
+        try {
+            const { user, rank, prevScore, newScore, boardName } = alert;
+            
+            // Create a simple, clean embed for score improvements
+            const embed = {
+                color: COLORS.SUCCESS, // Green for improvements
+                title: '🕹️ Arcade Alert!',
+                description: `**Score Improvement**\n**${user.username}** improved their score in **${boardName}**!`,
+                fields: [
+                    {
+                        name: '📊 Score Update',
+                        value: `Previous: ${prevScore}\nNew: **${newScore}**\nRank: **#${rank}** (unchanged)`,
+                        inline: false
+                    }
+                ],
+                timestamp: new Date().toISOString()
+            };
+            
+            if (thumbnailUrl) {
+                embed.thumbnail = { url: thumbnailUrl };
+            }
+            
+            await channel.send({ embeds: [embed] });
+            console.log(`Sent score improvement alert for ${user.username} in ${boardName}`);
+        } catch (error) {
+            console.error('Error sending score improvement alert:', error);
         }
     }
     
