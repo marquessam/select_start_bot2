@@ -284,7 +284,7 @@ class ArenaService extends FeedManagerBase {
 
         try {
             console.log('Starting arena service...');
-            
+            AlertUtils.setClient(this.client);  // Set the client for AlertUtils
             // Clear the arena feed channel first
             await this.clearArenaFeedChannel();
             
