@@ -6,6 +6,7 @@ const CACHE_TIMEOUTS = {
     GAME_INFO: 24 * 60 * 60 * 1000,     // 24 hours
     USER_INFO: 60 * 60 * 1000,          // 1 hour
     USER_PROGRESS: 15 * 60 * 1000,      // 15 minutes
+    USER_PROGRESS_AWARDS: 15 * 60 * 1000, // NEW: 15 minutes for progress with awards
     LEADERBOARD: 5 * 60 * 1000,         // 5 minutes
     RECENT_ACHIEVEMENTS: 2 * 60 * 1000  // 2 minutes
 };
@@ -120,6 +121,35 @@ export async function getUserGameProgress(username, gameId) {
         return { 
             numAwardedToUser: 0,
             achievements: {}
+        };
+    }
+}
+
+/**
+ * NEW: Get user's game progress with awards and caching
+ */
+export async function getUserGameProgressWithAwards(username, gameId) {
+    const cacheKey = `progress_awards:${username}:${gameId}`;
+    const cached = apiCache.get(cacheKey);
+    
+    if (cached) return cached;
+    
+    try {
+        const progress = await retroAPI.getUserGameProgressWithAwards(username, gameId);
+        apiCache.set(cacheKey, progress, CACHE_TIMEOUTS.USER_PROGRESS_AWARDS);
+        return progress;
+    } catch (error) {
+        console.error(`Error fetching game progress with awards for ${username} on ${gameId}:`, error);
+        // Return minimal object to prevent errors
+        return { 
+            NumAwardedToUser: 0,
+            NumAchievements: 0,
+            UserCompletion: '0%',
+            UserCompletionHardcore: '0%',
+            HighestAwardKind: null,
+            HighestAwardDate: null,
+            Achievements: {},
+            title: `Game ${gameId}`
         };
     }
 }
@@ -247,6 +277,9 @@ export function clearCache(type = null, identifier = null) {
         case 'progress':
             prefix = identifier ? `progress:${identifier}` : 'progress:';
             break;
+        case 'progress_awards':  // NEW: Support for clearing progress with awards cache
+            prefix = identifier ? `progress_awards:${identifier}` : 'progress_awards:';
+            break;
         case 'recent':
             prefix = identifier ? `recent:${identifier}` : 'recent:';
             break;
@@ -264,6 +297,7 @@ export default {
     getGameInfo,
     getUserInfo,
     getUserGameProgress,
+    getUserGameProgressWithAwards,  // NEW: Export the new method
     getUserRecentAchievements,
     getLeaderboardEntries,
     findUserInLeaderboard,
