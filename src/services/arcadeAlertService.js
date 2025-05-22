@@ -26,6 +26,10 @@ class ArcadeAlertService extends FeedManagerBase {
         try {
             console.log('Starting arcade alert service...');
             
+            // CRITICAL: Set the Discord client for AlertUtils
+            AlertUtils.setClient(this.client);
+            console.log('AlertUtils client configured for arcade alerts');
+            
             // Initial check (without alerts, just to build baseline standings)
             await this.checkForRankChanges(false);
             
@@ -64,6 +68,7 @@ class ArcadeAlertService extends FeedManagerBase {
             
             // Get all registered users
             const users = await User.find({});
+            console.log(`Found ${users.length} registered users total`);
             
             // Create mapping of RA usernames to user info
             const registeredUsers = new Map();
@@ -78,13 +83,18 @@ class ArcadeAlertService extends FeedManagerBase {
             const alerts = [];
             for (const board of boards) {
                 try {
+                    console.log(`Processing board: ${board.gameTitle} (ID: ${board.boardId})`);
+                    
                     // Get the current standings for this board using our utility
                     const currentStandings = await this.getArcadeBoardStandings(board, registeredUsers);
                     
                     // Skip if no results
                     if (!currentStandings || currentStandings.size === 0) {
+                        console.log(`No registered users found on board: ${board.gameTitle}`);
                         continue;
                     }
+                    
+                    console.log(`Found ${currentStandings.size} registered users on board: ${board.gameTitle}`);
                     
                     // Compare with previous standings to check for changes
                     if (sendAlerts && this.previousStandings.has(board.boardId)) {
@@ -219,9 +229,12 @@ class ArcadeAlertService extends FeedManagerBase {
             // Send alerts if any were found
             if (sendAlerts && alerts.length > 0) {
                 console.log(`Found ${alerts.length} arcade ranking/score changes to notify`);
+                console.log('AlertUtils client exists:', !!AlertUtils.client);
                 await this.sendRankChangeAlerts(alertsChannel, alerts);
             } else if (sendAlerts) {
                 console.log('No arcade rank/score changes detected');
+            } else {
+                console.log('Baseline standings established for all arcade boards');
             }
         } catch (error) {
             console.error('Error checking arcade rank changes:', error);
