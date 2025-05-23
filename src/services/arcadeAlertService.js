@@ -5,7 +5,7 @@ import { config } from '../config/config.js';
 import { FeedManagerBase } from '../utils/FeedManagerBase.js';
 import { COLORS, EMOJIS } from '../utils/FeedUtils.js';
 import RetroAPIUtils from '../utils/RetroAPIUtils.js';
-import AlertUtils from '../utils/AlertUtils.js';
+import AlertUtils, { ALERT_TYPES } from '../utils/AlertUtils.js';
 
 class ArcadeAlertService extends FeedManagerBase {
     constructor() {
@@ -13,8 +13,8 @@ class ArcadeAlertService extends FeedManagerBase {
         // Store previous arcade standings for comparison
         this.previousStandings = new Map();
         
-        // Configure AlertUtils
-        AlertUtils.setAlertsChannel(this.channelId);
+        // No need to configure AlertUtils here anymore
+        // AlertUtils knows about the arcade alerts channel from its initialization
     }
 
     setClient(client) {
@@ -435,7 +435,7 @@ class ArcadeAlertService extends FeedManagerBase {
                         currentStandings.push(...topFive);
                     }
                     
-                    // Use our AlertUtils for rank changes
+                    // Use our AlertUtils for rank changes with the ARCADE alert type
                     await AlertUtils.sendPositionChangeAlert({
                         title: '🕹️ Arcade Alert!',
                         description: `The leaderboard for **${boardName}** has been updated!`,
@@ -444,7 +444,7 @@ class ArcadeAlertService extends FeedManagerBase {
                         thumbnail: thumbnailUrl,
                         color: COLORS.INFO,
                         footer: { text: 'Data provided by RetroAchievements • Rankings update hourly' }
-                    });
+                    }, ALERT_TYPES.ARCADE); // Specify ARCADE alert type for proper channel routing
                 }
                 
                 // NEW: Send score improvement alerts (separate, simpler notifications)
