@@ -153,11 +153,26 @@ class GameAwardService {
     }
 
     /**
+     * FIXED: Helper function to parse completion percentage safely
+     */
+    parseCompletionPercentage(completionString) {
+        if (!completionString) return 0;
+        
+        // Remove % symbol and any other non-numeric characters except decimal point
+        const cleanString = completionString.toString().replace(/[^\d.]/g, '');
+        const percentage = parseFloat(cleanString);
+        
+        return isNaN(percentage) ? 0 : percentage;
+    }
+
+    /**
      * Check if a user has mastered a game and announce if so
      */
     async checkForGameMastery(user, gameId, achievement) {
         try {
             if (!user || !gameId) return false;
+            
+            console.log(`Checking game mastery for ${user.raUsername} on game ${gameId}`);
             
             // Determine which system this game belongs to
             const systemType = this.getGameSystemType(gameId);
@@ -170,8 +185,19 @@ class GameAwardService {
             // Get the user's game progress with awards
             const progress = await RetroAPIUtils.getUserGameProgressWithAwards(user.raUsername, gameId);
             
+            console.log(`Progress data for ${user.raUsername} on game ${gameId}:`, {
+                HighestAwardKind: progress?.HighestAwardKind,
+                UserCompletion: progress?.UserCompletion,
+                UserCompletionHardcore: progress?.UserCompletionHardcore,
+                NumAwardedToUser: progress?.NumAwardedToUser,
+                NumAchievements: progress?.NumAchievements
+            });
+            
             // Check if the user has any award for this game
-            if (!progress || !progress.HighestAwardKind) return false;
+            if (!progress || !progress.HighestAwardKind) {
+                console.log(`No award found for ${user.raUsername} on game ${gameId}`);
+                return false;
+            }
             
             // Create a unique identifier for this award
             const awardIdentifier = `${user.raUsername}:${systemType}:${gameId}:${progress.HighestAwardKind}`;
@@ -195,7 +221,24 @@ class GameAwardService {
             } else if (progress.HighestAwardKind === 'completion') {
                 isBeaten = true;
             } else {
-                // Not an award we announce
+                console.log(`Award type ${progress.HighestAwardKind} not announced for regular games`);
+                return false;
+            }
+            
+            // FIXED: Parse completion percentages correctly
+            const userCompletion = this.parseCompletionPercentage(progress.UserCompletion);
+            const userCompletionHardcore = this.parseCompletionPercentage(progress.UserCompletionHardcore);
+            
+            console.log(`Completion check for ${user.raUsername}: completion=${userCompletion}%, hardcore=${userCompletionHardcore}%`);
+            
+            // Verify the user actually has the award with proper completion
+            if (isMastery && userCompletionHardcore < 100) {
+                console.log(`User ${user.raUsername} doesn't have 100% hardcore mastery for game ${gameId} (${userCompletionHardcore}%), skipping announcement`);
+                return false;
+            }
+            
+            if (isBeaten && userCompletion < 100) {
+                console.log(`User ${user.raUsername} doesn't have 100% completion for game ${gameId} (${userCompletion}%), skipping announcement`);
                 return false;
             }
             
@@ -205,21 +248,6 @@ class GameAwardService {
             // Prepare thumbnail URL
             const thumbnailUrl = gameInfo?.imageIcon ? 
                 `https://retroachievements.org${gameInfo.imageIcon}` : null;
-            
-            // Check the game again to make sure they have the award
-            // This prevents false positives where an achievement might not trigger the award yet
-            const userCompletion = parseInt(progress.UserCompletion || '0');
-            const userCompletionHardcore = parseInt(progress.UserCompletionHardcore || '0');
-            
-            if (isMastery && userCompletionHardcore < 100) {
-                console.log(`User ${user.raUsername} doesn't have 100% hardcore mastery for game ${gameId}, skipping announcement`);
-                return false;
-            }
-            
-            if (isBeaten && userCompletion < 100) {
-                console.log(`User ${user.raUsername} doesn't have 100% completion for game ${gameId}, skipping announcement`);
-                return false;
-            }
             
             // Add award to session history
             this.sessionAwardHistory.add(awardIdentifier);
@@ -270,11 +298,22 @@ class GameAwardService {
         try {
             if (!user || !gameId) return false;
             
+            console.log(`Checking game awards for ${user.raUsername} on ${isShadow ? 'shadow' : 'monthly'} game ${gameId}`);
+            
             // Get the user's game progress with awards
             const progress = await RetroAPIUtils.getUserGameProgressWithAwards(user.raUsername, gameId);
             
+            console.log(`Progress data for ${user.raUsername} on ${isShadow ? 'shadow' : 'monthly'} game ${gameId}:`, {
+                HighestAwardKind: progress?.HighestAwardKind,
+                UserCompletion: progress?.UserCompletion,
+                UserCompletionHardcore: progress?.UserCompletionHardcore
+            });
+            
             // Check if the user has any award for this game
-            if (!progress || !progress.HighestAwardKind) return false;
+            if (!progress || !progress.HighestAwardKind) {
+                console.log(`No award found for ${user.raUsername} on ${isShadow ? 'shadow' : 'monthly'} game ${gameId}`);
+                return false;
+            }
             
             // Create a unique identifier for this award
             const systemType = isShadow ? 'shadow' : 'monthly';
@@ -316,7 +355,7 @@ class GameAwardService {
                 awardEmoji = AWARD_EMOJIS.PARTICIPATION;
                 awardColor = '#CD7F32'; // Bronze for participation
             } else {
-                // Not an award we announce
+                console.log(`Award type ${progress.HighestAwardKind} not announced for ${systemType} games`);
                 return false;
             }
             
