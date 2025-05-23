@@ -638,16 +638,11 @@ class ArcadeAlertService extends FeedManagerBase {
                         name: '📊 Score Update',
                         value: `**Previous:** ${prevScore}\n**New:** ${newScore} ${improvement}\n**Rank:** #${rank} (maintained)`,
                         inline: false
-                    },
-                    {
-                        name: '🎯 Status',
-                        value: `${user.username} is making moves on the leaderboard! Watch out for potential rank changes.`,
-                        inline: false
                     }
                 ],
                 timestamp: new Date().toISOString(),
                 footer: {
-                    text: 'Someone is grinding for a better position! • Updates hourly'
+                    text: 'Score improvement detected • Updates hourly'
                 }
             };
             
