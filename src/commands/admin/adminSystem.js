@@ -8,6 +8,8 @@ import achievementFeedService from '../../services/achievementFeedService.js';
 import gameAwardService from '../../services/gameAwardService.js';
 import { User } from '../../models/User.js';
 import retroAPI from '../../services/retroAPI.js';
+import RetroAPIUtils from '../../utils/RetroAPIUtils.js';
+import AlertUtils, { ALERT_TYPES } from '../../utils/AlertUtils.js';
 
 export default {
     data: new SlashCommandBuilder()
@@ -348,9 +350,9 @@ export default {
                         if (achievementType === 'regular') {
                             awardAnnounced = await this.forceCheckGameMastery(user, gameId, achievement, forceAnnounce);
                         } else if (achievementType === 'monthly') {
-                            awardAnnounced = await gameAwardService.checkForGameAwards(user, gameId, false);
+                            awardAnnounced = await this.forceCheckGameAwards(user, gameId, false, forceAnnounce);
                         } else if (achievementType === 'shadow') {
-                            awardAnnounced = await gameAwardService.checkForGameAwards(user, gameId, true);
+                            awardAnnounced = await this.forceCheckGameAwards(user, gameId, true, forceAnnounce);
                         }
                         
                         if (awardAnnounced) {
@@ -375,43 +377,253 @@ export default {
     },
 
     /**
-     * Force check for game mastery
+     * FIXED: Force check for game mastery - improved bypass logic
      * @private
      */
     async forceCheckGameMastery(user, gameId, achievement, forceAnnounce) {
         if (!user || !gameId) return false;
 
         try {
-            // First, try the regular method
-            const result = await gameAwardService.checkForGameMastery(user, gameId, achievement);
+            console.log(`Force checking game mastery for ${user.raUsername} on game ${gameId}, force=${forceAnnounce}`);
             
-            // If it succeeded or we're not forcing, return the result
-            if (result || !forceAnnounce) return result;
-            
-            // If we're forcing and the regular method didn't announce, 
-            // we need to bypass the announcement history check
-            
-            // Create a temporary backup of session history
-            const gameSystemType = achievementFeedService.getGameSystemType(gameId);
-            const sessionBackup = new Set([...gameAwardService.sessionAwardHistory]);
-            
-            // Clear any existing award identifiers for this game/user
-            const awardTypes = ['mastery', 'beaten', 'completion', 'participation'];
-            for (const awardType of awardTypes) {
-                const awardIdentifier = `${user.raUsername}:${gameSystemType}:${gameId}:${awardType}`;
-                gameAwardService.sessionAwardHistory.delete(awardIdentifier);
+            // If not forcing, just use the regular method
+            if (!forceAnnounce) {
+                return await gameAwardService.checkForGameMastery(user, gameId, achievement);
             }
             
-            // Try again with cleared history
-            const forceResult = await gameAwardService.checkForGameMastery(user, gameId, achievement);
+            // For force mode, directly check the API for mastery status
+            const progress = await RetroAPIUtils.getUserGameProgressWithAwards(user.raUsername, gameId);
             
-            // Restore the original session history
-            gameAwardService.sessionAwardHistory = sessionBackup;
+            console.log(`Direct API check result for ${user.raUsername} on game ${gameId}:`, {
+                HighestAwardKind: progress?.HighestAwardKind,
+                UserCompletion: progress?.UserCompletion,
+                UserCompletionHardcore: progress?.UserCompletionHardcore
+            });
             
-            return forceResult;
+            if (!progress || !progress.HighestAwardKind) {
+                console.log(`No award found for ${user.raUsername} on game ${gameId}`);
+                return false;
+            }
+            
+            // Check if it's mastery or beaten
+            const isMastery = progress.HighestAwardKind === 'mastery';
+            const isBeaten = progress.HighestAwardKind === 'completion';
+            
+            if (!isMastery && !isBeaten) {
+                console.log(`Award type ${progress.HighestAwardKind} not eligible for announcement`);
+                return false;
+            }
+            
+            // Parse completion percentages correctly
+            const parsePercentage = (str) => {
+                if (!str) return 0;
+                const cleaned = str.toString().replace(/[^\d.]/g, '');
+                return parseFloat(cleaned) || 0;
+            };
+            
+            const userCompletion = parsePercentage(progress.UserCompletion);
+            const userCompletionHardcore = parsePercentage(progress.UserCompletionHardcore);
+            
+            console.log(`Completion percentages: normal=${userCompletion}%, hardcore=${userCompletionHardcore}%`);
+            
+            // Verify completion requirements
+            if (isMastery && userCompletionHardcore < 100) {
+                console.log(`User doesn't have 100% hardcore completion for mastery`);
+                return false;
+            }
+            
+            if (isBeaten && userCompletion < 100) {
+                console.log(`User doesn't have 100% completion for beaten status`);
+                return false;
+            }
+            
+            // Get game info
+            const gameInfo = await RetroAPIUtils.getGameInfo(gameId);
+            
+            // Create the award identifier
+            const systemType = gameAwardService.getGameSystemType(gameId);
+            const awardIdentifier = `${user.raUsername}:${systemType}:${gameId}:${progress.HighestAwardKind}`;
+            
+            console.log(`Award identifier: ${awardIdentifier}`);
+            
+            // For force mode, temporarily remove from session history
+            const wasInSession = gameAwardService.sessionAwardHistory.has(awardIdentifier);
+            if (wasInSession) {
+                gameAwardService.sessionAwardHistory.delete(awardIdentifier);
+                console.log(`Temporarily removed from session history for force announcement`);
+            }
+            
+            // For force mode, temporarily remove from user's announced awards
+            let wasInUserAwards = false;
+            let userAwardsBackup = null;
+            if (user.announcedAwards && user.announcedAwards.includes(awardIdentifier)) {
+                wasInUserAwards = true;
+                userAwardsBackup = [...user.announcedAwards];
+                user.announcedAwards = user.announcedAwards.filter(award => award !== awardIdentifier);
+                await user.save();
+                console.log(`Temporarily removed from user's announced awards for force announcement`);
+            }
+            
+            try {
+                // Get user's profile image and thumbnail
+                const profileImageUrl = await gameAwardService.getUserProfileImageUrl(user.raUsername);
+                const thumbnailUrl = gameInfo?.imageIcon ? 
+                    `https://retroachievements.org${gameInfo.imageIcon}` : null;
+                
+                // Manually send the alert using AlertUtils
+                await AlertUtils.sendAchievementAlert({
+                    username: user.raUsername,
+                    achievementTitle: isMastery ? `Mastery of ${gameInfo.title}` : `Beaten ${gameInfo.title}`,
+                    achievementDescription: isMastery ? 
+                        `${user.raUsername} has mastered ${gameInfo.title} by earning all achievements in hardcore mode!` :
+                        `${user.raUsername} has beaten ${gameInfo.title} by completing all core achievements!`,
+                    gameTitle: gameInfo.title,
+                    gameId: gameId,
+                    thumbnail: thumbnailUrl,
+                    badgeUrl: profileImageUrl,
+                    color: isMastery ? '#FFD700' : '#C0C0C0',
+                    isMastery: isMastery,
+                    isBeaten: isBeaten
+                }, ALERT_TYPES.MASTERY);
+                
+                // Add to session history and user awards (permanently this time)
+                gameAwardService.sessionAwardHistory.add(awardIdentifier);
+                
+                if (!user.announcedAwards) {
+                    user.announcedAwards = [];
+                }
+                user.announcedAwards.push(awardIdentifier);
+                await user.save();
+                
+                console.log(`Successfully force-announced ${isMastery ? 'mastery' : 'beaten'} for ${user.raUsername} on ${gameInfo.title}`);
+                return true;
+                
+            } catch (alertError) {
+                console.error(`Error sending forced alert:`, alertError);
+                
+                // Restore previous state if announcement failed
+                if (wasInSession) {
+                    gameAwardService.sessionAwardHistory.add(awardIdentifier);
+                }
+                if (wasInUserAwards && userAwardsBackup) {
+                    user.announcedAwards = userAwardsBackup;
+                    await user.save();
+                }
+                
+                return false;
+            }
             
         } catch (error) {
             console.error(`Error force checking game mastery for ${user.raUsername} on game ${gameId}:`, error);
+            return false;
+        }
+    },
+
+    /**
+     * FIXED: Force check for monthly/shadow game awards
+     * @private
+     */
+    async forceCheckGameAwards(user, gameId, isShadow, forceAnnounce) {
+        if (!user || !gameId) return false;
+
+        try {
+            // If not forcing, use regular method
+            if (!forceAnnounce) {
+                return await gameAwardService.checkForGameAwards(user, gameId, isShadow);
+            }
+
+            // For force mode, use similar logic to forceCheckGameMastery
+            const progress = await RetroAPIUtils.getUserGameProgressWithAwards(user.raUsername, gameId);
+            
+            if (!progress || !progress.HighestAwardKind) {
+                console.log(`No award found for ${user.raUsername} on ${isShadow ? 'shadow' : 'monthly'} game ${gameId}`);
+                return false;
+            }
+
+            const systemType = isShadow ? 'shadow' : 'monthly';
+            const awardIdentifier = `${user.raUsername}:${systemType}:${gameId}:${progress.HighestAwardKind}`;
+
+            // Temporarily bypass history checks
+            const wasInSession = gameAwardService.sessionAwardHistory.has(awardIdentifier);
+            if (wasInSession) {
+                gameAwardService.sessionAwardHistory.delete(awardIdentifier);
+            }
+
+            let wasInUserAwards = false;
+            let userAwardsBackup = null;
+            if (user.announcedAwards && user.announcedAwards.includes(awardIdentifier)) {
+                wasInUserAwards = true;
+                userAwardsBackup = [...user.announcedAwards];
+                user.announcedAwards = user.announcedAwards.filter(award => award !== awardIdentifier);
+                await user.save();
+            }
+
+            try {
+                // Manually construct and send the alert
+                const gameInfo = await RetroAPIUtils.getGameInfo(gameId);
+                let awardTitle = '';
+                let awardColor = '';
+
+                if (progress.HighestAwardKind === 'mastery') {
+                    awardTitle = `${systemType === 'shadow' ? 'Shadow' : 'Monthly'} Challenge Mastery`;
+                    awardColor = '#FFD700';
+                } else if (progress.HighestAwardKind === 'completion') {
+                    awardTitle = `${systemType === 'shadow' ? 'Shadow' : 'Monthly'} Challenge Beaten`;
+                    awardColor = '#C0C0C0';
+                } else if (progress.HighestAwardKind === 'participation') {
+                    awardTitle = `${systemType === 'shadow' ? 'Shadow' : 'Monthly'} Challenge Participation`;
+                    awardColor = '#CD7F32';
+                } else {
+                    return false;
+                }
+
+                const profileImageUrl = await gameAwardService.getUserProfileImageUrl(user.raUsername);
+                const thumbnailUrl = gameInfo?.imageIcon ? 
+                    `https://retroachievements.org${gameInfo.imageIcon}` : null;
+
+                const alertType = isShadow ? ALERT_TYPES.SHADOW : ALERT_TYPES.MONTHLY;
+
+                await AlertUtils.sendAchievementAlert({
+                    username: user.raUsername,
+                    achievementTitle: awardTitle,
+                    achievementDescription: `${user.raUsername} has earned ${awardTitle.toLowerCase()} for ${gameInfo.title}!`,
+                    gameTitle: gameInfo.title,
+                    gameId: gameId,
+                    thumbnail: thumbnailUrl,
+                    badgeUrl: profileImageUrl,
+                    color: awardColor,
+                    isAward: true
+                }, alertType);
+
+                // Add to session history and user awards
+                gameAwardService.sessionAwardHistory.add(awardIdentifier);
+                
+                if (!user.announcedAwards) {
+                    user.announcedAwards = [];
+                }
+                user.announcedAwards.push(awardIdentifier);
+                await user.save();
+
+                console.log(`Successfully force-announced ${systemType} award for ${user.raUsername} on ${gameInfo.title}`);
+                return true;
+
+            } catch (alertError) {
+                console.error(`Error sending forced ${systemType} alert:`, alertError);
+                
+                // Restore previous state
+                if (wasInSession) {
+                    gameAwardService.sessionAwardHistory.add(awardIdentifier);
+                }
+                if (wasInUserAwards && userAwardsBackup) {
+                    user.announcedAwards = userAwardsBackup;
+                    await user.save();
+                }
+                
+                return false;
+            }
+
+        } catch (error) {
+            console.error(`Error force checking ${isShadow ? 'shadow' : 'monthly'} game awards for ${user.raUsername} on game ${gameId}:`, error);
             return false;
         }
     },
@@ -443,11 +655,21 @@ export default {
                 return interaction.editReply(`Error fetching game info for ${gameId}. Please check the game ID.`);
             }
             
-            // Force check for mastery
-            const result = await this.forceCheckGameMastery(user, gameId, null, forceAnnounce);
+            // Check which system this game belongs to
+            const systemType = gameAwardService.getGameSystemType(gameId);
+            
+            let result = false;
+            
+            if (systemType === 'monthly') {
+                result = await this.forceCheckGameAwards(user, gameId, false, forceAnnounce);
+            } else if (systemType === 'shadow') {
+                result = await this.forceCheckGameAwards(user, gameId, true, forceAnnounce);
+            } else {
+                result = await this.forceCheckGameMastery(user, gameId, null, forceAnnounce);
+            }
             
             if (result) {
-                return interaction.editReply(`Successfully announced mastery/beaten for ${username} on ${gameInfo.title}!`);
+                return interaction.editReply(`Successfully announced ${systemType} mastery/beaten for ${username} on ${gameInfo.title}!`);
             } else {
                 return interaction.editReply(`No mastery/beaten award found for ${username} on ${gameInfo.title}.`);
             }
