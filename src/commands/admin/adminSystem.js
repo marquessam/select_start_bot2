@@ -120,6 +120,30 @@ export default {
     },
 
     /**
+     * Normalize award kind strings to handle API variations
+     */
+    normalizeAwardKind(awardKind) {
+        if (!awardKind) return null;
+        
+        const normalized = awardKind.toString().toLowerCase().trim();
+        
+        // Map various API responses to standard values
+        const mappings = {
+            'mastered': 'mastery',
+            'mastery': 'mastery',
+            'master': 'mastery',
+            'completed': 'completion',
+            'completion': 'completion',
+            'beaten': 'completion',
+            'complete': 'completion',
+            'participated': 'participation',
+            'participation': 'participation'
+        };
+        
+        return mappings[normalized] || normalized;
+    },
+
+    /**
      * Handle force update stats
      */
     async handleForceUpdate(interaction) {
@@ -260,11 +284,9 @@ export default {
             const recentAchievements = await retroAPI.getUserRecentAchievements(user.raUsername, count);
             
             if (!recentAchievements || !Array.isArray(recentAchievements) || recentAchievements.length === 0) {
-                console.log(`No recent achievements found for ${user.raUsername}`);
                 return result;
             }
             
-            console.log(`Found ${recentAchievements.length} recent achievements for ${user.raUsername}`);
             result.processed = recentAchievements.length;
             
             // Set up for achievement processing
@@ -309,8 +331,6 @@ export default {
                     });
                     
                     if ((alreadyInSession || alreadyInUser) && !forceAnnounce) {
-                        // Skip if already announced and not forcing
-                        console.log(`Achievement ${achievement.Title} already announced for ${user.raUsername}, skipping`);
                         continue;
                     }
                     
@@ -397,15 +417,13 @@ export default {
     },
 
     /**
-     * FIXED: Force check for game mastery - improved bypass logic
+     * Force check for game mastery - improved award kind handling
      * @private
      */
     async forceCheckGameMastery(user, gameId, achievement, forceAnnounce) {
         if (!user || !gameId) return false;
 
         try {
-            console.log(`Force checking game mastery for ${user.raUsername} on game ${gameId}, force=${forceAnnounce}`);
-            
             // If not forcing, just use the regular method
             if (!forceAnnounce) {
                 return await gameAwardService.checkForGameMastery(user, gameId, achievement);
@@ -414,23 +432,18 @@ export default {
             // For force mode, directly check the API for mastery status
             const progress = await RetroAPIUtils.getUserGameProgressWithAwards(user.raUsername, gameId);
             
-            console.log(`Direct API check result for ${user.raUsername} on game ${gameId}:`, {
-                HighestAwardKind: progress?.HighestAwardKind,
-                UserCompletion: progress?.UserCompletion,
-                UserCompletionHardcore: progress?.UserCompletionHardcore
-            });
-            
             if (!progress || !progress.HighestAwardKind) {
-                console.log(`No award found for ${user.raUsername} on game ${gameId}`);
                 return false;
             }
             
+            // Normalize the award kind to handle 'mastered' vs 'mastery'
+            const normalizedAwardKind = this.normalizeAwardKind(progress.HighestAwardKind);
+            
             // Check if it's mastery or beaten
-            const isMastery = progress.HighestAwardKind === 'mastery';
-            const isBeaten = progress.HighestAwardKind === 'completion';
+            const isMastery = normalizedAwardKind === 'mastery';
+            const isBeaten = normalizedAwardKind === 'completion';
             
             if (!isMastery && !isBeaten) {
-                console.log(`Award type ${progress.HighestAwardKind} not eligible for announcement`);
                 return false;
             }
             
@@ -444,33 +457,26 @@ export default {
             const userCompletion = parsePercentage(progress.UserCompletion);
             const userCompletionHardcore = parsePercentage(progress.UserCompletionHardcore);
             
-            console.log(`Completion percentages: normal=${userCompletion}%, hardcore=${userCompletionHardcore}%`);
-            
             // Verify completion requirements
             if (isMastery && userCompletionHardcore < 100) {
-                console.log(`User doesn't have 100% hardcore completion for mastery`);
                 return false;
             }
             
             if (isBeaten && userCompletion < 100) {
-                console.log(`User doesn't have 100% completion for beaten status`);
                 return false;
             }
             
             // Get game info
             const gameInfo = await RetroAPIUtils.getGameInfo(gameId);
             
-            // Create the award identifier
+            // Create the award identifier using normalized award kind
             const systemType = gameAwardService.getGameSystemType(gameId);
-            const awardIdentifier = `${user.raUsername}:${systemType}:${gameId}:${progress.HighestAwardKind}`;
-            
-            console.log(`Award identifier: ${awardIdentifier}`);
+            const awardIdentifier = `${user.raUsername}:${systemType}:${gameId}:${normalizedAwardKind}`;
             
             // For force mode, temporarily remove from session history
             const wasInSession = gameAwardService.sessionAwardHistory.has(awardIdentifier);
             if (wasInSession) {
                 gameAwardService.sessionAwardHistory.delete(awardIdentifier);
-                console.log(`Temporarily removed from session history for force announcement`);
             }
             
             // For force mode, temporarily remove from user's announced awards
@@ -481,7 +487,6 @@ export default {
                 userAwardsBackup = [...user.announcedAwards];
                 user.announcedAwards = user.announcedAwards.filter(award => award !== awardIdentifier);
                 await user.save();
-                console.log(`Temporarily removed from user's announced awards for force announcement`);
             }
             
             try {
@@ -540,7 +545,7 @@ export default {
     },
 
     /**
-     * FIXED: Force check for monthly/shadow game awards
+     * Force check for monthly/shadow game awards - improved award kind handling
      * @private
      */
     async forceCheckGameAwards(user, gameId, isShadow, forceAnnounce) {
@@ -556,12 +561,14 @@ export default {
             const progress = await RetroAPIUtils.getUserGameProgressWithAwards(user.raUsername, gameId);
             
             if (!progress || !progress.HighestAwardKind) {
-                console.log(`No award found for ${user.raUsername} on ${isShadow ? 'shadow' : 'monthly'} game ${gameId}`);
                 return false;
             }
 
+            // Normalize the award kind
+            const normalizedAwardKind = this.normalizeAwardKind(progress.HighestAwardKind);
+
             const systemType = isShadow ? 'shadow' : 'monthly';
-            const awardIdentifier = `${user.raUsername}:${systemType}:${gameId}:${progress.HighestAwardKind}`;
+            const awardIdentifier = `${user.raUsername}:${systemType}:${gameId}:${normalizedAwardKind}`;
 
             // Temporarily bypass history checks
             const wasInSession = gameAwardService.sessionAwardHistory.has(awardIdentifier);
@@ -584,13 +591,14 @@ export default {
                 let awardTitle = '';
                 let awardColor = '';
 
-                if (progress.HighestAwardKind === 'mastery') {
+                // Use normalized award kind for comparisons
+                if (normalizedAwardKind === 'mastery') {
                     awardTitle = `${systemType === 'shadow' ? 'Shadow' : 'Monthly'} Challenge Mastery`;
                     awardColor = '#FFD700';
-                } else if (progress.HighestAwardKind === 'completion') {
+                } else if (normalizedAwardKind === 'completion') {
                     awardTitle = `${systemType === 'shadow' ? 'Shadow' : 'Monthly'} Challenge Beaten`;
                     awardColor = '#C0C0C0';
-                } else if (progress.HighestAwardKind === 'participation') {
+                } else if (normalizedAwardKind === 'participation') {
                     awardTitle = `${systemType === 'shadow' ? 'Shadow' : 'Monthly'} Challenge Participation`;
                     awardColor = '#CD7F32';
                 } else {
@@ -701,7 +709,7 @@ export default {
     },
 
     /**
-     * NEW: Handle debugging mastery detection with detailed logging
+     * Handle debugging mastery detection with detailed logging
      */
     async handleDebugMastery(interaction) {
         await interaction.deferReply();
@@ -716,7 +724,7 @@ export default {
                 return interaction.editReply(`User ${username} not found in the database.`);
             }
             
-            await interaction.editReply(`🔍 Running debug mastery check for ${username} on game ${gameId}...\n\n**Check the console logs for detailed output.**\n\nThis will show:\n• Raw API response data\n• Field availability analysis\n• Completion percentage parsing\n• Step-by-step decision process`);
+            await interaction.editReply(`🔍 Running debug mastery check for ${username} on game ${gameId}...\n\n**Check the console logs for detailed output.**`);
             
             // Call the debug method
             await gameAwardService.debugCheckForGameMastery(user, gameId);
@@ -734,12 +742,7 @@ export default {
                 `✅ **Debug analysis completed!**\n\n` +
                 `**User:** ${username}\n` +
                 `**Game:** ${gameTitle} (ID: ${gameId})\n\n` +
-                `📋 **Check your console logs for detailed information including:**\n` +
-                `• Raw API response structure\n` +
-                `• Available fields and their values\n` +
-                `• Completion percentage parsing attempts\n` +
-                `• Award detection logic steps\n\n` +
-                `🛠️ **Use this information to troubleshoot why mastery detection might not be working.**`
+                `📋 **Check your console logs for detailed information.**`
             );
             
         } catch (error) {
