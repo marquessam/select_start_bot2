@@ -1,6 +1,9 @@
-import { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, StringSelectMenuBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
+import { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, StringSelectMenuBuilder, ButtonBuilder, ButtonStyle, ComponentType } from 'discord.js';
 import { User } from '../../models/User.js';
 import { Poll } from '../../models/Poll.js';
+
+// Admin channel ID for vote logging
+const ADMIN_CHANNEL_ID = '1304814893857374270';
 
 export default {
     data: new SlashCommandBuilder()
@@ -158,7 +161,7 @@ export default {
         }
     },
 
-    // Handle select menu interactions
+    // Handle select menu interactions with improved visual feedback
     async handleSelectMenuInteraction(interaction) {
         await interaction.deferUpdate();
 
@@ -169,6 +172,8 @@ export default {
             // Parse current vote state from the message
             let firstChoice = null;
             let secondChoice = null;
+            let firstChoiceIndex = null;
+            let secondChoiceIndex = null;
 
             // Extract current selections from embed fields if they exist
             const statusField = embed.fields?.find(f => f.name === 'Vote Status');
@@ -192,15 +197,24 @@ export default {
 
             const selectedValue = interaction.values[0];
             
+            // Update selection based on which dropdown was used
             if (interaction.customId === 'vote_first_choice') {
+                firstChoiceIndex = selectedValue;
                 const gameIndex = parseInt(selectedValue);
                 firstChoice = activePoll.selectedGames[gameIndex]?.title || null;
+                
+                // Log the selection for debugging
+                console.log(`User ${interaction.user.id} selected first choice: ${firstChoice} (index: ${gameIndex})`);
             } else if (interaction.customId === 'vote_second_choice') {
                 if (selectedValue === 'none') {
                     secondChoice = null;
+                    secondChoiceIndex = 'none';
+                    console.log(`User ${interaction.user.id} cleared second choice`);
                 } else {
+                    secondChoiceIndex = selectedValue;
                     const gameIndex = parseInt(selectedValue);
                     secondChoice = activePoll.selectedGames[gameIndex]?.title || null;
+                    console.log(`User ${interaction.user.id} selected second choice: ${secondChoice} (index: ${gameIndex})`);
                 }
             }
 
@@ -208,8 +222,63 @@ export default {
             let duplicateWarning = false;
             if (firstChoice && secondChoice && firstChoice === secondChoice) {
                 secondChoice = null;
+                secondChoiceIndex = 'none';
                 duplicateWarning = true;
+                console.log(`User ${interaction.user.id} had duplicate selections - cleared second choice`);
             }
+
+            // Create new dropdown components with selected values
+            const gameOptions = activePoll.selectedGames.map((game, index) => ({
+                label: `${index + 1}. ${game.title}`,
+                description: `${game.consoleName}`,
+                value: `${index}`,
+                emoji: '🎮'
+            }));
+
+            // First choice menu with updated placeholder showing selection
+            const firstChoiceMenu = new StringSelectMenuBuilder()
+                .setCustomId('vote_first_choice')
+                .setPlaceholder(firstChoice ? `Selected: ${firstChoice}` : '🥇 Select your FIRST choice')
+                .addOptions(gameOptions)
+                .setMinValues(1)
+                .setMaxValues(1);
+
+            // Second choice menu options with "none" option first
+            const secondChoiceOptions = [
+                {
+                    label: 'No second choice',
+                    description: 'Vote for only one game',
+                    value: 'none',
+                    emoji: '❌'
+                },
+                ...gameOptions
+            ];
+
+            // Second choice menu with updated placeholder showing selection
+            const secondChoiceMenu = new StringSelectMenuBuilder()
+                .setCustomId('vote_second_choice')
+                .setPlaceholder(secondChoice ? `Selected: ${secondChoice}` : secondChoiceIndex === 'none' ? 'No second choice selected' : '🥈 Select your SECOND choice (optional)')
+                .addOptions(secondChoiceOptions)
+                .setMinValues(1)
+                .setMaxValues(1);
+
+            // Submit and cancel buttons
+            const submitButton = new ButtonBuilder()
+                .setCustomId('vote_submit')
+                .setLabel('Submit Vote')
+                .setStyle(ButtonStyle.Success)
+                .setEmoji('✅');
+
+            const cancelButton = new ButtonBuilder()
+                .setCustomId('vote_cancel')
+                .setLabel('Cancel')
+                .setStyle(ButtonStyle.Secondary)
+                .setEmoji('❌');
+
+            // Action rows
+            const firstRow = new ActionRowBuilder().addComponents(firstChoiceMenu);
+            const secondRow = new ActionRowBuilder().addComponents(secondChoiceMenu);
+            const buttonRow = new ActionRowBuilder().addComponents(submitButton, cancelButton);
 
             // Update the embed to show current selections
             const updatedEmbed = EmbedBuilder.from(embed);
@@ -230,7 +299,8 @@ export default {
             }
 
             await interaction.editReply({
-                embeds: [updatedEmbed]
+                embeds: [updatedEmbed],
+                components: [firstRow, secondRow, buttonRow]
             });
 
         } catch (error) {
@@ -243,7 +313,7 @@ export default {
         }
     },
 
-    // Handle button interactions  
+    // Handle button interactions with admin logging  
     async handleButtonInteraction(interaction) {
         await interaction.deferUpdate();
 
@@ -334,10 +404,49 @@ export default {
                     });
                 }
 
+                // Get user information
+                const user = await User.findOne({ discordId: interaction.user.id });
+                const raUsername = user ? user.raUsername : 'Unknown';
+
                 // Record the vote
                 try {
                     activePoll.addVote(interaction.user.id, votes);
                     await activePoll.save();
+                    
+                    // Log successful vote
+                    console.log(`User ${interaction.user.id} (${raUsername}) successfully voted: ${votes.join(', ')}`);
+                    
+                    // Send log to admin channel
+                    try {
+                        const adminChannel = await interaction.client.channels.fetch(ADMIN_CHANNEL_ID);
+                        if (adminChannel) {
+                            const voteLogEmbed = new EmbedBuilder()
+                                .setTitle('🗳️ Vote Recorded')
+                                .setDescription(`A user has submitted their vote for the monthly challenge.`)
+                                .setColor('#00AAFF')
+                                .addFields(
+                                    { name: 'Discord User', value: `<@${interaction.user.id}> (${interaction.user.tag})`, inline: true },
+                                    { name: 'RA Username', value: raUsername, inline: true },
+                                    { name: 'Vote Time', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true },
+                                    { name: 'Vote Details', value: votes.length === 1 ? 
+                                        `🥇 **${firstChoice}**` :
+                                        `🥇 **${firstChoice}**\n🥈 **${secondChoice}**`, 
+                                        inline: false
+                                    }
+                                )
+                                .setFooter({ text: `User ID: ${interaction.user.id}` })
+                                .setTimestamp();
+                                
+                            await adminChannel.send({ embeds: [voteLogEmbed] });
+                            console.log(`Vote log sent to admin channel for user ${interaction.user.id}`);
+                        } else {
+                            console.warn(`Admin channel with ID ${ADMIN_CHANNEL_ID} not found`);
+                        }
+                    } catch (logError) {
+                        console.error('Error sending vote log to admin channel:', logError);
+                        // Continue even if admin logging fails
+                    }
+                    
                 } catch (error) {
                     console.error('Error saving vote:', error);
                     return interaction.editReply({
