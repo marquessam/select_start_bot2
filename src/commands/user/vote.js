@@ -1,43 +1,11 @@
-import { SlashCommandBuilder, EmbedBuilder } from 'discord.js';
+import { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, StringSelectMenuBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 import { User } from '../../models/User.js';
 import { Poll } from '../../models/Poll.js';
 
 export default {
     data: new SlashCommandBuilder()
         .setName('vote')
-        .setDescription('Vote for next month\'s challenge game')
-        .addStringOption(option =>
-            option.setName('first')
-            .setDescription('Your first choice game (1-10)')
-            .setRequired(true)
-            .setChoices(
-                { name: '1', value: '1' },
-                { name: '2', value: '2' },
-                { name: '3', value: '3' },
-                { name: '4', value: '4' },
-                { name: '5', value: '5' },
-                { name: '6', value: '6' },
-                { name: '7', value: '7' },
-                { name: '8', value: '8' },
-                { name: '9', value: '9' },
-                { name: '10', value: '10' }
-            ))
-        .addStringOption(option =>
-            option.setName('second')
-            .setDescription('Your second choice game (1-10, different from first)')
-            .setRequired(false) // Optional second vote
-            .setChoices(
-                { name: '1', value: '1' },
-                { name: '2', value: '2' },
-                { name: '3', value: '3' },
-                { name: '4', value: '4' },
-                { name: '5', value: '5' },
-                { name: '6', value: '6' },
-                { name: '7', value: '7' },
-                { name: '8', value: '8' },
-                { name: '9', value: '9' },
-                { name: '10', value: '10' }
-            )),
+        .setDescription('Vote for next month\'s challenge games'),
 
     async execute(interaction) {
         await interaction.deferReply({ ephemeral: true });
@@ -77,23 +45,25 @@ export default {
                     const results = activePoll.getVoteCounts();
                     
                     const voteResultsEmbed = new EmbedBuilder()
-                        .setTitle('Current Voting Results')
-                        .setDescription('You have already voted. Here are the current results.\n\n⚠️ **Please do not share these results with others who haven\'t voted yet!**')
+                        .setTitle('🗳️ You Have Already Voted!')
+                        .setDescription('Thanks for voting! Here are the current results.\n\n⚠️ **Please keep these results private until voting ends!**')
                         .setColor('#FF69B4')
                         .setFooter({ text: `Voting ends on ${activePoll.endDate.toDateString()}` });
                     
                     // Add results fields, handling potential missing values safely
                     if (results && Array.isArray(results) && results.length > 0) {
-                        const resultsFields = results.map((result, index) => ({
-                            name: `${result.title || `Game ${index+1}`} ${result.consoleName ? `(${result.consoleName})` : ''}`,
-                            value: `${result.votes || 0} vote${result.votes !== 1 ? 's' : ''}`
-                        }));
+                        const resultsText = results.map((result, index) => 
+                            `**${index + 1}. ${result.title || `Game ${index+1}`}** ${result.consoleName ? `(${result.consoleName})` : ''}\n` +
+                            `${result.votes || 0} vote${result.votes !== 1 ? 's' : ''}`
+                        ).join('\n\n');
                         
-                        voteResultsEmbed.addFields(resultsFields);
+                        voteResultsEmbed.setDescription(
+                            voteResultsEmbed.data.description + '\n\n' + resultsText
+                        );
                     } else {
                         voteResultsEmbed.addFields({ 
-                            name: 'No votes yet', 
-                            value: 'No one has voted yet!' 
+                            name: 'No other votes yet', 
+                            value: 'You are the first to vote!' 
                         });
                     }
                     
@@ -104,108 +74,291 @@ export default {
                 }
             }
 
-            // Get their votes
-            const firstChoice = interaction.options.getString('first');
-            const secondChoice = interaction.options.getString('second');
+            // Create the voting interface
+            const votingEmbed = new EmbedBuilder()
+                .setTitle('🗳️ Cast Your Vote!')
+                .setDescription(
+                    `Select up to **2 games** you'd like to see as next month's challenge.\n\n` +
+                    `**Available Games:**\n` +
+                    activePoll.selectedGames.map((game, index) => 
+                        `**${index + 1}.** ${game.title} *(${game.consoleName})*`
+                    ).join('\n') +
+                    `\n\n✅ Use the dropdown menus below to make your selections!\n` +
+                    `🔄 You can change your selections before submitting.\n` +
+                    `⏰ Voting ends <t:${Math.floor(activePoll.endDate.getTime() / 1000)}:R>`
+                )
+                .setColor('#00FF00')
+                .setFooter({ text: 'Select your choices below, then click Submit Vote!' });
 
-            // Validate votes
-            if (firstChoice === secondChoice && secondChoice) {
-                return interaction.editReply('You cannot vote for the same game twice. Please choose different games for your votes.');
-            }
+            // Create select menu options from the games
+            const gameOptions = activePoll.selectedGames.map((game, index) => ({
+                label: `${index + 1}. ${game.title}`,
+                description: `${game.consoleName}`,
+                value: `${index}`,
+                emoji: '🎮'
+            }));
 
-            // Convert choices to gameIds (index in the array is choice-1)
-            const votes = [];
-            
-            try {
-                if (firstChoice && parseInt(firstChoice) > 0 && parseInt(firstChoice) <= activePoll.selectedGames.length) {
-                    const firstGameIndex = parseInt(firstChoice) - 1;
-                    if (activePoll.selectedGames[firstGameIndex] && activePoll.selectedGames[firstGameIndex].gameId) {
-                        votes.push(activePoll.selectedGames[firstGameIndex].gameId);
-                    }
-                }
-                
-                if (secondChoice && parseInt(secondChoice) > 0 && parseInt(secondChoice) <= activePoll.selectedGames.length) {
-                    const secondGameIndex = parseInt(secondChoice) - 1;
-                    if (activePoll.selectedGames[secondGameIndex] && activePoll.selectedGames[secondGameIndex].gameId) {
-                        votes.push(activePoll.selectedGames[secondGameIndex].gameId);
-                    }
-                }
-            } catch (error) {
-                console.error('Error processing vote choices:', error);
-                return interaction.editReply('An error occurred when processing your vote. Please try again.');
-            }
+            // First choice select menu
+            const firstChoiceMenu = new StringSelectMenuBuilder()
+                .setCustomId('vote_first_choice')
+                .setPlaceholder('🥇 Select your FIRST choice')
+                .addOptions(gameOptions)
+                .setMinValues(1)
+                .setMaxValues(1);
 
-            if (votes.length === 0) {
-                return interaction.editReply('Invalid vote choices. Please select valid games from the list.');
-            }
+            // Second choice select menu
+            const secondChoiceMenu = new StringSelectMenuBuilder()
+                .setCustomId('vote_second_choice')
+                .setPlaceholder('🥈 Select your SECOND choice (optional)')
+                .addOptions([
+                    {
+                        label: 'No second choice',
+                        description: 'Vote for only one game',
+                        value: 'none',
+                        emoji: '❌'
+                    },
+                    ...gameOptions
+                ])
+                .setMinValues(1)
+                .setMaxValues(1);
 
-            // Record the vote
-            try {
-                activePoll.addVote(interaction.user.id, votes);
-                await activePoll.save();
-            } catch (error) {
-                console.error('Error saving vote:', error);
-                return interaction.editReply('An error occurred when recording your vote. Please try again later.');
-            }
+            // Submit and cancel buttons
+            const submitButton = new ButtonBuilder()
+                .setCustomId('vote_submit')
+                .setLabel('Submit Vote')
+                .setStyle(ButtonStyle.Success)
+                .setEmoji('✅');
 
-            // Prepare confirmation message
-            const selectedGames = votes.map(gameId => {
-                const game = activePoll.selectedGames.find(g => g.gameId === gameId);
-                return game ? `${game.title} ${game.consoleName ? `(${game.consoleName})` : ''}` : 'Unknown game';
+            const cancelButton = new ButtonBuilder()
+                .setCustomId('vote_cancel')
+                .setLabel('Cancel')
+                .setStyle(ButtonStyle.Secondary)
+                .setEmoji('❌');
+
+            // Action rows
+            const firstRow = new ActionRowBuilder().addComponents(firstChoiceMenu);
+            const secondRow = new ActionRowBuilder().addComponents(secondChoiceMenu);
+            const buttonRow = new ActionRowBuilder().addComponents(submitButton, cancelButton);
+
+            // Store the vote state (we'll use this when they submit)
+            const voteData = {
+                userId: interaction.user.id,
+                pollId: activePoll._id.toString(),
+                firstChoice: null,
+                secondChoice: null,
+                timestamp: Date.now()
+            };
+
+            // Store vote data in the embed (we'll extract it later)
+            votingEmbed.setFields({
+                name: 'Vote Status',
+                value: 'Please make your selections above',
+                inline: false
             });
 
-            const confirmationEmbed = new EmbedBuilder()
-                .setTitle('Vote Recorded!')
-                .setDescription('Your vote for next month\'s challenge has been recorded.')
-                .setColor('#00FF00')
-                .addFields(
-                    { 
-                        name: 'Your Votes', 
-                        value: selectedGames.join('\n') 
-                    }
-                )
-                .setFooter({ text: 'Use /vote again to see current results' });
-
-            await interaction.editReply({ embeds: [confirmationEmbed] });
-
-            // Now show them the results in a follow-up message
-            try {
-                const results = activePoll.getVoteCounts();
-                
-                const voteResultsEmbed = new EmbedBuilder()
-                    .setTitle('Current Voting Results')
-                    .setDescription('Thank you for voting! Here are the current results.\n\n⚠️ **Please do not share these results with others who haven\'t voted yet!**')
-                    .setColor('#FF69B4')
-                    .setFooter({ text: `Voting ends on ${activePoll.endDate.toDateString()}` });
-                
-                // Add results fields, handling potential missing values safely
-                if (results && Array.isArray(results) && results.length > 0) {
-                    const resultsFields = results.map((result, index) => ({
-                        name: `${result.title || `Game ${index+1}`} ${result.consoleName ? `(${result.consoleName})` : ''}`,
-                        value: `${result.votes || 0} vote${result.votes !== 1 ? 's' : ''}`
-                    }));
-                    
-                    voteResultsEmbed.addFields(resultsFields);
-                } else {
-                    voteResultsEmbed.addFields({ 
-                        name: 'No other votes yet', 
-                        value: 'You are the first to vote!' 
-                    });
-                }
-                
-                return interaction.followUp({ embeds: [voteResultsEmbed], ephemeral: true });
-            } catch (error) {
-                console.error('Error showing results after voting:', error);
-                // Don't fail if just the results display fails
-                return interaction.followUp({ 
-                    content: 'Your vote was recorded, but there was an error displaying the current results.', 
-                    ephemeral: true 
-                });
-            }
+            await interaction.editReply({
+                embeds: [votingEmbed],
+                components: [firstRow, secondRow, buttonRow]
+            });
 
         } catch (error) {
             console.error('Error processing vote:', error);
-            return interaction.editReply('An error occurred while processing your vote. Please try again later.');
+            return interaction.editReply('An error occurred while setting up voting. Please try again later.');
+        }
+    },
+
+    // Handle the select menu and button interactions
+    async handleVoteInteraction(interaction) {
+        if (!interaction.isStringSelectMenu() && !interaction.isButton()) return;
+
+        // Only handle voting-related interactions
+        if (!interaction.customId.startsWith('vote_')) return;
+
+        await interaction.deferUpdate();
+
+        try {
+            const embed = interaction.message.embeds[0];
+            if (!embed) return;
+
+            // Parse current vote state from the message
+            let firstChoice = null;
+            let secondChoice = null;
+
+            // Extract current selections from embed fields if they exist
+            const statusField = embed.fields?.find(f => f.name === 'Vote Status');
+            if (statusField && statusField.value !== 'Please make your selections above') {
+                const matches = statusField.value.match(/First choice: (.+)\nSecond choice: (.+)/);
+                if (matches) {
+                    firstChoice = matches[1] !== 'None' ? matches[1] : null;
+                    secondChoice = matches[2] !== 'None' ? matches[2] : null;
+                }
+            }
+
+            // Get the active poll
+            const activePoll = await Poll.findActivePoll();
+            if (!activePoll) {
+                return interaction.editReply({
+                    content: 'This voting poll is no longer active.',
+                    embeds: [],
+                    components: []
+                });
+            }
+
+            if (interaction.isStringSelectMenu()) {
+                const selectedValue = interaction.values[0];
+                
+                if (interaction.customId === 'vote_first_choice') {
+                    const gameIndex = parseInt(selectedValue);
+                    firstChoice = activePoll.selectedGames[gameIndex]?.title || null;
+                } else if (interaction.customId === 'vote_second_choice') {
+                    if (selectedValue === 'none') {
+                        secondChoice = null;
+                    } else {
+                        const gameIndex = parseInt(selectedValue);
+                        secondChoice = activePoll.selectedGames[gameIndex]?.title || null;
+                    }
+                }
+
+                // Validate that first and second choice are different
+                if (firstChoice && secondChoice && firstChoice === secondChoice) {
+                    secondChoice = null;
+                }
+
+                // Update the embed to show current selections
+                const updatedEmbed = EmbedBuilder.from(embed);
+                updatedEmbed.setFields({
+                    name: 'Vote Status',
+                    value: `**First choice:** ${firstChoice || 'None'}\n**Second choice:** ${secondChoice || 'None'}`,
+                    inline: false
+                });
+
+                if (firstChoice && secondChoice && firstChoice === secondChoice) {
+                    updatedEmbed.addFields({
+                        name: '⚠️ Note',
+                        value: 'You cannot vote for the same game twice. Second choice was cleared.',
+                        inline: false
+                    });
+                }
+
+                await interaction.editReply({
+                    embeds: [updatedEmbed]
+                });
+
+            } else if (interaction.isButton()) {
+                if (interaction.customId === 'vote_cancel') {
+                    const cancelEmbed = new EmbedBuilder()
+                        .setTitle('❌ Vote Cancelled')
+                        .setDescription('Your vote was cancelled. You can use `/vote` again anytime before voting ends.')
+                        .setColor('#FF0000');
+
+                    return interaction.editReply({
+                        embeds: [cancelEmbed],
+                        components: []
+                    });
+
+                } else if (interaction.customId === 'vote_submit') {
+                    if (!firstChoice) {
+                        const errorEmbed = EmbedBuilder.from(embed);
+                        errorEmbed.addFields({
+                            name: '❌ Error',
+                            value: 'Please select at least your first choice before submitting.',
+                            inline: false
+                        });
+
+                        return interaction.editReply({
+                            embeds: [errorEmbed]
+                        });
+                    }
+
+                    // Convert game titles back to game IDs for storage
+                    const votes = [];
+                    
+                    // Find first choice game ID
+                    const firstGame = activePoll.selectedGames.find(g => g.title === firstChoice);
+                    if (firstGame) votes.push(firstGame.gameId);
+
+                    // Find second choice game ID
+                    if (secondChoice) {
+                        const secondGame = activePoll.selectedGames.find(g => g.title === secondChoice);
+                        if (secondGame) votes.push(secondGame.gameId);
+                    }
+
+                    if (votes.length === 0) {
+                        return interaction.editReply({
+                            content: 'Error processing your vote. Please try again.',
+                            embeds: [],
+                            components: []
+                        });
+                    }
+
+                    // Record the vote
+                    try {
+                        activePoll.addVote(interaction.user.id, votes);
+                        await activePoll.save();
+                    } catch (error) {
+                        console.error('Error saving vote:', error);
+                        return interaction.editReply({
+                            content: 'An error occurred when recording your vote. Please try again later.',
+                            embeds: [],
+                            components: []
+                        });
+                    }
+
+                    // Create success embed
+                    const successEmbed = new EmbedBuilder()
+                        .setTitle('✅ Vote Recorded!')
+                        .setDescription('Thank you for voting! Your vote has been recorded.')
+                        .setColor('#00FF00')
+                        .addFields({
+                            name: 'Your Votes',
+                            value: votes.length === 1 ? 
+                                `🥇 **${firstChoice}**` :
+                                `🥇 **${firstChoice}**\n🥈 **${secondChoice}**`,
+                            inline: false
+                        })
+                        .setFooter({ text: 'Your vote is final and cannot be changed.' });
+
+                    await interaction.editReply({
+                        embeds: [successEmbed],
+                        components: []
+                    });
+
+                    // Show results in a follow-up
+                    try {
+                        const results = activePoll.getVoteCounts();
+                        
+                        const resultsEmbed = new EmbedBuilder()
+                            .setTitle('📊 Current Results')
+                            .setDescription('Here are the current voting results.\n\n⚠️ **Please keep these private until voting ends!**')
+                            .setColor('#FF69B4')
+                            .setFooter({ text: `Voting ends on ${activePoll.endDate.toDateString()}` });
+                        
+                        if (results && results.length > 0) {
+                            const resultsText = results.map((result, index) => 
+                                `**${index + 1}. ${result.title}** *(${result.consoleName})*\n` +
+                                `${result.votes} vote${result.votes !== 1 ? 's' : ''}`
+                            ).join('\n\n');
+                            
+                            resultsEmbed.setDescription(resultsEmbed.data.description + '\n\n' + resultsText);
+                        }
+                        
+                        await interaction.followUp({ 
+                            embeds: [resultsEmbed], 
+                            ephemeral: true 
+                        });
+                    } catch (error) {
+                        console.error('Error showing results after voting:', error);
+                    }
+                }
+            }
+
+        } catch (error) {
+            console.error('Error handling vote interaction:', error);
+            await interaction.editReply({
+                content: 'An error occurred while processing your interaction. Please try `/vote` again.',
+                embeds: [],
+                components: []
+            });
         }
     }
 };
