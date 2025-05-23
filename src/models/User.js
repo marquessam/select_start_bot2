@@ -232,17 +232,47 @@ userSchema.methods.getCommunityPointsForYear = function(year) {
         .reduce((total, award) => total + award.points, 0);
 };
 
-// Method to get current month's nominations
+// UPDATED: Method to get current month's nominations with validation
 userSchema.methods.getCurrentNominations = function() {
+    if (!this.nominations || !Array.isArray(this.nominations)) {
+        return [];
+    }
+
     const now = new Date();
     const currentMonth = now.getMonth();
     const currentYear = now.getFullYear();
     
-    return this.nominations.filter(nom => {
-        const nomMonth = nom.nominatedAt.getMonth();
-        const nomYear = nom.nominatedAt.getFullYear();
-        return nomMonth === currentMonth && nomYear === currentYear;
-    });
+    // Filter nominations for current month and validate required fields
+    const currentNominations = this.nominations
+        .filter(nomination => {
+            // Check if nomination is from current month
+            const nomMonth = nomination.nominatedAt.getMonth();
+            const nomYear = nomination.nominatedAt.getFullYear();
+            const isCurrentMonth = nomMonth === currentMonth && nomYear === currentYear;
+            
+            if (!isCurrentMonth) return false;
+            
+            // Validate required fields exist
+            if (!nomination.gameId) {
+                console.warn(`Invalid nomination without gameId for user ${this.raUsername}:`, nomination);
+                return false;
+            }
+            
+            // Check if title exists
+            if (!nomination.gameTitle) {
+                console.warn(`Invalid nomination without gameTitle for user ${this.raUsername}:`, nomination);
+                return false;
+            }
+            
+            if (!nomination.consoleName) {
+                console.warn(`Invalid nomination without consoleName for user ${this.raUsername}:`, nomination);
+                return false;
+            }
+            
+            return true;
+        });
+    
+    return currentNominations;
 };
 
 // Method to clear nominations for the current month
