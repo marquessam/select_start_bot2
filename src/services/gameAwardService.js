@@ -153,20 +153,190 @@ class GameAwardService {
     }
 
     /**
-     * FIXED: Helper function to parse completion percentage safely
+     * ENHANCED: Parse completion percentage with multiple fallback methods
      */
     parseCompletionPercentage(completionString) {
         if (!completionString) return 0;
         
-        // Remove % symbol and any other non-numeric characters except decimal point
-        const cleanString = completionString.toString().replace(/[^\d.]/g, '');
-        const percentage = parseFloat(cleanString);
+        // Convert to string if it isn't already
+        const str = completionString.toString().trim();
         
-        return isNaN(percentage) ? 0 : percentage;
+        // Try multiple parsing approaches
+        const approaches = [
+            // Direct number (for cases where it's already a number)
+            () => typeof completionString === 'number' ? completionString : NaN,
+            
+            // Strip % symbol and parse
+            () => parseFloat(str.replace('%', '')),
+            
+            // Strip all non-numeric characters except decimal point
+            () => parseFloat(str.replace(/[^\d.-]/g, '')),
+            
+            // Extract first number using regex
+            () => {
+                const match = str.match(/[\d.-]+/);
+                return match ? parseFloat(match[0]) : NaN;
+            },
+            
+            // Handle fraction format (like "85/85")
+            () => {
+                const fractionMatch = str.match(/(\d+)\/(\d+)/);
+                if (fractionMatch) {
+                    const numerator = parseInt(fractionMatch[1]);
+                    const denominator = parseInt(fractionMatch[2]);
+                    return denominator > 0 ? (numerator / denominator) * 100 : NaN;
+                }
+                return NaN;
+            }
+        ];
+        
+        // Try each approach until we get a valid number
+        for (const approach of approaches) {
+            try {
+                const result = approach();
+                if (!isNaN(result) && isFinite(result)) {
+                    return Math.max(0, Math.min(100, result)); // Clamp between 0 and 100
+                }
+            } catch (error) {
+                // Continue to next approach
+            }
+        }
+        
+        console.warn(`Could not parse completion percentage: "${completionString}"`);
+        return 0;
     }
 
     /**
-     * Check if a user has mastered a game and announce if so
+     * DEBUG: Enhanced mastery checking with detailed logging
+     */
+    async debugCheckForGameMastery(user, gameId) {
+        try {
+            if (!user || !gameId) return false;
+            
+            console.log(`\n=== DEBUG MASTERY CHECK FOR ${user.raUsername} ON GAME ${gameId} ===`);
+            
+            // Get the user's game progress with awards
+            const progress = await RetroAPIUtils.getUserGameProgressWithAwards(user.raUsername, gameId);
+            
+            console.log('=== RAW API RESPONSE ===');
+            console.log(JSON.stringify(progress, null, 2));
+            
+            if (!progress) {
+                console.log('❌ No progress data returned from API');
+                return false;
+            }
+            
+            // Log all top-level fields
+            console.log('\n=== TOP-LEVEL FIELDS ===');
+            console.log('Available fields:', Object.keys(progress));
+            
+            // Check for various possible award-related fields
+            const possibleAwardFields = [
+                'HighestAwardKind',
+                'UserAward',
+                'Award',
+                'AwardKind', 
+                'UserAwardKind',
+                'MasteryStatus',
+                'CompletionStatus',
+                'UserCompletion',
+                'UserCompletionHardcore',
+                'HardcoreCompletion',
+                'NumAwardedToUser',
+                'NumAchievements',
+                'MaxPossible',
+                'PossibleScore',
+                'ScoreAchieved',
+                'ScoreAchievedHardcore'
+            ];
+            
+            console.log('\n=== AWARD-RELATED FIELDS ===');
+            for (const field of possibleAwardFields) {
+                if (progress.hasOwnProperty(field)) {
+                    console.log(`✅ ${field}:`, progress[field]);
+                } else {
+                    console.log(`❌ ${field}: NOT FOUND`);
+                }
+            }
+            
+            // Check if there's a nested user object
+            if (progress.User) {
+                console.log('\n=== USER OBJECT ===');
+                console.log('User object:', JSON.stringify(progress.User, null, 2));
+            }
+            
+            // Parse completion percentages with multiple methods
+            console.log('\n=== COMPLETION PARSING ===');
+            
+            const userCompletion = progress.UserCompletion;
+            const userCompletionHardcore = progress.UserCompletionHardcore;
+            
+            console.log('Raw UserCompletion:', userCompletion, '(type:', typeof userCompletion, ')');
+            console.log('Raw UserCompletionHardcore:', userCompletionHardcore, '(type:', typeof userCompletionHardcore, ')');
+            
+            // Try different parsing methods
+            const parseAttempts = [
+                { method: 'direct_number', normal: userCompletion, hardcore: userCompletionHardcore },
+                { method: 'parseFloat', normal: parseFloat(userCompletion), hardcore: parseFloat(userCompletionHardcore) },
+                { method: 'parseInt', normal: parseInt(userCompletion), hardcore: parseInt(userCompletionHardcore) },
+                { method: 'percentage_strip', normal: this.parseCompletionPercentage(userCompletion), hardcore: this.parseCompletionPercentage(userCompletionHardcore) }
+            ];
+            
+            for (const attempt of parseAttempts) {
+                console.log(`${attempt.method}:`, 
+                    `normal=${attempt.normal} (${typeof attempt.normal})`, 
+                    `hardcore=${attempt.hardcore} (${typeof attempt.hardcore})`);
+            }
+            
+            // Check achievements count
+            console.log('\n=== ACHIEVEMENT COUNTS ===');
+            console.log('NumAwardedToUser:', progress.NumAwardedToUser);
+            console.log('NumAchievements:', progress.NumAchievements);
+            
+            if (progress.NumAwardedToUser && progress.NumAchievements) {
+                const completionRatio = progress.NumAwardedToUser / progress.NumAchievements;
+                console.log('Completion ratio:', completionRatio, '(', (completionRatio * 100).toFixed(2), '%)');
+            }
+            
+            // Check for achievement data
+            if (progress.Achievements) {
+                console.log('\n=== ACHIEVEMENTS DATA ===');
+                console.log('Achievements object exists, keys:', Object.keys(progress.Achievements).length);
+                
+                // Sample a few achievements to see their structure
+                const achievementIds = Object.keys(progress.Achievements).slice(0, 3);
+                for (const id of achievementIds) {
+                    console.log(`Sample achievement ${id}:`, JSON.stringify(progress.Achievements[id], null, 2));
+                }
+            }
+            
+            // Try alternative API endpoints
+            console.log('\n=== TRYING ALTERNATIVE API CALLS ===');
+            
+            try {
+                // Try getUserInfo to see if it has award information
+                const userInfo = await retroAPI.getUserInfo(user.raUsername);
+                console.log('UserInfo awards field:', userInfo.awards);
+                
+                // Try getGameInfo to see game structure
+                const gameInfo = await RetroAPIUtils.getGameInfo(gameId);
+                console.log('Game info title:', gameInfo.title);
+                
+            } catch (altError) {
+                console.log('Error with alternative API calls:', altError.message);
+            }
+            
+            console.log('=== END DEBUG ===\n');
+            return false; // Don't actually announce during debug
+            
+        } catch (error) {
+            console.error('Error in debug mastery check:', error);
+            return false;
+        }
+    }
+
+    /**
+     * COMPREHENSIVE FIX: Check if a user has mastered a game and announce if so
      */
     async checkForGameMastery(user, gameId, achievement) {
         try {
@@ -182,25 +352,144 @@ class GameAwardService {
                 return await this.checkForGameAwards(user, gameId, systemType === 'shadow');
             }
             
-            // Get the user's game progress with awards
-            const progress = await RetroAPIUtils.getUserGameProgressWithAwards(user.raUsername, gameId);
+            // ENHANCED: Try multiple API approaches to get award information
+            let progress = null;
+            let masteryInfo = null;
             
-            console.log(`Progress data for ${user.raUsername} on game ${gameId}:`, {
-                HighestAwardKind: progress?.HighestAwardKind,
-                UserCompletion: progress?.UserCompletion,
-                UserCompletionHardcore: progress?.UserCompletionHardcore,
-                NumAwardedToUser: progress?.NumAwardedToUser,
-                NumAchievements: progress?.NumAchievements
-            });
+            // Approach 1: Try the getUserGameProgressWithAwards method
+            try {
+                progress = await RetroAPIUtils.getUserGameProgressWithAwards(user.raUsername, gameId);
+                console.log(`Progress API response keys:`, Object.keys(progress || {}));
+                console.log(`HighestAwardKind:`, progress?.HighestAwardKind);
+                console.log(`UserCompletion:`, progress?.UserCompletion);
+                console.log(`UserCompletionHardcore:`, progress?.UserCompletionHardcore);
+            } catch (error) {
+                console.error('Error with getUserGameProgressWithAwards:', error);
+            }
             
-            // Check if the user has any award for this game
-            if (!progress || !progress.HighestAwardKind) {
-                console.log(`No award found for ${user.raUsername} on game ${gameId}`);
+            // Approach 2: Try to get user info which might have awards data
+            try {
+                const userInfo = await retroAPI.getUserInfo(user.raUsername);
+                if (userInfo.awards && Array.isArray(userInfo.awards)) {
+                    // Look for this specific game in the awards
+                    const gameAward = userInfo.awards.find(award => 
+                        award.AwardData === gameId || 
+                        award.GameID === gameId ||
+                        award.gameId === gameId
+                    );
+                    
+                    if (gameAward) {
+                        console.log(`Found game award in user info:`, gameAward);
+                        masteryInfo = {
+                            hasAward: true,
+                            awardType: gameAward.AwardType || gameAward.Type,
+                            awardDate: gameAward.AwardedAt || gameAward.Date,
+                            gameTitle: gameAward.Title || gameAward.GameTitle
+                        };
+                    }
+                }
+            } catch (error) {
+                console.error('Error getting user info for awards:', error);
+            }
+            
+            // Approach 3: Use standard game progress and infer mastery from completion
+            if (!progress) {
+                try {
+                    progress = await RetroAPIUtils.getUserGameProgress(user.raUsername, gameId);
+                    console.log(`Standard progress API response:`, {
+                        numAwardedToUser: progress?.numAwardedToUser,
+                        achievements: Object.keys(progress?.achievements || {}).length
+                    });
+                } catch (error) {
+                    console.error('Error with standard getUserGameProgress:', error);
+                }
+            }
+            
+            if (!progress) {
+                console.log(`No progress data available for ${user.raUsername} on game ${gameId}`);
+                return false;
+            }
+            
+            // ENHANCED: Multiple ways to detect mastery/completion
+            let isMastery = false;
+            let isBeaten = false;
+            let awardType = null;
+            
+            // Method 1: Check HighestAwardKind field (if available)
+            if (progress.HighestAwardKind) {
+                awardType = progress.HighestAwardKind.toLowerCase();
+                console.log(`Award type from HighestAwardKind: ${awardType}`);
+            }
+            
+            // Method 2: Check alternative award fields
+            const alternativeAwardFields = [
+                'UserAward', 'Award', 'AwardKind', 'UserAwardKind', 
+                'HighestAward', 'CompletionStatus', 'MasteryStatus'
+            ];
+            
+            for (const field of alternativeAwardFields) {
+                if (progress[field]) {
+                    awardType = progress[field].toString().toLowerCase();
+                    console.log(`Award type from ${field}: ${awardType}`);
+                    break;
+                }
+            }
+            
+            // Method 3: Infer from completion percentages and achievement counts
+            if (!awardType) {
+                const numAwarded = progress.NumAwardedToUser || progress.numAwardedToUser || 0;
+                const totalAchievements = progress.NumAchievements || Object.keys(progress.achievements || {}).length;
+                
+                console.log(`Achievement count check: ${numAwarded}/${totalAchievements}`);
+                
+                if (numAwarded > 0 && totalAchievements > 0) {
+                    const completionRatio = numAwarded / totalAchievements;
+                    console.log(`Completion ratio: ${completionRatio} (${(completionRatio * 100).toFixed(1)}%)`);
+                    
+                    if (completionRatio >= 1.0) {
+                        // User has all achievements - now check if hardcore
+                        const hardcoreCompletion = this.parseCompletionPercentage(
+                            progress.UserCompletionHardcore || progress.HardcoreCompletion || '0'
+                        );
+                        
+                        console.log(`Hardcore completion: ${hardcoreCompletion}%`);
+                        
+                        if (hardcoreCompletion >= 100) {
+                            awardType = 'mastery';
+                            console.log('Inferred mastery from 100% hardcore completion');
+                        } else {
+                            awardType = 'completion';
+                            console.log('Inferred beaten from 100% regular completion');
+                        }
+                    }
+                }
+            }
+            
+            // Method 4: Use masteryInfo from user awards if available
+            if (!awardType && masteryInfo && masteryInfo.hasAward) {
+                awardType = masteryInfo.awardType?.toLowerCase() || 'completion';
+                console.log(`Award type from user info: ${awardType}`);
+            }
+            
+            // Determine final award status
+            if (awardType) {
+                if (awardType.includes('mastery') || awardType.includes('master')) {
+                    isMastery = true;
+                } else if (awardType.includes('completion') || awardType.includes('beaten') || awardType.includes('complete')) {
+                    isBeaten = true;
+                }
+            }
+            
+            console.log(`Final determination: mastery=${isMastery}, beaten=${isBeaten}, awardType=${awardType}`);
+            
+            if (!isMastery && !isBeaten) {
+                console.log(`No mastery or beaten status found for ${user.raUsername} on game ${gameId}`);
                 return false;
             }
             
             // Create a unique identifier for this award
-            const awardIdentifier = `${user.raUsername}:${systemType}:${gameId}:${progress.HighestAwardKind}`;
+            const finalAwardType = isMastery ? 'mastery' : 'completion';
+            const awardIdentifier = `${user.raUsername}:${systemType}:${gameId}:${finalAwardType}`;
             
             // Check if we've already announced this award
             if (this.sessionAwardHistory.has(awardIdentifier) || 
@@ -209,38 +498,33 @@ class GameAwardService {
                 return false;
             }
             
+            // ENHANCED: Double-check completion requirements
+            if (isMastery) {
+                // For mastery, verify hardcore completion
+                const hardcoreCompletion = this.parseCompletionPercentage(
+                    progress.UserCompletionHardcore || progress.HardcoreCompletion || '0'
+                );
+                
+                if (hardcoreCompletion < 100) {
+                    console.log(`User ${user.raUsername} doesn't have 100% hardcore completion for mastery (${hardcoreCompletion}%), skipping`);
+                    return false;
+                }
+            }
+            
+            if (isBeaten) {
+                // For beaten, verify regular completion
+                const regularCompletion = this.parseCompletionPercentage(
+                    progress.UserCompletion || progress.Completion || '0'
+                );
+                
+                if (regularCompletion < 100) {
+                    console.log(`User ${user.raUsername} doesn't have 100% completion for beaten status (${regularCompletion}%), skipping`);
+                    return false;
+                }
+            }
+            
             // Get game info
             const gameInfo = await RetroAPIUtils.getGameInfo(gameId);
-            
-            // Determine award type and prepare announcement
-            let isMastery = false;
-            let isBeaten = false;
-            
-            if (progress.HighestAwardKind === 'mastery') {
-                isMastery = true;
-            } else if (progress.HighestAwardKind === 'completion') {
-                isBeaten = true;
-            } else {
-                console.log(`Award type ${progress.HighestAwardKind} not announced for regular games`);
-                return false;
-            }
-            
-            // FIXED: Parse completion percentages correctly
-            const userCompletion = this.parseCompletionPercentage(progress.UserCompletion);
-            const userCompletionHardcore = this.parseCompletionPercentage(progress.UserCompletionHardcore);
-            
-            console.log(`Completion check for ${user.raUsername}: completion=${userCompletion}%, hardcore=${userCompletionHardcore}%`);
-            
-            // Verify the user actually has the award with proper completion
-            if (isMastery && userCompletionHardcore < 100) {
-                console.log(`User ${user.raUsername} doesn't have 100% hardcore mastery for game ${gameId} (${userCompletionHardcore}%), skipping announcement`);
-                return false;
-            }
-            
-            if (isBeaten && userCompletion < 100) {
-                console.log(`User ${user.raUsername} doesn't have 100% completion for game ${gameId} (${userCompletion}%), skipping announcement`);
-                return false;
-            }
             
             // Get user's profile image
             const profileImageUrl = await this.getUserProfileImageUrl(user.raUsername);
@@ -282,7 +566,7 @@ class GameAwardService {
                 isBeaten: isBeaten
             }, ALERT_TYPES.MASTERY); // Use MASTERY alert type for proper channel routing
             
-            console.log(`Announced ${isMastery ? 'mastery' : 'beaten'} award for ${user.raUsername} on game ${gameInfo.title}`);
+            console.log(`✅ Successfully announced ${isMastery ? 'mastery' : 'beaten'} award for ${user.raUsername} on game ${gameInfo.title}`);
             return true;
             
         } catch (error) {
