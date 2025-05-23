@@ -514,7 +514,7 @@ class ArenaService extends FeedManagerBase {
             // Set footer based on challenge type
             if (challenge.isOpenChallenge) {
                 embed.setFooter({ 
-                    text: `Use /arena and select "Browse Open Challenges" to join this challenge.` 
+                    text: `Use /arena and select "Browse Open Challenges" to join this challenge. Auto-cancels in 72 hours if no one joins.` 
                 });
             } else {
                 embed.setFooter({ 
@@ -831,6 +831,86 @@ class ArenaService extends FeedManagerBase {
             console.error('Error sending standings change notification:', error);
         }
     }
+
+    /**
+     * NEW: Notify about automatic challenge timeout/cancellation
+     */
+    async notifyAutoTimeout(challenge, creator) {
+        try {
+            // Use AlertUtils with ARENA type for auto-timeout notifications
+            
+            // Use our createHeaderEmbed utility
+            const embed = createHeaderEmbed(
+                '⏰ Open Challenge Auto-Cancelled',
+                `An open challenge created by **${creator.raUsername}** has been automatically cancelled due to no participants joining within 72 hours.`,
+                {
+                    color: COLORS.NEUTRAL, // Gray for cancellations
+                    timestamp: true
+                }
+            );
+            
+            embed.addFields(
+                { name: 'Game', value: challenge.gameTitle, inline: false },
+                { name: 'Wager Refunded', value: `${challenge.wagerAmount} GP`, inline: true },
+                { name: 'Duration Open', value: '72 hours', inline: true }
+            );
+            
+            if (challenge.description) {
+                embed.addFields({ name: 'Description', value: challenge.description, inline: false });
+            }
+            
+            // Add thumbnail if available
+            if (challenge.iconUrl) {
+                embed.setThumbnail(`https://retroachievements.org${challenge.iconUrl}`);
+            }
+            
+            embed.setFooter({ 
+                text: 'Open challenges automatically cancel after 72 hours if no one joins. Create a new challenge anytime!' 
+            });
+            
+            // Send as a temporary message that will auto-delete after 4 hours
+            // Use AlertUtils to ensure the message goes to the correct channel
+            const messageOptions = { embeds: [embed] };
+            
+            await this.sendTemporaryMessage(
+                await AlertUtils.getAlertsChannel(ALERT_TYPES.ARENA), 
+                messageOptions, 
+                4, 
+                'autoTimeout'
+            );
+            
+            console.log(`Sent auto-timeout notification for challenge ${challenge._id}`);
+            
+        } catch (error) {
+            console.error('Error sending auto-timeout notification:', error);
+        }
+    }
+
+    /**
+     * NEW: Check for challenges approaching timeout and process automatic cancellations
+     * This method should be called periodically (e.g., every hour)
+     */
+    async checkAndProcessTimeouts() {
+        try {
+            // Import the timeout utils
+            const ArenaTimeoutUtils = (await import('../utils/ArenaTimeoutUtils.js')).default;
+            
+            // Process any timeouts
+            const result = await ArenaTimeoutUtils.checkAndProcessTimeouts();
+            
+            if (result.processed > 0) {
+                console.log(`Arena: Auto-cancelled ${result.processed} open challenges due to timeout.`);
+                
+                // Refresh the entire feed after processing timeouts to maintain order
+                await this.refreshEntireFeed();
+            }
+            
+            return result;
+        } catch (error) {
+            console.error('Error in arena timeout processing:', error);
+            return { processed: 0, errors: 1 };
+        }
+    }
     
     // Arena feed updates
     async updateArenaFeeds() {
@@ -1057,10 +1137,21 @@ class ArenaService extends FeedManagerBase {
             
             // Add how to join instructions at the bottom if the challenge is still open
             if (challenge.status === 'open') {
-                embed.addFields({
-                    name: 'How to Join', 
-                    value: `Use \`/arena\` and select "Browse Open Challenges" to join this challenge.`
-                });
+                // Add auto-cancellation info for open challenges with no participants
+                if (!challenge.participants || challenge.participants.length === 0) {
+                    const timeSinceCreation = Date.now() - challenge.createdAt.getTime();
+                    const hoursLeft = Math.max(0, 72 - Math.floor(timeSinceCreation / (60 * 60 * 1000)));
+                    
+                    embed.addFields({
+                        name: 'How to Join', 
+                        value: `Use \`/arena\` and select "Browse Open Challenges" to join this challenge.\n**Auto-cancels in ${hoursLeft} hours if no one joins.**`
+                    });
+                } else {
+                    embed.addFields({
+                        name: 'How to Join', 
+                        value: `Use \`/arena\` and select "Browse Open Challenges" to join this challenge.`
+                    });
+                }
             }
             
             // Send or update the message using our helper method
