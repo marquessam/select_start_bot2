@@ -745,7 +745,7 @@ class LeaderboardFeedService extends FeedManagerBase {
     }
 
     // Send alerts for rank changes using AlertUtils
-    async sendRankChangeAlerts(alerts) {
+   async sendRankChangeAlerts(alerts) {
         try {
             // Get current challenge game info for embedding
             const now = new Date();
@@ -806,20 +806,22 @@ class LeaderboardFeedService extends FeedManagerBase {
                 thumbnailUrl = `https://retroachievements.org${currentChallenge.monthly_game_icon_url}`;
             }
 
-            // Send alert using AlertUtils
+            // Send alert using AlertUtils with MONTHLY alert type
+            // Note: You'll need to add ALERT_TYPES to the import at the top of the file:
+            // import AlertUtils, { ALERT_TYPES } from '../utils/AlertUtils.js';
             await AlertUtils.sendPositionChangeAlert({
-                title: `${monthName} Challenge Update!`,
-                description: `The leaderboard for the monthly challenge has been updated!`,
+                title: `📊 ${monthName} Challenge Update!`,
+                description: `The leaderboard for **${currentChallenge.monthly_challange_title || 'the monthly challenge'}** has been updated!`,
                 changes: changes,
                 currentStandings: currentStandings,
                 thumbnail: thumbnailUrl,
-                color: COLORS.GOLD,
+                color: COLORS.INFO, // Changed to INFO (purple) to match monthly challenge color scheme
                 footer: { text: 'Data provided by RetroAchievements • Rankings update every 15 minutes' }
-            });
+            }, 'monthly'); // FIXED: Specify 'monthly' alert type for proper channel routing
             
-            console.log(`Sent streamlined leaderboard alert with ${changes.length} position changes`);
+            console.log(`Sent monthly challenge leaderboard alert to MONTHLY channel with ${changes.length} position changes`);
         } catch (error) {
-            console.error('Error sending rank change alerts:', error);
+            console.error('Error sending monthly challenge rank change alerts:', error);
         }
     }
 
