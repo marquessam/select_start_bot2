@@ -73,6 +73,11 @@ const userSchema = new mongoose.Schema({
         type: [{ type: String }],
         default: []
     },
+    // NEW: Field for tracking announced awards (mastery/beaten) to prevent duplicates
+    announcedAwards: {
+        type: [{ type: String }],
+        default: []
+    },
     // Add this new field to track the last time achievements were checked
     lastAchievementCheck: {
         type: Date,
