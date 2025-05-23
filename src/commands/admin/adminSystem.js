@@ -132,10 +132,12 @@ export default {
             'mastered': 'mastery',
             'mastery': 'mastery',
             'master': 'mastery',
+            'mastery/completion': 'mastery',
             'completed': 'completion',
             'completion': 'completion',
             'beaten': 'completion',
             'complete': 'completion',
+            'game beaten': 'completion',
             'participated': 'participation',
             'participation': 'participation'
         };
@@ -417,76 +419,122 @@ export default {
     },
 
     /**
-     * Force check for game mastery - improved award kind handling
+     * UPDATED: Force check for game mastery using getUserAwards API
      * @private
      */
     async forceCheckGameMastery(user, gameId, achievement, forceAnnounce) {
         if (!user || !gameId) return false;
 
         try {
+            console.log(`Force checking game mastery for ${user.raUsername} on game ${gameId}, force=${forceAnnounce}`);
+            
             // If not forcing, just use the regular method
             if (!forceAnnounce) {
                 return await gameAwardService.checkForGameMastery(user, gameId, achievement);
             }
             
-            // For force mode, directly check the API for mastery status
-            const progress = await RetroAPIUtils.getUserGameProgressWithAwards(user.raUsername, gameId);
+            // UPDATED: Use getUserAwards API to get actual award data
+            const userAwards = await retroAPI.getUserAwards(user.raUsername);
             
-            if (!progress || !progress.HighestAwardKind) {
+            if (!userAwards || !userAwards.visibleUserAwards) {
+                console.log(`No user awards found for ${user.raUsername}`);
                 return false;
             }
             
-            // Normalize the award kind to handle 'mastered' vs 'mastery'
-            const normalizedAwardKind = this.normalizeAwardKind(progress.HighestAwardKind);
+            console.log(`Found ${userAwards.visibleUserAwards.length} visible awards for ${user.raUsername}`);
             
-            // Check if it's mastery or beaten
-            const isMastery = normalizedAwardKind === 'mastery';
-            const isBeaten = normalizedAwardKind === 'completion';
+            // Find awards for this specific game
+            const gameAwards = userAwards.visibleUserAwards.filter(award => {
+                const awardGameId = String(award.awardData || award.AwardData);
+                return awardGameId === String(gameId);
+            });
             
-            if (!isMastery && !isBeaten) {
+            console.log(`Found ${gameAwards.length} awards for game ${gameId}`);
+            
+            if (gameAwards.length === 0) {
+                console.log(`No awards found for ${user.raUsername} on game ${gameId}`);
                 return false;
             }
             
-            // Parse completion percentages correctly
-            const parsePercentage = (str) => {
-                if (!str) return 0;
-                const cleaned = str.toString().replace(/[^\d.]/g, '');
-                return parseFloat(cleaned) || 0;
-            };
+            // Find the highest award for this game
+            let highestAward = null;
+            let isMastery = false;
+            let isBeaten = false;
             
-            const userCompletion = parsePercentage(progress.UserCompletion);
-            const userCompletionHardcore = parsePercentage(progress.UserCompletionHardcore);
-            
-            // Verify completion requirements
-            if (isMastery && userCompletionHardcore < 100) {
-                return false;
+            for (const award of gameAwards) {
+                const awardType = award.awardType || award.AwardType || '';
+                const awardExtra = award.awardDataExtra || award.AwardDataExtra || 0;
+                
+                console.log(`Award: type="${awardType}", extra=${awardExtra}, date=${award.awardedAt || award.AwardedAt}`);
+                
+                const normalizedType = this.normalizeAwardKind(awardType);
+                
+                if (normalizedType === 'mastery') {
+                    if (awardExtra === 1) { // Hardcore
+                        isMastery = true;
+                        highestAward = award;
+                        console.log(`Found mastery award for game ${gameId}`);
+                        break; // Mastery is highest, stop looking
+                    }
+                }
+                
+                if (normalizedType === 'completion') {
+                    if (awardExtra === 1) { // Hardcore beaten
+                        isBeaten = true;
+                        if (!highestAward) {
+                            highestAward = award;
+                            console.log(`Found beaten award for game ${gameId}`);
+                        }
+                    }
+                }
             }
             
-            if (isBeaten && userCompletion < 100) {
+            if (!highestAward) {
+                console.log(`No mastery or beaten award found for ${user.raUsername} on game ${gameId}`);
                 return false;
             }
             
             // Get game info
             const gameInfo = await RetroAPIUtils.getGameInfo(gameId);
             
-            // Create the award identifier using normalized award kind
+            // Create the award identifier with timestamp
             const systemType = gameAwardService.getGameSystemType(gameId);
-            const awardIdentifier = `${user.raUsername}:${systemType}:${gameId}:${normalizedAwardKind}`;
+            const awardType = isMastery ? 'mastery' : 'completion';
+            const awardDate = new Date(highestAward.awardedAt || highestAward.AwardedAt);
+            const awardIdentifier = `${user.raUsername}:${systemType}:${gameId}:${awardType}:${awardDate.getTime()}`;
+            
+            console.log(`Award identifier: ${awardIdentifier}`);
             
             // For force mode, temporarily remove from session history
             const wasInSession = gameAwardService.sessionAwardHistory.has(awardIdentifier);
             if (wasInSession) {
                 gameAwardService.sessionAwardHistory.delete(awardIdentifier);
+                console.log(`Temporarily removed from session history for force announcement`);
             }
             
             // For force mode, temporarily remove from user's announced awards
             let wasInUserAwards = false;
             let userAwardsBackup = null;
-            if (user.announcedAwards && user.announcedAwards.includes(awardIdentifier)) {
-                wasInUserAwards = true;
-                userAwardsBackup = [...user.announcedAwards];
-                user.announcedAwards = user.announcedAwards.filter(award => award !== awardIdentifier);
-                await user.save();
+            if (user.announcedAwards) {
+                // Check for any award with same user, system, game, and type (regardless of timestamp)
+                const existingAwardIndex = user.announcedAwards.findIndex(existing => {
+                    const parts = existing.split(':');
+                    const existingParts = awardIdentifier.split(':');
+                    
+                    return parts.length >= 4 && existingParts.length >= 4 &&
+                           parts[0] === existingParts[0] && // username
+                           parts[1] === existingParts[1] && // system
+                           parts[2] === existingParts[2] && // gameId
+                           parts[3] === existingParts[3];   // awardType
+                });
+                
+                if (existingAwardIndex !== -1) {
+                    wasInUserAwards = true;
+                    userAwardsBackup = [...user.announcedAwards];
+                    user.announcedAwards.splice(existingAwardIndex, 1);
+                    await user.save();
+                    console.log(`Temporarily removed similar award from user's announced awards for force announcement`);
+                }
             }
             
             try {
@@ -545,30 +593,89 @@ export default {
     },
 
     /**
-     * Force check for monthly/shadow game awards - improved award kind handling
+     * UPDATED: Force check for monthly/shadow game awards using getUserAwards API
      * @private
      */
     async forceCheckGameAwards(user, gameId, isShadow, forceAnnounce) {
         if (!user || !gameId) return false;
 
         try {
+            console.log(`Force checking ${isShadow ? 'shadow' : 'monthly'} game awards for ${user.raUsername} on game ${gameId}, force=${forceAnnounce}`);
+            
             // If not forcing, use regular method
             if (!forceAnnounce) {
                 return await gameAwardService.checkForGameAwards(user, gameId, isShadow);
             }
 
-            // For force mode, use similar logic to forceCheckGameMastery
-            const progress = await RetroAPIUtils.getUserGameProgressWithAwards(user.raUsername, gameId);
+            // UPDATED: Use getUserAwards API to get actual award data
+            const userAwards = await retroAPI.getUserAwards(user.raUsername);
             
-            if (!progress || !progress.HighestAwardKind) {
+            if (!userAwards || !userAwards.visibleUserAwards) {
+                console.log(`No user awards found for ${user.raUsername}`);
+                return false;
+            }
+            
+            // Find awards for this specific game
+            const gameAwards = userAwards.visibleUserAwards.filter(award => {
+                const awardGameId = String(award.awardData || award.AwardData);
+                return awardGameId === String(gameId);
+            });
+            
+            console.log(`Found ${gameAwards.length} awards for ${isShadow ? 'shadow' : 'monthly'} game ${gameId}`);
+            
+            if (gameAwards.length === 0) {
+                console.log(`No awards found for ${user.raUsername} on ${isShadow ? 'shadow' : 'monthly'} game ${gameId}`);
+                return false;
+            }
+            
+            // Find the highest award for this game
+            let highestAward = null;
+            let awardType = '';
+            
+            for (const award of gameAwards) {
+                const type = award.awardType || award.AwardType || '';
+                const extra = award.awardDataExtra || award.AwardDataExtra || 0;
+                
+                console.log(`Award: type="${type}", extra=${extra}, date=${award.awardedAt || award.AwardedAt}`);
+                
+                const normalizedType = this.normalizeAwardKind(type);
+                
+                if (normalizedType === 'mastery') {
+                    if (extra === 1) { // Hardcore
+                        awardType = 'mastery';
+                        highestAward = award;
+                        console.log(`Found mastery award for ${isShadow ? 'shadow' : 'monthly'} game ${gameId}`);
+                        break;
+                    }
+                }
+                
+                if (normalizedType === 'completion') {
+                    if (extra === 1) { // Hardcore
+                        awardType = 'beaten';
+                        if (!highestAward) {
+                            highestAward = award;
+                            console.log(`Found beaten award for ${isShadow ? 'shadow' : 'monthly'} game ${gameId}`);
+                        }
+                    }
+                }
+                
+                if (normalizedType === 'participation') {
+                    awardType = 'participation';
+                    if (!highestAward) {
+                        highestAward = award;
+                        console.log(`Found participation award for ${isShadow ? 'shadow' : 'monthly'} game ${gameId}`);
+                    }
+                }
+            }
+            
+            if (!highestAward) {
+                console.log(`No mastery, beaten, or participation award found for ${user.raUsername} on ${isShadow ? 'shadow' : 'monthly'} game ${gameId}`);
                 return false;
             }
 
-            // Normalize the award kind
-            const normalizedAwardKind = this.normalizeAwardKind(progress.HighestAwardKind);
-
             const systemType = isShadow ? 'shadow' : 'monthly';
-            const awardIdentifier = `${user.raUsername}:${systemType}:${gameId}:${normalizedAwardKind}`;
+            const awardDate = new Date(highestAward.awardedAt || highestAward.AwardedAt);
+            const awardIdentifier = `${user.raUsername}:${systemType}:${gameId}:${awardType}:${awardDate.getTime()}`;
 
             // Temporarily bypass history checks
             const wasInSession = gameAwardService.sessionAwardHistory.has(awardIdentifier);
@@ -578,11 +685,24 @@ export default {
 
             let wasInUserAwards = false;
             let userAwardsBackup = null;
-            if (user.announcedAwards && user.announcedAwards.includes(awardIdentifier)) {
-                wasInUserAwards = true;
-                userAwardsBackup = [...user.announcedAwards];
-                user.announcedAwards = user.announcedAwards.filter(award => award !== awardIdentifier);
-                await user.save();
+            if (user.announcedAwards) {
+                const existingAwardIndex = user.announcedAwards.findIndex(existing => {
+                    const parts = existing.split(':');
+                    const existingParts = awardIdentifier.split(':');
+                    
+                    return parts.length >= 4 && existingParts.length >= 4 &&
+                           parts[0] === existingParts[0] && // username
+                           parts[1] === existingParts[1] && // system
+                           parts[2] === existingParts[2] && // gameId
+                           parts[3] === existingParts[3];   // awardType
+                });
+                
+                if (existingAwardIndex !== -1) {
+                    wasInUserAwards = true;
+                    userAwardsBackup = [...user.announcedAwards];
+                    user.announcedAwards.splice(existingAwardIndex, 1);
+                    await user.save();
+                }
             }
 
             try {
@@ -591,17 +711,17 @@ export default {
                 let awardTitle = '';
                 let awardColor = '';
 
-                // Use normalized award kind for comparisons
-                if (normalizedAwardKind === 'mastery') {
+                if (awardType === 'mastery') {
                     awardTitle = `${systemType === 'shadow' ? 'Shadow' : 'Monthly'} Challenge Mastery`;
                     awardColor = '#FFD700';
-                } else if (normalizedAwardKind === 'completion') {
+                } else if (awardType === 'beaten') {
                     awardTitle = `${systemType === 'shadow' ? 'Shadow' : 'Monthly'} Challenge Beaten`;
                     awardColor = '#C0C0C0';
-                } else if (normalizedAwardKind === 'participation') {
+                } else if (awardType === 'participation') {
                     awardTitle = `${systemType === 'shadow' ? 'Shadow' : 'Monthly'} Challenge Participation`;
                     awardColor = '#CD7F32';
                 } else {
+                    console.log(`Unknown award type "${awardType}" for ${systemType} game`);
                     return false;
                 }
 
@@ -632,7 +752,7 @@ export default {
                 user.announcedAwards.push(awardIdentifier);
                 await user.save();
 
-                console.log(`Successfully force-announced ${systemType} award for ${user.raUsername} on ${gameInfo.title}`);
+                console.log(`Successfully force-announced ${systemType} ${awardType} award for ${user.raUsername} on ${gameInfo.title}`);
                 return true;
 
             } catch (alertError) {
