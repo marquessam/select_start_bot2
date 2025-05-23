@@ -68,6 +68,23 @@ export default {
                         .setDescription('Force announce even if already announced (default: false)')
                         .setRequired(false)
                 )
+        )
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('debug-mastery')
+                .setDescription('Debug mastery detection for a specific user/game with detailed logging')
+                .addStringOption(option => 
+                    option
+                        .setName('username')
+                        .setDescription('RetroAchievements username')
+                        .setRequired(true)
+                )
+                .addStringOption(option => 
+                    option
+                        .setName('gameid')
+                        .setDescription('RetroAchievements game ID to debug')
+                        .setRequired(true)
+                )
         ),
 
     async execute(interaction) {
@@ -90,6 +107,9 @@ export default {
                 break;
             case 'check-mastery':
                 await this.handleCheckMastery(interaction);
+                break;
+            case 'debug-mastery':
+                await this.handleDebugMastery(interaction);
                 break;
             default:
                 await interaction.reply({
@@ -677,6 +697,54 @@ export default {
         } catch (error) {
             console.error('Error checking mastery:', error);
             return interaction.editReply('An error occurred while checking mastery. Please try again.');
+        }
+    },
+
+    /**
+     * NEW: Handle debugging mastery detection with detailed logging
+     */
+    async handleDebugMastery(interaction) {
+        await interaction.deferReply();
+
+        try {
+            const username = interaction.options.getString('username');
+            const gameId = interaction.options.getString('gameid');
+            
+            const user = await User.findOne({ raUsername: username });
+            
+            if (!user) {
+                return interaction.editReply(`User ${username} not found in the database.`);
+            }
+            
+            await interaction.editReply(`🔍 Running debug mastery check for ${username} on game ${gameId}...\n\n**Check the console logs for detailed output.**\n\nThis will show:\n• Raw API response data\n• Field availability analysis\n• Completion percentage parsing\n• Step-by-step decision process`);
+            
+            // Call the debug method
+            await gameAwardService.debugCheckForGameMastery(user, gameId);
+            
+            // Get game info for the response
+            let gameTitle = 'Unknown Game';
+            try {
+                const gameInfo = await retroAPI.getGameInfo(gameId);
+                gameTitle = gameInfo.title;
+            } catch (error) {
+                // Use fallback title
+            }
+            
+            return interaction.editReply(
+                `✅ **Debug analysis completed!**\n\n` +
+                `**User:** ${username}\n` +
+                `**Game:** ${gameTitle} (ID: ${gameId})\n\n` +
+                `📋 **Check your console logs for detailed information including:**\n` +
+                `• Raw API response structure\n` +
+                `• Available fields and their values\n` +
+                `• Completion percentage parsing attempts\n` +
+                `• Award detection logic steps\n\n` +
+                `🛠️ **Use this information to troubleshoot why mastery detection might not be working.**`
+            );
+            
+        } catch (error) {
+            console.error('Error in debug mastery check:', error);
+            return interaction.editReply(`❌ **Error during debug check:**\n\`\`\`${error.message}\`\`\`\n\nCheck console logs for more details.`);
         }
     }
 };
