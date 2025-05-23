@@ -65,10 +65,13 @@ class GameAwardService {
     }
     
     /**
-     * Refresh the mapping of game IDs to their system types
+     * ENHANCED: Refresh the mapping of game IDs to their system types with better logging
      */
     async refreshGameSystemMap() {
         try {
+            console.log('Refreshing game system map...');
+            
+            // Clear current map
             this.gameSystemMap.clear();
             
             // Get current monthly/shadow challenge
@@ -83,25 +86,47 @@ class GameAwardService {
                 }
             });
             
-            // Add monthly and shadow game IDs to the map
-            if (currentChallenge) {
-                if (currentChallenge.monthly_challange_gameid) {
-                    const monthlyGameId = String(currentChallenge.monthly_challange_gameid);
-                    this.gameSystemMap.set(monthlyGameId, 'monthly');
-                }
-                
-                if (currentChallenge.shadow_challange_revealed && currentChallenge.shadow_challange_gameid) {
-                    const shadowGameId = String(currentChallenge.shadow_challange_gameid);
-                    this.gameSystemMap.set(shadowGameId, 'shadow');
-                }
+            if (!currentChallenge) {
+                console.log('No current challenge found for this month');
+                return;
             }
+            
+            console.log('Current challenge found:', {
+                monthly_gameid: currentChallenge.monthly_challange_gameid,
+                shadow_gameid: currentChallenge.shadow_challange_gameid,
+                shadow_revealed: currentChallenge.shadow_challange_revealed
+            });
+            
+            // Add monthly and shadow game IDs to the map
+            if (currentChallenge.monthly_challange_gameid) {
+                const monthlyGameId = String(currentChallenge.monthly_challange_gameid);
+                this.gameSystemMap.set(monthlyGameId, 'monthly');
+                console.log(`✅ Mapped game ID ${monthlyGameId} to monthly challenge`);
+            }
+            
+            if (currentChallenge.shadow_challange_revealed && currentChallenge.shadow_challange_gameid) {
+                const shadowGameId = String(currentChallenge.shadow_challange_gameid);
+                this.gameSystemMap.set(shadowGameId, 'shadow');
+                console.log(`✅ Mapped game ID ${shadowGameId} to shadow challenge`);
+            }
+            
+            // ENHANCED: Also check for unrevealed shadow games if we have the ID
+            if (!currentChallenge.shadow_challange_revealed && currentChallenge.shadow_challange_gameid) {
+                const shadowGameId = String(currentChallenge.shadow_challange_gameid);
+                this.gameSystemMap.set(shadowGameId, 'shadow');
+                console.log(`✅ Mapped unrevealed shadow game ID ${shadowGameId} to shadow challenge`);
+            }
+            
+            console.log(`Game system map refreshed with ${this.gameSystemMap.size} entries:`, 
+                       Array.from(this.gameSystemMap.entries()));
+            
         } catch (error) {
             console.error('Error refreshing game system map:', error);
         }
     }
     
     /**
-     * Get the system type for a game ID
+     * ENHANCED: Get the system type for a game ID with better detection
      */
     getGameSystemType(gameId) {
         if (!gameId) return 'regular';
@@ -110,10 +135,13 @@ class GameAwardService {
         
         // Check if in system map
         if (this.gameSystemMap.has(gameIdStr)) {
-            return this.gameSystemMap.get(gameIdStr);
+            const systemType = this.gameSystemMap.get(gameIdStr);
+            console.log(`Game ${gameId} identified as ${systemType} from system map`);
+            return systemType;
         }
         
         // If not found, it's a regular game
+        console.log(`Game ${gameId} not found in system map, treating as regular game`);
         return 'regular';
     }
     
@@ -233,24 +261,32 @@ class GameAwardService {
     }
 
     /**
-     * Check if a user has mastered a game and announce if so
+     * FIXED: Check if a user has mastered a game with improved system detection and routing
      */
     async checkForGameMastery(user, gameId, achievement) {
         try {
             if (!user || !gameId) return false;
             
+            console.log(`=== Checking game mastery for ${user.raUsername} on game ${gameId} ===`);
+            
+            // ENHANCED: Force refresh of game system map to ensure we have latest data
+            await this.refreshGameSystemMap();
+            
             // Determine which system this game belongs to
             const systemType = this.getGameSystemType(gameId);
+            console.log(`Game ${gameId} system type determined as: ${systemType}`);
             
             // For monthly/shadow games, we handle these separately
             if (systemType !== 'regular') {
+                console.log(`Routing to checkForGameAwards for ${systemType} game`);
                 return await this.checkForGameAwards(user, gameId, systemType === 'shadow');
             }
             
-            // Get user's awards using the proper API endpoint
+            // Continue with regular game logic...
             const userAwards = await this.getUserAwards(user.raUsername);
             
             if (!userAwards || !userAwards.visibleUserAwards) {
+                console.log(`No user awards found for ${user.raUsername}`);
                 return false;
             }
             
@@ -260,6 +296,7 @@ class GameAwardService {
             });
             
             if (gameAwards.length === 0) {
+                console.log(`No awards found for regular game ${gameId}`);
                 return false;
             }
             
@@ -291,6 +328,7 @@ class GameAwardService {
             }
             
             if (!highestAward) {
+                console.log(`No mastery or beaten award found for regular game ${gameId}`);
                 return false;
             }
             
@@ -300,6 +338,7 @@ class GameAwardService {
             const ageInMs = now - awardDate;
             
             if (ageInMs > this.maxAwardAge) {
+                console.log(`Award for regular game ${gameId} is too old, skipping`);
                 return false;
             }
             
@@ -309,6 +348,7 @@ class GameAwardService {
             
             // Check for duplicates
             if (this.isDuplicateAward(awardIdentifier, user)) {
+                console.log(`Duplicate award detected for regular game ${gameId}, skipping`);
                 return false;
             }
             
@@ -318,10 +358,11 @@ class GameAwardService {
             // Add award to history
             await this.addAwardToHistory(awardIdentifier, user);
             
-            // Announce the award
+            // FIXED: Always use MASTERY alert type for regular games (mastery and beaten)
+            console.log(`Announcing ${awardType} for regular game ${gameId} to MASTERY channel`);
             await this.announceRegularAward(user, gameInfo, gameId, isMastery, isBeaten);
             
-            console.log(`Announced ${awardType} award for ${user.raUsername} on ${gameInfo.title}`);
+            console.log(`✅ Successfully announced ${awardType} award for ${user.raUsername} on regular game ${gameInfo.title}`);
             return true;
             
         } catch (error) {
@@ -331,16 +372,20 @@ class GameAwardService {
     }
 
     /**
-     * Check for monthly/shadow game awards
+     * FIXED: Check for monthly/shadow game awards with proper alert routing
      */
     async checkForGameAwards(user, gameId, isShadow) {
         try {
             if (!user || !gameId) return false;
             
+            const systemType = isShadow ? 'shadow' : 'monthly';
+            console.log(`=== Checking ${systemType} game awards for ${user.raUsername} on game ${gameId} ===`);
+            
             // Get user's awards using the proper API endpoint
             const userAwards = await this.getUserAwards(user.raUsername);
             
             if (!userAwards || !userAwards.visibleUserAwards) {
+                console.log(`No user awards found for ${user.raUsername}`);
                 return false;
             }
             
@@ -350,6 +395,7 @@ class GameAwardService {
             });
             
             if (gameAwards.length === 0) {
+                console.log(`No awards found for ${systemType} game ${gameId}`);
                 return false;
             }
             
@@ -385,6 +431,7 @@ class GameAwardService {
             }
             
             if (!highestAward) {
+                console.log(`No qualifying award found for ${systemType} game ${gameId}`);
                 return false;
             }
             
@@ -394,13 +441,14 @@ class GameAwardService {
             const ageInMs = now - awardDate;
             
             if (ageInMs > this.maxAwardAge) {
+                console.log(`Award for ${systemType} game ${gameId} is too old, skipping`);
                 return false;
             }
             
-            const systemType = isShadow ? 'shadow' : 'monthly';
             const awardIdentifier = `${user.raUsername}:${systemType}:${gameId}:${awardType}:${awardDate.getTime()}`;
             
             if (this.isDuplicateAward(awardIdentifier, user)) {
+                console.log(`Duplicate award detected for ${systemType} game ${gameId}, skipping`);
                 return false;
             }
             
@@ -408,9 +456,11 @@ class GameAwardService {
             const gameInfo = await RetroAPIUtils.getGameInfo(gameId);
             await this.addAwardToHistory(awardIdentifier, user);
             
+            // FIXED: Use correct alert type based on system type
+            console.log(`Announcing ${awardType} for ${systemType} game ${gameId} to ${systemType.toUpperCase()} channel`);
             await this.announceMonthlyAward(user, gameInfo, gameId, awardType, systemType);
             
-            console.log(`Announced ${awardType} award for ${user.raUsername} on ${systemType} game ${gameInfo.title}`);
+            console.log(`✅ Successfully announced ${awardType} award for ${user.raUsername} on ${systemType} game ${gameInfo.title}`);
             return true;
             
         } catch (error) {
@@ -493,12 +543,13 @@ class GameAwardService {
     }
 
     /**
-     * Announce regular game award
+     * FIXED: Announce regular game award (always goes to mastery channel)
      */
     async announceRegularAward(user, gameInfo, gameId, isMastery, isBeaten) {
         const profileImageUrl = await this.getUserProfileImageUrl(user.raUsername);
         const thumbnailUrl = gameInfo?.imageIcon ? `https://retroachievements.org${gameInfo.imageIcon}` : null;
         
+        // FIXED: Always use MASTERY alert type for regular games
         await AlertUtils.sendAchievementAlert({
             username: user.raUsername,
             achievementTitle: isMastery ? `Mastery of ${gameInfo.title}` : `Beaten ${gameInfo.title}`,
@@ -512,11 +563,11 @@ class GameAwardService {
             color: isMastery ? '#FFD700' : '#C0C0C0',
             isMastery: isMastery,
             isBeaten: isBeaten
-        }, ALERT_TYPES.MASTERY);
+        }, ALERT_TYPES.MASTERY); // Always use MASTERY channel for regular games
     }
 
     /**
-     * Announce monthly/shadow award
+     * FIXED: Announce monthly/shadow award (goes to appropriate channel)
      */
     async announceMonthlyAward(user, gameInfo, gameId, awardType, systemType) {
         let awardTitle = '';
@@ -536,12 +587,17 @@ class GameAwardService {
             awardColor = '#CD7F32'; // Bronze for participation
             awardEmoji = AWARD_EMOJIS.PARTICIPATION;
         } else {
+            console.error(`Unknown award type: ${awardType} for ${systemType} game`);
             return;
         }
         
         const profileImageUrl = await this.getUserProfileImageUrl(user.raUsername);
         const thumbnailUrl = gameInfo?.imageIcon ? `https://retroachievements.org${gameInfo.imageIcon}` : null;
+        
+        // FIXED: Use correct alert type based on system type
         const alertType = systemType === 'shadow' ? ALERT_TYPES.SHADOW : ALERT_TYPES.MONTHLY;
+        
+        console.log(`Sending ${systemType} award alert with type: ${alertType}`);
         
         await AlertUtils.sendAchievementAlert({
             username: user.raUsername,
@@ -553,7 +609,7 @@ class GameAwardService {
             badgeUrl: profileImageUrl,
             color: awardColor,
             isAward: true
-        }, alertType);
+        }, alertType); // Use the correct alert type for proper channel routing
     }
 
     /**
@@ -574,6 +630,13 @@ class GameAwardService {
             if (!user || !gameId) return false;
             
             console.log(`\n=== DEBUG MASTERY CHECK FOR ${user.raUsername} ON GAME ${gameId} ===`);
+            
+            // Force refresh game system map first
+            await this.refreshGameSystemMap();
+            
+            // Check game system type
+            const systemType = this.getGameSystemType(gameId);
+            console.log(`Game system type: ${systemType}`);
             
             // Get user's awards using the proper API endpoint
             const userAwards = await this.getUserAwards(user.raUsername);
