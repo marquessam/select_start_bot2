@@ -22,6 +22,10 @@ export default {
                     option.setName('results_channel')
                     .setDescription('The channel to announce results in (defaults to same channel)')
                     .setRequired(false))
+                .addBooleanOption(option =>
+                    option.setName('force')
+                    .setDescription('Force start voting regardless of timing (override 8-day rule)')
+                    .setRequired(false))
         )
         .addSubcommand(subcommand =>
             subcommand
@@ -105,13 +109,29 @@ export default {
             startDate.setTime(endDate.getTime());
             startDate.setDate(startDate.getDate() - 7);
             
-            // If start date is in the future, inform admin and do not start yet
-            if (startDate > now) {
+            // Check if admin wants to force start regardless of timing
+            const forceStart = interaction.options.getBoolean('force') ?? false;
+            
+            // If start date is in the future and not forcing, inform admin and do not start yet
+            if (startDate > now && !forceStart) {
                 return interaction.editReply(
                     `Voting should start on ${startDate.toLocaleDateString()} ` +
                     `(8 days before the end of the month) and end on ${endDate.toLocaleDateString()} ` +
-                    `(24 hours before the end of the month). Please try again on the start date.`
+                    `(24 hours before the end of the month). Please try again on the start date, or use the \`force:true\` option to override this timing restriction.`
                 );
+            }
+
+            // If forcing early start, adjust end date to be reasonable
+            if (forceStart && startDate > now) {
+                console.log("Force starting vote early, adjusting end date");
+                // Set end date to be at least 7 days from now
+                const minEndDate = new Date();
+                minEndDate.setDate(minEndDate.getDate() + 7);
+                
+                if (endDate < minEndDate) {
+                    endDate.setTime(minEndDate.getTime());
+                    console.log(`Adjusted end date to ${endDate.toLocaleDateString()} to allow sufficient voting time`);
+                }
             }
 
             // Get all users
@@ -269,19 +289,34 @@ export default {
 
             // Create embed for the poll announcement
             const embed = new EmbedBuilder()
-                .setTitle('🎮 Monthly Challenge Voting Started!')
+                .setTitle('🗳️ Monthly Challenge Voting Started!')
                 .setDescription(
                     `Voting for next month's challenge has begun! The following games have been nominated:\n\n` +
                     selectedGames.map((game, index) => 
                         `**${index + 1}. [${game.title}](https://retroachievements.org/game/${game.gameId})** (${game.consoleName})`
                     ).join('\n\n') +
-                    `\n\n**How to vote:**\n` +
-                    `Use the \`/vote\` command to cast up to two votes for your favorite games!\n` +
-                    `Example: \`/vote first:1 second:3\` to vote for games #1 and #3\n\n` +
-                    `Voting ends <t:${Math.floor(endDate.getTime() / 1000)}:R>`
+                    `\n\n` +
+                    `📋 **HOW TO VOTE:**\n` +
+                    `🔸 Use the \`/vote\` slash command to cast your votes\n` +
+                    `🔸 You can vote for up to **2 games**\n` +
+                    `🔸 Example: \`/vote first:1 second:3\` (votes for games #1 and #3)\n` +
+                    `🔸 Example: \`/vote first:5\` (votes for only game #5)\n\n` +
+                    `⏰ Voting ends <t:${Math.floor(endDate.getTime() / 1000)}:R>\n\n` +
+                    `❗ **Important:** You must use the \`/vote\` command - reactions or messages in this channel do not count as votes!`
                 )
                 .setColor('#FF69B4')
-                .setFooter({ text: `Voting ends ${endDate.toLocaleDateString()}` });
+                .addFields(
+                    {
+                        name: '🎯 Quick Voting Guide',
+                        value: 
+                            `1️⃣ Type \`/vote\` in any channel\n` +
+                            `2️⃣ Select your first choice (1-${selectedGames.length})\n` +
+                            `3️⃣ Optionally select your second choice\n` +
+                            `4️⃣ Submit your vote!`,
+                        inline: false
+                    }
+                )
+                .setFooter({ text: `Voting ends ${endDate.toLocaleDateString()} • Use /vote command to participate` });
 
             // Get the specified channel
             const channel = interaction.options.getChannel('channel');
@@ -338,11 +373,12 @@ export default {
 
             console.log(`Successfully created voting poll with ${selectedGames.length} games`);
 
-            return interaction.editReply(
-                `Voting poll has been created with ${selectedGames.length} games! The poll will be active until ${endDate.toLocaleDateString()}. ` +
+            const successMessage = `Voting poll has been created with ${selectedGames.length} games! The poll will be active until ${endDate.toLocaleDateString()}. ` +
                 `Results will be announced in ${resultsChannel} when voting ends.` +
-                (poll.scheduledJobName ? ' The poll will end automatically on the scheduled date.' : ' Note: Automatic ending is not available, manual end required.')
-            );
+                (poll.scheduledJobName ? ' The poll will end automatically on the scheduled date.' : ' Note: Automatic ending is not available, manual end required.') +
+                (forceStart ? '\n\n⚠️ **Note:** Voting was force-started outside the normal 8-day window.' : '');
+
+            return interaction.editReply(successMessage);
 
         } catch (error) {
             console.error('Error starting voting:', error);
