@@ -146,23 +146,51 @@ class GameAwardService {
     }
     
     /**
-     * Initialize the session award history
+     * ENHANCED: Initialize session history with better cleanup
      */
     async initializeSessionHistory() {
+        console.log('Initializing session award history...');
         this.sessionAwardHistory.clear();
         
         try {
             // Get all users
             const users = await User.find({});
+            let totalEntries = 0;
             
             // Add all announced awards to session history
             for (const user of users) {
                 if (user.announcedAwards && Array.isArray(user.announcedAwards)) {
                     for (const award of user.announcedAwards) {
                         this.sessionAwardHistory.add(award);
+                        totalEntries++;
                     }
                 }
             }
+            
+            console.log(`Initialized session award history with ${totalEntries} entries from ${users.length} users`);
+            
+            // ENHANCED: Clean up very old entries from session history
+            const now = Date.now();
+            const maxAge = 30 * 24 * 60 * 60 * 1000; // 30 days
+            let removedOldEntries = 0;
+            
+            for (const award of this.sessionAwardHistory) {
+                const parts = award.split(':');
+                if (parts.length >= 5) {
+                    const timestamp = parseInt(parts[4]);
+                    if (!isNaN(timestamp) && (now - timestamp) > maxAge) {
+                        this.sessionAwardHistory.delete(award);
+                        removedOldEntries++;
+                    }
+                }
+            }
+            
+            if (removedOldEntries > 0) {
+                console.log(`Cleaned up ${removedOldEntries} old entries from session history`);
+            }
+            
+            console.log(`Final session history size: ${this.sessionAwardHistory.size} entries`);
+            
         } catch (error) {
             console.error('Error initializing session award history:', error);
         }
@@ -470,19 +498,24 @@ class GameAwardService {
     }
 
     /**
-     * Check if an award is a duplicate
+     * ENHANCED: Check if an award is a duplicate with improved logic
      */
     isDuplicateAward(awardIdentifier, user) {
-        // Check session history
+        // Check session history first
         if (this.sessionAwardHistory.has(awardIdentifier)) {
+            console.log(`Award ${awardIdentifier} found in session history, skipping`);
             return true;
         }
         
         // Extract components for flexible matching
         const parts = awardIdentifier.split(':');
-        if (parts.length < 4) return false;
+        if (parts.length < 4) {
+            console.log(`Invalid award identifier format: ${awardIdentifier}`);
+            return false;
+        }
         
         const [username, systemType, gameId, awardType] = parts;
+        const newTimestamp = parts.length >= 5 ? parseInt(parts[4]) : null;
         
         // Check user's announced awards with flexible matching
         if (user.announcedAwards && Array.isArray(user.announcedAwards)) {
@@ -490,6 +523,7 @@ class GameAwardService {
                 const existingParts = existingAward.split(':');
                 if (existingParts.length >= 4) {
                     const [existingUsername, existingSystem, existingGameId, existingType] = existingParts;
+                    const existingTimestamp = existingParts.length >= 5 ? parseInt(existingParts[4]) : null;
                     
                     // Match if same user, system, game, and award type
                     if (existingUsername === username && 
@@ -497,33 +531,73 @@ class GameAwardService {
                         existingGameId === gameId && 
                         existingType === awardType) {
                         
+                        console.log(`Found matching award in user's history: ${existingAward}`);
+                        
                         // For exact duplicates, always skip
                         if (existingAward === awardIdentifier) {
+                            console.log(`Exact duplicate found, skipping`);
                             return true;
                         }
                         
-                        // For same award but different timestamp, check if recent
-                        if (existingParts.length >= 5 && parts.length >= 5) {
-                            const existingTimestamp = parseInt(existingParts[4]);
-                            const newTimestamp = parseInt(parts[4]);
+                        // ENHANCED: More robust timestamp comparison
+                        if (existingTimestamp && newTimestamp) {
+                            const timeDiff = Math.abs(newTimestamp - existingTimestamp);
+                            const maxTimeDiff = 7 * 24 * 60 * 60 * 1000; // 7 days in milliseconds
                             
-                            // If the existing award is within 24 hours of the new one, consider it a duplicate
-                            if (Math.abs(newTimestamp - existingTimestamp) < 24 * 60 * 60 * 1000) {
+                            if (timeDiff < maxTimeDiff) {
+                                console.log(`Award within ${Math.floor(timeDiff / (60 * 60 * 1000))} hours of existing award, treating as duplicate`);
                                 return true;
                             }
+                        } else {
+                            // If no timestamps, treat any matching award as duplicate
+                            console.log(`No timestamps available, treating matching award as duplicate`);
+                            return true;
                         }
                     }
                 }
             }
         }
         
+        // ENHANCED: Check for similar awards in session history (without exact timestamp match)
+        for (const sessionAward of this.sessionAwardHistory) {
+            const sessionParts = sessionAward.split(':');
+            if (sessionParts.length >= 4) {
+                const [sessionUsername, sessionSystem, sessionGameId, sessionType] = sessionParts;
+                const sessionTimestamp = sessionParts.length >= 5 ? parseInt(sessionParts[4]) : null;
+                
+                if (sessionUsername === username && 
+                    sessionSystem === systemType && 
+                    sessionGameId === gameId && 
+                    sessionType === awardType) {
+                    
+                    // If we have timestamps, check if they're within a reasonable timeframe
+                    if (sessionTimestamp && newTimestamp) {
+                        const timeDiff = Math.abs(newTimestamp - sessionTimestamp);
+                        const maxTimeDiff = 24 * 60 * 60 * 1000; // 24 hours
+                        
+                        if (timeDiff < maxTimeDiff) {
+                            console.log(`Similar award found in session history within 24 hours, treating as duplicate`);
+                            return true;
+                        }
+                    } else {
+                        // If no timestamps, be more conservative
+                        console.log(`Similar award found in session history without timestamps, treating as duplicate`);
+                        return true;
+                    }
+                }
+            }
+        }
+        
+        console.log(`Award ${awardIdentifier} is not a duplicate, proceeding with announcement`);
         return false;
     }
 
     /**
-     * Add award to history with proper cleanup
+     * ENHANCED: Add award to history with better deduplication
      */
     async addAwardToHistory(awardIdentifier, user) {
+        console.log(`Adding award to history: ${awardIdentifier}`);
+        
         // Add to session history
         this.sessionAwardHistory.add(awardIdentifier);
         
@@ -532,14 +606,23 @@ class GameAwardService {
             user.announcedAwards = [];
         }
         
-        user.announcedAwards.push(awardIdentifier);
+        // ENHANCED: Check if already exists before adding
+        if (!user.announcedAwards.includes(awardIdentifier)) {
+            user.announcedAwards.push(awardIdentifier);
+            console.log(`Added to user's announced awards: ${awardIdentifier}`);
+        } else {
+            console.log(`Award already exists in user's announced awards: ${awardIdentifier}`);
+        }
         
-        // Clean up old entries (keep only last 50 per user)
-        if (user.announcedAwards.length > 50) {
-            user.announcedAwards = user.announcedAwards.slice(-50);
+        // Clean up old entries (keep only last 100 per user instead of 50 for better tracking)
+        if (user.announcedAwards.length > 100) {
+            const removedCount = user.announcedAwards.length - 100;
+            user.announcedAwards = user.announcedAwards.slice(-100);
+            console.log(`Cleaned up ${removedCount} old award entries for ${user.raUsername}`);
         }
         
         await user.save();
+        console.log(`User data saved for ${user.raUsername}`);
     }
 
     /**
