@@ -7,7 +7,8 @@ import retroAPI from './retroAPI.js';
 import { EmbedBuilder } from 'discord.js';
 import { config } from '../config/config.js';
 import EnhancedRateLimiter from './EnhancedRateLimiter.js';
-import gameAwardService from './gameAwardService.js'; // NEW: Import the game award service
+import gameAwardService from './gameAwardService.js';
+import AlertUtils, { ALERT_TYPES } from '../utils/AlertUtils.js';
 
 const AWARD_EMOJIS = {
     MASTERY: '✨',
@@ -54,6 +55,8 @@ class AchievementFeedService {
         this.client = client;
         // NEW: Also set client for gameAwardService
         gameAwardService.setClient(client);
+        // Set client for AlertUtils
+        AlertUtils.setClient(client);
         console.log('Discord client set for achievement feed service');
     }
 
