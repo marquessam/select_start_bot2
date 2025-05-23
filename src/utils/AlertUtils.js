@@ -5,11 +5,12 @@ import { COLORS, EMOJIS, getDiscordTimestamp } from './FeedUtils.js';
 
 /**
  * Helper class for sending alerts to designated channels
+ * Updated to support multiple alert channels per service
  */
 export class AlertManager {
     constructor(client) {
         this.client = client;
-        this.alertsChannelId = null;
+        this.defaultAlertsChannelId = null;
     }
     
     setClient(client) {
@@ -17,27 +18,33 @@ export class AlertManager {
     }
     
     setAlertsChannel(channelId) {
-        this.alertsChannelId = channelId;
+        this.defaultAlertsChannelId = channelId;
     }
     
-    async getAlertsChannel() {
-        if (!this.client || !this.alertsChannelId) return null;
+    async getAlertsChannel(channelId = null) {
+        if (!this.client) return null;
+        
+        // Use provided channelId or fall back to default
+        const targetChannelId = channelId || this.defaultAlertsChannelId;
+        if (!targetChannelId) return null;
         
         try {
             const guild = await this.client.guilds.fetch(config.discord.guildId);
             if (!guild) return null;
             
-            return await guild.channels.fetch(this.alertsChannelId);
+            return await guild.channels.fetch(targetChannelId);
         } catch (error) {
-            console.error('Error getting alerts channel:', error);
+            console.error(`Error getting alerts channel ${targetChannelId}:`, error);
             return null;
         }
     }
     
     /**
      * Send a standard alert for position/rank changes
+     * @param {Object} options - Alert options
+     * @param {string} channelId - Optional specific channel ID to override default
      */
-    async sendPositionChangeAlert(options) {
+    async sendPositionChangeAlert(options, channelId = null) {
         const {
             title,
             description,
@@ -48,9 +55,10 @@ export class AlertManager {
             footer = null
         } = options;
         
-        const channel = await this.getAlertsChannel();
+        const channel = await this.getAlertsChannel(channelId);
         if (!channel) {
-            console.log('No alerts channel configured, skipping notification');
+            const targetChannel = channelId || this.defaultAlertsChannelId;
+            console.log(`No alerts channel configured or accessible: ${targetChannel}, skipping notification`);
             return;
         }
         
@@ -116,13 +124,15 @@ export class AlertManager {
         
         // Send the alert
         await channel.send({ embeds: [embed] });
-        console.log(`Sent position change alert: "${title}"`);
+        console.log(`Sent position change alert to ${channel.name}: "${title}"`);
     }
     
     /**
      * Send a standard alert for new achievements/awards
+     * @param {Object} options - Alert options
+     * @param {string} channelId - Optional specific channel ID to override default
      */
-    async sendAchievementAlert(options) {
+    async sendAchievementAlert(options, channelId = null) {
         const {
             username,
             achievementTitle,
@@ -136,9 +146,10 @@ export class AlertManager {
             isAward = false
         } = options;
         
-        const channel = await this.getAlertsChannel();
+        const channel = await this.getAlertsChannel(channelId);
         if (!channel) {
-            console.log('No alerts channel configured, skipping notification');
+            const targetChannel = channelId || this.defaultAlertsChannelId;
+            console.log(`No alerts channel configured or accessible: ${targetChannel}, skipping notification`);
             return;
         }
         
@@ -193,7 +204,7 @@ export class AlertManager {
         
         // Send the alert
         await channel.send({ embeds: [embed] });
-        console.log(`Sent achievement alert for ${username}: "${achievementTitle}"`);
+        console.log(`Sent achievement alert to ${channel.name} for ${username}: "${achievementTitle}"`);
     }
 }
 
