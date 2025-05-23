@@ -59,6 +59,89 @@ class RetroAchievementsService {
     }
 
     /**
+     * ADDED: Get user's awards/badges using the getUserAwards endpoint
+     * @param {string} username - RetroAchievements username
+     * @returns {Promise<Object>} User awards data
+     */
+    async getUserAwards(username) {
+        const cacheKey = `user_awards_${username}`;
+        const cachedData = this.getCachedItem(cacheKey);
+        
+        // Use shorter cache TTL for awards (2 minutes) since they can change frequently
+        if (cachedData && (Date.now() - this.cache.get(cacheKey).timestamp) < 120000) {
+            return cachedData;
+        }
+        
+        try {
+            // Use the rate limiter to make the API call
+            const awards = await this.rateLimiter.add(() => 
+                getUserAwards(this.authorization, { userName: username })
+            );
+            
+            // Normalize the response to handle different field name formats
+            if (awards) {
+                // Handle both VisibleUserAwards and visibleUserAwards
+                if (awards.VisibleUserAwards && !awards.visibleUserAwards) {
+                    awards.visibleUserAwards = awards.VisibleUserAwards;
+                }
+                
+                // Normalize other field names
+                if (awards.TotalAwardsCount && !awards.totalAwardsCount) {
+                    awards.totalAwardsCount = awards.TotalAwardsCount;
+                }
+                
+                if (awards.MasteryAwardsCount && !awards.masteryAwardsCount) {
+                    awards.masteryAwardsCount = awards.MasteryAwardsCount;
+                }
+                
+                if (awards.BeatenHardcoreAwardsCount && !awards.beatenHardcoreAwardsCount) {
+                    awards.beatenHardcoreAwardsCount = awards.BeatenHardcoreAwardsCount;
+                }
+                
+                // Normalize award field names within each award
+                if (awards.visibleUserAwards && Array.isArray(awards.visibleUserAwards)) {
+                    awards.visibleUserAwards = awards.visibleUserAwards.map(award => ({
+                        ...award,
+                        // Normalize to lowercase versions for consistency
+                        awardedAt: award.awardedAt || award.AwardedAt,
+                        awardType: award.awardType || award.AwardType,
+                        awardData: award.awardData || award.AwardData,
+                        awardDataExtra: award.awardDataExtra || award.AwardDataExtra,
+                        title: award.title || award.Title,
+                        consoleName: award.consoleName || award.ConsoleName,
+                        imageIcon: award.imageIcon || award.ImageIcon,
+                        consoleId: award.consoleId || award.ConsoleID,
+                        // Keep original fields as well for backward compatibility
+                        AwardedAt: award.AwardedAt || award.awardedAt,
+                        AwardType: award.AwardType || award.awardType,
+                        AwardData: award.AwardData || award.awardData,
+                        AwardDataExtra: award.AwardDataExtra || award.awardDataExtra,
+                        Title: award.Title || award.title,
+                        ConsoleName: award.ConsoleName || award.consoleName,
+                        ImageIcon: award.ImageIcon || award.imageIcon,
+                        ConsoleID: award.ConsoleID || award.consoleId
+                    }));
+                }
+            }
+            
+            // Cache the normalized result
+            this.setCachedItem(cacheKey, awards);
+            
+            return awards;
+        } catch (error) {
+            console.error(`Error fetching user awards for ${username}:`, error);
+            
+            // Return a minimal valid response structure to prevent further errors
+            return {
+                totalAwardsCount: 0,
+                masteryAwardsCount: 0,
+                beatenHardcoreAwardsCount: 0,
+                visibleUserAwards: []
+            };
+        }
+    }
+
+    /**
      * Get user's progress for a specific game with award metadata
      * @param {string} username - RetroAchievements username
      * @param {string} gameId - RetroAchievements game ID
