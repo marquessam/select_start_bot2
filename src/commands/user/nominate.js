@@ -41,6 +41,11 @@ export default {
             const gameId = interaction.options.getInteger('gameid');
             const discordId = interaction.user.id;
 
+            // Validate gameId
+            if (!gameId || gameId <= 0) {
+                return interaction.editReply('Please provide a valid Game ID (positive number).');
+            }
+
             // Get the user
             const user = await User.findOne({ discordId });
             if (!user) {
@@ -50,20 +55,43 @@ export default {
                 });
             }
 
-            // Check if game exists in RetroAchievements
+            // Check if game exists in RetroAchievements and get complete info
             let gameInfo;
+            let achievementCount;
+            
             try {
+                console.log(`Fetching game info for gameId: ${gameId}`);
                 gameInfo = await retroAPI.getGameInfo(gameId);
-                if (!gameInfo || !gameInfo.title) {
-                    throw new Error('Invalid game info');
+                
+                if (!gameInfo || !gameInfo.title || !gameInfo.consoleName) {
+                    throw new Error('Incomplete game information received from API');
                 }
+                
+                // Also get achievement count
+                achievementCount = await retroAPI.getGameAchievementCount(gameId);
+                
+                console.log(`Successfully fetched: "${gameInfo.title}" (${gameInfo.consoleName}) with ${achievementCount} achievements`);
+                
             } catch (error) {
-                return interaction.editReply('Game not found. Please check the Game ID and try again.');
+                console.error(`Error fetching game info for gameId ${gameId}:`, error);
+                return interaction.editReply(
+                    'Game not found or unable to retrieve game information. Please check the Game ID and try again.'
+                );
+            }
+
+            // Validate that we have all required information
+            if (!gameInfo.title || !gameInfo.consoleName) {
+                console.error(`Incomplete game data for gameId ${gameId}:`, gameInfo);
+                return interaction.editReply(
+                    'The game information appears to be incomplete. Please try again or contact an administrator.'
+                );
             }
 
             // Check if the console is eligible
             if (INELIGIBLE_CONSOLES.includes(gameInfo.consoleName)) {
-                return interaction.editReply(`Games for ${gameInfo.consoleName} are not eligible for nomination. Please nominate a game from a different console.`);
+                return interaction.editReply(
+                    `Games for ${gameInfo.consoleName} are not eligible for nomination. Please nominate a game from a different console.`
+                );
             }
 
             // Get current nominations for the user
@@ -83,27 +111,39 @@ export default {
                 );
             }
             
-            // Get achievement count for the game
-            const achievementCount = await retroAPI.getGameAchievementCount(gameId);
+            // Create the nomination object with all required fields validated
+            const nomination = {
+                gameId: gameId,
+                gameTitle: gameInfo.title,
+                consoleName: gameInfo.consoleName,
+                nominatedAt: new Date()
+            };
+
+            // Validate the nomination object before saving
+            if (!nomination.gameId || !nomination.gameTitle || !nomination.consoleName) {
+                console.error('Nomination validation failed:', nomination);
+                return interaction.editReply(
+                    'Failed to create nomination due to missing required information. Please try again.'
+                );
+            }
             
-            // Add the nomination with all required fields
-            // Since user.nominate() doesn't exist, we'll implement the nomination logic here
-            const now = new Date();
-            
-            // Check if nominations array exists, if not, initialize it
+            // Initialize nominations array if it doesn't exist
             if (!user.nominations) {
                 user.nominations = [];
             }
             
-            // Add new nomination with current date AND game information
-            user.nominations.push({
-                gameId: gameId,
-                gameTitle: gameInfo.title,
-                consoleName: gameInfo.consoleName,
-                nominatedAt: now
-            });
+            // Add the new nomination
+            user.nominations.push(nomination);
             
-            await user.save();
+            try {
+                await user.save();
+                console.log(`Successfully saved nomination for ${user.raUsername}: "${gameInfo.title}" (${gameInfo.consoleName})`);
+            } catch (saveError) {
+                console.error('Error saving nomination:', saveError);
+                return interaction.editReply(
+                    'An error occurred while saving your nomination. Please try again.'
+                );
+            }
             
             // Create embed for confirmation - using RA username instead of Discord username
             const embed = new EmbedBuilder()
@@ -127,7 +167,7 @@ export default {
 
         } catch (error) {
             console.error('Error nominating game:', error);
-            return interaction.editReply('An error occurred while processing your nomination. Please try again.');
+            return interaction.editReply('An unexpected error occurred while processing your nomination. Please try again.');
         }
     }
 };
