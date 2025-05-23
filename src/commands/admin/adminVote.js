@@ -296,27 +296,28 @@ export default {
                         `**${index + 1}. [${game.title}](https://retroachievements.org/game/${game.gameId})** (${game.consoleName})`
                     ).join('\n\n') +
                     `\n\n` +
-                    `📋 **HOW TO VOTE:**\n` +
-                    `🔸 Use the \`/vote\` slash command to cast your votes\n` +
-                    `🔸 You can vote for up to **2 games**\n` +
-                    `🔸 Example: \`/vote first:1 second:3\` (votes for games #1 and #3)\n` +
-                    `🔸 Example: \`/vote first:5\` (votes for only game #5)\n\n` +
+                    `🗳️ **HOW TO VOTE:**\n` +
+                    `🔸 Type \`/vote\` to open the interactive voting interface\n` +
+                    `🔸 Select up to **2 games** using the dropdown menus\n` +
+                    `🔸 Click "Submit Vote" to record your choices\n` +
+                    `🔸 The interface shows game names - no need to remember numbers!\n\n` +
                     `⏰ Voting ends <t:${Math.floor(endDate.getTime() / 1000)}:R>\n\n` +
-                    `❗ **Important:** You must use the \`/vote\` command - reactions or messages in this channel do not count as votes!`
+                    `✨ **New Easy Voting System:** Use \`/vote\` for a user-friendly interface with dropdown menus showing actual game names!`
                 )
                 .setColor('#FF69B4')
                 .addFields(
                     {
-                        name: '🎯 Quick Voting Guide',
+                        name: '🎯 Quick Start Guide',
                         value: 
                             `1️⃣ Type \`/vote\` in any channel\n` +
-                            `2️⃣ Select your first choice (1-${selectedGames.length})\n` +
-                            `3️⃣ Optionally select your second choice\n` +
-                            `4️⃣ Submit your vote!`,
+                            `2️⃣ Use dropdown menus to select games by name\n` +
+                            `3️⃣ Choose 1 or 2 games (your choice!)\n` +
+                            `4️⃣ Click "Submit Vote" to confirm\n` +
+                            `5️⃣ See live results after voting!`,
                         inline: false
                     }
                 )
-                .setFooter({ text: `Voting ends ${endDate.toLocaleDateString()} • Use /vote command to participate` });
+                .setFooter({ text: `Voting ends ${endDate.toLocaleDateString()} • Type /vote to use the new interactive voting system!` });
 
             // Get the specified channel
             const channel = interaction.options.getChannel('channel');
