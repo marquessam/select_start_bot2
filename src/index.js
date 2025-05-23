@@ -404,6 +404,14 @@ client.once(Events.ClientReady, async () => {
             });
         });
 
+        // NEW: Schedule arena timeout checks every hour at 45 minutes past
+        cron.schedule('45 * * * *', () => {
+            console.log('Running arena timeout check...');
+            arenaService.checkAndProcessTimeouts().catch(error => {
+                console.error('Error in arena timeout check:', error);
+            });
+        });
+
         // Schedule membership check daily at 3:00 AM
         cron.schedule('0 3 * * *', () => {
             console.log('Running scheduled membership check...');
@@ -545,6 +553,12 @@ client.once(Events.ClientReady, async () => {
         // Check if monthly GP allowance should be handled on startup
         await handleMonthlyGpAllowance();
 
+        // NEW: Check for any arena timeouts that may have occurred while the bot was offline
+        console.log('Checking for any arena timeouts that occurred while offline...');
+        arenaService.checkAndProcessTimeouts().catch(error => {
+            console.error('Error in startup timeout check:', error);
+        });
+
         console.log('Bot is ready!');
         console.log('📅 Scheduled tasks:');
         console.log('  • Stats updates: Every 30 minutes');
@@ -552,7 +566,10 @@ client.once(Events.ClientReady, async () => {
         console.log('  • 🆕 Weekly comprehensive yearly sync: Sundays at 3:00 AM');
         console.log('  • Monthly tasks: 1st of each month');
         console.log('  • Arcade service: Daily at 12:15 AM');
-        console.log('  • Various feeds: Hourly');
+        console.log('  • Arena feeds: Hourly at 15 minutes past');
+        console.log('  • Arena completed challenges: Hourly at 30 minutes past');
+        console.log('  • 🆕 Arena timeouts: Hourly at 45 minutes past');
+        console.log('  • Various other feeds: Hourly');
         
     } catch (error) {
         console.error('Error during initialization:', error);
