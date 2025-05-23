@@ -24,7 +24,7 @@ export default {
                     .setRequired(false))
                 .addBooleanOption(option =>
                     option.setName('force')
-                    .setDescription('Force start voting regardless of timing (override 8-day rule)')
+                    .setDescription('Start a 7-day voting period immediately (bypasses monthly schedule)')
                     .setRequired(false))
         )
         .addSubcommand(subcommand =>
@@ -82,55 +82,51 @@ export default {
 
             // Calculate start and end dates
             const now = new Date();
-            const currentMonth = now.getMonth();
-            const currentYear = now.getFullYear();
-            
-            // Calculate the last day of the current month
-            const lastDayOfMonth = new Date(currentYear, currentMonth + 1, 0);
-            
-            // Set end date to 24 hours before the end of the month
-            const endDate = new Date(lastDayOfMonth);
-            endDate.setDate(endDate.getDate() - 1);
-            
-            // If we're already within 8 days of the end of the month, move to next month
-            const startDate = new Date();
-            if ((lastDayOfMonth - now) / (1000 * 60 * 60 * 24) < 8) {
-                console.log("Less than 8 days left in month, scheduling for next month");
-                const nextMonth = (currentMonth + 1) % 12;
-                const yearForNextMonth = nextMonth === 0 ? currentYear + 1 : currentYear;
-                
-                // Set end date to 24 hours before the end of next month
-                const lastDayOfNextMonth = new Date(yearForNextMonth, nextMonth + 1, 0);
-                endDate.setTime(lastDayOfNextMonth.getTime());
-                endDate.setDate(endDate.getDate() - 1);
-            }
-            
-            // Set start date to 8 days before the end date
-            startDate.setTime(endDate.getTime());
-            startDate.setDate(startDate.getDate() - 7);
-            
-            // Check if admin wants to force start regardless of timing
             const forceStart = interaction.options.getBoolean('force') ?? false;
+            let endDate;
             
-            // If start date is in the future and not forcing, inform admin and do not start yet
-            if (startDate > now && !forceStart) {
-                return interaction.editReply(
-                    `Voting should start on ${startDate.toLocaleDateString()} ` +
-                    `(8 days before the end of the month) and end on ${endDate.toLocaleDateString()} ` +
-                    `(24 hours before the end of the month). Please try again on the start date, or use the \`force:true\` option to override this timing restriction.`
-                );
-            }
-
-            // If forcing early start, adjust end date to be reasonable
-            if (forceStart && startDate > now) {
-                console.log("Force starting vote early, adjusting end date");
-                // Set end date to be at least 7 days from now
-                const minEndDate = new Date();
-                minEndDate.setDate(minEndDate.getDate() + 7);
+            if (forceStart) {
+                // Force start: Simple 7-day voting period from now
+                console.log("Force starting vote - setting 7-day voting period");
+                endDate = new Date();
+                endDate.setDate(endDate.getDate() + 7); // 7 days from now
                 
-                if (endDate < minEndDate) {
-                    endDate.setTime(minEndDate.getTime());
-                    console.log(`Adjusted end date to ${endDate.toLocaleDateString()} to allow sufficient voting time`);
+            } else {
+                // Normal schedule: Follow month-based timing
+                const currentMonth = now.getMonth();
+                const currentYear = now.getFullYear();
+                
+                // Calculate the last day of the current month
+                const lastDayOfMonth = new Date(currentYear, currentMonth + 1, 0);
+                
+                // Set end date to 24 hours before the end of the month
+                endDate = new Date(lastDayOfMonth);
+                endDate.setDate(endDate.getDate() - 1);
+                
+                // If we're already within 8 days of the end of the month, move to next month
+                const startDate = new Date();
+                if ((lastDayOfMonth - now) / (1000 * 60 * 60 * 24) < 8) {
+                    console.log("Less than 8 days left in month, scheduling for next month");
+                    const nextMonth = (currentMonth + 1) % 12;
+                    const yearForNextMonth = nextMonth === 0 ? currentYear + 1 : currentYear;
+                    
+                    // Set end date to 24 hours before the end of next month
+                    const lastDayOfNextMonth = new Date(yearForNextMonth, nextMonth + 1, 0);
+                    endDate.setTime(lastDayOfNextMonth.getTime());
+                    endDate.setDate(endDate.getDate() - 1);
+                }
+                
+                // Set start date to 8 days before the end date
+                startDate.setTime(endDate.getTime());
+                startDate.setDate(startDate.getDate() - 7);
+                
+                // If start date is in the future and not forcing, inform admin and do not start yet
+                if (startDate > now) {
+                    return interaction.editReply(
+                        `Voting should start on ${startDate.toLocaleDateString()} ` +
+                        `(8 days before the end of the month) and end on ${endDate.toLocaleDateString()} ` +
+                        `(24 hours before the end of the month). Please try again on the start date, or use the \`force:true\` option to start a **7-day voting period immediately**.`
+                    );
                 }
             }
 
@@ -301,8 +297,10 @@ export default {
                     `🔸 Select up to **2 games** using the dropdown menus\n` +
                     `🔸 Click "Submit Vote" to record your choices\n` +
                     `🔸 The interface shows game names - no need to remember numbers!\n\n` +
-                    `⏰ Voting ends <t:${Math.floor(endDate.getTime() / 1000)}:R>\n\n` +
-                    `✨ **New Easy Voting System:** Use \`/vote\` for a user-friendly interface with dropdown menus showing actual game names!`
+                    `⏰ Voting ends <t:${Math.floor(endDate.getTime() / 1000)}:R>` +
+                    (forceStart ? ` (7-day voting period)\n\n` : `\n\n`) +
+                    `✨ **New Easy Voting System:** Use \`/vote\` for a user-friendly interface with dropdown menus showing actual game names!` +
+                    (forceStart ? `\n\n⚠️ **Special Note:** This is a 7-day force-started voting period, not following the normal monthly schedule.` : ``)
                 )
                 .setColor('#FF69B4')
                 .addFields(
@@ -317,7 +315,9 @@ export default {
                         inline: false
                     }
                 )
-                .setFooter({ text: `Voting ends ${endDate.toLocaleDateString()} • Type /vote to use the new interactive voting system!` });
+                .setFooter({ 
+                    text: `Voting ends ${endDate.toLocaleDateString()}${forceStart ? ' (7-day period)' : ''} • Type /vote to use the interactive voting system!` 
+                });
 
             // Get the specified channel
             const channel = interaction.options.getChannel('channel');
@@ -374,10 +374,14 @@ export default {
 
             console.log(`Successfully created voting poll with ${selectedGames.length} games`);
 
-            const successMessage = `Voting poll has been created with ${selectedGames.length} games! The poll will be active until ${endDate.toLocaleDateString()}. ` +
-                `Results will be announced in ${resultsChannel} when voting ends.` +
+            const successMessage = `Voting poll has been created with ${selectedGames.length} games! ` +
+                (forceStart ? 
+                    `**Force-started voting period:** 7 days from now (ends ${endDate.toLocaleDateString()}).` :
+                    `The poll will be active until ${endDate.toLocaleDateString()}.`
+                ) +
+                ` Results will be announced in ${resultsChannel} when voting ends.` +
                 (poll.scheduledJobName ? ' The poll will end automatically on the scheduled date.' : ' Note: Automatic ending is not available, manual end required.') +
-                (forceStart ? '\n\n⚠️ **Note:** Voting was force-started outside the normal 8-day window.' : '');
+                (forceStart ? '\n\n⚠️ **Note:** This is a force-started 7-day voting period, not following the normal monthly schedule.' : '');
 
             return interaction.editReply(successMessage);
 
