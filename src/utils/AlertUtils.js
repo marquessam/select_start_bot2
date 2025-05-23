@@ -14,15 +14,15 @@ export const ALERT_TYPES = {
     DEFAULT: 'default'
 };
 
-// Default channel IDs for each alert type
+// Default channel IDs for each alert type - FIXED: Use correct channel mappings
 const DEFAULT_CHANNEL_IDS = {
     [ALERT_TYPES.ARCADE]: '1300941091335438471',    // Arcade alerts
-    [ALERT_TYPES.ARENA]: '1373570850912997476',     // Arena alerts
+    [ALERT_TYPES.ARENA]: '1373570850912997476',     // Arena alerts  
     [ALERT_TYPES.MONTHLY]: '1313640664356880445',   // Monthly challenge updates
     [ALERT_TYPES.SHADOW]: '1300941091335438470',    // Shadow game updates
     [ALERT_TYPES.MASTERY]: '1362227906343997583',   // Mastery and Beaten achievements
-    [ALERT_TYPES.ACHIEVEMENT]: null,                // Default achievement channel (configurable)
-    [ALERT_TYPES.DEFAULT]: null                     // Global fallback
+    [ALERT_TYPES.ACHIEVEMENT]: '1362227906343997583', // Default achievement channel (same as mastery)
+    [ALERT_TYPES.DEFAULT]: '1362227906343997583'    // Global fallback (same as mastery)
 };
 
 /**
@@ -33,6 +33,9 @@ export class AlertManager {
     constructor(client) {
         this.client = client;
         this.channelIds = { ...DEFAULT_CHANNEL_IDS };
+        
+        // DEBUG: Log channel configuration on initialization
+        console.log('AlertManager initialized with channels:', this.channelIds);
     }
     
     setClient(client) {
@@ -81,6 +84,8 @@ export class AlertManager {
     initializeFromConfig() {
         // Use config values if available, otherwise keep defaults
         try {
+            const originalChannels = { ...this.channelIds };
+            
             this.channelIds = {
                 ...DEFAULT_CHANNEL_IDS,
                 [ALERT_TYPES.ARCADE]: config.discord.arcadeAlertsChannelId || DEFAULT_CHANNEL_IDS[ALERT_TYPES.ARCADE],
@@ -89,10 +94,18 @@ export class AlertManager {
                 [ALERT_TYPES.SHADOW]: config.discord.shadowChannelId || DEFAULT_CHANNEL_IDS[ALERT_TYPES.SHADOW],
                 [ALERT_TYPES.MASTERY]: config.discord.masteryChannelId || DEFAULT_CHANNEL_IDS[ALERT_TYPES.MASTERY],
                 [ALERT_TYPES.ACHIEVEMENT]: config.discord.achievementChannelId || DEFAULT_CHANNEL_IDS[ALERT_TYPES.ACHIEVEMENT],
-                [ALERT_TYPES.DEFAULT]: config.discord.defaultAlertsChannelId || this.channelIds[ALERT_TYPES.DEFAULT]
+                [ALERT_TYPES.DEFAULT]: config.discord.defaultAlertsChannelId || DEFAULT_CHANNEL_IDS[ALERT_TYPES.DEFAULT]
             };
             
             console.log('AlertUtils channels initialized from config');
+            console.log('Channel mappings:', this.channelIds);
+            
+            // Log any changes
+            for (const [type, channelId] of Object.entries(this.channelIds)) {
+                if (originalChannels[type] !== channelId) {
+                    console.log(`Channel for ${type} updated: ${originalChannels[type]} -> ${channelId}`);
+                }
+            }
         } catch (error) {
             console.error('Error initializing AlertUtils channels from config:', error);
         }
@@ -110,23 +123,30 @@ export class AlertManager {
             return null;
         }
         
+        let channelId = null;
+        
         // Use override if provided
         if (overrideChannelId) {
-            return this.getChannelById(overrideChannelId);
+            channelId = overrideChannelId;
+            console.log(`Using override channel: ${channelId}`);
         }
-        
         // Use the specified alert type's channel
-        if (alertType && this.channelIds[alertType]) {
-            return this.getChannelById(this.channelIds[alertType]);
+        else if (alertType && this.channelIds[alertType]) {
+            channelId = this.channelIds[alertType];
+            console.log(`Using ${alertType} channel: ${channelId}`);
         }
-        
         // Fall back to default channel
-        if (this.channelIds[ALERT_TYPES.DEFAULT]) {
-            return this.getChannelById(this.channelIds[ALERT_TYPES.DEFAULT]);
+        else if (this.channelIds[ALERT_TYPES.DEFAULT]) {
+            channelId = this.channelIds[ALERT_TYPES.DEFAULT];
+            console.log(`Using default channel: ${channelId}`);
         }
         
-        console.warn(`No channel configured for alert type: ${alertType || 'default'}`);
-        return null;
+        if (!channelId) {
+            console.warn(`No channel configured for alert type: ${alertType || 'default'}`);
+            return null;
+        }
+        
+        return this.getChannelById(channelId);
     }
     
     /**
@@ -138,9 +158,19 @@ export class AlertManager {
         
         try {
             const guild = await this.client.guilds.fetch(config.discord.guildId);
-            if (!guild) return null;
+            if (!guild) {
+                console.error(`Guild not found: ${config.discord.guildId}`);
+                return null;
+            }
             
-            return await guild.channels.fetch(channelId);
+            const channel = await guild.channels.fetch(channelId);
+            if (!channel) {
+                console.error(`Channel not found: ${channelId}`);
+                return null;
+            }
+            
+            console.log(`Successfully fetched channel: ${channel.name} (${channelId})`);
+            return channel;
         } catch (error) {
             console.error(`Error getting alerts channel ${channelId}:`, error);
             return null;
@@ -154,191 +184,208 @@ export class AlertManager {
      * @param {string} overrideChannelId - Optional specific channel ID to override default
      */
     async sendPositionChangeAlert(options, alertType = ALERT_TYPES.ARCADE, overrideChannelId = null) {
-        const {
-            title,
-            description,
-            changes = [],
-            currentStandings = [],
-            thumbnail = null,
-            color = COLORS.WARNING,
-            footer = null
-        } = options;
-        
-        const channel = await this.getAlertsChannel(alertType, overrideChannelId);
-        if (!channel) {
-            console.log(`No alerts channel configured for type ${alertType}, skipping notification`);
-            return;
-        }
-        
-        // Create timestamp
-        const timestamp = getDiscordTimestamp(new Date());
-        
-        // Create embed
-        const embed = new EmbedBuilder()
-            .setColor(color)
-            .setTitle(title)
-            .setDescription(`${description}\n**Time:** ${timestamp}`)
-            .setTimestamp();
-        
-        if (thumbnail) {
-            embed.setThumbnail(thumbnail);
-        }
-        
-        // Add position changes if any exist
-        if (changes && changes.length > 0) {
-            let changesText = '';
-            changes.forEach(change => {
-                let rankEmoji = '';
-                if (change.newRank && change.newRank <= 3) {
-                    rankEmoji = EMOJIS[`RANK_${change.newRank}`];
-                } else {
-                    rankEmoji = `#${change.newRank || ''}`;
-                }
-                
-                changesText += `**@${change.username}** is now in ${rankEmoji} place!\n`;
-            });
+        try {
+            console.log(`Sending position change alert - Type: ${alertType}, Override: ${overrideChannelId || 'none'}`);
             
-            embed.addFields({ 
-                name: 'Position Changes', 
-                value: changesText 
-            });
-        }
-        
-        // Add current standings if provided
-        if (currentStandings && currentStandings.length > 0) {
-            let standingsText = '';
-            currentStandings.slice(0, 5).forEach(user => {
-                const rankEmoji = user.rank <= 3 ? 
-                    EMOJIS[`RANK_${user.rank}`] : 
-                    `#${user.rank}`;
-                
-                standingsText += `${rankEmoji} **@${user.username}**: ${user.score || user.value}\n`;
-            });
+            const {
+                title,
+                description,
+                changes = [],
+                currentStandings = [],
+                thumbnail = null,
+                color = COLORS.WARNING,
+                footer = null
+            } = options;
             
-            embed.addFields({ 
-                name: 'Current Top 5', 
-                value: standingsText 
-            });
+            const channel = await this.getAlertsChannel(alertType, overrideChannelId);
+            if (!channel) {
+                console.error(`No alerts channel found for type ${alertType}, skipping notification`);
+                return;
+            }
+            
+            console.log(`Sending position change alert to channel: ${channel.name} (${channel.id})`);
+            
+            // Create timestamp
+            const timestamp = getDiscordTimestamp(new Date());
+            
+            // Create embed
+            const embed = new EmbedBuilder()
+                .setColor(color)
+                .setTitle(title)
+                .setDescription(`${description}\n**Time:** ${timestamp}`)
+                .setTimestamp();
+            
+            if (thumbnail) {
+                embed.setThumbnail(thumbnail);
+            }
+            
+            // Add position changes if any exist
+            if (changes && changes.length > 0) {
+                let changesText = '';
+                changes.forEach(change => {
+                    let rankEmoji = '';
+                    if (change.newRank && change.newRank <= 3) {
+                        rankEmoji = EMOJIS[`RANK_${change.newRank}`];
+                    } else {
+                        rankEmoji = `#${change.newRank || ''}`;
+                    }
+                    
+                    changesText += `**${change.username}** is now in ${rankEmoji} place!\n`;
+                });
+                
+                embed.addFields({ 
+                    name: 'Position Changes', 
+                    value: changesText 
+                });
+            }
+            
+            // Add current standings if provided
+            if (currentStandings && currentStandings.length > 0) {
+                let standingsText = '';
+                currentStandings.slice(0, 5).forEach(user => {
+                    const rankEmoji = user.rank <= 3 ? 
+                        EMOJIS[`RANK_${user.rank}`] : 
+                        `#${user.rank}`;
+                    
+                    standingsText += `${rankEmoji} **${user.username}**: ${user.score || user.value}\n`;
+                });
+                
+                embed.addFields({ 
+                    name: 'Current Top 5', 
+                    value: standingsText 
+                });
+            }
+            
+            // Add footer if provided
+            if (footer) {
+                embed.setFooter(footer);
+            } else {
+                embed.setFooter({ 
+                    text: 'Rankings update regularly. Check the feed channel for full standings.' 
+                });
+            }
+            
+            // Send the alert
+            await channel.send({ embeds: [embed] });
+            console.log(`Successfully sent position change alert to ${channel.name} (${alertType}): "${title}"`);
+        } catch (error) {
+            console.error(`Error sending position change alert (${alertType}):`, error);
         }
-        
-        // Add footer if provided
-        if (footer) {
-            embed.setFooter(footer);
-        } else {
-            embed.setFooter({ 
-                text: 'Rankings update regularly. Check the feed channel for full standings.' 
-            });
-        }
-        
-        // Send the alert
-        await channel.send({ embeds: [embed] });
-        console.log(`Sent position change alert to ${channel.name} (${alertType}): "${title}"`);
     }
     
     /**
-     * Send a standard alert for new achievements/awards
+     * FIXED: Send a standard alert for new achievements/awards
      * @param {Object} options - Alert options
      * @param {string} alertType - The type of alert to send (determines channel)
      * @param {string} overrideChannelId - Optional specific channel ID to override default
      */
     async sendAchievementAlert(options, alertType = null, overrideChannelId = null) {
-        const {
-            username,
-            achievementTitle,
-            achievementDescription,
-            gameTitle,
-            gameId,
-            points = null,
-            thumbnail = null,
-            badgeUrl = null,
-            color = COLORS.SUCCESS,
-            isAward = false,
-            isMastery = false,
-            isBeaten = false
-        } = options;
-        
-        // Determine the correct alert type based on the achievement properties
-        let targetAlertType = alertType;
-        
-        if (!targetAlertType) {
-            if (isMastery || isBeaten) {
-                targetAlertType = ALERT_TYPES.MASTERY;
-            } else if (isAward) {
-                // Determine if it's a monthly or shadow award (would need additional context)
-                targetAlertType = ALERT_TYPES.ACHIEVEMENT;
-            } else {
-                targetAlertType = ALERT_TYPES.ACHIEVEMENT;
+        try {
+            const {
+                username,
+                achievementTitle,
+                achievementDescription,
+                gameTitle,
+                gameId,
+                points = null,
+                thumbnail = null,
+                badgeUrl = null,
+                color = COLORS.SUCCESS,
+                isAward = false,
+                isMastery = false,
+                isBeaten = false
+            } = options;
+            
+            // FIXED: Determine the correct alert type based on explicit parameter first
+            let targetAlertType = alertType;
+            
+            // Only use fallback logic if no alert type was explicitly provided
+            if (!targetAlertType) {
+                if (isMastery || isBeaten) {
+                    targetAlertType = ALERT_TYPES.MASTERY;
+                } else if (isAward) {
+                    // For awards without specific type, default to achievement channel
+                    targetAlertType = ALERT_TYPES.ACHIEVEMENT;
+                } else {
+                    targetAlertType = ALERT_TYPES.ACHIEVEMENT;
+                }
             }
+            
+            console.log(`Sending achievement alert - Type: ${targetAlertType}, Override: ${overrideChannelId || 'none'}`);
+            
+            const channel = await this.getAlertsChannel(targetAlertType, overrideChannelId);
+            if (!channel) {
+                console.error(`No alerts channel found for type ${targetAlertType}, skipping notification`);
+                return;
+            }
+            
+            console.log(`Sending achievement alert to channel: ${channel.name} (${channel.id})`);
+            
+            // Create embed
+            const embed = new EmbedBuilder()
+                .setColor(color)
+                .setTimestamp();
+            
+            // Create title based on achievement or award
+            if (isMastery) {
+                embed.setTitle(`✨ ${username} Mastered a Game!`);
+            } else if (isBeaten) {
+                embed.setTitle(`⭐ ${username} Beaten a Game!`);
+            } else if (isAward) {
+                embed.setTitle(`🏆 ${username} earned an award!`);
+            } else {
+                embed.setTitle(`🎮 Achievement Unlocked!`);
+            }
+            
+            // Create description
+            const gameUrl = `https://retroachievements.org/game/${gameId}`;
+            let description = '';
+            
+            if (isMastery) {
+                description = `**${username}** has mastered **${gameTitle}**!\n` +
+                             `They've earned every achievement in the game.`;
+            } else if (isBeaten) {
+                description = `**${username}** has beaten **${gameTitle}**!\n` +
+                             `They've completed the core achievements.`;
+            } else if (isAward) {
+                description = `**${username}** has earned **${achievementTitle}**\n` +
+                             `Game: [${gameTitle}](${gameUrl})`;
+            } else {
+                description = `**${username}** has unlocked **${achievementTitle}**\n` +
+                             `Game: [${gameTitle}](${gameUrl})`;
+            }
+            
+            embed.setDescription(description);
+            
+            // Add achievement description if available
+            if (achievementDescription && !isAward && !isMastery && !isBeaten) {
+                embed.addFields({ 
+                    name: 'Description', 
+                    value: `*${achievementDescription}*` 
+                });
+            }
+            
+            // Add points if available
+            if (points) {
+                embed.addFields({ 
+                    name: 'Points', 
+                    value: `${points}` 
+                });
+            }
+            
+            // Set thumbnail (game icon) or badge image
+            if (thumbnail) {
+                embed.setThumbnail(thumbnail);
+            } else if (badgeUrl) {
+                embed.setThumbnail(badgeUrl);
+            }
+            
+            // Send the alert
+            await channel.send({ embeds: [embed] });
+            console.log(`Successfully sent ${targetAlertType} alert to ${channel.name} for ${username}: "${achievementTitle}"`);
+        } catch (error) {
+            console.error(`Error sending achievement alert (${alertType}):`, error);
         }
-        
-        const channel = await this.getAlertsChannel(targetAlertType, overrideChannelId);
-        if (!channel) {
-            console.log(`No alerts channel configured for type ${targetAlertType}, skipping notification`);
-            return;
-        }
-        
-        // Create embed
-        const embed = new EmbedBuilder()
-            .setColor(color)
-            .setTimestamp();
-        
-        // Create title based on achievement or award
-        if (isMastery) {
-            embed.setTitle(`✨ ${username} Mastered a Game!`);
-        } else if (isBeaten) {
-            embed.setTitle(`⭐ ${username} Beaten a Game!`);
-        } else if (isAward) {
-            embed.setTitle(`🏆 ${username} earned an award!`);
-        } else {
-            embed.setTitle(`🎮 Achievement Unlocked!`);
-        }
-        
-        // Create description
-        const gameUrl = `https://retroachievements.org/game/${gameId}`;
-        let description = '';
-        
-        if (isMastery) {
-            description = `**${username}** has mastered **${gameTitle}**!\n` +
-                         `They've earned every achievement in the game.`;
-        } else if (isBeaten) {
-            description = `**${username}** has beaten **${gameTitle}**!\n` +
-                         `They've completed the core achievements.`;
-        } else if (isAward) {
-            description = `**${username}** has earned **${achievementTitle}**\n` +
-                         `Game: [${gameTitle}](${gameUrl})`;
-        } else {
-            description = `**${username}** has unlocked **${achievementTitle}**\n` +
-                         `Game: [${gameTitle}](${gameUrl})`;
-        }
-        
-        embed.setDescription(description);
-        
-        // Add achievement description if available
-        if (achievementDescription) {
-            embed.addFields({ 
-                name: 'Description', 
-                value: `*${achievementDescription}*` 
-            });
-        }
-        
-        // Add points if available
-        if (points) {
-            embed.addFields({ 
-                name: 'Points', 
-                value: `${points}` 
-            });
-        }
-        
-        // Set thumbnail (game icon) or badge image
-        if (badgeUrl) {
-            embed.setThumbnail(badgeUrl);
-        } else if (thumbnail) {
-            embed.setThumbnail(thumbnail);
-        }
-        
-        // Send the alert
-        await channel.send({ embeds: [embed] });
-        console.log(`Sent ${targetAlertType} alert to ${channel.name} for ${username}: "${achievementTitle}"`);
     }
     
     /**
