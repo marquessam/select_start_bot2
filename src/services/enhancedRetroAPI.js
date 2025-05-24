@@ -1,6 +1,5 @@
 // src/services/enhancedRetroAPI.js
 
-import axios from 'axios';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -21,36 +20,45 @@ class EnhancedRetroAPI {
      */
     async getGameDetails(gameId) {
         try {
-            const response = await axios.get(`${this.baseURL}/API_GetGame.php`, {
-                params: {
-                    z: this.username,
-                    y: this.apiKey,
-                    i: gameId
-                },
-                timeout: 10000
+            const url = new URL(`${this.baseURL}/API_GetGame.php`);
+            url.searchParams.append('z', this.username);
+            url.searchParams.append('y', this.apiKey);
+            url.searchParams.append('i', gameId);
+
+            const response = await fetch(url.toString(), {
+                method: 'GET',
+                headers: {
+                    'User-Agent': 'RetroBot/1.0'
+                }
             });
 
-            if (!response.data) {
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+
+            const data = await response.json();
+
+            if (!data) {
                 throw new Error('No data received from API');
             }
 
             // Transform the API response to our standard format
             const gameData = {
                 id: gameId,
-                title: response.data.title || response.data.gameTitle,
-                consoleName: response.data.consoleName || response.data.console,
-                consoleId: response.data.consoleId,
-                publisher: response.data.publisher,
-                developer: response.data.developer,
-                genre: response.data.genre,
-                released: response.data.released,
-                releasedAtGranularity: response.data.releasedAtGranularity,
-                imageIcon: response.data.imageIcon || response.data.gameIcon,
-                imageTitle: response.data.imageTitle,
-                imageIngame: response.data.imageIngame,
-                imageBoxArt: response.data.imageBoxArt,
-                forumTopicId: response.data.forumTopicId,
-                flags: response.data.flags
+                title: data.title || data.gameTitle,
+                consoleName: data.consoleName || data.console,
+                consoleId: data.consoleId,
+                publisher: data.publisher,
+                developer: data.developer,
+                genre: data.genre,
+                released: data.released,
+                releasedAtGranularity: data.releasedAtGranularity,
+                imageIcon: data.imageIcon || data.gameIcon,
+                imageTitle: data.imageTitle,
+                imageIngame: data.imageIngame,
+                imageBoxArt: data.imageBoxArt,
+                forumTopicId: data.forumTopicId,
+                flags: data.flags
             };
 
             // Validate essential fields
@@ -78,34 +86,43 @@ class EnhancedRetroAPI {
      */
     async getBasicGameInfo(gameId) {
         try {
-            const response = await axios.get(`${this.baseURL}/API_GetGameInfoAndUserProgress.php`, {
-                params: {
-                    z: this.username,
-                    y: this.apiKey,
-                    g: gameId,
-                    u: this.username
-                },
-                timeout: 10000
+            const url = new URL(`${this.baseURL}/API_GetGameInfoAndUserProgress.php`);
+            url.searchParams.append('z', this.username);
+            url.searchParams.append('y', this.apiKey);
+            url.searchParams.append('g', gameId);
+            url.searchParams.append('u', this.username);
+
+            const response = await fetch(url.toString(), {
+                method: 'GET',
+                headers: {
+                    'User-Agent': 'RetroBot/1.0'
+                }
             });
 
-            if (!response.data) {
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+
+            const data = await response.json();
+
+            if (!data) {
                 throw new Error('No data received from fallback API');
             }
 
             // Transform basic response
             return {
                 id: gameId,
-                title: response.data.Title,
-                consoleName: response.data.ConsoleName,
-                consoleId: response.data.ConsoleID,
+                title: data.Title,
+                consoleName: data.ConsoleName,
+                consoleId: data.ConsoleID,
                 publisher: null, // Not available in basic API
                 developer: null, // Not available in basic API
                 genre: null, // Not available in basic API
                 released: null, // Not available in basic API
-                imageIcon: response.data.ImageIcon,
-                imageTitle: response.data.ImageTitle,
-                imageIngame: response.data.ImageIngame,
-                imageBoxArt: response.data.ImageBoxArt
+                imageIcon: data.ImageIcon,
+                imageTitle: data.ImageTitle,
+                imageIngame: data.ImageIngame,
+                imageBoxArt: data.ImageBoxArt
             };
 
         } catch (error) {
@@ -119,21 +136,30 @@ class EnhancedRetroAPI {
      */
     async getGameAchievementCount(gameId) {
         try {
-            const response = await axios.get(`${this.baseURL}/API_GetGameInfoAndUserProgress.php`, {
-                params: {
-                    z: this.username,
-                    y: this.apiKey,
-                    g: gameId,
-                    u: this.username
-                },
-                timeout: 10000
+            const url = new URL(`${this.baseURL}/API_GetGameInfoAndUserProgress.php`);
+            url.searchParams.append('z', this.username);
+            url.searchParams.append('y', this.apiKey);
+            url.searchParams.append('g', gameId);
+            url.searchParams.append('u', this.username);
+
+            const response = await fetch(url.toString(), {
+                method: 'GET',
+                headers: {
+                    'User-Agent': 'RetroBot/1.0'
+                }
             });
 
-            if (!response.data || !response.data.Achievements) {
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+
+            const data = await response.json();
+
+            if (!data || !data.Achievements) {
                 return 0;
             }
 
-            return Object.keys(response.data.Achievements).length;
+            return Object.keys(data.Achievements).length;
 
         } catch (error) {
             console.error(`Error fetching achievement count for gameId ${gameId}:`, error);
@@ -201,29 +227,27 @@ class EnhancedRetroAPI {
     }
 
     /**
-     * Search for games by various criteria (if API supports it)
-     */
-    async searchGames(criteria) {
-        // This would use a search endpoint if available
-        // For now, return empty as most RA APIs don't support search
-        console.warn('Game search not implemented - RetroAchievements API limitation');
-        return [];
-    }
-
-    /**
      * Get console information
      */
     async getConsoleList() {
         try {
-            const response = await axios.get(`${this.baseURL}/API_GetConsoleIDs.php`, {
-                params: {
-                    z: this.username,
-                    y: this.apiKey
-                },
-                timeout: 10000
+            const url = new URL(`${this.baseURL}/API_GetConsoleIDs.php`);
+            url.searchParams.append('z', this.username);
+            url.searchParams.append('y', this.apiKey);
+
+            const response = await fetch(url.toString(), {
+                method: 'GET',
+                headers: {
+                    'User-Agent': 'RetroBot/1.0'
+                }
             });
 
-            return response.data || [];
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+
+            const data = await response.json();
+            return data || [];
         } catch (error) {
             console.error('Error fetching console list:', error);
             return [];
@@ -235,16 +259,24 @@ class EnhancedRetroAPI {
      */
     async validateCredentials() {
         try {
-            const response = await axios.get(`${this.baseURL}/API_GetUserSummary.php`, {
-                params: {
-                    z: this.username,
-                    y: this.apiKey,
-                    u: this.username
-                },
-                timeout: 5000
+            const url = new URL(`${this.baseURL}/API_GetUserSummary.php`);
+            url.searchParams.append('z', this.username);
+            url.searchParams.append('y', this.apiKey);
+            url.searchParams.append('u', this.username);
+
+            const response = await fetch(url.toString(), {
+                method: 'GET',
+                headers: {
+                    'User-Agent': 'RetroBot/1.0'
+                }
             });
 
-            return !!response.data && !!response.data.User;
+            if (!response.ok) {
+                return false;
+            }
+
+            const data = await response.json();
+            return !!data && !!data.User;
         } catch (error) {
             console.error('API credential validation failed:', error);
             return false;
