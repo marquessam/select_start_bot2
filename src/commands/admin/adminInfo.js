@@ -365,7 +365,7 @@ export default {
                     },
                     {
                         name: '⚔️ Arena System',
-                        value: 'Challenge other community members to head-to-head competitions on specific games or leaderboards. Bet points and prove your skills in direct competition!'
+                        value: 'Challenge other community members to head-to-head competitions on RetroAchievements leaderboards. Wager GP (Gold Points) and prove your skills in direct competition!'
                     },
                     {
                         name: '🏆 Point System',
@@ -507,15 +507,16 @@ export default {
                         value: '• **Monthly/Shadow Challenges:** Participation (1), Beaten (+3), Mastery (+3)\n' +
                                '• **Racing:** 1st (3), 2nd (2), 3rd (1) - awarded monthly\n' +
                                '• **Arcade:** 1st (3), 2nd (2), 3rd (1) - awarded December 1st\n' +
-                               '• **Arena:** Win/lose points based on challenge bets\n' +
+                               '• **Arena:** GP wagering system (separate from community points)\n' +
                                '• **Important:** Monthly and shadow challenges must be completed within their respective month to earn points'
                     },
                     {
                         name: '⚔️ Arena System',
                         value: '• Challenge other members to head-to-head competitions\n' +
-                               '• Both players must agree to challenge terms and point bets\n' +
-                               '• Challenges have time limits and specific objectives\n' +
-                               '• Points are transferred between players based on results\n' +
+                               '• Both players must agree to challenge terms and GP wagers\n' +
+                               '• Challenges last 1 week with specific objectives\n' +
+                               '• GP (Gold Points) are wagered, winner takes all\n' +
+                               '• Monthly GP allowance of 1,000 given on the 1st\n' +
                                '• Fair play and sportsmanship are expected'
                     },
                     {
