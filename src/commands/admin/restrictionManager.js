@@ -157,6 +157,12 @@ export default {
                         .setMinValue(1)
                         .setMaxValue(12)
                 )
+                .addStringOption(option =>
+                    option
+                        .setName('title')
+                        .setDescription('Restriction title')
+                        .setRequired(true)
+                )
                 .addIntegerOption(option =>
                     option
                         .setName('min-year')
@@ -172,12 +178,6 @@ export default {
                         .setRequired(false)
                         .setMinValue(1970)
                         .setMaxValue(2024)
-                )
-                .addStringOption(option =>
-                    option
-                        .setName('title')
-                        .setDescription('Restriction title')
-                        .setRequired(true)
                 )
         )
         
@@ -512,9 +512,9 @@ export default {
 
     async handleYearRange(interaction, modifiedBy) {
         const month = interaction.options.getInteger('month') - 1;
+        const title = interaction.options.getString('title');
         const minYear = interaction.options.getInteger('min-year');
         const maxYear = interaction.options.getInteger('max-year');
-        const title = interaction.options.getString('title');
 
         if (!minYear && !maxYear) {
             return interaction.editReply('❌ You must specify at least one year boundary.');
