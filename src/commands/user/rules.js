@@ -287,7 +287,6 @@ export default {
                     name: '🎮 Hardcore Mode Requirements',
                     value: '• **HARDCORE MODE IS MANDATORY** - All achievements must be earned in RetroAchievements Hardcore Mode\n' +
                            '• **What is Hardcore Mode?** - A setting in RetroAchievements that disables certain emulator features\n' +
-                           '• **Hardcore restrictions apply even during the "last day of month" grace period**\n' +
                            '• **Only achievements earned in Hardcore Mode count** toward challenges and competitions\n' +
                            '• **Achievements must be visible on your RetroAchievements profile** to count toward standings'
                 },
@@ -537,7 +536,6 @@ export default {
                     name: '📆 Challenge Period & Schedule',
                     value: '• **Start Date** - 12:00 AM on the 1st day of each month\n' +
                            '• **End Date** - 11:59 PM on the last day of each month\n' +
-                           '• **Grace Period** - The last day of the previous month (for participation only)\n' +
                            '• **Time Zone** - All times are based on UTC (Coordinated Universal Time)\n' +
                            '• **Selection Process** - Games are chosen by community vote from nominated titles\n' +
                            '• **Voting Period** - Starts 8 days before month end, closes 1 day before month end'
@@ -641,7 +639,6 @@ export default {
                     value: '• **Start Date** - Once revealed, either by correct guess or automatically on the 1st\n' +
                            '• **End Date** - 11:59 PM on the last day of the month (same as monthly challenge)\n' +
                            '• **Past Games** - Previous month shadow games are automatically revealed\n' +
-                           '• **No Grace Period** - Unlike monthly challenges, shadow games have no grace period for points\n' +
                            '• **Guessing Period** - Guessing can begin as soon as the monthly challenge is announced'
                 },
                 {
