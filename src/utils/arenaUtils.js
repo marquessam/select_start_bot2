@@ -16,10 +16,7 @@ export { formatTimeRemaining };
  */
 export const getLeaderboardEntries = RetroAPIUtils.getLeaderboardEntries;
 
-/**
- * Find a user in leaderboard entries - re-export for compatibility
- */
-export const findUserInLeaderboard = RetroAPIUtils.findUserInLeaderboard;
+
 
 /**
  * Process raw leaderboard entries - simplified to use rank only
