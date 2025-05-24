@@ -18,12 +18,17 @@ import arenaService from './services/arenaService.js';
 import gameAwardService from './services/gameAwardService.js';
 import { User } from './models/User.js';
 
-// Import nomination handlers
+// Import nomination and restriction handlers
 import { 
     handleNominationButtonInteraction, 
     handleNominationModalSubmit, 
     handleNominationSelectMenu 
 } from './handlers/nominationHandlers.js';
+import { 
+    handleRestrictionButtonInteraction, 
+    handleRestrictionModalSubmit, 
+    handleRestrictionSelectMenu 
+} from './handlers/restrictionHandlers.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -106,6 +111,12 @@ client.on(Events.InteractionCreate, async interaction => {
             return;
         }
         
+        // Check if this is a restriction-related button
+        if (interaction.customId.startsWith('restrictions_')) {
+            await handleRestrictionButtonInteraction(interaction);
+            return;
+        }
+        
         // Handle other button interactions
         const commandName = interaction.customId.split('_')[0];
         const command = client.commands.get(commandName);
@@ -140,6 +151,12 @@ client.on(Events.InteractionCreate, async interaction => {
             return;
         }
         
+        // Check if this is a restriction-related select menu
+        if (interaction.customId.startsWith('restrictions_')) {
+            await handleRestrictionSelectMenu(interaction);
+            return;
+        }
+        
         // Handle other select menu interactions
         const commandName = interaction.customId.split('_')[0];
         const command = client.commands.get(commandName);
@@ -171,6 +188,12 @@ client.on(Events.InteractionCreate, async interaction => {
         // Check if this is a nomination-related modal
         if (interaction.customId.startsWith('nomination_')) {
             await handleNominationModalSubmit(interaction);
+            return;
+        }
+        
+        // Check if this is a restriction-related modal
+        if (interaction.customId.startsWith('restrictions_')) {
+            await handleRestrictionModalSubmit(interaction);
             return;
         }
         
