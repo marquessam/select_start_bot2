@@ -15,8 +15,15 @@ import arcadeAlertService from './services/arcadeAlertService.js';
 import arcadeFeedService from './services/arcadeFeedService.js';
 import membershipCheckService from './services/membershipCheckService.js';
 import arenaService from './services/arenaService.js';
-import gameAwardService from './services/gameAwardService.js'; // NEW: Import the game award service
+import gameAwardService from './services/gameAwardService.js';
 import { User } from './models/User.js';
+
+// Import nomination handlers
+import { 
+    handleNominationButtonInteraction, 
+    handleNominationModalSubmit, 
+    handleNominationSelectMenu 
+} from './handlers/nominationHandlers.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -93,12 +100,20 @@ client.on(Events.InteractionCreate, async interaction => {
     if (!interaction.isButton()) return;
     
     try {
-        // Extract the command name from the customId (assuming format: commandName_action_etc)
+        // Check if this is a nomination-related button
+        if (interaction.customId.startsWith('nominate_')) {
+            await handleNominationButtonInteraction(interaction);
+            return;
+        }
+        
+        // Handle other button interactions
         const commandName = interaction.customId.split('_')[0];
         const command = client.commands.get(commandName);
         
         if (command && typeof command.handleButtonInteraction === 'function') {
             await command.handleButtonInteraction(interaction);
+        } else {
+            console.log(`No button handler found for customId: ${interaction.customId}`);
         }
     } catch (error) {
         console.error('Error handling button interaction:', error);
@@ -119,12 +134,20 @@ client.on(Events.InteractionCreate, async interaction => {
     if (!interaction.isStringSelectMenu()) return;
     
     try {
-        // Extract the command name from the customId (assuming format: commandName_action_etc)
+        // Check if this is a nomination-related select menu
+        if (interaction.customId.startsWith('nominate_')) {
+            await handleNominationSelectMenu(interaction);
+            return;
+        }
+        
+        // Handle other select menu interactions
         const commandName = interaction.customId.split('_')[0];
         const command = client.commands.get(commandName);
         
         if (command && typeof command.handleSelectMenuInteraction === 'function') {
             await command.handleSelectMenuInteraction(interaction);
+        } else {
+            console.log(`No select menu handler found for customId: ${interaction.customId}`);
         }
     } catch (error) {
         console.error('Error handling select menu interaction:', error);
@@ -145,12 +168,20 @@ client.on(Events.InteractionCreate, async interaction => {
     if (!interaction.isModalSubmit()) return;
     
     try {
-        // Extract the command name from the customId (assuming format: commandName_action_etc)
+        // Check if this is a nomination-related modal
+        if (interaction.customId.startsWith('nomination_')) {
+            await handleNominationModalSubmit(interaction);
+            return;
+        }
+        
+        // Handle other modal interactions
         const commandName = interaction.customId.split('_')[0];
         const command = client.commands.get(commandName);
         
         if (command && typeof command.handleModalSubmit === 'function') {
             await command.handleModalSubmit(interaction);
+        } else {
+            console.log(`No modal handler found for customId: ${interaction.customId}`);
         }
     } catch (error) {
         console.error('Error handling modal submission:', error);
@@ -203,7 +234,7 @@ async function handleMonthlyGpAllowance() {
     }
 }
 
-// NEW: Function to handle weekly comprehensive yearly sync
+// Function to handle weekly comprehensive yearly sync
 async function handleWeeklyComprehensiveSync() {
     try {
         console.log('🔄 Starting weekly comprehensive yearly sync...');
@@ -316,7 +347,7 @@ client.once(Events.ClientReady, async () => {
         arcadeFeedService.setClient(client);
         membershipCheckService.setClient(client);
         arenaService.setClient(client);
-        gameAwardService.setClient(client); // NEW: Set client for game award service
+        gameAwardService.setClient(client);
 
         // Schedule stats updates every 30 minutes
         cron.schedule('*/30 * * * *', () => {
@@ -334,7 +365,7 @@ client.once(Events.ClientReady, async () => {
             });
         });
 
-        // NEW: Schedule weekly comprehensive yearly sync (Sundays at 3:00 AM)
+        // Schedule weekly comprehensive yearly sync (Sundays at 3:00 AM)
         cron.schedule('0 3 * * 0', () => {
             console.log('Running weekly comprehensive yearly sync...');
             handleWeeklyComprehensiveSync().catch(error => {
@@ -404,7 +435,7 @@ client.once(Events.ClientReady, async () => {
             });
         });
 
-        // NEW: Schedule arena timeout checks every hour at 45 minutes past
+        // Schedule arena timeout checks every hour at 45 minutes past
         cron.schedule('45 * * * *', () => {
             console.log('Running arena timeout check...');
             arenaService.checkAndProcessTimeouts().catch(error => {
@@ -546,14 +577,14 @@ client.once(Events.ClientReady, async () => {
         // Start the arena service
         await arenaService.start();
         
-        // NEW: Initialize the game award service
+        // Initialize the game award service
         await gameAwardService.initialize();
         console.log('Game Award Service initialized');
         
         // Check if monthly GP allowance should be handled on startup
         await handleMonthlyGpAllowance();
 
-        // NEW: Check for any arena timeouts that may have occurred while the bot was offline
+        // Check for any arena timeouts that may have occurred while the bot was offline
         console.log('Checking for any arena timeouts that occurred while offline...');
         arenaService.checkAndProcessTimeouts().catch(error => {
             console.error('Error in startup timeout check:', error);
@@ -563,12 +594,12 @@ client.once(Events.ClientReady, async () => {
         console.log('📅 Scheduled tasks:');
         console.log('  • Stats updates: Every 30 minutes');
         console.log('  • Achievement feeds: Every 15 minutes');
-        console.log('  • 🆕 Weekly comprehensive yearly sync: Sundays at 3:00 AM');
+        console.log('  • Weekly comprehensive yearly sync: Sundays at 3:00 AM');
         console.log('  • Monthly tasks: 1st of each month');
         console.log('  • Arcade service: Daily at 12:15 AM');
         console.log('  • Arena feeds: Hourly at 15 minutes past');
         console.log('  • Arena completed challenges: Hourly at 30 minutes past');
-        console.log('  • 🆕 Arena timeouts: Hourly at 45 minutes past');
+        console.log('  • Arena timeouts: Hourly at 45 minutes past');
         console.log('  • Various other feeds: Hourly');
         
     } catch (error) {
