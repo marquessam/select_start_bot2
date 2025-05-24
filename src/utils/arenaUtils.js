@@ -17,6 +17,11 @@ export { formatTimeRemaining };
 export const getLeaderboardEntries = RetroAPIUtils.getLeaderboardEntries;
 
 /**
+ * Find a user in leaderboard entries - re-export for compatibility
+ */
+export const findUserInLeaderboard = RetroAPIUtils.findUserInLeaderboard;
+
+/**
  * Process raw leaderboard entries - simplified to use rank only
  */
 export function processLeaderboardEntries(rawEntries) {
@@ -96,18 +101,219 @@ export function getEstimatedWinner(challenge, challengerScore, challengeeScore) 
 }
 
 /**
- * Check for position changes in the leaderboard - simplified to use rank only
+ * Check for position changes in the leaderboard - ENHANCED VERSION
+ * Now supports ties and open challenges
  * @param {Object} challenge - The challenge
  * @param {Object} challengerScore - Challenger's current score
- * @param {Object} challengeeScore - Challengee's current score
- * @param {string} previousChallengerScore - Challenger's previous score (not used anymore)
- * @param {string} previousChallengeeScore - Challengee's previous score (not used anymore)
+ * @param {Object} challengeeScore - Challengee's current score (may be null for open challenges)
+ * @param {string} previousChallengerScore - Challenger's previous score (for comparison)
+ * @param {string} previousChallengeeScore - Challengee's previous score (for comparison)
  * @returns {Object|null} Position change info or null if no change
  */
 export function checkPositionChanges(challenge, challengerScore, challengeeScore, previousChallengerScore, previousChallengeeScore) {
-    // Simplified: we'll track leader changes in the arena service based on rank
-    // This function can be simplified or removed since we're using rank-based logic
+    // Handle open challenges differently
+    if (challenge.isOpenChallenge) {
+        return checkOpenChallengePositionChanges(challenge, challengerScore, challengeeScore);
+    }
+    
+    // Handle direct challenges (1v1)
+    return checkDirectChallengePositionChanges(challenge, challengerScore, challengeeScore, previousChallengerScore, previousChallengeeScore);
+}
+
+/**
+ * Check position changes for direct challenges (1v1)
+ * @private
+ */
+function checkDirectChallengePositionChanges(challenge, challengerScore, challengeeScore, previousChallengerScore, previousChallengeeScore) {
+    // Skip if either player doesn't have a score yet
+    if (!challengerScore.exists || !challengeeScore.exists) {
+        return null;
+    }
+    
+    // Skip if we don't have valid ranks
+    if (!challengerScore.rank || !challengeeScore.rank) {
+        return null;
+    }
+    
+    // Check if scores have changed from what's stored in the challenge
+    const challengerScoreChanged = challenge.challengerScore && challenge.challengerScore !== challengerScore.formattedScore;
+    const challengeeScoreChanged = challenge.challengeeScore && challenge.challengeeScore !== challengeeScore.formattedScore;
+    
+    // Only notify if at least one score changed
+    if (!challengerScoreChanged && !challengeeScoreChanged) {
+        return null;
+    }
+    
+    // Determine current leader based on rank (lower rank is better)
+    let currentLeader = null;
+    if (challengerScore.rank < challengeeScore.rank) {
+        currentLeader = challenge.challengerUsername;
+    } else if (challengeeScore.rank < challengerScore.rank) {
+        currentLeader = challenge.challengeeUsername;
+    } else {
+        currentLeader = 'Tie';
+    }
+    
+    // Now we notify for ANY position change, including ties
+    return {
+        newLeader: currentLeader,
+        scoreChange: true,
+        isTie: currentLeader === 'Tie',
+        challengerChanged: challengerScoreChanged,
+        challengeeChanged: challengeeScoreChanged
+    };
+}
+
+/**
+ * Check position changes for open challenges (multiple participants)
+ * @private
+ */
+function checkOpenChallengePositionChanges(challenge, challengerScore, challengeeScore) {
+    // For open challenges, we need to check all participants
+    if (!challenge.participants || challenge.participants.length === 0) {
+        return null; // No participants yet, nothing to notify
+    }
+    
+    // Check if the creator's (challenger's) score changed
+    const challengerScoreChanged = challenge.challengerScore && challenge.challengerScore !== challengerScore.formattedScore;
+    
+    // Check if any participant scores changed
+    let anyParticipantScoreChanged = false;
+    const participantChanges = [];
+    
+    if (challenge.participants) {
+        challenge.participants.forEach(participant => {
+            if (participant.score && participant.score !== (participant.previousScore || 'No score yet')) {
+                anyParticipantScoreChanged = true;
+                participantChanges.push({
+                    username: participant.username,
+                    oldScore: participant.previousScore || 'No score yet',
+                    newScore: participant.score
+                });
+            }
+        });
+    }
+    
+    // Only notify if someone's score changed
+    if (!challengerScoreChanged && !anyParticipantScoreChanged) {
+        return null;
+    }
+    
+    // For basic open challenge detection, just note that scores changed
+    return {
+        newLeader: 'Position changes detected',
+        scoreChange: true,
+        isTie: false,
+        isOpenChallenge: true,
+        participantChanges: participantChanges
+    };
+}
+
+/**
+ * Enhanced version that works with participant scores map
+ * This should be called from arenaService with proper participant score data
+ */
+export function checkPositionChangesWithParticipants(challenge, challengerScore, challengeeScore, participantScores = null) {
+    // Handle open challenges with proper participant data
+    if (challenge.isOpenChallenge && participantScores) {
+        return checkOpenChallengePositionChangesEnhanced(challenge, challengerScore, participantScores);
+    }
+    
+    // Handle direct challenges
+    if (!challenge.isOpenChallenge && challengeeScore) {
+        return checkDirectChallengePositionChanges(challenge, challengerScore, challengeeScore);
+    }
+    
     return null;
+}
+
+/**
+ * Enhanced open challenge position checking with full participant data
+ * @private
+ */
+function checkOpenChallengePositionChangesEnhanced(challenge, challengerScore, participantScores) {
+    // Check if the creator's score changed
+    const challengerScoreChanged = challenge.challengerScore && challenge.challengerScore !== challengerScore.formattedScore;
+    
+    // Check if any participant scores changed
+    let anyParticipantScoreChanged = false;
+    const participantChanges = [];
+    
+    if (challenge.participants && participantScores) {
+        challenge.participants.forEach(participant => {
+            const currentScore = participantScores.get(participant.username.toLowerCase());
+            if (currentScore && participant.score !== currentScore.formattedScore) {
+                anyParticipantScoreChanged = true;
+                participantChanges.push({
+                    username: participant.username,
+                    oldScore: participant.score || 'No score yet',
+                    newScore: currentScore.formattedScore,
+                    rank: currentScore.rank
+                });
+            }
+        });
+    }
+    
+    // Only notify if someone's score changed
+    if (!challengerScoreChanged && !anyParticipantScoreChanged) {
+        return null;
+    }
+    
+    // Find the current leader(s) based on ranks
+    const allPlayers = [];
+    
+    // Add creator
+    if (challengerScore.exists && challengerScore.rank && challengerScore.rank > 0) {
+        allPlayers.push({
+            username: challenge.challengerUsername,
+            rank: challengerScore.rank,
+            isCreator: true
+        });
+    }
+    
+    // Add participants with valid ranks
+    if (challenge.participants && participantScores) {
+        challenge.participants.forEach(participant => {
+            const scoreInfo = participantScores.get(participant.username.toLowerCase());
+            if (scoreInfo && scoreInfo.exists && scoreInfo.rank && scoreInfo.rank > 0) {
+                allPlayers.push({
+                    username: participant.username,
+                    rank: scoreInfo.rank,
+                    isCreator: false
+                });
+            }
+        });
+    }
+    
+    if (allPlayers.length === 0) {
+        return null; // No valid players with ranks
+    }
+    
+    // Sort by rank (lower is better)
+    allPlayers.sort((a, b) => a.rank - b.rank);
+    
+    // Find the best rank
+    const bestRank = allPlayers[0].rank;
+    const leaders = allPlayers.filter(player => player.rank === bestRank);
+    
+    let currentLeader;
+    const isTie = leaders.length > 1;
+    
+    if (isTie) {
+        currentLeader = `Tie between ${leaders.map(l => l.username).join(', ')}`;
+    } else {
+        currentLeader = leaders[0].username;
+    }
+    
+    return {
+        newLeader: currentLeader,
+        scoreChange: true,
+        isTie: isTie,
+        isOpenChallenge: true,
+        participantChanges: participantChanges,
+        tiedPlayers: isTie ? leaders.map(l => l.username) : null,
+        allPlayers: allPlayers
+    };
 }
 
 /**
@@ -773,6 +979,7 @@ export default {
     findUserInLeaderboard,
     processLeaderboardEntries,
     checkPositionChanges,
+    checkPositionChangesWithParticipants,
     createChallengeEmbed,
     addBettingResultsToEmbed,
     createArenaOverviewEmbed,
