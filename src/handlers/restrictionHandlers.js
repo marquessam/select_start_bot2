@@ -723,7 +723,606 @@ export class RestrictionInteractionHandler {
         }
     }
 
-    // ... Additional methods for publisher groups, modal submissions, etc.
+    /**
+     * Handle toggle submit
+     */
+    static async handleToggleSubmit(interaction) {
+        await interaction.deferReply({ ephemeral: true });
+
+        try {
+            const monthStr = interaction.fields.getTextInputValue('toggle_month');
+            const enabledStr = interaction.fields.getTextInputValue('toggle_enabled').toLowerCase();
+
+            const month = parseInt(monthStr) - 1;
+            const enabled = enabledStr === 'true' || enabledStr === '1';
+
+            if (isNaN(month) || month < 0 || month > 11) {
+                return interaction.editReply('❌ Month must be between 1 and 12.');
+            }
+
+            const settings = await NominationSettings.getSettings();
+            const success = settings.toggleMonthlyRestriction(month, null, enabled);
+
+            if (!success) {
+                const monthName = MONTH_NAMES[month];
+                return interaction.editReply(`❌ No restriction found for **${monthName}**.`);
+            }
+
+            settings.lastModifiedBy = {
+                discordId: interaction.user.id,
+                username: interaction.user.tag
+            };
+            await settings.save();
+
+            const monthName = MONTH_NAMES[month];
+            const status = enabled ? 'enabled' : 'disabled';
+            
+            const embed = new EmbedBuilder()
+                .setTitle('✅ Restriction Updated')
+                .setColor(enabled ? '#00FF00' : '#FF9900')
+                .addFields({
+                    name: '📅 Month',
+                    value: monthName,
+                    inline: true
+                }, {
+                    name: '🔄 Status',
+                    value: enabled ? '✅ Enabled' : '❌ Disabled',
+                    inline: true
+                })
+                .setTimestamp();
+
+            const backButton = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('restrictions_back_to_main')
+                        .setLabel('Back to Menu')
+                        .setStyle(ButtonStyle.Secondary)
+                        .setEmoji('⬅️')
+                );
+
+            await interaction.editReply({
+                embeds: [embed],
+                components: [backButton]
+            });
+
+        } catch (error) {
+            console.error('Error toggling restriction:', error);
+            await interaction.editReply('An error occurred while toggling the restriction.');
+        }
+    }
+
+    /**
+     * Handle remove submit
+     */
+    static async handleRemoveSubmit(interaction) {
+        await interaction.deferReply({ ephemeral: true });
+
+        try {
+            const monthStr = interaction.fields.getTextInputValue('remove_month');
+            const yearStr = interaction.fields.getTextInputValue('remove_year') || '';
+
+            const month = parseInt(monthStr) - 1;
+            const year = yearStr ? parseInt(yearStr) : null;
+
+            if (isNaN(month) || month < 0 || month > 11) {
+                return interaction.editReply('❌ Month must be between 1 and 12.');
+            }
+
+            if (year && (isNaN(year) || year < 2024 || year > 2030)) {
+                return interaction.editReply('❌ Year must be between 2024 and 2030.');
+            }
+
+            const settings = await NominationSettings.getSettings();
+            const removed = settings.removeMonthlyRestriction(month, year);
+
+            if (!removed) {
+                const monthName = MONTH_NAMES[month];
+                const yearText = year ? ` ${year}` : '';
+                return interaction.editReply(`❌ No restriction found for **${monthName}${yearText}**.`);
+            }
+
+            settings.lastModifiedBy = {
+                discordId: interaction.user.id,
+                username: interaction.user.tag
+            };
+            await settings.save();
+
+            const monthName = MONTH_NAMES[month];
+            const yearText = year ? ` ${year}` : '';
+            
+            const embed = new EmbedBuilder()
+                .setTitle('🗑️ Restriction Removed')
+                .setColor('#FF0000')
+                .addFields({
+                    name: '📅 Removed From',
+                    value: `${monthName}${yearText}`,
+                    inline: false
+                })
+                .setTimestamp();
+
+            const backButton = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('restrictions_back_to_main')
+                        .setLabel('Back to Menu')
+                        .setStyle(ButtonStyle.Secondary)
+                        .setEmoji('⬅️')
+                );
+
+            await interaction.editReply({
+                embeds: [embed],
+                components: [backButton]
+            });
+
+        } catch (error) {
+            console.error('Error removing restriction:', error);
+            await interaction.editReply('An error occurred while removing the restriction.');
+        }
+    }
+
+    /**
+     * Handle console group creation modal
+     */
+    static async handleCreateConsoleGroupModal(interaction) {
+        const modal = new ModalBuilder()
+            .setCustomId('restrictions_console_group_modal')
+            .setTitle('🎯 Create Console Group Restriction');
+
+        const monthInput = new TextInputBuilder()
+            .setCustomId('console_month')
+            .setLabel('Month (1-12)')
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder('e.g., 6 for June')
+            .setRequired(true);
+
+        const groupsInput = new TextInputBuilder()
+            .setCustomId('console_groups')
+            .setLabel('Console Groups (comma-separated)')
+            .setStyle(TextInputStyle.Paragraph)
+            .setPlaceholder('e.g., SEGA, NINTENDO, SONY')
+            .setRequired(true);
+
+        const titleInput = new TextInputBuilder()
+            .setCustomId('console_title')
+            .setLabel('Restriction Title')
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder('e.g., "Sega Month"')
+            .setRequired(true);
+
+        const operationInput = new TextInputBuilder()
+            .setCustomId('console_operation')
+            .setLabel('Logic (AND/OR)')
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder('OR (default) or AND')
+            .setRequired(false);
+
+        modal.addComponents(
+            new ActionRowBuilder().addComponents(monthInput),
+            new ActionRowBuilder().addComponents(groupsInput),
+            new ActionRowBuilder().addComponents(titleInput),
+            new ActionRowBuilder().addComponents(operationInput)
+        );
+
+        await interaction.showModal(modal);
+    }
+
+    /**
+     * Handle console group submit
+     */
+    static async handleConsoleGroupSubmit(interaction) {
+        await interaction.deferReply({ ephemeral: true });
+
+        try {
+            const monthStr = interaction.fields.getTextInputValue('console_month');
+            const groupsStr = interaction.fields.getTextInputValue('console_groups');
+            const title = interaction.fields.getTextInputValue('console_title');
+            const operation = interaction.fields.getTextInputValue('console_operation') || 'OR';
+
+            const month = parseInt(monthStr) - 1;
+            if (isNaN(month) || month < 0 || month > 11) {
+                return interaction.editReply('❌ Month must be between 1 and 12.');
+            }
+
+            const groupNames = groupsStr.split(',').map(g => g.trim().toUpperCase());
+            const validGroups = groupNames.filter(name => CONSOLE_GROUPS[name]);
+            
+            if (validGroups.length === 0) {
+                return interaction.editReply('❌ No valid console groups specified. Use `/restrictions groups` to see available groups.');
+            }
+
+            // Build conditions
+            const conditions = validGroups.map(groupName => 
+                RuleBuilder.consoleGroup(groupName)
+            );
+
+            // Create restriction rule
+            const firstGroup = CONSOLE_GROUPS[validGroups[0]];
+            const restrictionRule = {
+                name: title,
+                description: `Only games from: ${validGroups.map(g => CONSOLE_GROUPS[g].name).join(', ')}`,
+                emoji: firstGroup.emoji,
+                color: firstGroup.color,
+                enabled: true,
+                rules: {
+                    type: operation.toUpperCase(),
+                    conditions
+                }
+            };
+
+            const settings = await NominationSettings.getSettings();
+            settings.addMonthlyRestriction(month, null, restrictionRule);
+            settings.lastModifiedBy = {
+                discordId: interaction.user.id,
+                username: interaction.user.tag
+            };
+            await settings.save();
+
+            const monthName = MONTH_NAMES[month];
+            
+            const embed = new EmbedBuilder()
+                .setTitle('✅ Console Group Restriction Created!')
+                .setColor(firstGroup.color)
+                .addFields({
+                    name: '📅 Applied To',
+                    value: monthName,
+                    inline: true
+                }, {
+                    name: '🎯 Groups',
+                    value: validGroups.join(', '),
+                    inline: true
+                }, {
+                    name: '🔧 Logic',
+                    value: operation.toUpperCase(),
+                    inline: true
+                }, {
+                    name: '📝 Description',
+                    value: restrictionRule.description,
+                    inline: false
+                })
+                .setTimestamp();
+
+            const backButton = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('restrictions_back_to_main')
+                        .setLabel('Back to Menu')
+                        .setStyle(ButtonStyle.Secondary)
+                        .setEmoji('⬅️')
+                );
+
+            await interaction.editReply({
+                embeds: [embed],
+                components: [backButton]
+            });
+
+        } catch (error) {
+            console.error('Error creating console group restriction:', error);
+            await interaction.editReply('An error occurred while creating the restriction.');
+        }
+    }
+
+    /**
+     * Handle all publisher groups display
+     */
+    static async handleAllPublisherGroups(interaction) {
+        await interaction.deferReply({ ephemeral: true });
+
+        try {
+            const embed = new EmbedBuilder()
+                .setTitle('🏢 All Publisher Groups')
+                .setColor('#4ECDC4')
+                .setTimestamp();
+
+            const entries = Object.entries(PUBLISHER_GROUPS);
+            const chunks = [];
+            
+            for (let i = 0; i < entries.length; i += 8) {
+                const chunk = entries.slice(i, i + 8);
+                const text = chunk.map(([key, publishers]) => 
+                    `**${key}**\n${publishers.join(', ')}`
+                ).join('\n\n');
+                
+                chunks.push(text);
+            }
+
+            // Show first chunk
+            embed.setDescription(chunks[0]);
+            embed.setFooter({ text: `Showing ${Math.min(8, entries.length)} of ${entries.length} groups` });
+
+            const backButton = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('restrictions_back_to_main')
+                        .setLabel('Back to Menu')
+                        .setStyle(ButtonStyle.Secondary)
+                        .setEmoji('⬅️')
+                );
+
+            await interaction.editReply({
+                embeds: [embed],
+                components: [backButton]
+            });
+
+    /**
+     * Handle publisher creation modal
+     */
+    static async handleCreatePublisherModal(interaction) {
+        const modal = new ModalBuilder()
+            .setCustomId('restrictions_publisher_modal')
+            .setTitle('🏢 Create Publisher Restriction');
+
+        const monthInput = new TextInputBuilder()
+            .setCustomId('publisher_month')
+            .setLabel('Month (1-12)')
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder('e.g., 6 for June')
+            .setRequired(true);
+
+        const publishersInput = new TextInputBuilder()
+            .setCustomId('publisher_names')
+            .setLabel('Publishers (comma-separated)')
+            .setStyle(TextInputStyle.Paragraph)
+            .setPlaceholder('e.g., Nintendo, Capcom, SEGA_GAMES')
+            .setRequired(true);
+
+        const titleInput = new TextInputBuilder()
+            .setCustomId('publisher_title')
+            .setLabel('Restriction Title')
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder('e.g., "First Party Month"')
+            .setRequired(true);
+
+        modal.addComponents(
+            new ActionRowBuilder().addComponents(monthInput),
+            new ActionRowBuilder().addComponents(publishersInput),
+            new ActionRowBuilder().addComponents(titleInput)
+        );
+
+        await interaction.showModal(modal);
+    }
+
+    /**
+     * Handle publisher submit
+     */
+    static async handlePublisherSubmit(interaction) {
+        await interaction.deferReply({ ephemeral: true });
+
+        try {
+            const monthStr = interaction.fields.getTextInputValue('publisher_month');
+            const publishersInput = interaction.fields.getTextInputValue('publisher_names');
+            const title = interaction.fields.getTextInputValue('publisher_title');
+
+            const month = parseInt(monthStr) - 1;
+            if (isNaN(month) || month < 0 || month > 11) {
+                return interaction.editReply('❌ Month must be between 1 and 12.');
+            }
+
+            const publisherNames = publishersInput.split(',').map(p => p.trim());
+            const conditions = [];
+
+            publisherNames.forEach(name => {
+                if (PUBLISHER_GROUPS[name.toUpperCase()]) {
+                    // It's a group
+                    conditions.push(RuleBuilder.publisherGroup(name.toUpperCase()));
+                } else {
+                    // It's a custom publisher name
+                    conditions.push(RuleBuilder.publisher(name));
+                }
+            });
+
+            const restrictionRule = {
+                name: title,
+                description: `Only games from publishers: ${publisherNames.join(', ')}`,
+                emoji: '🏢',
+                color: '#4682B4',
+                enabled: true,
+                rules: {
+                    type: 'OR',
+                    conditions
+                }
+            };
+
+            const settings = await NominationSettings.getSettings();
+            settings.addMonthlyRestriction(month, null, restrictionRule);
+            settings.lastModifiedBy = {
+                discordId: interaction.user.id,
+                username: interaction.user.tag
+            };
+            await settings.save();
+
+            const monthName = MONTH_NAMES[month];
+            
+            const embed = new EmbedBuilder()
+                .setTitle('✅ Publisher Restriction Created!')
+                .setColor('#4682B4')
+                .addFields({
+                    name: '📅 Applied To',
+                    value: monthName,
+                    inline: true
+                }, {
+                    name: '🏢 Publishers',
+                    value: publisherNames.join(', '),
+                    inline: true
+                }, {
+                    name: '📝 Description',
+                    value: restrictionRule.description,
+                    inline: false
+                })
+                .setTimestamp();
+
+            const backButton = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('restrictions_back_to_main')
+                        .setLabel('Back to Menu')
+                        .setStyle(ButtonStyle.Secondary)
+                        .setEmoji('⬅️')
+                );
+
+            await interaction.editReply({
+                embeds: [embed],
+                components: [backButton]
+            });
+
+        } catch (error) {
+            console.error('Error creating publisher restriction:', error);
+            await interaction.editReply('An error occurred while creating the restriction.');
+        }
+    }
+
+    /**
+     * Handle year range creation modal
+     */
+    static async handleCreateYearRangeModal(interaction) {
+        const modal = new ModalBuilder()
+            .setCustomId('restrictions_year_range_modal')
+            .setTitle('📅 Create Year Range Restriction');
+
+        const monthInput = new TextInputBuilder()
+            .setCustomId('year_month')
+            .setLabel('Month (1-12)')
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder('e.g., 6 for June')
+            .setRequired(true);
+
+        const titleInput = new TextInputBuilder()
+            .setCustomId('year_title')
+            .setLabel('Restriction Title')
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder('e.g., "Retro Games Month"')
+            .setRequired(true);
+
+        const minYearInput = new TextInputBuilder()
+            .setCustomId('min_year')
+            .setLabel('Minimum Year (optional)')
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder('e.g., 1980')
+            .setRequired(false);
+
+        const maxYearInput = new TextInputBuilder()
+            .setCustomId('max_year')
+            .setLabel('Maximum Year (optional)')
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder('e.g., 1999')
+            .setRequired(false);
+
+        modal.addComponents(
+            new ActionRowBuilder().addComponents(monthInput),
+            new ActionRowBuilder().addComponents(titleInput),
+            new ActionRowBuilder().addComponents(minYearInput),
+            new ActionRowBuilder().addComponents(maxYearInput)
+        );
+
+        await interaction.showModal(modal);
+    }
+
+    /**
+     * Handle year range submit
+     */
+    static async handleYearRangeSubmit(interaction) {
+        await interaction.deferReply({ ephemeral: true });
+
+        try {
+            const monthStr = interaction.fields.getTextInputValue('year_month');
+            const title = interaction.fields.getTextInputValue('year_title');
+            const minYearStr = interaction.fields.getTextInputValue('min_year') || '';
+            const maxYearStr = interaction.fields.getTextInputValue('max_year') || '';
+
+            const month = parseInt(monthStr) - 1;
+            if (isNaN(month) || month < 0 || month > 11) {
+                return interaction.editReply('❌ Month must be between 1 and 12.');
+            }
+
+            const minYear = minYearStr ? parseInt(minYearStr) : null;
+            const maxYear = maxYearStr ? parseInt(maxYearStr) : null;
+
+            if (!minYear && !maxYear) {
+                return interaction.editReply('❌ You must specify at least one year boundary.');
+            }
+
+            if (minYear && (isNaN(minYear) || minYear < 1970 || minYear > 2024)) {
+                return interaction.editReply('❌ Minimum year must be between 1970 and 2024.');
+            }
+
+            if (maxYear && (isNaN(maxYear) || maxYear < 1970 || maxYear > 2024)) {
+                return interaction.editReply('❌ Maximum year must be between 1970 and 2024.');
+            }
+
+            const conditions = [];
+            let description = 'Games ';
+
+            if (minYear && maxYear) {
+                conditions.push(RuleBuilder.yearRange(minYear, maxYear));
+                description += `from ${minYear}-${maxYear}`;
+            } else if (minYear) {
+                conditions.push(RuleBuilder.afterYear(minYear - 1));
+                description += `from ${minYear} onwards`;
+            } else {
+                conditions.push(RuleBuilder.beforeYear(maxYear + 1));
+                description += `before ${maxYear + 1}`;
+            }
+
+            const restrictionRule = {
+                name: title,
+                description,
+                emoji: '📅',
+                color: '#8B4513',
+                enabled: true,
+                rules: {
+                    type: 'AND',
+                    conditions
+                }
+            };
+
+            const settings = await NominationSettings.getSettings();
+            settings.addMonthlyRestriction(month, null, restrictionRule);
+            settings.lastModifiedBy = {
+                discordId: interaction.user.id,
+                username: interaction.user.tag
+            };
+            await settings.save();
+
+            const monthName = MONTH_NAMES[month];
+            
+            const embed = new EmbedBuilder()
+                .setTitle('✅ Year Range Restriction Created!')
+                .setColor('#8B4513')
+                .addFields({
+                    name: '📅 Applied To',
+                    value: monthName,
+                    inline: true
+                }, {
+                    name: '📆 Year Range',
+                    value: minYear && maxYear ? `${minYear}-${maxYear}` : 
+                           minYear ? `${minYear}+` : 
+                           `Before ${maxYear + 1}`,
+                    inline: true
+                }, {
+                    name: '📝 Description',
+                    value: description,
+                    inline: false
+                })
+                .setTimestamp();
+
+            const backButton = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('restrictions_back_to_main')
+                        .setLabel('Back to Menu')
+                        .setStyle(ButtonStyle.Secondary)
+                        .setEmoji('⬅️')
+                );
+
+            await interaction.editReply({
+                embeds: [embed],
+                components: [backButton]
+            });
+
+        } catch (error) {
+            console.error('Error creating year range restriction:', error);
+            await interaction.editReply('An error occurred while creating the restriction.');
+        }
+    }
 }
 
 // Export individual handler functions for easier integration
