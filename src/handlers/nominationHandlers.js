@@ -1,5 +1,5 @@
 // src/handlers/nominationHandlers.js
-// Handle button interactions and modals for the nomination system
+// Handle button interactions, modals, and select menus for the nomination system
 
 import { 
     EmbedBuilder, 
@@ -13,6 +13,7 @@ import {
 import { User } from '../models/User.js';
 import { NominationSettings } from '../models/NominationSettings.js';
 import enhancedRetroAPI from '../services/enhancedRetroAPI.js';
+import { config } from '../config/config.js';
 
 const MONTH_NAMES = [
     'January', 'February', 'March', 'April', 'May', 'June',
@@ -22,6 +23,55 @@ const MONTH_NAMES = [
 const MAX_NOMINATIONS = 2;
 
 export class NominationInteractionHandler {
+    /**
+     * Handle select menu interactions for nomination system
+     */
+    static async handleSelectMenuInteraction(interaction) {
+        if (interaction.customId !== 'nominate_main_menu') {
+            return;
+        }
+
+        const selectedValue = interaction.values[0];
+
+        try {
+            // Get the nominate command to reuse its methods
+            const nominateCommand = interaction.client.commands.get('nominate');
+            
+            switch(selectedValue) {
+                case 'nominate':
+                    await this.handleOpenNominationForm(interaction);
+                    break;
+                case 'info':
+                    await nominateCommand.handleDetailedInfo(interaction);
+                    break;
+                case 'status':
+                    await nominateCommand.handleStatus(interaction);
+                    break;
+                case 'upcoming':
+                    await this.handleUpcomingInfo(interaction);
+                    break;
+                default:
+                    await interaction.reply({
+                        content: 'Unknown menu option.',
+                        ephemeral: true
+                    });
+            }
+        } catch (error) {
+            console.error('Error handling select menu interaction:', error);
+            
+            const errorMessage = {
+                content: 'An error occurred while processing your selection.',
+                ephemeral: true
+            };
+            
+            if (interaction.replied || interaction.deferred) {
+                await interaction.followUp(errorMessage);
+            } else {
+                await interaction.reply(errorMessage);
+            }
+        }
+    }
+
     /**
      * Handle all nomination-related button interactions
      */
@@ -41,6 +91,9 @@ export class NominationInteractionHandler {
                     break;
                 case 'nominate_upcoming_info':
                     await this.handleUpcomingInfo(interaction);
+                    break;
+                case 'nominate_back_to_main':
+                    await this.handleBackToMain(interaction);
                     break;
                 default:
                     await interaction.reply({
@@ -98,6 +151,29 @@ export class NominationInteractionHandler {
     }
 
     /**
+     * Handle back to main menu button
+     */
+    static async handleBackToMain(interaction) {
+        await interaction.deferUpdate();
+
+        try {
+            const nominateCommand = interaction.client.commands.get('nominate');
+            
+            await interaction.editReply({
+                embeds: [nominateCommand.createMainMenuEmbed()],
+                components: nominateCommand.createMenuComponents()
+            });
+        } catch (error) {
+            console.error('Error handling back to main:', error);
+            await interaction.editReply({
+                content: 'An error occurred while returning to the main menu.',
+                embeds: [],
+                components: []
+            });
+        }
+    }
+
+    /**
      * Open the nomination form modal
      */
     static async handleOpenNominationForm(interaction) {
@@ -106,6 +182,20 @@ export class NominationInteractionHandler {
         if (!user) {
             return interaction.reply({
                 content: 'You need to register first using `/register` command.',
+                ephemeral: true
+            });
+        }
+
+        // Check if nominations are open
+        const settings = await NominationSettings.getSettings();
+        const now = new Date();
+        
+        if (!settings.areNominationsOpen(now)) {
+            const nextOpening = settings.getNextOpeningDate(now);
+            const nextOpeningTimestamp = Math.floor(nextOpening.getTime() / 1000);
+            
+            return interaction.reply({
+                content: `🚫 **Nominations are currently closed!**\n\nNext nominations period opens: <t:${nextOpeningTimestamp}:F>`,
                 ephemeral: true
             });
         }
@@ -152,9 +242,10 @@ export class NominationInteractionHandler {
     }
 
     /**
-     * Handle the nomination form submission
+     * Handle the nomination form submission - KEEP ORIGINAL PUBLIC POSTING BEHAVIOR
      */
     static async handleNominationFormSubmit(interaction) {
+        // This should post publicly, not ephemeral - PRESERVING ORIGINAL BEHAVIOR
         await interaction.deferReply({ ephemeral: false });
 
         try {
@@ -169,7 +260,7 @@ export class NominationInteractionHandler {
                 });
             }
 
-            // Process the nomination
+            // Process the nomination - PRESERVING ORIGINAL RICH EMBED BEHAVIOR
             await this.processModalNomination(interaction, gameId, comment);
 
         } catch (error) {
@@ -181,7 +272,7 @@ export class NominationInteractionHandler {
     }
 
     /**
-     * Process nomination from modal form
+     * Process nomination from modal form - PRESERVE ORIGINAL RICH EMBED FUNCTIONALITY
      */
     static async processModalNomination(interaction, gameId, comment) {
         try {
@@ -272,7 +363,7 @@ export class NominationInteractionHandler {
             
             await user.save();
             
-            // Create success response
+            // Create success response - PRESERVE ORIGINAL RICH EMBED
             const currentRestriction = settings.getCurrentMonthRestriction(now);
             
             const embed = new EmbedBuilder()
@@ -319,14 +410,14 @@ export class NominationInteractionHandler {
 
             // Status
             embed.addFields({
-                name: '📊 Your Status',
-                value: `${MAX_NOMINATIONS - (currentNominations.length + 1)}/${MAX_NOMINATIONS} nominations remaining`,
+                name: '📊 Status',
+                value: `${user.raUsername} has ${MAX_NOMINATIONS - currentNominations.length}/${MAX_NOMINATIONS} nominations remaining`,
                 inline: false
             });
 
-            // Add action button for another nomination
+            // PRESERVE ORIGINAL ACTION BUTTONS
             const actionRow = new ActionRowBuilder();
-            if (currentNominations.length + 1 < MAX_NOMINATIONS) {
+            if (currentNominations.length < MAX_NOMINATIONS) {
                 actionRow.addComponents(
                     new ButtonBuilder()
                         .setCustomId('nominate_open_form')
@@ -338,7 +429,7 @@ export class NominationInteractionHandler {
 
             actionRow.addComponents(
                 new ButtonBuilder()
-                    .setCustomId('nominate_refresh_menu')
+                    .setCustomId('nominate_back_to_main')
                     .setLabel('Back to Menu')
                     .setStyle(ButtonStyle.Secondary)
                     .setEmoji('📋')
@@ -348,6 +439,16 @@ export class NominationInteractionHandler {
                 embeds: [embed],
                 components: [actionRow]
             });
+
+            // ALSO send a follow-up private confirmation
+            try {
+                await interaction.followUp({
+                    content: `✅ **Nomination confirmed!** Your nomination for **${gameData.title}** has been posted publicly.`,
+                    ephemeral: true
+                });
+            } catch (followUpError) {
+                console.error('Error sending private confirmation:', followUpError);
+            }
 
         } catch (error) {
             console.error('Error in processModalNomination:', error);
@@ -433,13 +534,26 @@ export class NominationInteractionHandler {
             // Tips
             embed.addFields({
                 name: '💡 Pro Tips',
-                value: '• Use `/nominate info month:X` to check future restrictions\n' +
-                       '• Use `/nominate status` to check your current nominations\n' +
-                       '• Use `/restrictions test gameid:XXXXX` to test game eligibility',
+                value: '• Use `/restrictions test gameid:XXXXX` to test game eligibility\n' +
+                       '• Check upcoming themes to plan ahead\n' +
+                       '• Consider achievement count when nominating',
                 inline: false
             });
 
-            await interaction.editReply({ embeds: [embed] });
+            // Back button
+            const backButton = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('nominate_back_to_main')
+                        .setLabel('Back to Menu')
+                        .setStyle(ButtonStyle.Secondary)
+                        .setEmoji('⬅️')
+                );
+
+            await interaction.editReply({ 
+                embeds: [embed],
+                components: [backButton]
+            });
 
         } catch (error) {
             console.error('Error in handleDetailedInfo:', error);
@@ -451,10 +565,12 @@ export class NominationInteractionHandler {
      * Refresh the main nomination menu
      */
     static async handleRefreshMenu(interaction) {
+        await interaction.deferUpdate();
+
         try {
-            await interaction.deferUpdate();
+            const nominateCommand = interaction.client.commands.get('nominate');
             
-            // We need to recreate the menu embed
+            // Recreate the main menu using the command's methods
             const settings = await NominationSettings.getSettings();
             const user = await User.findOne({ discordId: interaction.user.id });
             const now = new Date();
@@ -465,19 +581,15 @@ export class NominationInteractionHandler {
             const currentRestriction = settings.getCurrentMonthRestriction(now);
             const monthName = MONTH_NAMES[currentMonth];
 
-            // Create main embed
-            const embed = new EmbedBuilder()
-                .setTitle('🎮 Monthly Challenge Nominations')
-                .setColor(nominationsOpen ? (currentRestriction?.restrictionRule?.color || '#00FF00') : '#FF0000')
-                .setThumbnail('https://retroachievements.org/Images/icon.png')
-                .setTimestamp();
+            // Create main embed with current status
+            const embed = nominateCommand.createMainMenuEmbed();
 
-            // Status section
+            // Add dynamic status information
             if (nominationsOpen) {
                 embed.addFields({
-                    name: '✅ Nominations Open',
-                    value: 'Ready to nominate games for next month\'s challenge!',
-                    inline: false
+                    name: '✅ Status: OPEN',
+                    value: 'Nominations are currently being accepted!',
+                    inline: true
                 });
 
                 // Show closing time
@@ -488,14 +600,14 @@ export class NominationInteractionHandler {
                 
                 embed.addFields({
                     name: '⏰ Deadline',
-                    value: `Nominations close <t:${nextClosingTimestamp}:R>`,
+                    value: `<t:${nextClosingTimestamp}:R>`,
                     inline: true
                 });
             } else {
                 embed.addFields({
-                    name: '❌ Nominations Closed',
-                    value: 'Nominations are not currently being accepted.',
-                    inline: false
+                    name: '❌ Status: CLOSED',
+                    value: 'Nominations not currently accepted',
+                    inline: true
                 });
 
                 const nextOpening = settings.getNextOpeningDate(now);
@@ -503,25 +615,16 @@ export class NominationInteractionHandler {
                 
                 embed.addFields({
                     name: '📅 Next Opening',
-                    value: `<t:${nextOpeningTimestamp}:F>`,
+                    value: `<t:${nextOpeningTimestamp}:R>`,
                     inline: true
                 });
             }
 
-            // Current restrictions summary
+            // Current month theme (brief)
             if (currentRestriction && currentRestriction.enabled) {
-                let restrictionSummary = `${currentRestriction.restrictionRule.emoji} **${currentRestriction.restrictionRule.name}**\n`;
-                restrictionSummary += `${currentRestriction.restrictionRule.description}`;
-                
-                // Add quick rule summary
-                const conditions = currentRestriction.restrictionRule.rules?.conditions || [];
-                if (conditions.length > 0) {
-                    restrictionSummary += `\n\n*Rules: ${conditions.length} condition(s)*`;
-                }
-
                 embed.addFields({
                     name: `🎯 ${monthName} Theme`,
-                    value: restrictionSummary,
+                    value: `${currentRestriction.restrictionRule.emoji} **${currentRestriction.restrictionRule.name}**\n${currentRestriction.restrictionRule.description.substring(0, 100)}${currentRestriction.restrictionRule.description.length > 100 ? '...' : ''}`,
                     inline: false
                 });
             } else {
@@ -532,82 +635,28 @@ export class NominationInteractionHandler {
                 });
             }
 
-            // User's current nominations
+            // User's nomination count (if registered)
             if (user) {
                 const currentNominations = user.getCurrentNominations();
-                let nominationText = '';
-                
-                if (currentNominations.length > 0) {
-                    nominationText = currentNominations.map((nom, index) => 
-                        `${index + 1}. **${nom.gameTitle}** *(${nom.consoleName})*`
-                    ).join('\n');
-                    nominationText += `\n\n${MAX_NOMINATIONS - currentNominations.length} slot(s) remaining`;
-                } else {
-                    nominationText = 'No nominations yet - you can nominate up to 2 games!';
-                }
-
                 embed.addFields({
-                    name: '📊 Your Nominations',
-                    value: nominationText,
-                    inline: false
+                    name: '📊 Your Progress',
+                    value: `${currentNominations.length}/${MAX_NOMINATIONS} nominations used`,
+                    inline: true
                 });
             } else {
                 embed.addFields({
-                    name: '⚠️ Registration Required',
-                    value: 'You need to register first using `/register` command.',
-                    inline: false
+                    name: '⚠️ Not Registered',
+                    value: 'Use `/register` first',
+                    inline: true
                 });
             }
 
-            // Create action buttons
-            const actionRow = new ActionRowBuilder();
-            
-            if (nominationsOpen && user) {
-                const currentNominations = user.getCurrentNominations();
-                const canNominate = currentNominations.length < MAX_NOMINATIONS;
-                
-                actionRow.addComponents(
-                    new ButtonBuilder()
-                        .setCustomId('nominate_open_form')
-                        .setLabel('Nominate Game')
-                        .setStyle(ButtonStyle.Primary)
-                        .setEmoji('🎮')
-                        .setDisabled(!canNominate)
-                );
-            }
-
-            actionRow.addComponents(
-                new ButtonBuilder()
-                    .setCustomId('nominate_detailed_info')
-                    .setLabel('Detailed Info')
-                    .setStyle(ButtonStyle.Secondary)
-                    .setEmoji('📋'),
-                
-                new ButtonBuilder()
-                    .setCustomId('nominate_refresh_menu')
-                    .setLabel('Refresh')
-                    .setStyle(ButtonStyle.Secondary)
-                    .setEmoji('🔄')
-            );
-
-            // Add upcoming restrictions button if there are any
-            const upcomingRestrictions = settings.monthlyRestrictions
-                .filter(r => r.enabled && r.month !== currentMonth)
-                .slice(0, 1);
-            
-            if (upcomingRestrictions.length > 0) {
-                actionRow.addComponents(
-                    new ButtonBuilder()
-                        .setCustomId('nominate_upcoming_info')
-                        .setLabel('Upcoming')
-                        .setStyle(ButtonStyle.Secondary)
-                        .setEmoji('🔮')
-                );
-            }
+            // Update embed color based on status
+            embed.setColor(nominationsOpen ? '#00FF00' : '#FF0000');
 
             await interaction.editReply({
                 embeds: [embed],
-                components: [actionRow]
+                components: nominateCommand.createMenuComponents()
             });
 
         } catch (error) {
@@ -670,11 +719,24 @@ export class NominationInteractionHandler {
 
             embed.addFields({
                 name: '💡 Planning Ahead',
-                value: 'Use `/nominate info month:X` to check specific months\nThemes may be added or changed by administrators',
+                value: 'Use the detailed info option to check specific month requirements\nThemes may be added or changed by administrators',
                 inline: false
             });
 
-            await interaction.editReply({ embeds: [embed] });
+            // Back button
+            const backButton = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('nominate_back_to_main')
+                        .setLabel('Back to Menu')
+                        .setStyle(ButtonStyle.Secondary)
+                        .setEmoji('⬅️')
+                );
+
+            await interaction.editReply({ 
+                embeds: [embed],
+                components: [backButton]
+            });
 
         } catch (error) {
             console.error('Error in handleUpcomingInfo:', error);
@@ -716,3 +778,4 @@ export class NominationInteractionHandler {
 // Export individual handler functions for easier integration
 export const handleNominationButtonInteraction = NominationInteractionHandler.handleButtonInteraction.bind(NominationInteractionHandler);
 export const handleNominationModalSubmit = NominationInteractionHandler.handleModalSubmit.bind(NominationInteractionHandler);
+export const handleNominationSelectMenu = NominationInteractionHandler.handleSelectMenuInteraction.bind(NominationInteractionHandler);
