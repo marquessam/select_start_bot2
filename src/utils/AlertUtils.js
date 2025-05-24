@@ -14,7 +14,18 @@ export const ALERT_TYPES = {
     DEFAULT: 'default'
 };
 
-// Default channel IDs for each alert type - FIXED: Use correct channel mappings
+// Color mapping for different alert types (matching achievement feed)
+const ALERT_COLORS = {
+    [ALERT_TYPES.ARCADE]: '#3498DB',    // Blue for arcade
+    [ALERT_TYPES.ARENA]: '#FF5722',     // Red for arena  
+    [ALERT_TYPES.MONTHLY]: '#9B59B6',   // Purple for monthly
+    [ALERT_TYPES.SHADOW]: '#000000',    // Black for shadow
+    [ALERT_TYPES.MASTERY]: '#FFD700',   // Gold for mastery
+    [ALERT_TYPES.ACHIEVEMENT]: '#808080', // Grey for regular achievements
+    [ALERT_TYPES.DEFAULT]: '#808080'    // Grey for default
+};
+
+// Default channel IDs for each alert type
 const DEFAULT_CHANNEL_IDS = {
     [ALERT_TYPES.ARCADE]: '1300941091335438471',    // Arcade alerts
     [ALERT_TYPES.ARENA]: '1373570850912997476',     // Arena alerts  
@@ -27,20 +38,26 @@ const DEFAULT_CHANNEL_IDS = {
 
 /**
  * Helper class for sending alerts to designated channels
- * Updated to support multiple alert channels per service
+ * Updated to support multiple alert channels per service and proper color coding
  */
 export class AlertManager {
     constructor(client) {
         this.client = client;
         this.channelIds = { ...DEFAULT_CHANNEL_IDS };
         
-        // DEBUG: Log channel configuration on initialization
         console.log('AlertManager initialized with channels:', this.channelIds);
     }
     
     setClient(client) {
         this.client = client;
         console.log('AlertUtils client configured');
+    }
+    
+    /**
+     * Get the appropriate color for an alert type
+     */
+    getColorForAlertType(alertType) {
+        return ALERT_COLORS[alertType] || ALERT_COLORS[ALERT_TYPES.DEFAULT];
     }
     
     /**
@@ -82,7 +99,6 @@ export class AlertManager {
      * This should be called once during bot startup
      */
     initializeFromConfig() {
-        // Use config values if available, otherwise keep defaults
         try {
             const originalChannels = { ...this.channelIds };
             
@@ -99,13 +115,6 @@ export class AlertManager {
             
             console.log('AlertUtils channels initialized from config');
             console.log('Channel mappings:', this.channelIds);
-            
-            // Log any changes
-            for (const [type, channelId] of Object.entries(this.channelIds)) {
-                if (originalChannels[type] !== channelId) {
-                    console.log(`Channel for ${type} updated: ${originalChannels[type]} -> ${channelId}`);
-                }
-            }
         } catch (error) {
             console.error('Error initializing AlertUtils channels from config:', error);
         }
@@ -125,18 +134,13 @@ export class AlertManager {
         
         let channelId = null;
         
-        // Use override if provided
         if (overrideChannelId) {
             channelId = overrideChannelId;
             console.log(`Using override channel: ${channelId}`);
-        }
-        // Use the specified alert type's channel
-        else if (alertType && this.channelIds[alertType]) {
+        } else if (alertType && this.channelIds[alertType]) {
             channelId = this.channelIds[alertType];
             console.log(`Using ${alertType} channel: ${channelId}`);
-        }
-        // Fall back to default channel
-        else if (this.channelIds[ALERT_TYPES.DEFAULT]) {
+        } else if (this.channelIds[ALERT_TYPES.DEFAULT]) {
             channelId = this.channelIds[ALERT_TYPES.DEFAULT];
             console.log(`Using default channel: ${channelId}`);
         }
@@ -180,7 +184,7 @@ export class AlertManager {
     /**
      * Send a standard alert for position/rank changes
      * @param {Object} options - Alert options
-     * @param {string} alertType - The type of alert to send (determines channel)
+     * @param {string} alertType - The type of alert to send (determines channel and color)
      * @param {string} overrideChannelId - Optional specific channel ID to override default
      */
     async sendPositionChangeAlert(options, alertType = ALERT_TYPES.ARCADE, overrideChannelId = null) {
@@ -193,7 +197,7 @@ export class AlertManager {
                 changes = [],
                 currentStandings = [],
                 thumbnail = null,
-                color = COLORS.WARNING,
+                color = null, // Will be overridden by alert type color
                 footer = null
             } = options;
             
@@ -205,12 +209,15 @@ export class AlertManager {
             
             console.log(`Sending position change alert to channel: ${channel.name} (${channel.id})`);
             
+            // Use alert type specific color, or fallback to provided color
+            const alertColor = this.getColorForAlertType(alertType);
+            
             // Create timestamp
             const timestamp = getDiscordTimestamp(new Date());
             
             // Create embed
             const embed = new EmbedBuilder()
-                .setColor(color)
+                .setColor(alertColor)
                 .setTitle(title)
                 .setDescription(`${description}\n**Time:** ${timestamp}`)
                 .setTimestamp();
@@ -239,15 +246,22 @@ export class AlertManager {
                 });
             }
             
-            // Add current standings if provided
+            // Add current standings if provided - SORTED BY RANK
             if (currentStandings && currentStandings.length > 0) {
+                // Sort by rank (lower is better)
+                const sortedStandings = [...currentStandings]
+                    .sort((a, b) => (a.rank || 999) - (b.rank || 999));
+                
                 let standingsText = '';
-                currentStandings.slice(0, 5).forEach(user => {
+                sortedStandings.slice(0, 5).forEach(user => {
                     const rankEmoji = user.rank <= 3 ? 
                         EMOJIS[`RANK_${user.rank}`] : 
                         `#${user.rank}`;
                     
-                    standingsText += `${rankEmoji} **${user.username}**: ${user.score || user.value}\n`;
+                    // Show global rank in parentheses if available
+                    const globalRank = user.globalRank ? ` (Global: #${user.globalRank})` : '';
+                    
+                    standingsText += `${rankEmoji} **${user.username}**: ${user.score || user.value}${globalRank}\n`;
                 });
                 
                 embed.addFields({ 
@@ -274,7 +288,7 @@ export class AlertManager {
     }
     
     /**
-     * FIXED: Send a standard alert for new achievements/awards
+     * Send a standard alert for new achievements/awards
      * @param {Object} options - Alert options
      * @param {string} alertType - The type of alert to send (determines channel)
      * @param {string} overrideChannelId - Optional specific channel ID to override default
@@ -290,21 +304,19 @@ export class AlertManager {
                 points = null,
                 thumbnail = null,
                 badgeUrl = null,
-                color = COLORS.SUCCESS,
+                color = null, // Will be overridden by alert type color
                 isAward = false,
                 isMastery = false,
                 isBeaten = false
             } = options;
             
-            // FIXED: Determine the correct alert type based on explicit parameter first
+            // Determine the correct alert type based on explicit parameter first
             let targetAlertType = alertType;
             
-            // Only use fallback logic if no alert type was explicitly provided
             if (!targetAlertType) {
                 if (isMastery || isBeaten) {
                     targetAlertType = ALERT_TYPES.MASTERY;
                 } else if (isAward) {
-                    // For awards without specific type, default to achievement channel
                     targetAlertType = ALERT_TYPES.ACHIEVEMENT;
                 } else {
                     targetAlertType = ALERT_TYPES.ACHIEVEMENT;
@@ -321,9 +333,12 @@ export class AlertManager {
             
             console.log(`Sending achievement alert to channel: ${channel.name} (${channel.id})`);
             
+            // Use alert type specific color
+            const alertColor = this.getColorForAlertType(targetAlertType);
+            
             // Create embed
             const embed = new EmbedBuilder()
-                .setColor(color)
+                .setColor(alertColor)
                 .setTimestamp();
             
             // Create title based on achievement or award
@@ -390,8 +405,6 @@ export class AlertManager {
     
     /**
      * Send a mastery alert (convenience method)
-     * @param {Object} options - Alert options
-     * @param {string} overrideChannelId - Optional specific channel ID to override default
      */
     async sendMasteryAlert(options, overrideChannelId = null) {
         return this.sendAchievementAlert(
@@ -403,8 +416,6 @@ export class AlertManager {
     
     /**
      * Send a beaten game alert (convenience method)
-     * @param {Object} options - Alert options
-     * @param {string} overrideChannelId - Optional specific channel ID to override default
      */
     async sendBeatenAlert(options, overrideChannelId = null) {
         return this.sendAchievementAlert(
@@ -416,8 +427,6 @@ export class AlertManager {
     
     /**
      * Send a monthly challenge award alert (convenience method)
-     * @param {Object} options - Alert options
-     * @param {string} overrideChannelId - Optional specific channel ID to override default
      */
     async sendMonthlyAwardAlert(options, overrideChannelId = null) {
         return this.sendAchievementAlert(
@@ -429,8 +438,6 @@ export class AlertManager {
     
     /**
      * Send a shadow challenge award alert (convenience method)
-     * @param {Object} options - Alert options
-     * @param {string} overrideChannelId - Optional specific channel ID to override default
      */
     async sendShadowAwardAlert(options, overrideChannelId = null) {
         return this.sendAchievementAlert(
