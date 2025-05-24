@@ -439,7 +439,7 @@ export default {
                         name: '⚔️ Arena Battles',
                         value: '• `/arena` - Access the arena system for competitive battles\n' +
                                '  - Challenge other members to head-to-head competitions\n' +
-                               '  - Bet points on your performance\n' +
+                               '  - Bet GP on your performance\n' +
                                '  - Accept or decline incoming challenges'
                     }
                 )
@@ -493,7 +493,6 @@ export default {
                                '• Submit scores and achievements honestly\n' +
                                '• Report technical issues to admins promptly\n' +
                                '• **Achievements must be earned during the challenge month to earn points**\n' +
-                               '• One grace period on the last day of the previous month for participation only\n' +
                                '• Help maintain a fair and supportive competitive environment'
                     },
                     {
