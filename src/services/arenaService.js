@@ -1076,7 +1076,7 @@ class ArenaService extends FeedManagerBase {
         }
     }
 
-    // ========================
+// ========================
     // UTILITY METHODS - Delegating to utility classes
     // ========================
 
@@ -1090,6 +1090,11 @@ class ArenaService extends FeedManagerBase {
 
     async checkExistingChallenge(user1, user2) {
         return ArenaCompletionUtils.checkExistingChallenge(user1, user2);
+    }
+
+    // ADD THIS MISSING METHOD:
+    async getChallengersScores(challenge) {
+        return ArenaCompletionUtils.getChallengersScores(challenge);
     }
 
     async refreshDirectChallengeLeaderboard(interaction, challenge) {
