@@ -186,7 +186,7 @@ export default {
             // Add explanation of how arcade works
             embed.addFields({
                 name: 'How Arcade Works',
-                value: 'Each month we add 1-2 arcade boards to our collection. You are only competing against other members of Select Start and must place in the top 999 of the global leaderboard to appear in our rankings.\n\n' +
+                value: 'New arcade boards are announced in the 2nd week of each month and added to our collection. You are only competing against other members of Select Start and must place in the top 999 of the global leaderboard to appear in our rankings.\n\n' +
                       'Boards remain open until the end of the year and will be locked on December 1st. Those placing 1st, 2nd, and 3rd will receive 3, 2, and 1 points respectively.\n\n' + 
                       'The arcade is a way for members to collect points without the pressure of a monthly deadline or if you aren\'t interested in the month\'s official challenges.'
             });
@@ -265,10 +265,11 @@ export default {
                 
                 let monthlyText = `**Game:** [${gameInfo.title}](${gameUrl})\n`;
                 monthlyText += `**Ends:** <t:${lastDayTimestamp}:F>\n\n`;
-                monthlyText += `**Points Available:**\n`;
-                monthlyText += `• Participation: 1 point\n`;
-                monthlyText += `• Beaten: 3 points\n`;
-                monthlyText += `• Mastery: 3 points\n`;
+                monthlyText += `**Points Available (Additive):**\n`;
+                monthlyText += `• Participation: 1 point (any achievement)\n`;
+                monthlyText += `• Beaten: +3 points (4 total)\n`;
+                monthlyText += `• Mastery: +3 points (7 total)\n\n`;
+                monthlyText += `**Important:** You must complete the challenge within this month to earn points.`;
                 
                 embed.addFields({ name: '🏆 Monthly Challenge', value: monthlyText });
                 
@@ -287,9 +288,10 @@ export default {
                 
                 let shadowText = `**Game:** [${shadowGameInfo.title}](${shadowUrl})\n`;
                 shadowText += `**Ends:** <t:${lastDayTimestamp}:F>\n\n`;
-                shadowText += `**Points Available:**\n`;
-                shadowText += `• Participation: 1 point\n`;
-                shadowText += `• Beaten: 3 points\n`;
+                shadowText += `**Points Available (Additive):**\n`;
+                shadowText += `• Participation: 1 point (any achievement)\n`;
+                shadowText += `• Beaten: +3 points (4 total)\n\n`;
+                shadowText += `**Important:** You must complete the challenge within this month to earn points. Shadow games are capped at Beaten status.`;
                 
                 embed.addFields({ name: '👥 Shadow Challenge', value: shadowText });
             } else if (currentChallenge && currentChallenge.shadow_challange_gameid) {
@@ -355,15 +357,23 @@ export default {
                     },
                     {
                         name: '🗳️ Game Nominations',
-                        value: 'Each month, you can nominate up to two games for the next challenge. In the last week of the month, 10 games are randomly selected from all nominations for community voting.'
+                        value: 'Each month, you can nominate up to two games for the next challenge. Voting starts 8 days before the end of the month with 10 randomly selected games from all nominations.'
                     },
                     {
                         name: '🏎️ Racing & Arcade',
-                        value: 'We have monthly racing challenges and year-round arcade leaderboards. Compete for the top positions to earn additional community points! Racing points are awarded monthly for each new track. Arcade boards remain open until December 1st, providing a way to earn points without monthly deadlines.'
+                        value: 'We have monthly racing challenges that start on the 1st of each month and year-round arcade leaderboards announced in the 2nd week. Compete for the top positions to earn additional community points!'
+                    },
+                    {
+                        name: '⚔️ Arena System',
+                        value: 'Challenge other community members to head-to-head competitions on specific games or leaderboards. Bet points and prove your skills in direct competition!'
                     },
                     {
                         name: '🏆 Point System',
-                        value: 'You can earn points by participating in monthly challenges, discovering shadow games, racing competitions, and arcade leaderboards. Points accumulate throughout the year for annual prizes.'
+                        value: 'You can earn points by participating in monthly challenges, discovering shadow games, racing competitions, arcade leaderboards, and arena battles. Points accumulate throughout the year for annual prizes.'
+                    },
+                    {
+                        name: '📅 Monthly Schedule',
+                        value: '• **1st:** New monthly, shadow, and racing challenges begin\n• **2nd week:** New arcade boards announced\n• **3rd week:** Tiebreakers announced if needed\n• **8 days before month end:** Voting opens\n• **1 day before month end:** Voting closes'
                     },
                     {
                         name: '🏅 Year-End Awards',
@@ -400,7 +410,8 @@ export default {
                 .addFields(
                     {
                         name: '📋 Community Information',
-                        value: '• `/help` - Display help information with interactive buttons'
+                        value: '• `/help` - Display help information with interactive buttons\n' +
+                               '• `/rules` - View detailed community rules and guidelines'
                     },
                     {
                         name: '🏆 Challenges & Leaderboards',
@@ -414,7 +425,8 @@ export default {
                         name: '🗳️ Nominations & Suggestions',
                         value: '• `/nominate` - Nominate a game for the next monthly challenge\n' +
                                '• `/nominations` - Show all current nominations for the next month\n' +
-                               '• `/suggest` - Suggest arcade boards, racing tracks, or bot improvements'
+                               '• `/suggest` - Suggest arcade boards, racing tracks, or bot improvements\n' +
+                               '• `/vote` - Cast your vote for the next monthly challenge (when active)'
                     },
                     {
                         name: '🏎️ Arcade & Racing',
@@ -422,6 +434,13 @@ export default {
                                '  - View all arcade leaderboards\n' +
                                '  - Check current and past racing challenges\n' +
                                '  - See active tiebreaker competitions'
+                    },
+                    {
+                        name: '⚔️ Arena Battles',
+                        value: '• `/arena` - Access the arena system for competitive battles\n' +
+                               '  - Challenge other members to head-to-head competitions\n' +
+                               '  - Bet points on your performance\n' +
+                               '  - Accept or decline incoming challenges'
                     }
                 )
                 .setFooter({ text: 'Select Start Gaming Community' })
@@ -473,8 +492,8 @@ export default {
                         value: '• No cheating or exploitation of games\n' +
                                '• Submit scores and achievements honestly\n' +
                                '• Report technical issues to admins promptly\n' +
-                               '• Achievements must be earned during the challenge period\n' +
-                               '• One grace period on the last day of the previous month\n' +
+                               '• **Achievements must be earned during the challenge month to earn points**\n' +
+                               '• One grace period on the last day of the previous month for participation only\n' +
                                '• Help maintain a fair and supportive competitive environment'
                     },
                     {
@@ -482,6 +501,22 @@ export default {
                         value: '• You must be registered by an admin using the `/register` command\n' +
                                '• Your RetroAchievements username must be linked to your Discord account\n' +
                                '• You must place in the top 999 of the global leaderboard to appear in arcade rankings'
+                    },
+                    {
+                        name: '🏆 Points System (Additive)',
+                        value: '• **Monthly/Shadow Challenges:** Participation (1), Beaten (+3), Mastery (+3)\n' +
+                               '• **Racing:** 1st (3), 2nd (2), 3rd (1) - awarded monthly\n' +
+                               '• **Arcade:** 1st (3), 2nd (2), 3rd (1) - awarded December 1st\n' +
+                               '• **Arena:** Win/lose points based on challenge bets\n' +
+                               '• **Important:** Monthly and shadow challenges must be completed within their respective month to earn points'
+                    },
+                    {
+                        name: '⚔️ Arena System',
+                        value: '• Challenge other members to head-to-head competitions\n' +
+                               '• Both players must agree to challenge terms and point bets\n' +
+                               '• Challenges have time limits and specific objectives\n' +
+                               '• Points are transferred between players based on results\n' +
+                               '• Fair play and sportsmanship are expected'
                     },
                     {
                         name: '💬 Communication Guidelines',
@@ -492,7 +527,7 @@ export default {
                                '• Direct feedback and suggestions through proper channels'
                     }
                 )
-                .setFooter({ text: 'Select Start Gaming Community' })
+                .setFooter({ text: 'Select Start Gaming Community • Use /rules for detailed rules' })
                 .setTimestamp();
 
             // Send a public (non-ephemeral) message visible to everyone
