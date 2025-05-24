@@ -4,14 +4,12 @@ import {
     COLORS, 
     EMOJIS, 
     formatTimeRemaining, 
-    parseTimeToSeconds, 
-    parseScoreString, 
-    isTimeBasedLeaderboard 
+    getDiscordTimestamp
 } from './FeedUtils.js';
 import RetroAPIUtils from './RetroAPIUtils.js';
 
 // Re-export functions from FeedUtils for backward compatibility
-export { formatTimeRemaining, parseTimeToSeconds, parseScoreString, isTimeBasedLeaderboard };
+export { formatTimeRemaining };
 
 /**
  * Get leaderboard entries - re-export for compatibility
@@ -19,9 +17,9 @@ export { formatTimeRemaining, parseTimeToSeconds, parseScoreString, isTimeBasedL
 export const getLeaderboardEntries = RetroAPIUtils.getLeaderboardEntries;
 
 /**
- * Process raw leaderboard entries
+ * Process raw leaderboard entries - simplified to use rank only
  */
-export function processLeaderboardEntries(rawEntries, isTimeBased = false) {
+export function processLeaderboardEntries(rawEntries) {
     if (!rawEntries || !Array.isArray(rawEntries)) {
         console.error('Invalid leaderboard entries received:', rawEntries);
         return [];
@@ -47,10 +45,9 @@ export function processLeaderboardEntries(rawEntries, isTimeBased = false) {
         };
     }).filter(entry => entry !== null); // Remove any null entries
     
-    // Sort entries based on their original API Rank (global rank)
+    // Sort entries by their API Rank (lower is better)
     entries.sort((a, b) => a.ApiRank - b.ApiRank);
     
-    // Log the number of processed entries
     console.log(`Processed ${entries.length} valid leaderboard entries`);
     
     return entries;
@@ -62,7 +59,7 @@ export function processLeaderboardEntries(rawEntries, isTimeBased = false) {
 export const findUserInLeaderboard = RetroAPIUtils.findUserInLeaderboard;
 
 /**
- * Get estimated winner based on current scores
+ * Get estimated winner based on API rank only
  * @param {Object} challenge - The challenge object
  * @param {Object} challengerScore - Challenger's score info
  * @param {Object|null} challengeeScore - Challengee's score info (may be null for open challenges)
@@ -83,122 +80,44 @@ export function getEstimatedWinner(challenge, challengerScore, challengeeScore) 
         return null;
     }
     
-    // First use ApiRank for determining winner
-    // Lower ApiRank is better (1st place is better than 2nd)
+    // Use ApiRank for determining winner (lower rank is better)
     if (challengerScore.rank && challengeeScore.rank) {
-        // Global rank comparison - LOWER IS BETTER
         if (challengerScore.rank < challengeeScore.rank) {
             return challengerScore.username;
         } else if (challengeeScore.rank < challengerScore.rank) {
             return challengeeScore.username;
         }
-        // If ranks are equal (extremely unlikely), fall through to time/score comparison
+        // Ranks are equal - it's a tie
+        return 'Tie';
     }
     
-    // Fallback to value-based comparison if ranks aren't available
-    const isTimeBasedChallenge = isTimeBasedLeaderboard(challenge);
-    
-    // For time-based leaderboards, lower value is better
-    if (isTimeBasedChallenge) {
-        if (challengerScore.value < challengeeScore.value) {
-            return challengerScore.username;
-        } else if (challengeeScore.value < challengerScore.value) {
-            return challengeeScore.username;
-        }
-    } 
-    // For score-based leaderboards, higher value is better
-    else {
-        if (challengerScore.value > challengeeScore.value) {
-            return challengerScore.username;
-        } else if (challengeeScore.value > challengerScore.value) {
-            return challengeeScore.username;
-        }
-    }
-    
-    // Scores are equal
-    return 'Tie';
+    // If no ranks available, can't determine winner
+    return null;
 }
 
 /**
- * Check for position changes in the leaderboard 
+ * Check for position changes in the leaderboard - simplified to use rank only
  * @param {Object} challenge - The challenge
  * @param {Object} challengerScore - Challenger's current score
  * @param {Object} challengeeScore - Challengee's current score
- * @param {string} previousChallengerScore - Challenger's previous score
- * @param {string} previousChallengeeScore - Challengee's previous score
+ * @param {string} previousChallengerScore - Challenger's previous score (not used anymore)
+ * @param {string} previousChallengeeScore - Challengee's previous score (not used anymore)
  * @returns {Object|null} Position change info or null if no change
  */
 export function checkPositionChanges(challenge, challengerScore, challengeeScore, previousChallengerScore, previousChallengeeScore) {
-    // Only check if we have previous scores
-    if (!previousChallengerScore || !previousChallengeeScore) {
-        return null;
-    }
+    // Simplified: we'll track leader changes in the arena service based on rank
+    // This function can be simplified or removed since we're using rank-based logic
+    return null;
+}
 
-    let positionChange = null;
-    
-    // Check if ranks have changed
-    if (challengerScore.rank && challengeeScore.rank) {
-        // Get previous ranks
-        let previousChallengerRank = Infinity;
-        let previousChallengeeRank = Infinity;
-        
-        // Try to extract ranks from previous state
-        // This would only work if we stored ranks earlier, but we'll improve it gradually
-        
-        // Fall back to checking if the leader changed based on score values        
-        const isTimeBasedChallenge = isTimeBasedLeaderboard(challenge);
-        
-        // Parse the numerical values for comparison
-        let previousChallengerValue, previousChallengeeValue, currentChallengerValue, currentChallengeeValue;
-        
-        if (isTimeBasedChallenge) {
-            // Parse times for time-based challenges
-            previousChallengerValue = parseTimeToSeconds(previousChallengerScore);
-            previousChallengeeValue = parseTimeToSeconds(previousChallengeeScore);
-            currentChallengerValue = parseTimeToSeconds(challengerScore.formattedScore);
-            currentChallengeeValue = parseTimeToSeconds(challengeeScore.formattedScore);
-            
-            // For times, lower is better
-            // Check if challenger overtook challengee
-            if (previousChallengerValue > previousChallengeeValue && currentChallengerValue <= currentChallengeeValue) {
-                positionChange = {
-                    newLeader: challenge.challengerUsername,
-                    previousLeader: challenge.challengeeUsername
-                };
-            }
-            // Check if challengee overtook challenger
-            else if (previousChallengeeValue > previousChallengerValue && currentChallengeeValue <= currentChallengerValue) {
-                positionChange = {
-                    newLeader: challenge.challengeeUsername,
-                    previousLeader: challenge.challengerUsername
-                };
-            }
-        } else {
-            // Parse scores for score-based challenges
-            previousChallengerValue = parseScoreString(previousChallengerScore);
-            previousChallengeeValue = parseScoreString(previousChallengeeScore);
-            currentChallengerValue = parseScoreString(challengerScore.formattedScore);
-            currentChallengeeValue = parseScoreString(challengeeScore.formattedScore);
-            
-            // For scores, higher is better
-            // Check if challenger overtook challengee
-            if (previousChallengerValue < previousChallengeeValue && currentChallengerValue >= currentChallengeeValue) {
-                positionChange = {
-                    newLeader: challenge.challengerUsername,
-                    previousLeader: challenge.challengeeUsername
-                };
-            }
-            // Check if challengee overtook challenger
-            else if (previousChallengeeValue < previousChallengerValue && currentChallengeeValue >= currentChallengerValue) {
-                positionChange = {
-                    newLeader: challenge.challengeeUsername,
-                    previousLeader: challenge.challengerUsername
-                };
-            }
-        }
-    }
-    
-    return positionChange;
+/**
+ * Determine if a leaderboard is time-based (deprecated - no longer needed)
+ * @deprecated Use ApiRank instead
+ */
+export function isTimeBasedLeaderboard(challenge) {
+    // This function is deprecated since we now use ApiRank
+    // Keeping for backward compatibility but always return false
+    return false;
 }
 
 /**
@@ -211,7 +130,6 @@ export function checkPositionChanges(challenge, challengerScore, challengeeScore
  */
 export function createChallengeEmbed(challenge, challengerScore, challengeeScore, participantScores) {
     // Calculate time remaining
-    const now = new Date();
     const timeLeft = formatTimeRemaining(challenge.endDate);
     
     // Create the embed with the correct color based on challenge type
@@ -269,9 +187,9 @@ function createBasicChallengeEmbed(challenge, challengerScore, embed, timeLeft) 
                `**Ends:** ${timeLeft}`
     });
     
-    // Add creator's score information
+    // Add creator's score information with global rank
     if (challengerScore.exists) {
-        const rankDisplay = challengerScore.rank ? ` (Rank: #${challengerScore.rank})` : '';
+        const rankDisplay = challengerScore.rank ? ` (Global: #${challengerScore.rank})` : '';
         embed.addFields({
             name: 'Creator\'s Score',
             value: `**${challenge.challengerUsername}**: ${challengerScore.formattedScore}${rankDisplay}`
@@ -312,7 +230,7 @@ function createOpenChallengeEmbed(challenge, challengerScore, participantScores,
                `**Participants:** ${challenge.participants.length + 1}` // +1 for the creator
     });
     
-    // Sort participants by rank first, then by score
+    // Sort participants by global rank (ApiRank)
     const allParticipants = [];
     
     // Add creator with rank
@@ -320,7 +238,7 @@ function createOpenChallengeEmbed(challenge, challengerScore, participantScores,
         username: challenge.challengerUsername,
         isCreator: true,
         score: challengerScore.formattedScore,
-        rank: challengerScore.rank || 999999,
+        globalRank: challengerScore.rank || 999999,
         exists: challengerScore.exists
     });
     
@@ -329,43 +247,30 @@ function createOpenChallengeEmbed(challenge, challengerScore, participantScores,
         challenge.participants.forEach(participant => {
             const scoreInfo = participantScores?.get?.(participant.username.toLowerCase());
             const score = scoreInfo?.formattedScore || participant.score || 'No score yet';
-            const rank = scoreInfo?.rank || 0;
+            const globalRank = scoreInfo?.rank || 999999;
             
             allParticipants.push({
                 username: participant.username,
                 isCreator: false,
                 score: score,
-                rank: rank || 999999,
+                globalRank: globalRank,
                 exists: !!scoreInfo?.exists
             });
         });
     }
     
-    // Determine if time-based for sorting
-    const isTimeBasedChallenge = isTimeBasedLeaderboard(challenge);
-    
-    // Sort participants
+    // Sort participants by global rank (lower is better)
     allParticipants.sort((a, b) => {
         // Put participants with scores first
         if (a.exists && !b.exists) return -1;
         if (!a.exists && b.exists) return 1;
         
-        // If both have scores, sort by rank or score
+        // If both have scores, sort by global rank
         if (a.exists && b.exists) {
-            if (a.rank !== 999999 && b.rank !== 999999) {
-                return a.rank - b.rank; // Lower rank is better
-            } else if (isTimeBasedChallenge) {
-                const aValue = parseTimeToSeconds(a.score);
-                const bValue = parseTimeToSeconds(b.score);
-                return aValue - bValue; // Lower time is better
-            } else {
-                const aValue = parseScoreString(a.score);
-                const bValue = parseScoreString(b.score);
-                return bValue - aValue; // Higher score is better
-            }
+            return a.globalRank - b.globalRank;
         }
         
-        return 0; // No preference if neither has scores
+        return 0;
     });
     
     // Create standings field with crown for the leader
@@ -376,7 +281,7 @@ function createOpenChallengeEmbed(challenge, challengerScore, participantScores,
             // Add crown emoji only for the top position (leader)
             const prefixEmoji = index === 0 ? `${EMOJIS.CROWN} ` : '';
             const creatorTag = participant.isCreator ? ' (Creator)' : '';
-            const rankDisplay = participant.rank < 999999 ? ` (Rank: #${participant.rank})` : '';
+            const rankDisplay = participant.globalRank < 999999 ? ` (Global: #${participant.globalRank})` : '';
             
             participantsText += `${prefixEmoji}**${participant.username}${creatorTag}**: ${participant.score}${rankDisplay}\n`;
         } else {
@@ -436,7 +341,7 @@ function createDirectChallengeEmbed(challenge, challengerScore, challengeeScore,
         embed.addFields({ name: 'Challenge', value: challenge.description });
     }
     
-    // Calculate status text based on correct leader
+    // Calculate status text based on leader
     const statusText = leader === 'Tie' ? 'Challenge is tied!'
                      : leader === challenge.challengerUsername ? `${challenge.challengerUsername} leads`
                      : leader === challenge.challengeeUsername ? `${challenge.challengeeUsername} leads` 
@@ -450,45 +355,41 @@ function createDirectChallengeEmbed(challenge, challengerScore, challengeeScore,
                `**Status:** ${statusText}`
     });
     
-    // Add current scores with crown notation
-    // Sort challenger and challengee by rank or score
+    // Add current scores with crown notation - sorted by global rank
     const participants = [
         {
             username: challenge.challengerUsername,
             score: challengerScore.formattedScore,
-            rank: challengerScore.rank || 999999,
+            globalRank: challengerScore.rank || 999999,
             exists: challengerScore.exists,
             isLeader: leader === challenge.challengerUsername
         },
         {
             username: challenge.challengeeUsername,
             score: challengeeScore.formattedScore,
-            rank: challengeeScore.rank || 999999,
+            globalRank: challengeeScore.rank || 999999,
             exists: challengeeScore.exists,
             isLeader: leader === challenge.challengeeUsername
         }
     ];
     
-    // Sort by rank first (lower is better)
+    // Sort by global rank (lower is better)
     participants.sort((a, b) => {
         if (a.exists && !b.exists) return -1;
         if (!a.exists && b.exists) return 1;
         
         if (a.exists && b.exists) {
-            if (a.rank !== 999999 && b.rank !== 999999) {
-                return a.rank - b.rank;
-            }
+            return a.globalRank - b.globalRank;
         }
         
-        // Default to showing the leader first
-        return (a.isLeader === b.isLeader) ? 0 : (a.isLeader ? -1 : 1);
+        return 0;
     });
     
     let scoresText = '';
     participants.forEach((participant) => {
         // Use crown for leader, nothing for others
         const prefixEmoji = participant.isLeader ? `${EMOJIS.CROWN} ` : '';
-        const rankDisplay = participant.rank < 999999 ? ` (Rank: #${participant.rank})` : '';
+        const rankDisplay = participant.globalRank < 999999 ? ` (Global: #${participant.globalRank})` : '';
         
         scoresText += `${prefixEmoji}**${participant.username}:** ${participant.score}${rankDisplay}\n`;
     });
@@ -868,8 +769,6 @@ export default {
     calculateBettingOdds,
     isTimeBasedLeaderboard,
     getEstimatedWinner,
-    parseTimeToSeconds,
-    parseScoreString,
     getLeaderboardEntries,
     findUserInLeaderboard,
     processLeaderboardEntries,
