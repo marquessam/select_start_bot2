@@ -246,29 +246,40 @@ export class AlertManager {
                 });
             }
             
-            // Add current standings if provided - SORTED BY RANK
-            if (currentStandings && currentStandings.length > 0) {
-                // Sort by rank (lower is better)
-                const sortedStandings = [...currentStandings]
-                    .sort((a, b) => (a.rank || 999) - (b.rank || 999));
-                
-                let standingsText = '';
-                sortedStandings.slice(0, 5).forEach(user => {
-                    const rankEmoji = user.rank <= 3 ? 
-                        EMOJIS[`RANK_${user.rank}`] : 
-                        `#${user.rank}`;
-                    
-                    // Show global rank in parentheses if available
-                    const globalRank = user.globalRank ? ` (Global: #${user.globalRank})` : '';
-                    
-                    standingsText += `${rankEmoji} **${user.username}**: ${user.score || user.value}${globalRank}\n`;
-                });
-                
-                embed.addFields({ 
-                    name: 'Current Top 5', 
-                    value: standingsText 
-                });
-            }
+          // Add current standings if provided - SORTED BY RANK
+if (currentStandings && currentStandings.length > 0) {
+    // Sort by rank (lower is better)
+    const sortedStandings = [...currentStandings]
+        .sort((a, b) => (a.rank || 999) - (b.rank || 999));
+    
+    let standingsText = '';
+    sortedStandings.slice(0, 5).forEach(user => {
+        const rankEmoji = user.rank <= 3 ? 
+            EMOJIS[`RANK_${user.rank}`] : 
+            `#${user.rank}`;
+        
+        // Show global rank in parentheses if available
+        const globalRank = user.globalRank ? ` (Global: #${user.globalRank})` : '';
+        
+        // Handle multi-line scores (like those with tiebreaker info)
+        const scoreLines = (user.score || user.value).split('\n');
+        const primaryScore = scoreLines[0];
+        const secondaryInfo = scoreLines.slice(1).join('\n');
+        
+        standingsText += `${rankEmoji} **${user.username}**: ${primaryScore}${globalRank}\n`;
+        
+        // Add secondary information (like tiebreaker) with proper indentation
+        if (secondaryInfo.trim()) {
+            // Indent the secondary information slightly
+            standingsText += `   ${secondaryInfo}\n`;
+        }
+    });
+    
+    embed.addFields({ 
+        name: 'Current Top 5', 
+        value: standingsText 
+    });
+}
             
             // Add footer if provided
             if (footer) {
