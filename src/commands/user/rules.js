@@ -93,6 +93,12 @@ export default {
                             emoji: '🏎️'
                         },
                         {
+                            label: 'Arena Battle Rules',
+                            description: 'Rules for head-to-head arena competitions',
+                            value: 'arena',
+                            emoji: '⚔️'
+                        },
+                        {
                             label: 'Points System',
                             description: 'Detailed explanation of points system',
                             value: 'points',
@@ -166,6 +172,10 @@ export default {
                 case 'arcade':
                     const arcadeEmbed = this.createArcadeRacingEmbed();
                     await i.editReply({ embeds: [arcadeEmbed], components: [backRow] });
+                    break;
+                case 'arena':
+                    const arenaEmbed = this.createArenaRulesEmbed();
+                    await i.editReply({ embeds: [arenaEmbed], components: [backRow] });
                     break;
                 case 'points':
                     const pointsEmbed = this.createPointsSystemEmbed();
@@ -340,9 +350,11 @@ export default {
                 {
                     name: '📆 Time Restrictions',
                     value: '• **Monthly Challenge Timeframe** - From 12:00 AM on the 1st day to 11:59 PM on the last day of the month\n' +
-                           '• **Racing Challenge Duration** - As specified in the challenge announcement, typically one calendar month\n' +
+                           '• **Shadow Challenge Timeframe** - Same as monthly challenge (must complete within challenge month to earn points)\n' +
+                           '• **Racing Challenge Duration** - From 1st of the month to end of month, as specified in challenge announcement\n' +
                            '• **Arcade Boards** - Open year-round until December 1st when points are calculated\n' +
-                           '• **Tiebreakers** - Special tiebreaker challenges have their own specified timeframes'
+                           '• **Arena Battles** - Individual time limits set for each challenge\n' +
+                           '• **Tiebreakers** - Announced in 3rd week of month with their own specified timeframes'
                 },
                 {
                     name: '📊 Achievement Tracking',
@@ -354,11 +366,13 @@ export default {
                 },
                 {
                     name: '⚖️ Tie Resolution',
-                    value: '• **Identical Mastery** - When users reach identical mastery status in monthly challenges\n' +
-                           '• **Tiebreaker Events** - Special tiebreaker competitions will typically be created\n' +
-                           '• **Participation** - Anyone can participate in tiebreakers, but only tied users\' scores count toward final rankings\n' +
+                    value: '• **Monthly Challenge Only** - Only monthly challenges have tiebreaker events for tied positions\n' +
+                           '• **Identical Mastery** - When users reach identical mastery status in monthly challenges\n' +
+                           '• **Tiebreaker Events** - Special tiebreaker competitions will typically be announced in the 3rd week\n' +
+                           '• **Open Participation** - Anyone can participate in tiebreakers\n' +
+                           '• **Scoring** - Only scores from users tied for top 3 positions count toward final monthly challenge rankings\n' +
                            '• **Tiebreaker Format** - Usually involves a time-limited competition on a separate game\n' +
-                           '• **Timeline** - Usually ends with the monthly challenge but may be extended in special circumstances (e.g., a tie within a tie)'
+                           '• **Timeline** - Usually ends with the monthly challenge but may be extended in special circumstances'
                 },
                 {
                     name: '🚫 Disqualification',
@@ -384,7 +398,6 @@ export default {
                     value: '• **Admin Registration** - You must be registered by an admin using the `/register` command\n' +
                            '• **RetroAchievements Account** - You must have a valid RetroAchievements account\n' +
                            '• **Account Linking** - Your RetroAchievements username must be linked to your Discord account\n' +
-                           '• **Account Age** - Your RetroAchievements account should be at least 7 days old\n' +
                            '• **Account Changes** - If you change your RetroAchievements username, notify an admin for updating'
                 },
                 {
@@ -458,12 +471,30 @@ export default {
                 },
                 {
                     name: '#the-arcade',
-                    value: '• For discussions about arcade board challenges\n' +
+                    value: '• For discussions about arcade board challenges and racing\n' +
                            '• Share racing strategies and time trial tips\n' +
                            '• Discuss high scores and leaderboard standings\n' +
                            '• Suggest new arcade boards and racing challenges\n' +
                            '• Ask technical questions about specific leaderboards\n' +
                            '• Celebrate new records and personal bests'
+                },
+                {
+                    name: '#the-arena',
+                    value: '• For discussions about arena challenges and head-to-head competitions\n' +
+                           '• Coordinate arena battles between members\n' +
+                           '• Share strategies for specific competitive games\n' +
+                           '• Celebrate wins and congratulate opponents\n' +
+                           '• Report disputes or issues with arena challenges\n' +
+                           '• Maintain good sportsmanship in all discussions'
+                },
+                {
+                    name: '#retroachievements',
+                    value: '• For general RetroAchievements discussion\n' +
+                           '• Share achievement hunting tips and strategies\n' +
+                           '• Discuss RetroAchievements news and updates\n' +
+                           '• Ask questions about emulators and setup\n' +
+                           '• Share interesting achievement sets and games\n' +
+                           '• General RetroAchievements community discussion'
                 },
                 {
                     name: '#nominations',
@@ -503,12 +534,13 @@ export default {
             .setDescription('Detailed rules for participating in our monthly challenge events:')
             .addFields(
                 {
-                    name: '📆 Challenge Period',
+                    name: '📆 Challenge Period & Schedule',
                     value: '• **Start Date** - 12:00 AM on the 1st day of each month\n' +
                            '• **End Date** - 11:59 PM on the last day of each month\n' +
                            '• **Grace Period** - The last day of the previous month (for participation only)\n' +
                            '• **Time Zone** - All times are based on UTC (Coordinated Universal Time)\n' +
-                           '• **Selection Process** - Games are chosen by community vote from nominated titles'
+                           '• **Selection Process** - Games are chosen by community vote from nominated titles\n' +
+                           '• **Voting Period** - Starts 8 days before month end, closes 1 day before month end'
                 },
                 {
                     name: '🏆 Achievement Categories',
@@ -519,18 +551,18 @@ export default {
                            '• **Beaten vs. Mastery** - "Beaten" requires progression/win achievements; "Mastery" requires all achievements'
                 },
                 {
-                    name: '📊 Point Structure',
-                    value: '**CUMULATIVE POINT SYSTEM:**\n' +
+                    name: '📊 Point Structure (Additive System)',
+                    value: '**ADDITIVE POINT SYSTEM:**\n' +
                            '• **Participation** - 1 point (earned by unlocking any achievement)\n' +
-                           '• **Beaten** - 4 points total (1 for participation + 3 for completing all progression requirements)\n' +
-                           '• **Mastery** - 7 points total (1 for participation + 3 for beaten + 3 for 100% completion)\n\n' +
-                           'Points from each tier include points from lower tiers (cumulative).'
+                           '• **Beaten** - +3 additional points (4 points total - includes participation)\n' +
+                           '• **Mastery** - +3 additional points (7 points total - includes participation + beaten)\n\n' +
+                           '**CRITICAL REQUIREMENT:** You must complete the challenge within the challenge month to earn points!'
                 },
                 {
                     name: '🥇 Leaderboard Rankings',
                     value: '• **Monthly Rankings** - Based on achievement completion percentage\n' +
                            '• **Tiebreakers** - Same percentage ties are resolved by earliest completion timestamp\n' +
-                           '• **Prize Tiebreakers** - Ties for top 3 positions may trigger special tiebreaker events\n' +
+                           '• **Prize Tiebreakers** - Ties for top 3 positions may trigger special tiebreaker events (announced 3rd week)\n' +
                            '• **Leaderboard Updates** - Updated regularly throughout the month\n' +
                            '• **Final Standings** - Confirmed within 48 hours after the month ends'
                 },
@@ -575,7 +607,8 @@ export default {
                            '• **Purpose** - Adds mystery and variety to the monthly competitions\n' +
                            '• **Game Style** - While thematically connected to the main challenge, shadow games typically offer different gameplay experiences (different genre, length, or tone)\n' +
                            '• **Discovery Mechanic** - Must be correctly guessed by a community member to be revealed\n' +
-                           '• **Automatic Reveal** - Past month shadow games are automatically revealed'
+                           '• **Automatic Reveal** - Past month shadow games are automatically revealed\n' +
+                           '• **Start Date** - Shadow games begin on the 1st of each month'
                 },
                 {
                     name: '🔍 Guessing Process',
@@ -587,11 +620,13 @@ export default {
                            '• **Hint System** - Occasional hints may be shared by admins in the #shadow-game channel'
                 },
                 {
-                    name: '📊 Point Structure',
-                    value: '**CUMULATIVE POINT SYSTEM:**\n' +
+                    name: '📊 Point Structure (Additive System)',
+                    value: '**ADDITIVE POINT SYSTEM:**\n' +
                            '• **Participation** - 1 point (earned by unlocking any achievement)\n' +
-                           '• **Beaten** - 4 points total (1 for participation + 3 for completing all progression requirements)\n\n' +
-                           '**IMPORTANT:** Shadow games are capped at "Beaten" status - there is no additional mastery bonus.'
+                           '• **Beaten** - +3 additional points (4 points total - includes participation)\n\n' +
+                           '**IMPORTANT LIMITATIONS:**\n' +
+                           '• Shadow games are capped at "Beaten" status - there is no additional mastery bonus\n' +
+                           '• **CRITICAL REQUIREMENT:** You must complete the challenge within the challenge month to earn points!'
                 },
                 {
                     name: '🏆 Achievement Categories',
@@ -603,10 +638,10 @@ export default {
                 },
                 {
                     name: '📆 Timeframe',
-                    value: '• **Start Date** - Once revealed, either by correct guess or automatically\n' +
+                    value: '• **Start Date** - Once revealed, either by correct guess or automatically on the 1st\n' +
                            '• **End Date** - 11:59 PM on the last day of the month (same as monthly challenge)\n' +
                            '• **Past Games** - Previous month shadow games are automatically revealed\n' +
-                           '• **No Grace Period** - Unlike monthly challenges, shadow games have no grace period\n' +
+                           '• **No Grace Period** - Unlike monthly challenges, shadow games have no grace period for points\n' +
                            '• **Guessing Period** - Guessing can begin as soon as the monthly challenge is announced'
                 },
                 {
@@ -639,6 +674,7 @@ export default {
                 {
                     name: '🏎️ Racing Challenge Rules',
                     value: '• **Definition** - Monthly time trial competitions on racing games\n' +
+                           '• **Schedule** - New racing challenges start on the 1st of each month\n' +
                            '• **Timeframe** - Typically runs for one calendar month\n' +
                            '• **Point Structure** - 1st Place (3 points), 2nd Place (2 points), 3rd Place (1 point)\n' +
                            '• **Scoring** - Based on fastest time or highest score depending on the challenge\n' +
@@ -648,6 +684,7 @@ export default {
                 {
                     name: '🎮 Arcade Board Rules',
                     value: '• **Definition** - Year-round leaderboard competitions\n' +
+                           '• **Schedule** - New arcade boards are announced in the 2nd week of each month\n' +
                            '• **Duration** - Boards remain open until December 1st each year\n' +
                            '• **Point Structure** - 1st Place (3 points), 2nd Place (2 points), 3rd Place (1 point)\n' +
                            '• **Point Awarding** - Points awarded annually on December 1st\n' +
@@ -659,7 +696,6 @@ export default {
                     value: '• **Score Tracking** - All scores tracked via RetroAchievements leaderboards\n' +
                            '• **No Manual Submissions** - Scores must be automatically recorded through RetroAchievements\n' +
                            '• **Verification** - Admins may verify unusual scores\n' +
-                           '• **Disputed Scores** - Contested scores may require video evidence\n' +
                            '• **Valid Attempts** - Only attempts completed in Hardcore Mode count\n' +
                            '• **Updates** - Leaderboards update approximately every 30 minutes'
                 },
@@ -678,26 +714,93 @@ export default {
                            '• **No Exploits** - Game-breaking glitches are not permitted\n' +
                            '• **Character Selection** - Any in-game character/vehicle is allowed unless specified\n' +
                            '• **Track Conditions** - Standard track conditions unless specified\n' +
-                           '• **Control Schemes** - Any control scheme is permitted\n' +
-                           '• **Recording** - Recording your runs is encouraged but not required'
+                           '• **Control Schemes** - Any control scheme is permitted'
                 },
                 {
-                    name: '📅 Seasonal Rotation',
-                    value: '• **Board Selection** - Each month we add 1-2 arcade boards to our collection\n' +
+                    name: '📅 Seasonal Rotation & Schedule',
+                    value: '• **Monthly Schedule** - 1st: New racing challenges begin; 2nd week: New arcade boards announced\n' +
                            '• **Racing Rotation** - New racing challenges each month\n' +
                            '• **Annual Reset** - All boards reset on December 1st after points are awarded\n' +
-                           '• **Board Suggestions** - Use `/suggest` to recommend new boards\n' +
-                           '• **Voting** - Community may vote on arcade board selections\n' +
-                           '• **Transparency** - All board selections announced in advance'
+                           '• **Board Suggestions** - Use `/suggest` to recommend new boards'
                 },
                 {
                     name: '⚔️ Tiebreakers',
                     value: '• **Identical Scores** - In case of identical scores, earliest submission wins\n' +
-                           '• **Top 3 Ties** - For tied positions in top 3, additional tiebreaker events may be created\n' +
-                           '• **Tiebreaker Format** - Usually a separate mini-challenge\n' +
-                           '• **Participation** - Only tied participants can compete in tiebreakers\n' +
-                           '• **Duration** - Typically shorter than regular challenges (3-7 days)\n' +
+                           '• **Tied Positions** - For tied positions in top 3, all tied users receive the same amount of points\n' +
+                           '• **No Special Events** - Arcade and racing challenges do not have additional tiebreaker competitions\n' +
                            '• **Decision** - Admins have final say in tiebreaker disputes'
+                }
+            )
+            .setFooter({ text: 'Select Start Gaming Community • Updated Rules' })
+            .setTimestamp();
+    },
+
+    createArenaRulesEmbed() {
+        return new EmbedBuilder()
+            .setTitle('Arena Battle Rules')
+            .setColor('#C0392B')
+            .setDescription('Comprehensive rules for head-to-head arena competitions:')
+            .addFields(
+                {
+                    name: '⚔️ Arena System Overview',
+                    value: '• **Definition** - Head-to-head competitive challenges between community members on RetroAchievements leaderboards\n' +
+                           '• **Purpose** - Provides direct competition and GP betting opportunities\n' +
+                           '• **Monthly Allowance** - All users receive 1,000 GP automatically on the 1st of each month\n' +
+                           '• **GP Wagering** - Winner takes agreed-upon GP from loser\n' +
+                           '• **Mutual Agreement** - Both players must agree to challenge terms before it begins'
+                },
+                {
+                    name: '🌐 Challenge Types',
+                    value: '• **Direct Challenges** - Challenge a specific user to a one-on-one competition\n' +
+                           '• **Open Challenges** - Create challenges that any community member can join\n' +
+                           '• **Leaderboard-based** - All challenges use existing RetroAchievements leaderboards\n' +
+                           '• **Custom Objectives** - Clearly define victory conditions (highest score, fastest time, etc.)\n' +
+                           '• **Challenge Expiration** - Challenges have time limits and can expire if not completed'
+                },
+                {
+                    name: '💰 GP & Betting System',
+                    value: '• **GP Currency** - GP (Gold Points) is the Arena currency used for all wagers\n' +
+                           '• **Monthly GP** - Receive 1,000 GP automatically on the 1st of each month\n' +
+                           '• **Wager Limits** - Cannot wager more GP than you currently have\n' +
+                           '• **Automatic Transfer** - GP is transferred automatically when challenges complete\n' +
+                           '• **Pot Betting** - Bet GP on other players\' challenges during first 72 hours\n' +
+                           '• **House Guarantee** - 50% profit guaranteed if you\'re the only bettor and your player wins'
+                },
+                {
+                    name: '📋 Challenge Creation & Management',
+                    value: '• **Challenge Creation** - Use `/arena` to create new challenges for other players\n' +
+                           '• **Terms Agreement** - Both players must agree to all terms before the challenge begins\n' +
+                           '• **Duration** - All challenges have a fixed duration of 1 week\n' +
+                           '• **Objective Setting** - Clearly define victory conditions and game requirements\n' +
+                           '• **Open Challenge Cancellation** - Open challenges with no participants can be cancelled within 72 hours\n' +
+                           '• **Auto-cancellation** - Open challenges automatically cancel after 72 hours if no one joins'
+                },
+                {
+                    name: '⚠️ Technical Requirements',
+                    value: '• **Hardcore Mode Required** - All arena battles must use RetroAchievements Hardcore Mode\n' +
+                           '• **No Save States** - Save states are strictly prohibited\n' +
+                           '• **No Rewind** - Rewind features are strictly prohibited\n' +
+                           '• **Fast Forward Allowed** - Fast forward is permitted\n' +
+                           '• **Approved Emulators** - Same emulator requirements as other challenges\n' +
+                           '• **Account Standing** - Must be in good standing with RetroAchievements'
+                },
+                {
+                    name: '🏆 Competition Guidelines',
+                    value: '• **Fair Play** - Play honestly and follow all community competition guidelines\n' +
+                           '• **Sportsmanship** - Maintain good sportsmanship before, during, and after battles\n' +
+                           '• **No Collaboration** - Each player must play their own games\n' +
+                           '• **Clear Descriptions** - When creating challenges, clearly specify track/level/mode/difficulty\n' +
+                           '• **Completion Tracking** - Progress tracked via RetroAchievements API\n' +
+                           '• **Dispute Resolution** - Report disputes to admins for investigation'
+                },
+                {
+                    name: '🚫 Prohibited Actions',
+                    value: '• **GP Manipulation** - Attempting to manipulate GP transfers or balances\n' +
+                           '• **False Challenges** - Creating challenges with no intention to complete them\n' +
+                           '• **Harassment** - Using arena system to harass other players\n' +
+                           '• **Exploitation** - Exploiting bugs or glitches in the arena system\n' +
+                           '• **Coordination** - Coordinating with opponents to manipulate results\n' +
+                           '• **Multiple Accounts** - Using multiple accounts for arena battles'
                 }
             )
             .setFooter({ text: 'Select Start Gaming Community • Updated Rules' })
@@ -711,26 +814,28 @@ export default {
             .setDescription('Complete breakdown of our community points system:')
             .addFields(
                 {
-                    name: '🎮 Monthly Challenge Points',
-                    value: '**CUMULATIVE POINT STRUCTURE:**\n' +
+                    name: '🎮 Monthly Challenge Points (Additive)',
+                    value: '**ADDITIVE POINT STRUCTURE:**\n' +
                            '• **Participation** - 1 point (earn any achievement)\n' +
-                           '• **Beaten** - 4 points total (1 for participation + 3 for completion)\n' +
-                           '• **Mastery** - 7 points total (1 for participation + 3 for beaten + 3 for 100% completion)\n\n' +
+                           '• **Beaten** - +3 additional points (4 points total - includes participation)\n' +
+                           '• **Mastery** - +3 additional points (7 points total - includes participation + beaten)\n\n' +
                            '**Requirements:**\n' +
                            '• Complete all designated progression achievements\n' +
                            '• Earn any required win achievements (when applicable)\n' +
                            '• For mastery, earn 100% of all achievements in the game\n\n' +
-                           'Points are awarded at month\'s end based on highest status achieved.'
+                           '**CRITICAL:** Must complete challenge within the challenge month to earn points!'
                 },
                 {
-                    name: '👥 Shadow Challenge Points',
-                    value: '**CUMULATIVE POINT STRUCTURE:**\n' +
+                    name: '👥 Shadow Challenge Points (Additive)',
+                    value: '**ADDITIVE POINT STRUCTURE:**\n' +
                            '• **Participation** - 1 point (earn any achievement)\n' +
-                           '• **Beaten** - 4 points total (1 for participation + 3 for completion)\n\n' +
+                           '• **Beaten** - +3 additional points (4 points total - includes participation)\n\n' +
                            '**Requirements:**\n' +
                            '• Complete all designated progression achievements\n' +
                            '• Earn any required win achievements (when applicable)\n\n' +
-                           '**IMPORTANT:** Shadow games are capped at "Beaten" status - there is no additional mastery bonus.'
+                           '**IMPORTANT LIMITATIONS:**\n' +
+                           '• Shadow games are capped at "Beaten" status - no mastery bonus\n' +
+                           '• Must complete challenge within the challenge month to earn points!'
                 },
                 {
                     name: '🏎️ Racing Challenge Points',
@@ -742,7 +847,7 @@ export default {
                            '• Must place in top 999 of global leaderboard\n' +
                            '• Must use Hardcore Mode\n' +
                            '• Must submit score during the challenge period\n\n' +
-                           'Racing points are awarded at the end of each month\'s challenge.'
+                           '**Schedule:** New racing challenges start on the 1st of each month'
                 },
                 {
                     name: '🎮 Arcade Leaderboard Points',
@@ -754,15 +859,39 @@ export default {
                            '• Must place in top 999 of global leaderboard\n' +
                            '• Must use Hardcore Mode\n' +
                            '• Scores valid until December 1st\n\n' +
-                           'Points are awarded for each arcade board separately, so you can earn points from multiple boards.'
+                           '**Schedule:** New arcade boards announced in 2nd week of each month\n' +
+                           'Points awarded for each arcade board separately'
+                },
+                {
+                    name: '⚔️ Arena Battle GP',
+                    value: '**GP WAGERING SYSTEM:**\n' +
+                           '• **GP Currency** - GP (Gold Points) used for all arena wagers and bets\n' +
+                           '• **Monthly GP** - All users receive 1,000 GP automatically on the 1st of each month\n' +
+                           '• **Winner Takes Wager** - Winner receives full wager amount from loser in direct challenges\n' +
+                           '• **Open Challenge Pots** - All participants contribute to pot, winner takes all\n' +
+                           '• **Pot Betting** - Bet GP on others\' challenges during first 72 hours\n' +
+                           '• **House Guarantee** - 50% profit guaranteed if you\'re the only bettor and your player wins\n\n' +
+                           '**Schedule:** GP allowance refreshed on the 1st of each month'
                 },
                 {
                     name: '🏅 Community Awards',
                     value: '**SPECIAL RECOGNITION:**\n' +
-                           '• **Community Contribution** - Exceptional contributions to the community\n' +
-                           '• **Special Event Winner** - Winners of special events and contests\n' +
-                           '• **Seasonal Champion** - Outstanding performance across multiple months\n\n' +
-                           'These awards are given at the discretion of the admin team for notable achievements and contributions.'
+                           '• **Community Contribution** - For exceptional contributions to the community\n' +
+                           '• **Special Event Winner** - For winners of special events and contests\n' +
+                           '• **Seasonal Champion** - For outstanding performance across multiple categories\n\n' +
+                           'These awards are given at the discretion of the admin team for notable achievements and community involvement.'
+                },
+                {
+                    name: '📅 Monthly Schedule Summary',
+                    value: '**1st of Month:**\n' +
+                           '• New monthly challenges begin\n' +
+                           '• New shadow games begin\n' +
+                           '• New racing challenges start\n' +
+                           '• Arena allowance refreshed\n\n' +
+                           '**2nd Week:** New arcade boards announced\n' +
+                           '**3rd Week:** Tiebreakers announced (if needed)\n' +
+                           '**8 days before end:** Voting opens\n' +
+                           '**1 day before end:** Voting closes'
                 },
                 {
                     name: '📊 Point Tracking & Verification',
@@ -775,15 +904,11 @@ export default {
                 },
                 {
                     name: '🏆 Annual Awards',
-                    value: '**DECEMBER 1ST AWARDS (TBD):**\n' +
-                           'Annual awards may include categories such as:\n' +
-                           '• **Grand Champion** - Highest overall point earner for the year\n' +
-                           '• **Monthly Master** - Most monthly challenge points\n' +
-                           '• **Shadow Seeker** - Most shadow game points\n' +
-                           '• **Racing Champion** - Most racing challenge points\n' +
-                           '• **Arcade Legend** - Most arcade board points\n' +
-                           '• **Community Star** - Community contributions\n\n' +
-                           'Specific award categories and prizes will be determined closer to the event. All points reset after the December awards.'
+                    value: '**DECEMBER 1ST AWARDS (WORK IN PROGRESS):**\n' +
+                           'Annual awards are still being planned and nothing is finalized yet. However, we can confirm:\n\n' +
+                           '• **Grand Prize** - Steam Deck for the player with the most overall points for the year\n' +
+                           '• **Additional Categories** - Various award categories are being considered for different types of achievements\n\n' +
+                           'More details about award categories, criteria, and prizes will be announced as they are finalized. All points reset after the December awards ceremony.'
                 }
             )
             .setFooter({ text: 'Select Start Gaming Community • Updated Rules' })
