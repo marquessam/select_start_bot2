@@ -745,85 +745,91 @@ class LeaderboardFeedService extends FeedManagerBase {
     }
 
     // Send alerts for rank changes using AlertUtils
-   async sendRankChangeAlerts(alerts) {
-        try {
-            // Get current challenge game info for embedding
-            const now = new Date();
-            const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-            const nextMonthStart = new Date(now.getFullYear(), now.getMonth() + 1, 1);
-            
-            const currentChallenge = await Challenge.findOne({
-                date: {
-                    $gte: currentMonthStart,
-                    $lt: nextMonthStart
-                }
-            });
-
-            if (!currentChallenge) {
-                console.log('No active challenge found for the current month.');
-                return;
+async sendRankChangeAlerts(alerts) {
+    try {
+        // Get current challenge game info for embedding
+        const now = new Date();
+        const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+        const nextMonthStart = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+        
+        const currentChallenge = await Challenge.findOne({
+            date: {
+                $gte: currentMonthStart,
+                $lt: nextMonthStart
             }
+        });
 
-            // Get month name
-            const monthName = now.toLocaleString('default', { month: 'long' });
-
-            // Format position changes
-            const changes = [];
-            for (const alert of alerts) {
-                if (alert.type === 'overtake') {
-                    changes.push({
-                        username: alert.user.username,
-                        newRank: alert.newRank
-                    });
-                } else if (alert.type === 'newEntry') {
-                    changes.push({
-                        username: alert.user.username,
-                        newRank: alert.newRank
-                    });
-                }
-            }
-
-            // Get current top standings for the alert
-            const { sortedUsers } = await this.generateLeaderboardEmbeds();
-            const currentStandings = [];
-            
-            if (sortedUsers && sortedUsers.length > 0) {
-                // Get top 5
-                const topFive = sortedUsers.slice(0, 5);
-                
-                for (const user of topFive) {
-                    currentStandings.push({
-                        username: user.username,
-                        rank: user.displayRank,
-                        score: `${user.achieved}/${currentChallenge.monthly_challange_game_total} achievements (${user.percentage}%)`
-                    });
-                }
-            }
-
-            // Get thumbnail URL
-            let thumbnailUrl = null;
-            if (currentChallenge.monthly_game_icon_url) {
-                thumbnailUrl = `https://retroachievements.org${currentChallenge.monthly_game_icon_url}`;
-            }
-
-            // Send alert using AlertUtils with MONTHLY alert type
-            // Note: You'll need to add ALERT_TYPES to the import at the top of the file:
-            // import AlertUtils, { ALERT_TYPES } from '../utils/AlertUtils.js';
-            await AlertUtils.sendPositionChangeAlert({
-                title: `📊 ${monthName} Challenge Update!`,
-                description: `The leaderboard for **${currentChallenge.monthly_challange_title || 'the monthly challenge'}** has been updated!`,
-                changes: changes,
-                currentStandings: currentStandings,
-                thumbnail: thumbnailUrl,
-                color: COLORS.INFO, // Changed to INFO (purple) to match monthly challenge color scheme
-                footer: { text: 'Data provided by RetroAchievements • Rankings update every 15 minutes' }
-            }, 'monthly'); // FIXED: Specify 'monthly' alert type for proper channel routing
-            
-            console.log(`Sent monthly challenge leaderboard alert to MONTHLY channel with ${changes.length} position changes`);
-        } catch (error) {
-            console.error('Error sending monthly challenge rank change alerts:', error);
+        if (!currentChallenge) {
+            console.log('No active challenge found for the current month.');
+            return;
         }
+
+        // Get month name
+        const monthName = now.toLocaleString('default', { month: 'long' });
+
+        // Format position changes
+        const changes = [];
+        for (const alert of alerts) {
+            if (alert.type === 'overtake') {
+                changes.push({
+                    username: alert.user.username,
+                    newRank: alert.newRank
+                });
+            } else if (alert.type === 'newEntry') {
+                changes.push({
+                    username: alert.user.username,
+                    newRank: alert.newRank
+                });
+            }
+        }
+
+        // Get current top standings for the alert
+        const { sortedUsers } = await this.generateLeaderboardEmbeds();
+        const currentStandings = [];
+        
+        if (sortedUsers && sortedUsers.length > 0) {
+            // Get top 5
+            const topFive = sortedUsers.slice(0, 5);
+            
+            for (const user of topFive) {
+                // Create score text with tiebreaker information if available
+                let scoreText = `${user.achieved}/${currentChallenge.monthly_challange_game_total} achievements (${user.percentage}%)`;
+                
+                // Add tiebreaker information if the user has it
+                if (user.hasTiebreaker && user.tiebreakerScore) {
+                    scoreText += `\n⚔️ Tiebreaker: ${user.tiebreakerScore} in ${user.tiebreakerGame}`;
+                }
+                
+                currentStandings.push({
+                    username: user.username,
+                    rank: user.displayRank,
+                    score: scoreText
+                });
+            }
+        }
+
+        // Get thumbnail URL
+        let thumbnailUrl = null;
+        if (currentChallenge.monthly_game_icon_url) {
+            thumbnailUrl = `https://retroachievements.org${currentChallenge.monthly_game_icon_url}`;
+        }
+
+        // Send alert using AlertUtils with MONTHLY alert type
+        await AlertUtils.sendPositionChangeAlert({
+            title: `📊 ${monthName} Challenge Update!`,
+            description: `The leaderboard for **${currentChallenge.monthly_challange_title || 'the monthly challenge'}** has been updated!`,
+            changes: changes,
+            currentStandings: currentStandings,
+            thumbnail: thumbnailUrl,
+            color: COLORS.INFO, // Purple to match monthly challenge color scheme
+            footer: { text: 'Data provided by RetroAchievements • Rankings update every 15 minutes' }
+        }, 'monthly'); // Specify 'monthly' alert type for proper channel routing
+        
+        console.log(`Sent monthly challenge leaderboard alert to MONTHLY channel with ${changes.length} position changes`);
+    } catch (error) {
+        console.error('Error sending monthly challenge rank change alerts:', error);
     }
+}
 
     // Code to assign ranks (mostly preserved from original)
     assignRanks(users, tiebreakerEntries, activeTiebreaker) {
