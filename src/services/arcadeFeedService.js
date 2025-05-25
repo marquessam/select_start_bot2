@@ -7,6 +7,10 @@ import { COLORS, EMOJIS, createHeaderEmbed, createLeaderboardEmbed, getDiscordTi
 import { EmbedBuilder } from 'discord.js';
 import RetroAPIUtils from '../utils/RetroAPIUtils.js';
 
+// NEW: Tiebreaker-specific emojis
+const TIEBREAKER_EMOJI = '⚔️';        // Main tiebreaker
+const TIEBREAKER_BREAKER_EMOJI = '🗡️'; // Tiebreaker-breaker
+
 class ArcadeFeedService extends FeedManagerBase {
     constructor() {
         super(null, config.discord.arcadeFeedChannelId || '1371363491130114098');
@@ -108,7 +112,7 @@ class ArcadeFeedService extends FeedManagerBase {
             });
             
             // Check if there's an active tiebreaker
-            const hasTiebreaker = await ArcadeBoard.exists({
+            const activeTiebreaker = await ArcadeBoard.findOne({
                 boardType: 'tiebreaker',
                 startDate: { $lte: now },
                 endDate: { $gte: now }
@@ -140,8 +144,14 @@ class ArcadeFeedService extends FeedManagerBase {
             // Add active boards info
             let contentField = '';
             
-            if (hasTiebreaker) {
-                contentField += `• **Active Tiebreaker:** ${currentMonth} tiebreaker (see below)\n`;
+            // NEW: Enhanced tiebreaker display with tiebreaker-breaker info
+            if (activeTiebreaker) {
+                let tiebreakerText = `• **Active Tiebreaker:** ${currentMonth} tiebreaker (see below)`;
+                if (activeTiebreaker.hasTiebreakerBreaker()) {
+                    const tbInfo = activeTiebreaker.getTiebreakerBreakerInfo();
+                    tiebreakerText += `\n  ${TIEBREAKER_BREAKER_EMOJI} **Tiebreaker-Breaker:** ${tbInfo.gameTitle}`;
+                }
+                contentField += tiebreakerText + '\n';
             }
             
             if (hasRacingBoard) {
@@ -187,7 +197,7 @@ class ArcadeFeedService extends FeedManagerBase {
     }
 
     /**
-     * Update the tiebreaker board embed
+     * ENHANCED: Update the tiebreaker board embed with tiebreaker-breaker support
      */
     async updateTiebreakerBoard(channel, tiebreaker) {
         try {
@@ -226,6 +236,34 @@ class ArcadeFeedService extends FeedManagerBase {
                 }
             }
             
+            // NEW: Get tiebreaker-breaker entries if available
+            let tiebreakerBreakerEntries = [];
+            if (tiebreaker.hasTiebreakerBreaker()) {
+                try {
+                    const tbInfo = tiebreaker.getTiebreakerBreakerInfo();
+                    const tbRawEntries = await RetroAPIUtils.getLeaderboardEntries(tbInfo.leaderboardId, 1000);
+                    
+                    for (const entry of tbRawEntries) {
+                        const username = entry.User || '';
+                        if (!username) continue;
+                        
+                        const lowerUsername = username.toLowerCase().trim();
+                        if (registeredUsers.has(lowerUsername)) {
+                            tiebreakerBreakerEntries.push({
+                                apiRank: entry.Rank,
+                                username: username,
+                                score: entry.FormattedScore || entry.Score?.toString() || '0'
+                            });
+                        }
+                    }
+                    
+                    // Sort by API rank
+                    tiebreakerBreakerEntries.sort((a, b) => a.apiRank - b.apiRank);
+                } catch (error) {
+                    console.error('Error fetching tiebreaker-breaker entries:', error);
+                }
+            }
+            
             // Sort by API rank to ensure correct ordering
             filteredEntries.sort((a, b) => a.apiRank - b.apiRank);
             
@@ -251,13 +289,24 @@ class ArcadeFeedService extends FeedManagerBase {
                 console.error(`Error fetching game info for tiebreaker ${tiebreaker.gameTitle}:`, error);
             }
             
+            // NEW: Enhanced description with tiebreaker-breaker info
+            let description = `**${tiebreaker.gameTitle}**\n${tiebreaker.description || ''}\n\n` +
+                            `This tiebreaker is used to resolve ties in the ${monthName} challenge standings.\n` +
+                            `End time: ${endTimestamp} (${endRelative})\n\n`;
+            
+            // Add tiebreaker-breaker info if available
+            if (tiebreaker.hasTiebreakerBreaker()) {
+                const tbInfo = tiebreaker.getTiebreakerBreakerInfo();
+                description += `${TIEBREAKER_BREAKER_EMOJI} **Tiebreaker-Breaker:** ${tbInfo.gameTitle}\n` +
+                             `*Used to resolve ties within the tiebreaker itself.*\n\n`;
+            }
+            
+            description += `*Note: Only users ranked 999 or lower in the global leaderboard are shown.*`;
+            
             // Create embed
             const embed = createHeaderEmbed(
-                `⚔️ ${monthName} Tiebreaker Challenge`,
-                `**${tiebreaker.gameTitle}**\n${tiebreaker.description || ''}\n\n` +
-                `This tiebreaker is used to resolve ties in the ${monthName} challenge standings.\n` +
-                `End time: ${endTimestamp} (${endRelative})\n\n` +
-                `*Note: Only users ranked 999 or lower in the global leaderboard are shown.*`,
+                `${TIEBREAKER_EMOJI} ${monthName} Tiebreaker Challenge`,
+                description,
                 {
                     color: '#9B59B6', // Purple color for tiebreaker
                     thumbnail: thumbnailUrl,
@@ -288,6 +337,16 @@ class ArcadeFeedService extends FeedManagerBase {
                     const tiedIndicator = entry.isTiedUser ? ' 🔄' : '';
                     
                     leaderboardText += `${medalEmoji} **${entry.username}${tiedIndicator}**: ${entry.score} (Global Rank: #${entry.apiRank})\n`;
+                    
+                    // NEW: Add tiebreaker-breaker score if available
+                    if (tiebreakerBreakerEntries.length > 0) {
+                        const tbEntry = tiebreakerBreakerEntries.find(tb => 
+                            tb.username.toLowerCase() === entry.username.toLowerCase()
+                        );
+                        if (tbEntry) {
+                            leaderboardText += `   ${TIEBREAKER_BREAKER_EMOJI} ${tbEntry.score} (TB-Breaker Global: #${tbEntry.apiRank})\n`;
+                        }
+                    }
                 });
                 
                 if (tiedUsernames.length > 0) {
@@ -301,6 +360,14 @@ class ArcadeFeedService extends FeedManagerBase {
                     name: 'Participants', 
                     value: `${filteredEntries.length} registered members participating in this tiebreaker`
                 });
+                
+                // NEW: Add tiebreaker-breaker participants if available
+                if (tiebreakerBreakerEntries.length > 0) {
+                    embed.addFields({
+                        name: 'Tiebreaker-Breaker Participants',
+                        value: `${tiebreakerBreakerEntries.length} members also competing in the tiebreaker-breaker`
+                    });
+                }
             } else {
                 embed.addFields({ name: 'No Participants', value: 'No registered users have submitted scores for this tiebreaker yet.' });
             }
