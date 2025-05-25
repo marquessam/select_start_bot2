@@ -599,7 +599,7 @@ class LeaderboardFeedService extends FeedManagerBase {
             console.error('Error generating leaderboard embeds:', error);
             return { headerEmbed: null, participantEmbeds: null, sortedUsers: null };
         }
-    },
+    }
 
     // New method to generate yearly leaderboard embeds
     async generateYearlyLeaderboardEmbeds() {
@@ -739,7 +739,7 @@ class LeaderboardFeedService extends FeedManagerBase {
             console.error('Error generating yearly leaderboard embeds:', error);
             return { yearlyHeaderEmbed: null, yearlyParticipantEmbeds: null };
         }
-    },
+    }
 
     // Check for rank changes in the top 3 positions and notify affected users
     async checkForRankChanges(currentRanks) {
@@ -806,7 +806,7 @@ class LeaderboardFeedService extends FeedManagerBase {
         } catch (error) {
             console.error('Error checking for rank changes:', error);
         }
-    },
+    }
 
     // Store top ranks from current leaderboard for future comparison
     storeTopRanks(ranks) {
@@ -819,7 +819,7 @@ class LeaderboardFeedService extends FeedManagerBase {
                 this.previousTopRanks.set(user.username, user.displayRank);
             }
         }
-    },
+    }
 
     // Find which user previously held a specific rank
     findUserByPreviousRank(rank) {
@@ -829,7 +829,7 @@ class LeaderboardFeedService extends FeedManagerBase {
             }
         }
         return null;
-    },
+    }
 
     // NEW: Enhanced sendRankChangeAlerts with tiebreaker-breaker support
     async sendRankChangeAlerts(alerts) {
@@ -1054,7 +1054,7 @@ class LeaderboardFeedService extends FeedManagerBase {
             // Secondary sort: preserve original order for stable sort
             return a.originalIndex - b.originalIndex;
         });
-    },
+    }
 
     // NEW: Enhanced processTieGroup method with tiebreaker-breaker support
     processTieGroup(users, tieGroupIndices, startIdx) {
@@ -1121,7 +1121,7 @@ class LeaderboardFeedService extends FeedManagerBase {
                 users[idx].displayRank = startIdx + 1;
             }
         }
-    },
+    }
 
     // NEW: Method to process tiebreaker tie groups using tiebreaker-breaker
     processTiebreakerTieGroup(users, tieGroupIndices, startRank) {
