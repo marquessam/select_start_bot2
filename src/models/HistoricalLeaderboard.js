@@ -56,7 +56,7 @@ const historicalLeaderboardSchema = new mongoose.Schema({
         default: []
     },
     
-    // Store the complete leaderboard data
+    // Store the complete leaderboard data with tiebreaker-breaker support
     participants: [{
         username: String,
         achievements: Number,
@@ -66,10 +66,23 @@ const historicalLeaderboardSchema = new mongoose.Schema({
         displayRank: Number,
         hasTiebreaker: Boolean,
         tiebreakerScore: String,
-        tiebreakerRank: Number
+        tiebreakerRank: Number,
+        // NEW: Tiebreaker-breaker fields
+        hasTiebreakerBreaker: {
+            type: Boolean,
+            default: false
+        },
+        tiebreakerBreakerScore: {
+            type: String,
+            default: null
+        },
+        tiebreakerBreakerRank: {
+            type: Number,
+            default: null
+        }
     }],
     
-    // Winners for quick access (top 3)
+    // Winners for quick access (top 3) with tiebreaker-breaker support
     winners: [{
         rank: Number,
         username: String,
@@ -77,15 +90,37 @@ const historicalLeaderboardSchema = new mongoose.Schema({
         percentage: Number,
         award: String,
         points: Number,
-        tiebreakerScore: String
+        tiebreakerScore: String,
+        // NEW: Tiebreaker-breaker fields for winners
+        tiebreakerBreakerScore: {
+            type: String,
+            default: null
+        }
     }],
     
-    // Tiebreaker information (if applicable)
+    // Enhanced tiebreaker information with tiebreaker-breaker support
     tiebreakerInfo: {
         gameId: String,
         gameTitle: String,
         leaderboardId: Number,
-        isActive: Boolean
+        isActive: Boolean,
+        // NEW: Tiebreaker-breaker information
+        tiebreakerBreakerGameId: {
+            type: Number,
+            default: null
+        },
+        tiebreakerBreakerGameTitle: {
+            type: String,
+            default: null
+        },
+        tiebreakerBreakerLeaderboardId: {
+            type: Number,
+            default: null
+        },
+        hasTiebreakerBreaker: {
+            type: Boolean,
+            default: false
+        }
     },
     
     // Shadow challenge information (if applicable)
@@ -124,6 +159,50 @@ historicalLeaderboardSchema.methods.getFormattedTitle = function() {
     return `${monthName} ${year} Challenge Leaderboard`;
 };
 
+// NEW: Method to check if this historical leaderboard had a tiebreaker-breaker
+historicalLeaderboardSchema.methods.hadTiebreakerBreaker = function() {
+    return this.tiebreakerInfo && 
+           this.tiebreakerInfo.hasTiebreakerBreaker && 
+           this.tiebreakerInfo.tiebreakerBreakerLeaderboardId;
+};
+
+// NEW: Method to get tiebreaker-breaker info safely
+historicalLeaderboardSchema.methods.getTiebreakerBreakerInfo = function() {
+    if (!this.hadTiebreakerBreaker()) {
+        return null;
+    }
+    
+    return {
+        gameId: this.tiebreakerInfo.tiebreakerBreakerGameId,
+        gameTitle: this.tiebreakerInfo.tiebreakerBreakerGameTitle,
+        leaderboardId: this.tiebreakerInfo.tiebreakerBreakerLeaderboardId
+    };
+};
+
+// NEW: Method to count participants who used tiebreaker-breaker
+historicalLeaderboardSchema.methods.getTiebreakerBreakerParticipantCount = function() {
+    if (!this.participants) return 0;
+    
+    return this.participants.filter(p => p.hasTiebreakerBreaker && p.tiebreakerBreakerScore).length;
+};
+
+// NEW: Method to get formatted tiebreaker description including tiebreaker-breaker
+historicalLeaderboardSchema.methods.getFormattedTiebreakerDescription = function() {
+    if (!this.tiebreakerInfo || !this.tiebreakerInfo.isActive) {
+        return null;
+    }
+    
+    let description = `⚔️ **Tiebreaker Game:** ${this.tiebreakerInfo.gameTitle}\n` +
+                     `*Tiebreaker results were used to determine final ranking for tied users in top positions.*`;
+    
+    if (this.hadTiebreakerBreaker()) {
+        description += `\n\n🗡️ **Tiebreaker-Breaker Game:** ${this.tiebreakerInfo.tiebreakerBreakerGameTitle}\n` +
+                      `*Used to resolve ties within the tiebreaker itself.*`;
+    }
+    
+    return description;
+};
+
 // Static method to find historical leaderboard by month name
 historicalLeaderboardSchema.statics.findByMonthName = async function(monthName, year) {
     const monthNames = [
@@ -154,6 +233,37 @@ historicalLeaderboardSchema.statics.getRecentLeaderboards = function(limit = 10)
     return this.find({ isFinalized: true })
         .sort({ date: -1 })
         .limit(limit);
+};
+
+// NEW: Static method to find leaderboards that used tiebreaker-breakers
+historicalLeaderboardSchema.statics.findWithTiebreakerBreakers = function(limit = 10) {
+    return this.find({ 
+        isFinalized: true,
+        'tiebreakerInfo.hasTiebreakerBreaker': true 
+    })
+        .sort({ date: -1 })
+        .limit(limit);
+};
+
+// NEW: Static method to get statistics about tiebreaker-breaker usage
+historicalLeaderboardSchema.statics.getTiebreakerBreakerStats = async function() {
+    const total = await this.countDocuments({ isFinalized: true });
+    const withTiebreakers = await this.countDocuments({ 
+        isFinalized: true,
+        'tiebreakerInfo.isActive': true 
+    });
+    const withTiebreakerBreakers = await this.countDocuments({ 
+        isFinalized: true,
+        'tiebreakerInfo.hasTiebreakerBreaker': true 
+    });
+    
+    return {
+        totalLeaderboards: total,
+        withTiebreakers: withTiebreakers,
+        withTiebreakerBreakers: withTiebreakerBreakers,
+        tiebreakerUsageRate: total > 0 ? (withTiebreakers / total * 100).toFixed(1) : 0,
+        tiebreakerBreakerUsageRate: withTiebreakers > 0 ? (withTiebreakerBreakers / withTiebreakers * 100).toFixed(1) : 0
+    };
 };
 
 export const HistoricalLeaderboard = mongoose.model('HistoricalLeaderboard', historicalLeaderboardSchema);
