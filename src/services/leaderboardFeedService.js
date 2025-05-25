@@ -17,6 +17,9 @@ const AWARD_EMOJIS = {
     PARTICIPATION: EMOJIS.PARTICIPATION
 };
 
+const TIEBREAKER_EMOJI = '⚔️'; // Emoji to indicate tiebreaker status
+const TIEBREAKER_BREAKER_EMOJI = '🗡️'; // NEW: Emoji for tiebreaker-breaker
+
 const USERS_PER_EMBED = 10; // Number of users to display per embed
 
 class LeaderboardFeedService extends FeedManagerBase {
@@ -216,6 +219,7 @@ class LeaderboardFeedService extends FeedManagerBase {
         return `${year}-${month}`;
     }
 
+    // UPDATED: Enhanced generateLeaderboardEmbeds with tiebreaker-breaker support
     async generateLeaderboardEmbeds() {
         try {
             // Get current date for finding current challenge
@@ -387,20 +391,89 @@ class LeaderboardFeedService extends FeedManagerBase {
             // Create a working copy of sortedProgress for tiebreaker processing
             const workingSorted = [...sortedProgress];
 
-            // Get tiebreaker data if there's an active tiebreaker
+            // NEW: Get tiebreaker and tiebreaker-breaker data if there's an active tiebreaker
             let tiebreakerEntries = [];
+            let tiebreakerBreakerEntries = [];
+            
             if (activeTiebreaker) {
                 try {
-                    // Use RetroAPIUtils to fetch leaderboard entries
-                    tiebreakerEntries = await RetroAPIUtils.getLeaderboardEntries(activeTiebreaker.leaderboardId, 1000);
-                    console.log(`Total tiebreaker entries fetched: ${tiebreakerEntries.length}`);
+                    // Fetch multiple batches of leaderboard entries
+                    const batch1 = await RetroAPIUtils.getLeaderboardEntries(activeTiebreaker.leaderboardId, 500);
+                    const batch2 = await RetroAPIUtils.getLeaderboardEntries(activeTiebreaker.leaderboardId, 500, 500);
+                    
+                    // Combine the batches
+                    let rawEntries = [];
+                    
+                    // Process first batch
+                    if (batch1) {
+                        rawEntries = [...rawEntries, ...batch1];
+                    }
+                    
+                    // Process second batch
+                    if (batch2) {
+                        rawEntries = [...rawEntries, ...batch2];
+                    }
+                    
+                    console.log(`Total tiebreaker entries fetched: ${rawEntries.length}`);
+                    
+                    // Process tiebreaker entries
+                    tiebreakerEntries = rawEntries.map(entry => {
+                        const user = entry.User || '';
+                        const score = entry.Score || entry.Value || 0;
+                        const formattedScore = entry.FormattedScore || score.toString();
+                        const rank = entry.Rank || 0;
+                        
+                        return {
+                            username: user.trim().toLowerCase(),
+                            score: formattedScore,
+                            apiRank: parseInt(rank, 10)
+                        };
+                    });
+
+                    // NEW: Fetch tiebreaker-breaker entries if available
+                    if (activeTiebreaker.hasTiebreakerBreaker()) {
+                        try {
+                            const tbInfo = activeTiebreaker.getTiebreakerBreakerInfo();
+                            const tbBatch1 = await RetroAPIUtils.getLeaderboardEntries(tbInfo.leaderboardId, 500);
+                            const tbBatch2 = await RetroAPIUtils.getLeaderboardEntries(tbInfo.leaderboardId, 500, 500);
+                            
+                            // Combine the tiebreaker-breaker batches
+                            let tbRawEntries = [];
+                            
+                            if (tbBatch1) {
+                                tbRawEntries = [...tbRawEntries, ...tbBatch1];
+                            }
+                            
+                            if (tbBatch2) {
+                                tbRawEntries = [...tbRawEntries, ...tbBatch2];
+                            }
+                            
+                            console.log(`Total tiebreaker-breaker entries fetched: ${tbRawEntries.length}`);
+                            
+                            // Process tiebreaker-breaker entries
+                            tiebreakerBreakerEntries = tbRawEntries.map(entry => {
+                                const user = entry.User || '';
+                                const score = entry.Score || entry.Value || 0;
+                                const formattedScore = entry.FormattedScore || score.toString();
+                                const rank = entry.Rank || 0;
+                                
+                                return {
+                                    username: user.trim().toLowerCase(),
+                                    score: formattedScore,
+                                    apiRank: parseInt(rank, 10)
+                                };
+                            });
+                        } catch (error) {
+                            console.error('Error fetching tiebreaker-breaker leaderboard:', error);
+                        }
+                    }
                 } catch (error) {
                     console.error('Error fetching tiebreaker leaderboard:', error);
                 }
             }
 
-            // Process tiebreaker and assign ranks correctly
-            this.assignRanks(workingSorted, tiebreakerEntries, activeTiebreaker);
+            // NEW: Process tiebreaker and assign ranks correctly with tiebreaker-breaker support
+            this.assignRanks(workingSorted, tiebreakerEntries, tiebreakerBreakerEntries, activeTiebreaker);
 
             // Get month name for the title
             const monthName = now.toLocaleString('default', { month: 'long' });
@@ -430,12 +503,21 @@ class LeaderboardFeedService extends FeedManagerBase {
                 }
             );
 
-            // Add tiebreaker info if active
+            // NEW: Add enhanced tiebreaker info if active
             if (activeTiebreaker) {
+                let tiebreakerText = `${TIEBREAKER_EMOJI} **${activeTiebreaker.gameTitle}**\n` +
+                                   `*Tiebreaker results are used to determine final ranking for tied users in top positions.*`;
+                
+                // Add tiebreaker-breaker info if available
+                if (activeTiebreaker.hasTiebreakerBreaker()) {
+                    const tbInfo = activeTiebreaker.getTiebreakerBreakerInfo();
+                    tiebreakerText += `\n\n${TIEBREAKER_BREAKER_EMOJI} **Tiebreaker-Breaker:** ${tbInfo.gameTitle}\n` +
+                                    `*Used to resolve ties within the tiebreaker itself.*`;
+                }
+                
                 headerEmbed.addFields({
                     name: 'Active Tiebreaker',
-                    value: `⚔️ **${activeTiebreaker.gameTitle}**\n` +
-                           `*Tiebreaker results are used to determine final ranking for tied users in top positions.*`
+                    value: tiebreakerText
                 });
             }
             
@@ -478,7 +560,7 @@ class LeaderboardFeedService extends FeedManagerBase {
                     }
                 );
                 
-                // Format leaderboard text for this page
+                // NEW: Format leaderboard text for this page with tiebreaker-breaker support
                 let leaderboardText = '';
                 
                 for (const user of usersOnPage) {
@@ -489,14 +571,19 @@ class LeaderboardFeedService extends FeedManagerBase {
                     leaderboardText += `${rankEmoji} **[${user.username}](https://retroachievements.org/user/${user.username})** ${user.award}\n`;
                     
                     // Add the achievement stats
+                    leaderboardText += `${user.achieved}/${currentChallenge.monthly_challange_game_total} (${user.percentage}%)\n`;
+                    
+                    // Add tiebreaker information if the user has it
                     if (user.hasTiebreaker && user.tiebreakerScore) {
-                        // For users with tiebreaker scores, show both regular and tiebreaker stats
-                        leaderboardText += `${user.achieved}/${currentChallenge.monthly_challange_game_total} (${user.percentage}%)\n`;
-                        leaderboardText += `⚔️ ${user.tiebreakerScore} in ${user.tiebreakerGame}\n\n`;
-                    } else {
-                        // For users without tiebreaker scores, just show regular stats
-                        leaderboardText += `${user.achieved}/${currentChallenge.monthly_challange_game_total} (${user.percentage}%)\n\n`;
+                        leaderboardText += `${TIEBREAKER_EMOJI} ${user.tiebreakerScore} in ${user.tiebreakerGame}\n`;
                     }
+                    
+                    // NEW: Add tiebreaker-breaker information if the user has it
+                    if (user.hasTiebreakerBreaker && user.tiebreakerBreakerScore) {
+                        leaderboardText += `${TIEBREAKER_BREAKER_EMOJI} ${user.tiebreakerBreakerScore} in ${user.tiebreakerBreakerGame}\n`;
+                    }
+                    
+                    leaderboardText += '\n';
                 }
                 
                 participantEmbed.addFields({
@@ -512,7 +599,7 @@ class LeaderboardFeedService extends FeedManagerBase {
             console.error('Error generating leaderboard embeds:', error);
             return { headerEmbed: null, participantEmbeds: null, sortedUsers: null };
         }
-    }
+    },
 
     // New method to generate yearly leaderboard embeds
     async generateYearlyLeaderboardEmbeds() {
@@ -652,7 +739,7 @@ class LeaderboardFeedService extends FeedManagerBase {
             console.error('Error generating yearly leaderboard embeds:', error);
             return { yearlyHeaderEmbed: null, yearlyParticipantEmbeds: null };
         }
-    }
+    },
 
     // Check for rank changes in the top 3 positions and notify affected users
     async checkForRankChanges(currentRanks) {
@@ -719,7 +806,7 @@ class LeaderboardFeedService extends FeedManagerBase {
         } catch (error) {
             console.error('Error checking for rank changes:', error);
         }
-    }
+    },
 
     // Store top ranks from current leaderboard for future comparison
     storeTopRanks(ranks) {
@@ -732,7 +819,7 @@ class LeaderboardFeedService extends FeedManagerBase {
                 this.previousTopRanks.set(user.username, user.displayRank);
             }
         }
-    }
+    },
 
     // Find which user previously held a specific rank
     findUserByPreviousRank(rank) {
@@ -742,113 +829,137 @@ class LeaderboardFeedService extends FeedManagerBase {
             }
         }
         return null;
-    }
+    },
 
-    // Send alerts for rank changes using AlertUtils
-async sendRankChangeAlerts(alerts) {
-    try {
-        // Get current challenge game info for embedding
-        const now = new Date();
-        const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-        const nextMonthStart = new Date(now.getFullYear(), now.getMonth() + 1, 1);
-        
-        const currentChallenge = await Challenge.findOne({
-            date: {
-                $gte: currentMonthStart,
-                $lt: nextMonthStart
-            }
-        });
-
-        if (!currentChallenge) {
-            console.log('No active challenge found for the current month.');
-            return;
-        }
-
-        // Get month name
-        const monthName = now.toLocaleString('default', { month: 'long' });
-
-        // Format position changes
-        const changes = [];
-        for (const alert of alerts) {
-            if (alert.type === 'overtake') {
-                changes.push({
-                    username: alert.user.username,
-                    newRank: alert.newRank
-                });
-            } else if (alert.type === 'newEntry') {
-                changes.push({
-                    username: alert.user.username,
-                    newRank: alert.newRank
-                });
-            }
-        }
-
-        // Get current top standings for the alert
-        const { sortedUsers } = await this.generateLeaderboardEmbeds();
-        const currentStandings = [];
-        
-        if (sortedUsers && sortedUsers.length > 0) {
-            // Get top 5
-            const topFive = sortedUsers.slice(0, 5);
+    // NEW: Enhanced sendRankChangeAlerts with tiebreaker-breaker support
+    async sendRankChangeAlerts(alerts) {
+        try {
+            // Get current challenge game info for embedding
+            const now = new Date();
+            const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+            const nextMonthStart = new Date(now.getFullYear(), now.getMonth() + 1, 1);
             
-            for (const user of topFive) {
-                // Create score text with tiebreaker information if available
-                let scoreText = `${user.achieved}/${currentChallenge.monthly_challange_game_total} achievements (${user.percentage}%)`;
-                
-                // Add tiebreaker information if the user has it
-                if (user.hasTiebreaker && user.tiebreakerScore) {
-                    scoreText += `\n⚔️ Tiebreaker: ${user.tiebreakerScore} in ${user.tiebreakerGame}`;
+            const currentChallenge = await Challenge.findOne({
+                date: {
+                    $gte: currentMonthStart,
+                    $lt: nextMonthStart
                 }
-                
-                currentStandings.push({
-                    username: user.username,
-                    rank: user.displayRank,
-                    score: scoreText
-                });
+            });
+
+            if (!currentChallenge) {
+                console.log('No active challenge found for the current month.');
+                return;
             }
+
+            // Get month name
+            const monthName = now.toLocaleString('default', { month: 'long' });
+
+            // Format position changes
+            const changes = [];
+            for (const alert of alerts) {
+                if (alert.type === 'overtake') {
+                    changes.push({
+                        username: alert.user.username,
+                        newRank: alert.newRank
+                    });
+                } else if (alert.type === 'newEntry') {
+                    changes.push({
+                        username: alert.user.username,
+                        newRank: alert.newRank
+                    });
+                }
+            }
+
+            // Get current top standings for the alert
+            const { sortedUsers } = await this.generateLeaderboardEmbeds();
+            const currentStandings = [];
+            
+            if (sortedUsers && sortedUsers.length > 0) {
+                // Get top 5
+                const topFive = sortedUsers.slice(0, 5);
+                
+                for (const user of topFive) {
+                    // NEW: Create score text with tiebreaker and tiebreaker-breaker information if available
+                    let scoreText = `${user.achieved}/${currentChallenge.monthly_challange_game_total} achievements (${user.percentage}%)`;
+                    
+                    // Add tiebreaker information if the user has it
+                    if (user.hasTiebreaker && user.tiebreakerScore) {
+                        scoreText += `\n${TIEBREAKER_EMOJI} Tiebreaker: ${user.tiebreakerScore} in ${user.tiebreakerGame}`;
+                    }
+                    
+                    // NEW: Add tiebreaker-breaker information if the user has it
+                    if (user.hasTiebreakerBreaker && user.tiebreakerBreakerScore) {
+                        scoreText += `\n${TIEBREAKER_BREAKER_EMOJI} TB-Breaker: ${user.tiebreakerBreakerScore} in ${user.tiebreakerBreakerGame}`;
+                    }
+                    
+                    currentStandings.push({
+                        username: user.username,
+                        rank: user.displayRank,
+                        score: scoreText
+                    });
+                }
+            }
+
+            // Get thumbnail URL
+            let thumbnailUrl = null;
+            if (currentChallenge.monthly_game_icon_url) {
+                thumbnailUrl = `https://retroachievements.org${currentChallenge.monthly_game_icon_url}`;
+            }
+
+            // Send alert using AlertUtils with MONTHLY alert type
+            await AlertUtils.sendPositionChangeAlert({
+                title: `📊 ${monthName} Challenge Update!`,
+                description: `The leaderboard for **${currentChallenge.monthly_challange_title || 'the monthly challenge'}** has been updated!`,
+                changes: changes,
+                currentStandings: currentStandings,
+                thumbnail: thumbnailUrl,
+                color: COLORS.INFO, // Purple to match monthly challenge color scheme
+                footer: { text: 'Data provided by RetroAchievements • Rankings update every 15 minutes' }
+            }, 'monthly'); // Specify 'monthly' alert type for proper channel routing
+            
+            console.log(`Sent monthly challenge leaderboard alert to MONTHLY channel with ${changes.length} position changes`);
+        } catch (error) {
+            console.error('Error sending monthly challenge rank change alerts:', error);
         }
+    },
 
-        // Get thumbnail URL
-        let thumbnailUrl = null;
-        if (currentChallenge.monthly_game_icon_url) {
-            thumbnailUrl = `https://retroachievements.org${currentChallenge.monthly_game_icon_url}`;
-        }
-
-        // Send alert using AlertUtils with MONTHLY alert type
-        await AlertUtils.sendPositionChangeAlert({
-            title: `📊 ${monthName} Challenge Update!`,
-            description: `The leaderboard for **${currentChallenge.monthly_challange_title || 'the monthly challenge'}** has been updated!`,
-            changes: changes,
-            currentStandings: currentStandings,
-            thumbnail: thumbnailUrl,
-            color: COLORS.INFO, // Purple to match monthly challenge color scheme
-            footer: { text: 'Data provided by RetroAchievements • Rankings update every 15 minutes' }
-        }, 'monthly'); // Specify 'monthly' alert type for proper channel routing
-        
-        console.log(`Sent monthly challenge leaderboard alert to MONTHLY channel with ${changes.length} position changes`);
-    } catch (error) {
-        console.error('Error sending monthly challenge rank change alerts:', error);
-    }
-}
-
-    // Code to assign ranks (mostly preserved from original)
-    assignRanks(users, tiebreakerEntries, activeTiebreaker) {
+    // NEW: Enhanced assignRanks method with full tiebreaker-breaker support
+    assignRanks(users, tiebreakerEntries, tiebreakerBreakerEntries, activeTiebreaker) {
         if (!users || users.length === 0) return;
 
         // First, add tiebreaker info to users
         if (tiebreakerEntries && tiebreakerEntries.length > 0) {
             for (const user of users) {
                 const entry = tiebreakerEntries.find(e => 
-                    e.User?.toLowerCase() === user.username.toLowerCase()
+                    e.username === user.username.toLowerCase()
                 );
                 
                 if (entry) {
-                    user.tiebreakerScore = entry.FormattedScore;
-                    user.tiebreakerRank = entry.Rank;
+                    user.tiebreakerScore = entry.score;
+                    user.tiebreakerRank = entry.apiRank;
                     user.tiebreakerGame = activeTiebreaker.gameTitle;
                     user.hasTiebreaker = true;
                 } else {
                     user.hasTiebreaker = false;
+                }
+            }
+        }
+
+        // NEW: Add tiebreaker-breaker info to users
+        if (tiebreakerBreakerEntries && tiebreakerBreakerEntries.length > 0 && activeTiebreaker && activeTiebreaker.hasTiebreakerBreaker()) {
+            const tbInfo = activeTiebreaker.getTiebreakerBreakerInfo();
+            for (const user of users) {
+                const entry = tiebreakerBreakerEntries.find(e => 
+                    e.username === user.username.toLowerCase()
+                );
+                
+                if (entry) {
+                    user.tiebreakerBreakerScore = entry.score;
+                    user.tiebreakerBreakerRank = entry.apiRank;
+                    user.tiebreakerBreakerGame = tbInfo.gameTitle;
+                    user.hasTiebreakerBreaker = true;
+                } else {
+                    user.hasTiebreakerBreaker = false;
                 }
             }
         }
@@ -917,15 +1028,15 @@ async sendRankChangeAlerts(alerts) {
             // Secondary sort: preserve original order for stable sort
             return a.originalIndex - b.originalIndex;
         });
-    }
+    },
 
-    // Helper method to process a tie group (preserved from original)
+    // NEW: Enhanced processTieGroup method with tiebreaker-breaker support
     processTieGroup(users, tieGroupIndices, startIdx) {
         // Only apply special tiebreaker logic to top 3 positions
         const isTopThree = startIdx < 3;
         
         if (isTopThree) {
-            // Check if any users in this tie group have tiebreaker scores
+            // Separate users by their tiebreaker status
             const withTiebreaker = tieGroupIndices.filter(idx => users[idx].hasTiebreaker);
             const withoutTiebreaker = tieGroupIndices.filter(idx => !users[idx].hasTiebreaker);
             
@@ -933,9 +1044,38 @@ async sendRankChangeAlerts(alerts) {
                 // Sort users with tiebreakers by their tiebreaker rank
                 withTiebreaker.sort((a, b) => users[a].tiebreakerRank - users[b].tiebreakerRank);
                 
-                // Assign individual ranks to users with tiebreakers
+                // NEW: Now check for ties within the tiebreaker ranks and apply tiebreaker-breaker
+                let currentTiebreakerRank = -1;
+                let tiebreakerTieGroup = [];
+                let assignedRank = startIdx + 1;
+                
                 for (let i = 0; i < withTiebreaker.length; i++) {
-                    users[withTiebreaker[i]].displayRank = startIdx + 1 + i;
+                    const userIdx = withTiebreaker[i];
+                    const user = users[userIdx];
+                    
+                    if (user.tiebreakerRank === currentTiebreakerRank) {
+                        // This user is tied in tiebreaker with previous user(s)
+                        tiebreakerTieGroup.push(userIdx);
+                    } else {
+                        // Process previous tiebreaker tie group if it exists
+                        if (tiebreakerTieGroup.length > 1) {
+                            this.processTiebreakerTieGroup(users, tiebreakerTieGroup, assignedRank - tiebreakerTieGroup.length);
+                        } else if (tiebreakerTieGroup.length === 1) {
+                            users[tiebreakerTieGroup[0]].displayRank = assignedRank - 1;
+                        }
+                        
+                        // Start new tiebreaker tie group
+                        tiebreakerTieGroup = [userIdx];
+                        currentTiebreakerRank = user.tiebreakerRank;
+                        assignedRank = startIdx + 1 + i;
+                    }
+                }
+                
+                // Process the last tiebreaker tie group
+                if (tiebreakerTieGroup.length > 1) {
+                    this.processTiebreakerTieGroup(users, tiebreakerTieGroup, assignedRank - tiebreakerTieGroup.length + 1);
+                } else if (tiebreakerTieGroup.length === 1) {
+                    users[tiebreakerTieGroup[0]].displayRank = assignedRank;
                 }
                 
                 // All users without tiebreakers share the next rank
@@ -953,6 +1093,34 @@ async sendRankChangeAlerts(alerts) {
             // Outside top 3: all users in tie group share the same rank
             for (const idx of tieGroupIndices) {
                 users[idx].displayRank = startIdx + 1;
+            }
+        }
+    },
+
+    // NEW: Method to process tiebreaker tie groups using tiebreaker-breaker
+    processTiebreakerTieGroup(users, tieGroupIndices, startRank) {
+        // Check if any users in this tiebreaker tie group have tiebreaker-breaker scores
+        const withTiebreakerBreaker = tieGroupIndices.filter(idx => users[idx].hasTiebreakerBreaker);
+        const withoutTiebreakerBreaker = tieGroupIndices.filter(idx => !users[idx].hasTiebreakerBreaker);
+        
+        if (withTiebreakerBreaker.length > 0) {
+            // Sort users with tiebreaker-breakers by their tiebreaker-breaker rank
+            withTiebreakerBreaker.sort((a, b) => users[a].tiebreakerBreakerRank - users[b].tiebreakerBreakerRank);
+            
+            // Assign individual ranks to users with tiebreaker-breakers
+            for (let i = 0; i < withTiebreakerBreaker.length; i++) {
+                users[withTiebreakerBreaker[i]].displayRank = startRank + i;
+            }
+            
+            // All users without tiebreaker-breakers share the next rank
+            const nextRank = startRank + withTiebreakerBreaker.length;
+            for (const idx of withoutTiebreakerBreaker) {
+                users[idx].displayRank = nextRank;
+            }
+        } else {
+            // No tiebreaker-breakers - all share the same rank
+            for (const idx of tieGroupIndices) {
+                users[idx].displayRank = startRank;
             }
         }
     }
