@@ -11,22 +11,18 @@ export const ALERT_TYPES = {
     SHADOW: 'shadow',
     MASTERY: 'mastery',
     ACHIEVEMENT: 'achievement',
-    TIEBREAKER: 'tiebreaker',        // NEW: For tiebreaker events
-    TIEBREAKER_BREAKER: 'tb_breaker', // NEW: For tiebreaker-breaker events
     DEFAULT: 'default'
 };
 
 // Color mapping for different alert types (matching achievement feed)
 const ALERT_COLORS = {
-    [ALERT_TYPES.ARCADE]: '#3498DB',           // Blue for arcade
-    [ALERT_TYPES.ARENA]: '#FF5722',            // Red for arena  
-    [ALERT_TYPES.MONTHLY]: '#9B59B6',          // Purple for monthly
-    [ALERT_TYPES.SHADOW]: '#000000',           // Black for shadow
-    [ALERT_TYPES.MASTERY]: '#FFD700',          // Gold for mastery
-    [ALERT_TYPES.ACHIEVEMENT]: '#808080',      // Grey for regular achievements
-    [ALERT_TYPES.TIEBREAKER]: '#FF0000',       // NEW: Red for tiebreaker events
-    [ALERT_TYPES.TIEBREAKER_BREAKER]: '#8B0000', // NEW: Dark red for tiebreaker-breaker
-    [ALERT_TYPES.DEFAULT]: '#808080'           // Grey for default
+    [ALERT_TYPES.ARCADE]: '#3498DB',    // Blue for arcade
+    [ALERT_TYPES.ARENA]: '#FF5722',     // Red for arena  
+    [ALERT_TYPES.MONTHLY]: '#9B59B6',   // Purple for monthly
+    [ALERT_TYPES.SHADOW]: '#000000',    // Black for shadow
+    [ALERT_TYPES.MASTERY]: '#FFD700',   // Gold for mastery
+    [ALERT_TYPES.ACHIEVEMENT]: '#808080', // Grey for regular achievements
+    [ALERT_TYPES.DEFAULT]: '#808080'    // Grey for default
 };
 
 // Default channel IDs for each alert type
@@ -37,24 +33,12 @@ const DEFAULT_CHANNEL_IDS = {
     [ALERT_TYPES.SHADOW]: '1300941091335438470',    // Shadow game updates
     [ALERT_TYPES.MASTERY]: '1362227906343997583',   // Mastery and Beaten achievements
     [ALERT_TYPES.ACHIEVEMENT]: '1362227906343997583', // Default achievement channel (same as mastery)
-    [ALERT_TYPES.TIEBREAKER]: '1313640664356880445',   // NEW: Tiebreaker alerts (same as monthly)
-    [ALERT_TYPES.TIEBREAKER_BREAKER]: '1313640664356880445', // NEW: Tiebreaker-breaker alerts
     [ALERT_TYPES.DEFAULT]: '1362227906343997583'    // Global fallback (same as mastery)
-};
-
-// NEW: Tiebreaker-specific emojis
-const TIEBREAKER_EMOJIS = {
-    TIEBREAKER: '⚔️',        // Main tiebreaker
-    TIEBREAKER_BREAKER: '🗡️', // Tiebreaker-breaker
-    COMBAT: '⚡',             // For intense competition
-    SHIELD: '🛡️',            // For defensive positioning
-    SWORD: '🗡️',             // Alternative tiebreaker-breaker
-    CROWN: '👑'              // For ultimate victory
 };
 
 /**
  * Helper class for sending alerts to designated channels
- * Enhanced to support tiebreaker-breaker functionality and improved formatting
+ * Updated to support multiple alert channels per service and proper color coding
  */
 export class AlertManager {
     constructor(client) {
@@ -126,8 +110,6 @@ export class AlertManager {
                 [ALERT_TYPES.SHADOW]: config.discord.shadowChannelId || DEFAULT_CHANNEL_IDS[ALERT_TYPES.SHADOW],
                 [ALERT_TYPES.MASTERY]: config.discord.masteryChannelId || DEFAULT_CHANNEL_IDS[ALERT_TYPES.MASTERY],
                 [ALERT_TYPES.ACHIEVEMENT]: config.discord.achievementChannelId || DEFAULT_CHANNEL_IDS[ALERT_TYPES.ACHIEVEMENT],
-                [ALERT_TYPES.TIEBREAKER]: config.discord.tiebreakerChannelId || DEFAULT_CHANNEL_IDS[ALERT_TYPES.TIEBREAKER],
-                [ALERT_TYPES.TIEBREAKER_BREAKER]: config.discord.tiebreakerBreakerChannelId || DEFAULT_CHANNEL_IDS[ALERT_TYPES.TIEBREAKER_BREAKER],
                 [ALERT_TYPES.DEFAULT]: config.discord.defaultAlertsChannelId || DEFAULT_CHANNEL_IDS[ALERT_TYPES.DEFAULT]
             };
             
@@ -200,34 +182,7 @@ export class AlertManager {
     }
     
     /**
-     * NEW: Enhanced method to format tiebreaker information for display
-     * @param {string} scoreText - The score text that may contain tiebreaker info
-     * @returns {Object} - Formatted score information
-     */
-    formatTiebreakerScore(scoreText) {
-        if (!scoreText) return { primary: '', tiebreaker: '', tiebreakerBreaker: '' };
-        
-        const lines = scoreText.split('\n');
-        const primary = lines[0] || '';
-        
-        let tiebreaker = '';
-        let tiebreakerBreaker = '';
-        
-        // Look for tiebreaker and tiebreaker-breaker lines
-        for (let i = 1; i < lines.length; i++) {
-            const line = lines[i].trim();
-            if (line.includes('⚔️') || line.includes('Tiebreaker:')) {
-                tiebreaker = line;
-            } else if (line.includes('🗡️') || line.includes('TB-Breaker:')) {
-                tiebreakerBreaker = line;
-            }
-        }
-        
-        return { primary, tiebreaker, tiebreakerBreaker };
-    }
-    
-    /**
-     * ENHANCED: Send a standard alert for position/rank changes with improved tiebreaker support
+     * Send a standard alert for position/rank changes
      * @param {Object} options - Alert options
      * @param {string} alertType - The type of alert to send (determines channel and color)
      * @param {string} overrideChannelId - Optional specific channel ID to override default
@@ -243,11 +198,7 @@ export class AlertManager {
                 currentStandings = [],
                 thumbnail = null,
                 color = null, // Will be overridden by alert type color
-                footer = null,
-                hasTiebreaker = false,        // NEW: Indicates if tiebreaker is active
-                hasTiebreakerBreaker = false, // NEW: Indicates if tiebreaker-breaker is active
-                tiebreakerGame = null,        // NEW: Name of tiebreaker game
-                tiebreakerBreakerGame = null  // NEW: Name of tiebreaker-breaker game
+                footer = null
             } = options;
             
             const channel = await this.getAlertsChannel(alertType, overrideChannelId);
@@ -264,22 +215,11 @@ export class AlertManager {
             // Create timestamp
             const timestamp = getDiscordTimestamp(new Date());
             
-            // NEW: Enhanced description with tiebreaker context
-            let enhancedDescription = `${description}\n**Time:** ${timestamp}`;
-            
-            // Add tiebreaker context if active
-            if (hasTiebreaker && tiebreakerGame) {
-                enhancedDescription += `\n\n${TIEBREAKER_EMOJIS.TIEBREAKER} **Active Tiebreaker:** ${tiebreakerGame}`;
-                if (hasTiebreakerBreaker && tiebreakerBreakerGame) {
-                    enhancedDescription += `\n${TIEBREAKER_EMOJIS.TIEBREAKER_BREAKER} **Tiebreaker-Breaker:** ${tiebreakerBreakerGame}`;
-                }
-            }
-            
             // Create embed
             const embed = new EmbedBuilder()
                 .setColor(alertColor)
                 .setTitle(title)
-                .setDescription(enhancedDescription)
+                .setDescription(`${description}\n**Time:** ${timestamp}`)
                 .setTimestamp();
             
             if (thumbnail) {
@@ -297,99 +237,57 @@ export class AlertManager {
                         rankEmoji = `#${change.newRank || ''}`;
                     }
                     
-                    // NEW: Add special indicators for tiebreaker victories
-                    let specialIndicator = '';
-                    if (hasTiebreaker && change.newRank <= 3) {
-                        if (hasTiebreakerBreaker) {
-                            specialIndicator = ` ${TIEBREAKER_EMOJIS.CROWN}`;
-                        } else {
-                            specialIndicator = ` ${TIEBREAKER_EMOJIS.TIEBREAKER}`;
-                        }
-                    }
-                    
-                    changesText += `**${change.username}** is now in ${rankEmoji} place!${specialIndicator}\n`;
+                    changesText += `**${change.username}** is now in ${rankEmoji} place!\n`;
                 });
                 
                 embed.addFields({ 
-                    name: hasTiebreaker ? 'Tiebreaker Position Changes' : 'Position Changes', 
+                    name: 'Position Changes', 
                     value: changesText 
                 });
             }
             
-            // ENHANCED: Add current standings with improved tiebreaker formatting
-            if (currentStandings && currentStandings.length > 0) {
-                // Sort by rank (lower is better)
-                const sortedStandings = [...currentStandings]
-                    .sort((a, b) => (a.rank || 999) - (b.rank || 999));
-                
-                let standingsText = '';
-                sortedStandings.slice(0, 5).forEach(user => {
-                    const rankEmoji = user.rank <= 3 ? 
-                        EMOJIS[`RANK_${user.rank}`] : 
-                        `#${user.rank}`;
-                    
-                    // Show global rank in parentheses if available
-                    const globalRank = user.globalRank ? ` (Global: #${user.globalRank})` : '';
-                    
-                    // NEW: Enhanced handling of tiebreaker scores
-                    const scoreInfo = this.formatTiebreakerScore(user.score || user.value);
-                    
-                    standingsText += `${rankEmoji} **${user.username}**: ${scoreInfo.primary}${globalRank}\n`;
-                    
-                    // NEW: Better formatting for tiebreaker information
-                    if (scoreInfo.tiebreaker) {
-                        standingsText += `   ${scoreInfo.tiebreaker}\n`;
-                    }
-                    
-                    if (scoreInfo.tiebreakerBreaker) {
-                        standingsText += `   ${scoreInfo.tiebreakerBreaker}\n`;
-                    }
-                    
-                    // Add a small spacing between users for readability
-                    if (scoreInfo.tiebreaker || scoreInfo.tiebreakerBreaker) {
-                        standingsText += '\n';
-                    }
-                });
-                
-                // NEW: Enhanced field name based on tiebreaker status
-                let fieldName = 'Current Top 5';
-                if (hasTiebreaker) {
-                    if (hasTiebreakerBreaker) {
-                        fieldName = `${TIEBREAKER_EMOJIS.TIEBREAKER_BREAKER} Tiebreaker Rankings`;
-                    } else {
-                        fieldName = `${TIEBREAKER_EMOJIS.TIEBREAKER} Tiebreaker Rankings`;
-                    }
-                }
-                
-                embed.addFields({ 
-                    name: fieldName, 
-                    value: standingsText 
-                });
-            }
-            
-            // NEW: Add tiebreaker explanation if active
-            if (hasTiebreaker) {
-                let explanationText = `${TIEBREAKER_EMOJIS.TIEBREAKER} Tied users in top positions are ranked by their performance in ${tiebreakerGame}.`;
-                
-                if (hasTiebreakerBreaker) {
-                    explanationText += `\n${TIEBREAKER_EMOJIS.TIEBREAKER_BREAKER} Users tied in the tiebreaker are further ranked by ${tiebreakerBreakerGame}.`;
-                }
-                
-                embed.addFields({
-                    name: 'Tiebreaker System',
-                    value: explanationText
-                });
-            }
+          // Add current standings if provided - SORTED BY RANK
+if (currentStandings && currentStandings.length > 0) {
+    // Sort by rank (lower is better)
+    const sortedStandings = [...currentStandings]
+        .sort((a, b) => (a.rank || 999) - (b.rank || 999));
+    
+    let standingsText = '';
+    sortedStandings.slice(0, 5).forEach(user => {
+        const rankEmoji = user.rank <= 3 ? 
+            EMOJIS[`RANK_${user.rank}`] : 
+            `#${user.rank}`;
+        
+        // Show global rank in parentheses if available
+        const globalRank = user.globalRank ? ` (Global: #${user.globalRank})` : '';
+        
+        // Handle multi-line scores (like those with tiebreaker info)
+        const scoreLines = (user.score || user.value).split('\n');
+        const primaryScore = scoreLines[0];
+        const secondaryInfo = scoreLines.slice(1).join('\n');
+        
+        standingsText += `${rankEmoji} **${user.username}**: ${primaryScore}${globalRank}\n`;
+        
+        // Add secondary information (like tiebreaker) with proper indentation
+        if (secondaryInfo.trim()) {
+            // Indent the secondary information slightly
+            standingsText += `   ${secondaryInfo}\n`;
+        }
+    });
+    
+    embed.addFields({ 
+        name: 'Current Top 5', 
+        value: standingsText 
+    });
+}
             
             // Add footer if provided
             if (footer) {
                 embed.setFooter(footer);
             } else {
-                let footerText = 'Rankings update regularly. Check the feed channel for full standings.';
-                if (hasTiebreaker) {
-                    footerText = 'Tiebreaker system active. Rankings determined by multiple games.';
-                }
-                embed.setFooter({ text: footerText });
+                embed.setFooter({ 
+                    text: 'Rankings update regularly. Check the feed channel for full standings.' 
+                });
             }
             
             // Send the alert
@@ -397,138 +295,6 @@ export class AlertManager {
             console.log(`Successfully sent position change alert to ${channel.name} (${alertType}): "${title}"`);
         } catch (error) {
             console.error(`Error sending position change alert (${alertType}):`, error);
-        }
-    }
-    
-    /**
-     * NEW: Send a tiebreaker activation alert
-     * @param {Object} options - Alert options
-     * @param {string} overrideChannelId - Optional specific channel ID to override default
-     */
-    async sendTiebreakerActivationAlert(options, overrideChannelId = null) {
-        try {
-            const {
-                tiebreakerGame,
-                description,
-                endDate,
-                thumbnail = null,
-                hasTiebreakerBreaker = false,
-                tiebreakerBreakerGame = null
-            } = options;
-            
-            const channel = await this.getAlertsChannel(ALERT_TYPES.TIEBREAKER, overrideChannelId);
-            if (!channel) {
-                console.error('No tiebreaker alerts channel found, skipping notification');
-                return;
-            }
-            
-            const timestamp = getDiscordTimestamp(new Date());
-            const endTimestamp = endDate ? getDiscordTimestamp(endDate, 'F') : 'TBD';
-            
-            let alertDescription = `${TIEBREAKER_EMOJIS.TIEBREAKER} **A tiebreaker challenge is now active!**\n\n` +
-                                  `**Game:** ${tiebreakerGame}\n` +
-                                  `**Description:** ${description}\n` +
-                                  `**Ends:** ${endTimestamp}\n\n` +
-                                  `This tiebreaker will resolve ties in the monthly challenge leaderboard.`;
-            
-            if (hasTiebreakerBreaker) {
-                alertDescription += `\n\n${TIEBREAKER_EMOJIS.TIEBREAKER_BREAKER} **Tiebreaker-Breaker:** ${tiebreakerBreakerGame}\n` +
-                                   `*Used to resolve ties within the tiebreaker itself.*`;
-            }
-            
-            alertDescription += `\n\n**Time:** ${timestamp}`;
-            
-            const embed = new EmbedBuilder()
-                .setColor(ALERT_COLORS[ALERT_TYPES.TIEBREAKER])
-                .setTitle(`${TIEBREAKER_EMOJIS.COMBAT} Tiebreaker Challenge Active!`)
-                .setDescription(alertDescription)
-                .setTimestamp();
-            
-            if (thumbnail) {
-                embed.setThumbnail(thumbnail);
-            }
-            
-            embed.setFooter({ 
-                text: 'Compete in the tiebreaker to improve your ranking!' 
-            });
-            
-            await channel.send({ embeds: [embed] });
-            console.log(`Successfully sent tiebreaker activation alert to ${channel.name}`);
-        } catch (error) {
-            console.error('Error sending tiebreaker activation alert:', error);
-        }
-    }
-    
-    /**
-     * NEW: Send a tiebreaker completion alert
-     * @param {Object} options - Alert options
-     * @param {string} overrideChannelId - Optional specific channel ID to override default
-     */
-    async sendTiebreakerCompletionAlert(options, overrideChannelId = null) {
-        try {
-            const {
-                tiebreakerGame,
-                winners = [],
-                participantCount = 0,
-                thumbnail = null,
-                hasTiebreakerBreaker = false,
-                tiebreakerBreakerGame = null
-            } = options;
-            
-            const channel = await this.getAlertsChannel(ALERT_TYPES.TIEBREAKER, overrideChannelId);
-            if (!channel) {
-                console.error('No tiebreaker alerts channel found, skipping notification');
-                return;
-            }
-            
-            const timestamp = getDiscordTimestamp(new Date());
-            
-            let alertDescription = `${TIEBREAKER_EMOJIS.CROWN} **The tiebreaker challenge has concluded!**\n\n` +
-                                  `**Game:** ${tiebreakerGame}\n` +
-                                  `**Participants:** ${participantCount}\n\n`;
-            
-            if (hasTiebreakerBreaker) {
-                alertDescription += `${TIEBREAKER_EMOJIS.TIEBREAKER_BREAKER} **Tiebreaker-Breaker:** ${tiebreakerBreakerGame}\n\n`;
-            }
-            
-            alertDescription += `**Time:** ${timestamp}`;
-            
-            const embed = new EmbedBuilder()
-                .setColor(ALERT_COLORS[ALERT_TYPES.TIEBREAKER])
-                .setTitle(`${TIEBREAKER_EMOJIS.CROWN} Tiebreaker Complete!`)
-                .setDescription(alertDescription)
-                .setTimestamp();
-            
-            if (thumbnail) {
-                embed.setThumbnail(thumbnail);
-            }
-            
-            // Add winners if provided
-            if (winners && winners.length > 0) {
-                let winnersText = '';
-                winners.slice(0, 3).forEach((winner, index) => {
-                    const rankEmoji = [EMOJIS.RANK_1, EMOJIS.RANK_2, EMOJIS.RANK_3][index];
-                    winnersText += `${rankEmoji} **${winner.username}**: ${winner.score}\n`;
-                    
-                    if (winner.tiebreakerBreakerScore) {
-                        winnersText += `   ${TIEBREAKER_EMOJIS.TIEBREAKER_BREAKER} ${winner.tiebreakerBreakerScore}\n`;
-                    }
-                });
-                
-                embed.addFields({
-                    name: 'Final Tiebreaker Rankings',
-                    value: winnersText
-                });
-            }
-            
-            embed.setFooter({ 
-                text: 'Check the leaderboard for updated monthly challenge rankings!' 
-            });
-            
-            await channel.send({ embeds: [embed] });
-            console.log(`Successfully sent tiebreaker completion alert to ${channel.name}`);
-        } catch (error) {
-            console.error('Error sending tiebreaker completion alert:', error);
         }
     }
     
@@ -688,28 +454,6 @@ export class AlertManager {
         return this.sendAchievementAlert(
             { ...options, isAward: true },
             ALERT_TYPES.SHADOW,
-            overrideChannelId
-        );
-    }
-    
-    /**
-     * NEW: Send a tiebreaker-related alert (convenience method)
-     */
-    async sendTiebreakerAlert(options, overrideChannelId = null) {
-        return this.sendPositionChangeAlert(
-            { ...options, hasTiebreaker: true },
-            ALERT_TYPES.TIEBREAKER,
-            overrideChannelId
-        );
-    }
-    
-    /**
-     * NEW: Send a tiebreaker-breaker alert (convenience method)
-     */
-    async sendTiebreakerBreakerAlert(options, overrideChannelId = null) {
-        return this.sendPositionChangeAlert(
-            { ...options, hasTiebreaker: true, hasTiebreakerBreaker: true },
-            ALERT_TYPES.TIEBREAKER_BREAKER,
             overrideChannelId
         );
     }
