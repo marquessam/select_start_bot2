@@ -947,7 +947,7 @@ class LeaderboardFeedService extends FeedManagerBase {
         } catch (error) {
             console.error('Error sending monthly challenge rank change alerts:', error);
         }
-    },
+    }
 
     // NEW: Enhanced assignRanks method with full tiebreaker-breaker support
     assignRanks(users, tiebreakerEntries, tiebreakerBreakerEntries, activeTiebreaker) {
