@@ -7,11 +7,17 @@ import { COLORS, EMOJIS } from '../utils/FeedUtils.js';
 import RetroAPIUtils from '../utils/RetroAPIUtils.js';
 import AlertUtils, { ALERT_TYPES } from '../utils/AlertUtils.js';
 
+// NEW: Tiebreaker-specific emojis
+const TIEBREAKER_EMOJI = '⚔️';        // Main tiebreaker
+const TIEBREAKER_BREAKER_EMOJI = '🗡️'; // Tiebreaker-breaker
+
 class ArcadeAlertService extends FeedManagerBase {
     constructor() {
         super(null, config.discord.arcadeAlertsChannelId || '1300941091335438471');
         // Store previous arcade standings for comparison
         this.previousStandings = new Map();
+        // NEW: Store active tiebreaker info for enhanced context
+        this.activeTiebreakerInfo = null;
     }
 
     setClient(client) {
@@ -49,9 +55,40 @@ class ArcadeAlertService extends FeedManagerBase {
         await this.checkForRankChanges(true);
     }
 
+    // NEW: Check for active tiebreaker systems
+    async updateTiebreakerInfo() {
+        try {
+            const now = new Date();
+            const activeTiebreaker = await ArcadeBoard.findOne({
+                boardType: 'tiebreaker',
+                startDate: { $lte: now },
+                endDate: { $gte: now }
+            });
+
+            if (activeTiebreaker) {
+                this.activeTiebreakerInfo = {
+                    gameTitle: activeTiebreaker.gameTitle,
+                    leaderboardId: activeTiebreaker.leaderboardId,
+                    hasTiebreakerBreaker: activeTiebreaker.hasTiebreakerBreaker(),
+                    tiebreakerBreakerInfo: activeTiebreaker.hasTiebreakerBreaker() ? 
+                        activeTiebreaker.getTiebreakerBreakerInfo() : null
+                };
+                console.log(`Active tiebreaker detected: ${activeTiebreaker.gameTitle}${this.activeTiebreakerInfo.hasTiebreakerBreaker ? ' (with tiebreaker-breaker)' : ''}`);
+            } else {
+                this.activeTiebreakerInfo = null;
+            }
+        } catch (error) {
+            console.error('Error updating tiebreaker info:', error);
+            this.activeTiebreakerInfo = null;
+        }
+    }
+
     async checkForRankChanges(sendAlerts = true) {
         try {
             console.log(`Checking for arcade rank changes (sendAlerts=${sendAlerts})...`);
+            
+            // NEW: Update tiebreaker info first
+            await this.updateTiebreakerInfo();
             
             const alertsChannel = sendAlerts ? await this.getChannel() : null;
             if (sendAlerts && !alertsChannel) {
@@ -266,7 +303,7 @@ class ArcadeAlertService extends FeedManagerBase {
         }
     }
 
-    // Send alerts with proper organization
+    // ENHANCED: Send alerts with proper organization and tiebreaker context
     async sendRankChangeAlerts(alertsChannel, alerts) {
         if (!alertsChannel) {
             console.log('No alerts channel configured, skipping arcade rank change notifications');
@@ -290,7 +327,7 @@ class ArcadeAlertService extends FeedManagerBase {
         }
     }
 
-    // Send rank change alerts for a specific board
+    // ENHANCED: Send rank change alerts for a specific board with tiebreaker awareness
     async sendBoardRankChangeAlerts(boardAlertsList) {
         try {
             const firstAlert = boardAlertsList[0];
@@ -346,19 +383,46 @@ class ArcadeAlertService extends FeedManagerBase {
                 currentStandings.push(...topFive);
             }
             
-            // Use AlertUtils for rank changes with the ARCADE alert type
-            await AlertUtils.sendPositionChangeAlert({
+            // NEW: Enhanced alert with tiebreaker context
+            const alertOptions = {
                 title: '🕹️ Arcade Alert!',
-                description: `The leaderboard for **${boardName}** has been updated!`,
+                description: this.createEnhancedDescription(boardName),
                 changes: changes,
                 currentStandings: currentStandings,
                 thumbnail: thumbnailUrl,
-                footer: { text: 'Data provided by RetroAchievements • Rankings update hourly' }
-            }, ALERT_TYPES.ARCADE);
+                footer: { text: 'Data provided by RetroAchievements • Rankings update hourly' },
+                // NEW: Add tiebreaker context if active
+                hasTiebreaker: !!this.activeTiebreakerInfo,
+                hasTiebreakerBreaker: this.activeTiebreakerInfo?.hasTiebreakerBreaker || false,
+                tiebreakerGame: this.activeTiebreakerInfo?.gameTitle || null,
+                tiebreakerBreakerGame: this.activeTiebreakerInfo?.tiebreakerBreakerInfo?.gameTitle || null
+            };
+            
+            // Use enhanced AlertUtils method
+            await AlertUtils.sendPositionChangeAlert(alertOptions, ALERT_TYPES.ARCADE);
             
         } catch (error) {
             console.error('Error sending board rank change alerts:', error);
         }
+    }
+    
+    // NEW: Create enhanced description with tiebreaker context
+    createEnhancedDescription(boardName) {
+        let description = `The leaderboard for **${boardName}** has been updated!`;
+        
+        // Add tiebreaker context if active
+        if (this.activeTiebreakerInfo) {
+            description += `\n\n${TIEBREAKER_EMOJI} **Active Tiebreaker System**\n` +
+                          `${this.activeTiebreakerInfo.gameTitle} is currently being used to resolve ties in the monthly challenge.`;
+            
+            if (this.activeTiebreakerInfo.hasTiebreakerBreaker) {
+                description += `\n${TIEBREAKER_BREAKER_EMOJI} **Tiebreaker-Breaker:** ${this.activeTiebreakerInfo.tiebreakerBreakerInfo.gameTitle}`;
+            }
+            
+            description += '\n\n*Your performance in arcade boards may influence your overall ranking during tiebreaker periods.*';
+        }
+        
+        return description;
     }
     
     // Helper method to get all registered users
@@ -372,6 +436,72 @@ class ArcadeAlertService extends FeedManagerBase {
             });
         }
         return registeredUsers;
+    }
+
+    // NEW: Method to send tiebreaker activation alerts
+    async sendTiebreakerActivationAlert(tiebreakerBoard) {
+        try {
+            if (!tiebreakerBoard) return;
+            
+            // Get game info for thumbnail
+            let thumbnailUrl = null;
+            try {
+                const gameInfo = await RetroAPIUtils.getGameInfo(tiebreakerBoard.gameId);
+                if (gameInfo?.imageIcon) {
+                    thumbnailUrl = `https://retroachievements.org${gameInfo.imageIcon}`;
+                }
+            } catch (error) {
+                console.error('Error fetching tiebreaker game info:', error);
+            }
+            
+            const alertOptions = {
+                tiebreakerGame: tiebreakerBoard.gameTitle,
+                description: tiebreakerBoard.description,
+                endDate: tiebreakerBoard.endDate,
+                thumbnail: thumbnailUrl,
+                hasTiebreakerBreaker: tiebreakerBoard.hasTiebreakerBreaker(),
+                tiebreakerBreakerGame: tiebreakerBoard.hasTiebreakerBreaker() ? 
+                    tiebreakerBoard.getTiebreakerBreakerInfo().gameTitle : null
+            };
+            
+            await AlertUtils.sendTiebreakerActivationAlert(alertOptions);
+            console.log(`Sent tiebreaker activation alert for ${tiebreakerBoard.gameTitle}`);
+        } catch (error) {
+            console.error('Error sending tiebreaker activation alert:', error);
+        }
+    }
+
+    // NEW: Method to send tiebreaker completion alerts
+    async sendTiebreakerCompletionAlert(tiebreakerBoard, winners = [], participantCount = 0) {
+        try {
+            if (!tiebreakerBoard) return;
+            
+            // Get game info for thumbnail
+            let thumbnailUrl = null;
+            try {
+                const gameInfo = await RetroAPIUtils.getGameInfo(tiebreakerBoard.gameId);
+                if (gameInfo?.imageIcon) {
+                    thumbnailUrl = `https://retroachievements.org${gameInfo.imageIcon}`;
+                }
+            } catch (error) {
+                console.error('Error fetching tiebreaker game info:', error);
+            }
+            
+            const alertOptions = {
+                tiebreakerGame: tiebreakerBoard.gameTitle,
+                winners: winners,
+                participantCount: participantCount,
+                thumbnail: thumbnailUrl,
+                hasTiebreakerBreaker: tiebreakerBoard.hasTiebreakerBreaker(),
+                tiebreakerBreakerGame: tiebreakerBoard.hasTiebreakerBreaker() ? 
+                    tiebreakerBoard.getTiebreakerBreakerInfo().gameTitle : null
+            };
+            
+            await AlertUtils.sendTiebreakerCompletionAlert(alertOptions);
+            console.log(`Sent tiebreaker completion alert for ${tiebreakerBoard.gameTitle}`);
+        } catch (error) {
+            console.error('Error sending tiebreaker completion alert:', error);
+        }
     }
 }
 
