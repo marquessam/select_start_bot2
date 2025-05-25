@@ -1,4 +1,6 @@
 // src/handlers/restrictionHandlers.js
+// Handle button interactions, modals, and select menus for the restriction system
+
 import { 
     EmbedBuilder, 
     ActionRowBuilder, 
@@ -32,9 +34,6 @@ export class RestrictionInteractionHandler {
         const customId = interaction.customId;
 
         try {
-            // Get the restrictions command to reuse its methods
-            const restrictionsCommand = interaction.client.commands.get('restrictions');
-            
             switch(customId) {
                 case 'restrictions_main_menu':
                     await this.handleMainMenuSelection(interaction);
@@ -667,60 +666,6 @@ export class RestrictionInteractionHandler {
         await interaction.showModal(modal);
     }
 
-    // Additional handler methods would continue here...
-    // (Toggle submit, remove submit, console group modals, etc.)
-    // For brevity, I'll include the key ones and note where others would go
-
-    /**
-     * Handle all console groups display
-     */
-    static async handleAllConsoleGroups(interaction) {
-        await interaction.deferReply({ ephemeral: true });
-
-        try {
-            const embed = new EmbedBuilder()
-                .setTitle('🎯 All Console Groups')
-                .setColor('#4ECDC4')
-                .setTimestamp();
-
-            const chunks = [];
-            const entries = Object.entries(CONSOLE_GROUPS);
-            
-            for (let i = 0; i < entries.length; i += 10) {
-                const chunk = entries.slice(i, i + 10);
-                const text = chunk.map(([key, group]) => {
-                    const consoleList = group.consoles.slice(0, 4).join(', ') + 
-                        (group.consoles.length > 4 ? `, +${group.consoles.length - 4} more` : '');
-                    return `${group.emoji} **${key}**\n${consoleList}`;
-                }).join('\n\n');
-                
-                chunks.push(text);
-            }
-
-            // Show first chunk
-            embed.setDescription(chunks[0]);
-            embed.setFooter({ text: `Showing ${Math.min(10, entries.length)} of ${entries.length} groups` });
-
-            const backButton = new ActionRowBuilder()
-                .addComponents(
-                    new ButtonBuilder()
-                        .setCustomId('restrictions_back_to_main')
-                        .setLabel('Back to Menu')
-                        .setStyle(ButtonStyle.Secondary)
-                        .setEmoji('⬅️')
-                );
-
-            await interaction.editReply({
-                embeds: [embed],
-                components: [backButton]
-            });
-
-        } catch (error) {
-            console.error('Error showing console groups:', error);
-            await interaction.editReply('An error occurred while loading console groups.');
-        }
-    }
-
     /**
      * Handle toggle submit
      */
@@ -855,6 +800,104 @@ export class RestrictionInteractionHandler {
         } catch (error) {
             console.error('Error removing restriction:', error);
             await interaction.editReply('An error occurred while removing the restriction.');
+        }
+    }
+
+    /**
+     * Handle all console groups display
+     */
+    static async handleAllConsoleGroups(interaction) {
+        await interaction.deferReply({ ephemeral: true });
+
+        try {
+            const embed = new EmbedBuilder()
+                .setTitle('🎯 All Console Groups')
+                .setColor('#4ECDC4')
+                .setTimestamp();
+
+            const chunks = [];
+            const entries = Object.entries(CONSOLE_GROUPS);
+            
+            for (let i = 0; i < entries.length; i += 10) {
+                const chunk = entries.slice(i, i + 10);
+                const text = chunk.map(([key, group]) => {
+                    const consoleList = group.consoles.slice(0, 4).join(', ') + 
+                        (group.consoles.length > 4 ? `, +${group.consoles.length - 4} more` : '');
+                    return `${group.emoji} **${key}**\n${consoleList}`;
+                }).join('\n\n');
+                
+                chunks.push(text);
+            }
+
+            // Show first chunk
+            embed.setDescription(chunks[0]);
+            embed.setFooter({ text: `Showing ${Math.min(10, entries.length)} of ${entries.length} groups` });
+
+            const backButton = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('restrictions_back_to_main')
+                        .setLabel('Back to Menu')
+                        .setStyle(ButtonStyle.Secondary)
+                        .setEmoji('⬅️')
+                );
+
+            await interaction.editReply({
+                embeds: [embed],
+                components: [backButton]
+            });
+
+        } catch (error) {
+            console.error('Error showing console groups:', error);
+            await interaction.editReply('An error occurred while loading console groups.');
+        }
+    }
+
+    /**
+     * Handle all publisher groups display
+     */
+    static async handleAllPublisherGroups(interaction) {
+        await interaction.deferReply({ ephemeral: true });
+
+        try {
+            const embed = new EmbedBuilder()
+                .setTitle('🏢 All Publisher Groups')
+                .setColor('#4ECDC4')
+                .setTimestamp();
+
+            const entries = Object.entries(PUBLISHER_GROUPS);
+            const chunks = [];
+            
+            for (let i = 0; i < entries.length; i += 8) {
+                const chunk = entries.slice(i, i + 8);
+                const text = chunk.map(([key, publishers]) => 
+                    `**${key}**\n${publishers.join(', ')}`
+                ).join('\n\n');
+                
+                chunks.push(text);
+            }
+
+            // Show first chunk
+            embed.setDescription(chunks[0]);
+            embed.setFooter({ text: `Showing ${Math.min(8, entries.length)} of ${entries.length} groups` });
+
+            const backButton = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('restrictions_back_to_main')
+                        .setLabel('Back to Menu')
+                        .setStyle(ButtonStyle.Secondary)
+                        .setEmoji('⬅️')
+                );
+
+            await interaction.editReply({
+                embeds: [embed],
+                components: [backButton]
+            });
+
+        } catch (error) {
+            console.error('Error showing publisher groups:', error);
+            await interaction.editReply('An error occurred while loading publisher groups.');
         }
     }
 
@@ -998,48 +1041,6 @@ export class RestrictionInteractionHandler {
             await interaction.editReply('An error occurred while creating the restriction.');
         }
     }
-
-    /**
-     * Handle all publisher groups display
-     */
-    static async handleAllPublisherGroups(interaction) {
-        await interaction.deferReply({ ephemeral: true });
-
-        try {
-            const embed = new EmbedBuilder()
-                .setTitle('🏢 All Publisher Groups')
-                .setColor('#4ECDC4')
-                .setTimestamp();
-
-            const entries = Object.entries(PUBLISHER_GROUPS);
-            const chunks = [];
-            
-            for (let i = 0; i < entries.length; i += 8) {
-                const chunk = entries.slice(i, i + 8);
-                const text = chunk.map(([key, publishers]) => 
-                    `**${key}**\n${publishers.join(', ')}`
-                ).join('\n\n');
-                
-                chunks.push(text);
-            }
-
-            // Show first chunk
-            embed.setDescription(chunks[0]);
-            embed.setFooter({ text: `Showing ${Math.min(8, entries.length)} of ${entries.length} groups` });
-
-            const backButton = new ActionRowBuilder()
-                .addComponents(
-                    new ButtonBuilder()
-                        .setCustomId('restrictions_back_to_main')
-                        .setLabel('Back to Menu')
-                        .setStyle(ButtonStyle.Secondary)
-                        .setEmoji('⬅️')
-                );
-
-            await interaction.editReply({
-                embeds: [embed],
-                components: [backButton]
-            });
 
     /**
      * Handle publisher creation modal
