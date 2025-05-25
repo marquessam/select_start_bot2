@@ -20,7 +20,8 @@ const AWARD_EMOJIS = {
 const TIEBREAKER_EMOJI = '⚔️'; // Emoji to indicate tiebreaker status
 const TIEBREAKER_BREAKER_EMOJI = '🗡️'; // NEW: Emoji for tiebreaker-breaker
 
-const USERS_PER_EMBED = 10; // Number of users to display per embed
+const USERS_PER_EMBED = 15; // Increased since we're splitting into multiple fields
+const USERS_PER_FIELD = 3; // Number of users per field to stay under character limits
 
 class LeaderboardFeedService extends FeedManagerBase {
     constructor() {
@@ -219,7 +220,7 @@ class LeaderboardFeedService extends FeedManagerBase {
         return `${year}-${month}`;
     }
 
-    // UPDATED: Enhanced generateLeaderboardEmbeds with tiebreaker-breaker support
+    // UPDATED: Enhanced generateLeaderboardEmbeds with improved character limit handling
     async generateLeaderboardEmbeds() {
         try {
             // Get current date for finding current challenge
@@ -560,36 +561,8 @@ class LeaderboardFeedService extends FeedManagerBase {
                     }
                 );
                 
-                // NEW: Format leaderboard text for this page with tiebreaker-breaker support
-                let leaderboardText = '';
-                
-                for (const user of usersOnPage) {
-                    // Use the pre-calculated displayRank
-                    const rankEmoji = user.displayRank <= 3 ? EMOJIS[`RANK_${user.displayRank}`] : `#${user.displayRank}`;
-                    
-                    // Add the main user entry to leaderboard with link to profile
-                    leaderboardText += `${rankEmoji} **[${user.username}](https://retroachievements.org/user/${user.username})** ${user.award}\n`;
-                    
-                    // Add the achievement stats
-                    leaderboardText += `${user.achieved}/${currentChallenge.monthly_challange_game_total} (${user.percentage}%)\n`;
-                    
-                    // Add tiebreaker information if the user has it
-                    if (user.hasTiebreaker && user.tiebreakerScore) {
-                        leaderboardText += `${TIEBREAKER_EMOJI} ${user.tiebreakerScore} in ${user.tiebreakerGame}\n`;
-                    }
-                    
-                    // NEW: Add tiebreaker-breaker information if the user has it
-                    if (user.hasTiebreakerBreaker && user.tiebreakerBreakerScore) {
-                        leaderboardText += `${TIEBREAKER_BREAKER_EMOJI} ${user.tiebreakerBreakerScore} in ${user.tiebreakerBreakerGame}\n`;
-                    }
-                    
-                    leaderboardText += '\n';
-                }
-                
-                participantEmbed.addFields({
-                    name: `Rankings ${startIndex + 1}-${endIndex} (${workingSorted.length} total participants)`,
-                    value: leaderboardText || 'No rankings available.'
-                });
+                // UPDATED: Split users into multiple fields to avoid character limits
+                this.addUsersToEmbed(participantEmbed, usersOnPage, currentChallenge);
                 
                 participantEmbeds.push(participantEmbed);
             }
@@ -601,7 +574,62 @@ class LeaderboardFeedService extends FeedManagerBase {
         }
     }
 
-    // New method to generate yearly leaderboard embeds
+    // NEW: Helper method to add users to embed while respecting character limits
+    addUsersToEmbed(embed, users, currentChallenge) {
+        // Split users into groups for fields
+        const fieldsNeeded = Math.ceil(users.length / USERS_PER_FIELD);
+        
+        for (let fieldIndex = 0; fieldIndex < fieldsNeeded; fieldIndex++) {
+            const startIdx = fieldIndex * USERS_PER_FIELD;
+            const endIdx = Math.min((fieldIndex + 1) * USERS_PER_FIELD, users.length);
+            const usersForField = users.slice(startIdx, endIdx);
+            
+            let leaderboardText = '';
+            
+            for (const user of usersForField) {
+                // Ensure displayRank is set - fallback to a default if undefined
+                const displayRank = user.displayRank || (users.indexOf(user) + 1);
+                
+                // Use the pre-calculated displayRank
+                const rankEmoji = displayRank <= 3 ? EMOJIS[`RANK_${displayRank}`] : `#${displayRank}`;
+                
+                // Add the main user entry to leaderboard with link to profile
+                leaderboardText += `${rankEmoji} **[${user.username}](https://retroachievements.org/user/${user.username})** ${user.award}\n`;
+                
+                // Add the achievement stats
+                leaderboardText += `${user.achieved}/${currentChallenge.monthly_challange_game_total} (${user.percentage}%)\n`;
+                
+                // Add tiebreaker information if the user has it
+                if (user.hasTiebreaker && user.tiebreakerScore) {
+                    leaderboardText += `${TIEBREAKER_EMOJI} ${user.tiebreakerScore} in ${user.tiebreakerGame}\n`;
+                }
+                
+                // NEW: Add tiebreaker-breaker information if the user has it
+                if (user.hasTiebreakerBreaker && user.tiebreakerBreakerScore) {
+                    leaderboardText += `${TIEBREAKER_BREAKER_EMOJI} ${user.tiebreakerBreakerScore} in ${user.tiebreakerBreakerGame}\n`;
+                }
+                
+                leaderboardText += '\n';
+            }
+            
+            // Calculate actual ranks for field name
+            const firstRank = usersForField[0].displayRank || (startIdx + 1);
+            const lastRank = usersForField[usersForField.length - 1].displayRank || (endIdx);
+            
+            // Trim the text to ensure it's under the character limit
+            if (leaderboardText.length > 1000) {
+                leaderboardText = leaderboardText.substring(0, 1000) + '...';
+            }
+            
+            embed.addFields({
+                name: `Rankings ${firstRank}-${lastRank}`,
+                value: leaderboardText || 'No rankings available.',
+                inline: false
+            });
+        }
+    }
+
+    // New method to generate yearly leaderboard embeds (keeping same logic but with character limit fixes)
     async generateYearlyLeaderboardEmbeds() {
         try {
             // Get current year
@@ -676,8 +704,8 @@ class LeaderboardFeedService extends FeedManagerBase {
                 userPoints[i].displayRank = currentRank;
             }
             
-            // Create participant embeds (paginated)
-            const USERS_PER_PAGE = 5; // Reduced to stay within Discord's field character limits
+            // Create participant embeds (paginated) - reduced to 3 per page to stay within limits
+            const USERS_PER_PAGE = 3; 
             const yearlyParticipantEmbeds = [];
             const totalPages = Math.ceil(userPoints.length / USERS_PER_PAGE);
             
@@ -713,22 +741,24 @@ class LeaderboardFeedService extends FeedManagerBase {
                     const sb = user.stats.shadowBeaten;
                     const sp = user.stats.shadowParticipation;
                     
-                    // Format user stats
+                    // Format user stats (keep it compact to avoid character limits)
                     const userStatsText = 
-                        `Challenges: ${user.challengePoints} pts | Community: ${user.communityPoints} pts\n` +
+                        `Challenge: ${user.challengePoints}pts | Community: ${user.communityPoints}pts\n` +
                         `Reg: ${m}✨ ${b}⭐ ${p}🏁 | Shadow: ${sb}⭐ ${sp}🏁`;
                     
                     // Add each user as a separate field to avoid length limits
                     participantEmbed.addFields({
                         name: `${rankEmoji} ${user.username} - ${user.totalPoints} pts`,
-                        value: userStatsText
+                        value: userStatsText,
+                        inline: false
                     });
                 }
                 
                 // Add point system explanation to each page
                 participantEmbed.addFields({
                     name: 'Point System',
-                    value: '✨ Mastery: 7pts | ⭐ Beaten: 4pts | 🏁 Participation: 1pt | Shadow max: 4pts'
+                    value: '✨ Mastery: 7pts | ⭐ Beaten: 4pts | 🏁 Participation: 1pt | Shadow max: 4pts',
+                    inline: false
                 });
                 
                 yearlyParticipantEmbeds.push(participantEmbed);
@@ -949,9 +979,14 @@ class LeaderboardFeedService extends FeedManagerBase {
         }
     }
 
-    // NEW: Enhanced assignRanks method with full tiebreaker-breaker support
+    // UPDATED: Fixed assignRanks method to ensure displayRank is always set
     assignRanks(users, tiebreakerEntries, tiebreakerBreakerEntries, activeTiebreaker) {
         if (!users || users.length === 0) return;
+
+        // Initialize all users with a basic rank first
+        for (let i = 0; i < users.length; i++) {
+            users[i].displayRank = i + 1; // Default sequential ranking
+        }
 
         // First, add tiebreaker info to users
         if (tiebreakerEntries && tiebreakerEntries.length > 0) {
@@ -996,9 +1031,6 @@ class LeaderboardFeedService extends FeedManagerBase {
         });
 
         // Identify tied groups and assign ranks
-        let currentRank = 1;
-        let lastAchieved = -1;
-        let lastPoints = -1;
         let currentTieGroup = [];
         let tieGroupStartIdx = 0;
 
@@ -1007,39 +1039,35 @@ class LeaderboardFeedService extends FeedManagerBase {
             const user = users[i];
             
             // Check if this user is tied with the previous user
-            if (i > 0 && user.achieved === lastAchieved && user.points === lastPoints) {
+            if (i > 0 && 
+                user.achieved === users[i-1].achieved && 
+                user.points === users[i-1].points) {
                 // Add to current tie group
+                if (currentTieGroup.length === 0) {
+                    currentTieGroup.push(i-1); // Add the previous user
+                    tieGroupStartIdx = i-1;
+                }
                 currentTieGroup.push(i);
             } else {
                 // Process previous tie group if it exists
                 if (currentTieGroup.length > 1) {
                     // This is a tie group - handle it
                     this.processTieGroup(users, currentTieGroup, tieGroupStartIdx);
-                } else if (currentTieGroup.length === 1) {
-                    // Single user, just assign the rank
-                    users[currentTieGroup[0]].displayRank = tieGroupStartIdx + 1;
                 }
                 
-                // Start a new potential tie group
-                currentTieGroup = [i];
-                tieGroupStartIdx = i;
+                // Reset for next potential tie group
+                currentTieGroup = [];
             }
-            
-            // Update for next comparison
-            lastAchieved = user.achieved;
-            lastPoints = user.points;
         }
         
         // Process the last tie group if it exists
         if (currentTieGroup.length > 1) {
             this.processTieGroup(users, currentTieGroup, tieGroupStartIdx);
-        } else if (currentTieGroup.length === 1) {
-            users[currentTieGroup[0]].displayRank = tieGroupStartIdx + 1;
         }
 
-        // Final pass: ensure all users have a displayRank
+        // Final pass: ensure all users have a valid displayRank
         for (let i = 0; i < users.length; i++) {
-            if (users[i].displayRank === undefined) {
+            if (users[i].displayRank === undefined || users[i].displayRank === null) {
                 users[i].displayRank = i + 1;
             }
         }
