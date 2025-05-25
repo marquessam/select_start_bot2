@@ -4,6 +4,56 @@ import { ArcadeBoard } from '../../models/ArcadeBoard.js';
 import retroAPI from '../../services/retroAPI.js';
 import { config } from '../../config/config.js';
 
+// Add this after your imports - NEW Validation Class for Tiebreaker-Breaker
+class TiebreakerBreakerValidation {
+    static validateTiebreakerBreakerInput(input) {
+        if (!input || !input.trim()) {
+            return { valid: true, data: null };
+        }
+        
+        const parts = input.trim().split(':');
+        if (parts.length !== 2) {
+            return { 
+                valid: false, 
+                error: 'Invalid format. Use GameID:LeaderboardID (e.g., 12345:67890)' 
+            };
+        }
+        
+        const gameId = parseInt(parts[0]);
+        const leaderboardId = parseInt(parts[1]);
+        
+        if (isNaN(gameId) || isNaN(leaderboardId)) {
+            return { 
+                valid: false, 
+                error: 'Both GameID and LeaderboardID must be valid numbers' 
+            };
+        }
+        
+        if (gameId <= 0 || leaderboardId <= 0) {
+            return { 
+                valid: false, 
+                error: 'GameID and LeaderboardID must be positive numbers' 
+            };
+        }
+        
+        return { 
+            valid: true, 
+            data: { gameId, leaderboardId } 
+        };
+    }
+    
+    static validateNoCircularReference(tiebreakerLeaderboardId, tiebreakerBreakerLeaderboardId) {
+        if (tiebreakerLeaderboardId === tiebreakerBreakerLeaderboardId) {
+            return { 
+                valid: false, 
+                error: 'Tiebreaker and tiebreaker-breaker cannot use the same leaderboard' 
+            };
+        }
+        
+        return { valid: true };
+    }
+}
+
 export default {
     data: new SlashCommandBuilder()
         .setName('adminarcade')
@@ -410,7 +460,7 @@ export default {
         await interaction.showModal(modal);
     },
 
-    // Show a modal for creating a tiebreaker
+    // UPDATED: Show a modal for creating a tiebreaker - now includes tiebreaker-breaker field
     async showCreateTiebreakerModal(interaction) {
         const modal = new ModalBuilder()
             .setCustomId('adminarcade_create_tiebreaker_modal')
@@ -441,12 +491,21 @@ export default {
             .setStyle(TextInputStyle.Short)
             .setRequired(true);
 
+        // NEW: Add tiebreaker-breaker input field
+        const tiebreakerBreakerInput = new TextInputBuilder()
+            .setCustomId('tiebreaker_breaker')
+            .setLabel('🗡️ Tiebreaker-Breaker (optional)')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(false)
+            .setPlaceholder('GameID:LeaderboardID or leave blank');
+
         // Add inputs to the modal
         modal.addComponents(
             new ActionRowBuilder().addComponents(leaderboardIdInput),
             new ActionRowBuilder().addComponents(gameIdInput),
             new ActionRowBuilder().addComponents(descriptionInput),
-            new ActionRowBuilder().addComponents(endDateInput)
+            new ActionRowBuilder().addComponents(endDateInput),
+            new ActionRowBuilder().addComponents(tiebreakerBreakerInput)
         );
 
         // Show the modal
@@ -719,7 +778,7 @@ export default {
         }
     },
 
-    // Handle the modal submit for creating a tiebreaker
+    // UPDATED: Handle the modal submit for creating a tiebreaker - now supports tiebreaker-breaker
     async handleCreateTiebreakerModal(interaction) {
         try {
             await interaction.deferReply({ ephemeral: true });
@@ -729,6 +788,7 @@ export default {
             const gameId = parseInt(interaction.fields.getTextInputValue('game_id'));
             const description = interaction.fields.getTextInputValue('description');
             const endDateStr = interaction.fields.getTextInputValue('end_date');
+            const tiebreakerBreakerInput = interaction.fields.getTextInputValue('tiebreaker_breaker');
             
             // Parse end date
             const endDate = new Date(endDateStr);
@@ -739,10 +799,40 @@ export default {
             // Set end time to 23:59:59
             endDate.setHours(23, 59, 59);
 
+            // NEW: Validate tiebreaker-breaker input
+            const tiebreakerBreakerValidation = TiebreakerBreakerValidation.validateTiebreakerBreakerInput(tiebreakerBreakerInput);
+            if (!tiebreakerBreakerValidation.valid) {
+                return interaction.editReply(`Tiebreaker-breaker validation error: ${tiebreakerBreakerValidation.error}`);
+            }
+
+            // NEW: Check for circular reference if tiebreaker-breaker is provided
+            if (tiebreakerBreakerValidation.data) {
+                const circularCheck = TiebreakerBreakerValidation.validateNoCircularReference(
+                    leaderboardId, 
+                    tiebreakerBreakerValidation.data.leaderboardId
+                );
+                if (!circularCheck.valid) {
+                    return interaction.editReply(`Tiebreaker-breaker validation error: ${circularCheck.error}`);
+                }
+            }
+
             // Validate game exists
             const gameInfo = await retroAPI.getGameInfo(gameId);
             if (!gameInfo) {
                 return interaction.editReply('Game not found. Please check the game ID.');
+            }
+
+            // NEW: Validate tiebreaker-breaker game exists (if provided)
+            let tiebreakerBreakerGameInfo = null;
+            if (tiebreakerBreakerValidation.data) {
+                try {
+                    tiebreakerBreakerGameInfo = await retroAPI.getGameInfo(tiebreakerBreakerValidation.data.gameId);
+                    if (!tiebreakerBreakerGameInfo) {
+                        return interaction.editReply('Tiebreaker-breaker game not found. Please check the game ID.');
+                    }
+                } catch (error) {
+                    return interaction.editReply('Error validating tiebreaker-breaker game. Please check the game ID.');
+                }
             }
 
             // Check if an active tiebreaker already exists
@@ -775,6 +865,16 @@ export default {
                 monthKey: monthYear
             });
 
+            // NEW: Set tiebreaker-breaker data if provided
+            if (tiebreakerBreakerValidation.data && tiebreakerBreakerGameInfo) {
+                newBoard.setTiebreakerBreaker(
+                    tiebreakerBreakerValidation.data.leaderboardId,
+                    tiebreakerBreakerValidation.data.gameId,
+                    tiebreakerBreakerGameInfo.title,
+                    `Tiebreaker-breaker for ${gameInfo.title}`
+                );
+            }
+
             await newBoard.save();
 
             // Get the month name
@@ -790,6 +890,14 @@ export default {
                     `**Description:** ${description}\n\n` +
                     `**Tiebreaker Period:** ${now.toLocaleDateString()} to ${endDate.toLocaleDateString()}`
                 );
+
+            // NEW: Add tiebreaker-breaker info to embed if available
+            if (tiebreakerBreakerGameInfo) {
+                embed.addFields({
+                    name: '🗡️ Tiebreaker-Breaker',
+                    value: `**Game:** ${tiebreakerBreakerGameInfo.title}\n**Leaderboard ID:** ${tiebreakerBreakerValidation.data.leaderboardId}`
+                });
+            }
 
             if (gameInfo.imageIcon) {
                 embed.setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`);
@@ -928,7 +1036,7 @@ export default {
         }
     },
 
-    // Show edit modal for tiebreaker board
+    // UPDATED: Show edit modal for tiebreaker board - now includes tiebreaker-breaker field
     async showEditTiebreakerModal(interaction, boardId) {
         try {
             // Find the board
@@ -947,6 +1055,13 @@ export default {
             // Format end date as YYYY-MM-DD
             const endDate = board.endDate;
             const endDateStr = endDate ? `${endDate.getFullYear()}-${String(endDate.getMonth() + 1).padStart(2, '0')}-${String(endDate.getDate()).padStart(2, '0')}` : '';
+
+            // NEW: Format current tiebreaker-breaker value
+            let tiebreakerBreakerValue = '';
+            if (board.hasTiebreakerBreaker()) {
+                const tbInfo = board.getTiebreakerBreakerInfo();
+                tiebreakerBreakerValue = `${tbInfo.gameId}:${tbInfo.leaderboardId}`;
+            }
 
             // Create edit modal
             const modal = new ModalBuilder()
@@ -975,11 +1090,21 @@ export default {
                 .setValue(endDateStr)
                 .setRequired(true);
 
+            // NEW: Add tiebreaker-breaker input field with current value
+            const tiebreakerBreakerInput = new TextInputBuilder()
+                .setCustomId('tiebreaker_breaker')
+                .setLabel('🗡️ Tiebreaker-Breaker (optional)')
+                .setStyle(TextInputStyle.Short)
+                .setValue(tiebreakerBreakerValue)
+                .setRequired(false)
+                .setPlaceholder('GameID:LeaderboardID or leave blank to remove');
+
             // Add inputs to the modal
             modal.addComponents(
                 new ActionRowBuilder().addComponents(leaderboardIdInput),
                 new ActionRowBuilder().addComponents(descriptionInput),
-                new ActionRowBuilder().addComponents(endDateInput)
+                new ActionRowBuilder().addComponents(endDateInput),
+                new ActionRowBuilder().addComponents(tiebreakerBreakerInput)
             );
 
             // Show the modal
@@ -1108,7 +1233,7 @@ export default {
         }
     },
 
-    // Handle edit modal submission for tiebreaker board
+    // UPDATED: Handle edit modal submission for tiebreaker board - now supports tiebreaker-breaker updates
     async handleEditTiebreakerModal(interaction, boardId) {
         try {
             await interaction.deferReply({ ephemeral: true });
@@ -1117,6 +1242,7 @@ export default {
             const newLeaderboardId = parseInt(interaction.fields.getTextInputValue('leaderboard_id'));
             const newDescription = interaction.fields.getTextInputValue('description');
             const newEndDateStr = interaction.fields.getTextInputValue('end_date');
+            const tiebreakerBreakerInput = interaction.fields.getTextInputValue('tiebreaker_breaker');
 
             // Parse end date
             const newEndDate = new Date(newEndDateStr);
@@ -1127,6 +1253,23 @@ export default {
             // Set end time to 23:59:59
             newEndDate.setHours(23, 59, 59);
 
+            // NEW: Validate tiebreaker-breaker input
+            const tiebreakerBreakerValidation = TiebreakerBreakerValidation.validateTiebreakerBreakerInput(tiebreakerBreakerInput);
+            if (!tiebreakerBreakerValidation.valid) {
+                return interaction.editReply(`Tiebreaker-breaker validation error: ${tiebreakerBreakerValidation.error}`);
+            }
+
+            // NEW: Check for circular reference if tiebreaker-breaker is provided
+            if (tiebreakerBreakerValidation.data) {
+                const circularCheck = TiebreakerBreakerValidation.validateNoCircularReference(
+                    newLeaderboardId, 
+                    tiebreakerBreakerValidation.data.leaderboardId
+                );
+                if (!circularCheck.valid) {
+                    return interaction.editReply(`Tiebreaker-breaker validation error: ${circularCheck.error}`);
+                }
+            }
+
             // Find the board
             const board = await ArcadeBoard.findOne({ 
                 boardId,
@@ -1135,6 +1278,31 @@ export default {
 
             if (!board) {
                 return interaction.editReply(`Tiebreaker board with ID "${boardId}" not found.`);
+            }
+
+            // NEW: Handle tiebreaker-breaker updates
+            let tiebreakerBreakerGameInfo = null;
+            if (tiebreakerBreakerValidation.data) {
+                // Validate tiebreaker-breaker game exists
+                try {
+                    tiebreakerBreakerGameInfo = await retroAPI.getGameInfo(tiebreakerBreakerValidation.data.gameId);
+                    if (!tiebreakerBreakerGameInfo) {
+                        return interaction.editReply('Tiebreaker-breaker game not found. Please check the game ID.');
+                    }
+                } catch (error) {
+                    return interaction.editReply('Error validating tiebreaker-breaker game. Please check the game ID.');
+                }
+
+                // Set new tiebreaker-breaker
+                board.setTiebreakerBreaker(
+                    tiebreakerBreakerValidation.data.leaderboardId,
+                    tiebreakerBreakerValidation.data.gameId,
+                    tiebreakerBreakerGameInfo.title,
+                    `Tiebreaker-breaker for ${board.gameTitle}`
+                );
+            } else {
+                // Clear tiebreaker-breaker if input is empty
+                board.clearTiebreakerBreaker();
             }
 
             // Update the board
@@ -1156,6 +1324,19 @@ export default {
             embed.addFields({ name: 'New Description', value: newDescription });
             embed.addFields({ name: 'New Leaderboard ID', value: newLeaderboardId.toString() });
             embed.addFields({ name: 'New End Date', value: newEndDateStr });
+
+            // NEW: Add tiebreaker-breaker info to response
+            if (tiebreakerBreakerGameInfo) {
+                embed.addFields({
+                    name: '🗡️ Tiebreaker-Breaker Updated',
+                    value: `**Game:** ${tiebreakerBreakerGameInfo.title}\n**Leaderboard ID:** ${tiebreakerBreakerValidation.data.leaderboardId}`
+                });
+            } else if (!tiebreakerBreakerInput || !tiebreakerBreakerInput.trim()) {
+                embed.addFields({
+                    name: '🗡️ Tiebreaker-Breaker',
+                    value: 'Removed (no longer configured)'
+                });
+            }
 
             // Add announce button
             const row = new ActionRowBuilder()
@@ -1351,6 +1532,12 @@ export default {
                 
                 if (board.startDate && board.endDate) {
                     entryText += `\nPeriod: ${board.startDate.toLocaleDateString()} to ${board.endDate.toLocaleDateString()}`;
+                }
+                
+                // NEW: Add tiebreaker-breaker info if available
+                if (board.boardType === 'tiebreaker' && board.hasTiebreakerBreaker()) {
+                    const tbInfo = board.getTiebreakerBreakerInfo();
+                    entryText += `\n🗡️ TB-Breaker: ${tbInfo.gameTitle}`;
                 }
                 
                 description += entryText + '\n\n';
@@ -1645,7 +1832,7 @@ export default {
         }
     },
 
-    // Announce a board
+    // UPDATED: Announce a board - now includes tiebreaker-breaker info
     async announceBoard(interaction, boardType, boardId, isSelectMenu = false) {
         try {
             if (isSelectMenu) {
@@ -1737,6 +1924,15 @@ export default {
                         `This tiebreaker will be used to resolve ties in the ${monthName} monthly challenge leaderboard. Check it out with \`/arcade tiebreaker\`!`
                     )
                     .setTimestamp();
+
+                // NEW: Add tiebreaker-breaker info if available
+                if (board.hasTiebreakerBreaker()) {
+                    const tbInfo = board.getTiebreakerBreakerInfo();
+                    embed.addFields({
+                        name: '🗡️ Tiebreaker-Breaker',
+                        value: `**Game:** ${tbInfo.gameTitle}\nIf users are tied in the main tiebreaker, this will resolve the tie.`
+                    });
+                }
                 
                 // Get game info for thumbnail
                 const gameInfo = await retroAPI.getGameInfo(board.gameId);
