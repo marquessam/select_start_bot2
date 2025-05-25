@@ -108,12 +108,46 @@ const arcadeBoardSchema = new mongoose.Schema({
     isRacing: {
         type: Boolean,
         default: false
+    },
+    
+    // NEW: Tiebreaker-breaker fields (for when tiebreaker is also tied)
+    // These fields are used to resolve ties within the primary tiebreaker
+    tiebreakerBreakerLeaderboardId: {
+        type: Number,
+        required: false,
+        default: null
+    },
+    
+    tiebreakerBreakerGameId: {
+        type: Number,
+        required: false,
+        default: null
+    },
+    
+    tiebreakerBreakerGameTitle: {
+        type: String,
+        required: false,
+        default: null
+    },
+    
+    tiebreakerBreakerDescription: {
+        type: String,
+        required: false,
+        default: null
     }
 });
 
 // Create indexes for frequently queried fields
 arcadeBoardSchema.index({ boardType: 1, startDate: 1, endDate: 1 });
 arcadeBoardSchema.index({ boardType: 1, monthKey: 1 });
+
+// NEW: Add index for tiebreaker-breaker queries
+arcadeBoardSchema.index({ 
+    boardType: 1, 
+    tiebreakerBreakerLeaderboardId: 1,
+    startDate: 1, 
+    endDate: 1 
+});
 
 // Static method to find racing board by month name or month key
 arcadeBoardSchema.statics.findRacingBoardByMonth = async function(monthInput) {
@@ -183,6 +217,17 @@ arcadeBoardSchema.statics.findActiveTiebreaker = function() {
     });
 };
 
+// NEW: Statics method to find active tiebreaker with tiebreaker-breaker
+arcadeBoardSchema.statics.findActiveTiebreakerWithBreaker = function() {
+    const now = new Date();
+    return this.findOne({
+        boardType: 'tiebreaker',
+        startDate: { $lte: now },
+        endDate: { $gte: now },
+        tiebreakerBreakerLeaderboardId: { $exists: true, $ne: null }
+    });
+};
+
 // Statics method to find all arcade boards
 arcadeBoardSchema.statics.findAllArcadeBoards = function() {
     return this.find({ boardType: 'arcade' }).sort({ gameTitle: 1 });
@@ -202,6 +247,48 @@ arcadeBoardSchema.methods.isCompletedWithoutPoints = function() {
            this.endDate < now && 
            !this.pointsAwarded;
 };
+
+// NEW: Method to check if this tiebreaker has a tiebreaker-breaker configured
+arcadeBoardSchema.methods.hasTiebreakerBreaker = function() {
+    return this.boardType === 'tiebreaker' && 
+           this.tiebreakerBreakerLeaderboardId && 
+           this.tiebreakerBreakerGameId;
+};
+
+// NEW: Method to get tiebreaker-breaker info safely
+arcadeBoardSchema.methods.getTiebreakerBreakerInfo = function() {
+    if (!this.hasTiebreakerBreaker()) {
+        return null;
+    }
+    
+    return {
+        leaderboardId: this.tiebreakerBreakerLeaderboardId,
+        gameId: this.tiebreakerBreakerGameId,
+        gameTitle: this.tiebreakerBreakerGameTitle,
+        description: this.tiebreakerBreakerDescription
+    };
+};
+
+// NEW: Method to clear tiebreaker-breaker data
+arcadeBoardSchema.methods.clearTiebreakerBreaker = function() {
+    this.tiebreakerBreakerLeaderboardId = null;
+    this.tiebreakerBreakerGameId = null;
+    this.tiebreakerBreakerGameTitle = null;
+    this.tiebreakerBreakerDescription = null;
+};
+
+// NEW: Method to set tiebreaker-breaker data
+arcadeBoardSchema.methods.setTiebreakerBreaker = function(leaderboardId, gameId, gameTitle, description = null) {
+    this.tiebreakerBreakerLeaderboardId = leaderboardId;
+    this.tiebreakerBreakerGameId = gameId;
+    this.tiebreakerBreakerGameTitle = gameTitle;
+    this.tiebreakerBreakerDescription = description;
+};
+
+// NEW: Virtual to check if board is a tiebreaker with tiebreaker-breaker
+arcadeBoardSchema.virtual('isTiebreakerWithBreaker').get(function() {
+    return this.hasTiebreakerBreaker();
+});
 
 export const ArcadeBoard = mongoose.model('ArcadeBoard', arcadeBoardSchema);
 export default ArcadeBoard;
