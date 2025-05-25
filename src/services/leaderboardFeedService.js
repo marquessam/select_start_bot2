@@ -851,6 +851,13 @@ class LeaderboardFeedService extends FeedManagerBase {
                 return;
             }
 
+            // NEW: Check for active tiebreaker to enhance alert context
+            const activeTiebreaker = await ArcadeBoard.findOne({
+                boardType: 'tiebreaker',
+                startDate: { $lte: now },
+                endDate: { $gte: now }
+            });
+
             // Get month name
             const monthName = now.toLocaleString('default', { month: 'long' });
 
@@ -906,18 +913,37 @@ class LeaderboardFeedService extends FeedManagerBase {
                 thumbnailUrl = `https://retroachievements.org${currentChallenge.monthly_game_icon_url}`;
             }
 
-            // Send alert using AlertUtils with MONTHLY alert type
-            await AlertUtils.sendPositionChangeAlert({
+            // NEW: Enhanced alert with tiebreaker context
+            const alertOptions = {
                 title: `📊 ${monthName} Challenge Update!`,
                 description: `The leaderboard for **${currentChallenge.monthly_challange_title || 'the monthly challenge'}** has been updated!`,
                 changes: changes,
                 currentStandings: currentStandings,
                 thumbnail: thumbnailUrl,
-                color: COLORS.INFO, // Purple to match monthly challenge color scheme
-                footer: { text: 'Data provided by RetroAchievements • Rankings update every 15 minutes' }
-            }, 'monthly'); // Specify 'monthly' alert type for proper channel routing
+                footer: { text: 'Data provided by RetroAchievements • Rankings update every 15 minutes' },
+                // NEW: Add tiebreaker context
+                hasTiebreaker: !!activeTiebreaker,
+                hasTiebreakerBreaker: activeTiebreaker ? activeTiebreaker.hasTiebreakerBreaker() : false,
+                tiebreakerGame: activeTiebreaker ? activeTiebreaker.gameTitle : null,
+                tiebreakerBreakerGame: activeTiebreaker && activeTiebreaker.hasTiebreakerBreaker() ? 
+                    activeTiebreaker.getTiebreakerBreakerInfo().gameTitle : null
+            };
+
+            // NEW: Use enhanced alert method with proper alert type
+            if (activeTiebreaker && activeTiebreaker.hasTiebreakerBreaker()) {
+                // If tiebreaker-breaker is active, use specialized alert
+                await AlertUtils.sendTiebreakerBreakerAlert(alertOptions);
+                console.log(`Sent tiebreaker-breaker alert with ${changes.length} position changes`);
+            } else if (activeTiebreaker) {
+                // If only tiebreaker is active, use tiebreaker alert
+                await AlertUtils.sendTiebreakerAlert(alertOptions);
+                console.log(`Sent tiebreaker alert with ${changes.length} position changes`);
+            } else {
+                // Standard monthly challenge alert
+                await AlertUtils.sendPositionChangeAlert(alertOptions, 'monthly');
+                console.log(`Sent monthly challenge leaderboard alert with ${changes.length} position changes`);
+            }
             
-            console.log(`Sent monthly challenge leaderboard alert to MONTHLY channel with ${changes.length} position changes`);
         } catch (error) {
             console.error('Error sending monthly challenge rank change alerts:', error);
         }
