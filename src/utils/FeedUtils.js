@@ -9,17 +9,35 @@ export const COLORS = {
     DANGER: '#E74C3C',       // Red - errors/failures
     INFO: '#9B59B6',         // Purple - information
     NEUTRAL: '#95A5A6',      // Gray - neutral/inactive
-    GOLD: '#FFD700'          // Gold - special achievements
+    GOLD: '#FFD700',         // Gold - special achievements
+    SILVER: '#C0C0C0',       // Silver
+    BRONZE: '#CD7F32',       // Bronze
+    ERROR: '#FF0000'         // Red - errors/failures (alias)
 };
 
-// Standard emojis
+// Standard emojis (updated with tiebreaker-breaker support)
 export const EMOJIS = {
+    // Rank emojis
     RANK_1: '🥇',
     RANK_2: '🥈',
     RANK_3: '🥉',
+    
+    // Award emojis
     MASTERY: '✨',
     BEATEN: '⭐',
     PARTICIPATION: '🏁',
+    
+    // Competition emojis
+    TIEBREAKER: '⚔️',
+    TIEBREAKER_BREAKER: '⚡', // Lightning bolt for tiebreaker-breaker
+    
+    // Status emojis
+    SUCCESS: '✅',
+    ERROR: '❌',
+    WARNING: '⚠️',
+    INFO: 'ℹ️',
+    
+    // General emojis
     WINNER: '🏆',
     CROWN: '👑',
     GAME: '🎮',
@@ -27,7 +45,16 @@ export const EMOJIS = {
     RACING: '🏎️',
     ARENA: '🏟️',
     CHART: '📊',
-    MONEY: '💰'
+    MONEY: '💰',
+    
+    // Action emojis
+    UP_ARROW: '⬆️',
+    DOWN_ARROW: '⬇️',
+    FIRE: '🔥',
+    TROPHY: '🏆',
+    
+    // Additional game emojis
+    SHADOW: '👥'
 };
 
 /**
@@ -93,7 +120,8 @@ export function createHeaderEmbed(title, description, options = {}) {
         thumbnail = null,
         footer = null,
         timestamp = true,
-        url = null
+        url = null,
+        fields = null
     } = options;
     
     const embed = new EmbedBuilder()
@@ -111,6 +139,10 @@ export function createHeaderEmbed(title, description, options = {}) {
     
     if (footer) {
         embed.setFooter(footer);
+    }
+    
+    if (fields) {
+        embed.addFields(fields);
     }
     
     if (timestamp) {
@@ -185,6 +217,100 @@ export function createLeaderboardEmbed(title, entries, options = {}) {
     }
     
     return embed;
+}
+
+// NEW: Helper function to get rank emoji
+export function getRankEmoji(rank) {
+    if (rank <= 3) {
+        return EMOJIS[`RANK_${rank}`];
+    }
+    return `#${rank}`;
+}
+
+// NEW: Helper function to get award emoji
+export function getAwardEmoji(points) {
+    if (points === 7) return EMOJIS.MASTERY;
+    if (points === 4) return EMOJIS.BEATEN;
+    if (points === 1) return EMOJIS.PARTICIPATION;
+    return '';
+}
+
+// NEW: Helper function to format tiebreaker display
+export function formatTiebreakerDisplay(user, showOnlyTop5 = true) {
+    let display = '';
+    
+    // Only show tiebreaker info for top 5 if specified
+    if (!showOnlyTop5 || user.displayRank <= 5) {
+        if (user.hasTiebreaker && user.tiebreakerScore) {
+            display += `${EMOJIS.TIEBREAKER} ${user.tiebreakerScore}`;
+            if (user.tiebreakerGame) {
+                display += ` in ${user.tiebreakerGame}`;
+            }
+            display += '\n';
+        }
+        
+        if (user.hasTiebreakerBreaker && user.tiebreakerBreakerScore) {
+            display += `${EMOJIS.TIEBREAKER_BREAKER} ${user.tiebreakerBreakerScore}`;
+            if (user.tiebreakerBreakerGame) {
+                display += ` in ${user.tiebreakerBreakerGame}`;
+            }
+            display += '\n';
+        }
+    }
+    
+    return display;
+}
+
+// NEW: Helper function to create comprehensive user display text
+export function formatUserDisplayText(user, totalAchievements, showOnlyTop5Tiebreakers = true) {
+    let displayText = '';
+    
+    // Rank and username
+    const rankEmoji = getRankEmoji(user.displayRank);
+    const award = getAwardEmoji(user.points);
+    
+    displayText += `${rankEmoji} **[${user.username}](https://retroachievements.org/user/${user.username})** ${award}\n`;
+    
+    // Achievement stats
+    displayText += `${user.achieved || user.achievements}/${totalAchievements} (${user.percentage}%)\n`;
+    
+    // Tiebreaker information
+    displayText += formatTiebreakerDisplay(user, showOnlyTop5Tiebreakers);
+    
+    return displayText;
+}
+
+// NEW: Helper function to validate tiebreaker-breaker configuration
+export function validateTiebreakerBreakerConfig(tiebreakerLeaderboardId, tiebreakerBreakerLeaderboardId) {
+    if (!tiebreakerBreakerLeaderboardId) {
+        return { valid: true, data: null };
+    }
+    
+    if (tiebreakerLeaderboardId === tiebreakerBreakerLeaderboardId) {
+        return {
+            valid: false,
+            error: 'Tiebreaker and tiebreaker-breaker cannot use the same leaderboard'
+        };
+    }
+    
+    return { valid: true };
+}
+
+// NEW: Helper function to format tiebreaker description for embeds
+export function formatTiebreakerDescription(tiebreakerInfo) {
+    if (!tiebreakerInfo || !tiebreakerInfo.isActive) {
+        return null;
+    }
+    
+    let description = `${EMOJIS.TIEBREAKER} **Tiebreaker Game:** ${tiebreakerInfo.gameTitle}\n` +
+                     `*Tiebreaker results are used to determine final ranking for tied users in top positions.*`;
+    
+    if (tiebreakerInfo.hasTiebreakerBreaker) {
+        description += `\n${EMOJIS.TIEBREAKER_BREAKER} **Tiebreaker-Breaker Game:** ${tiebreakerInfo.tiebreakerBreakerGameTitle}\n` +
+                      `*Used to resolve ties within the tiebreaker itself.*`;
+    }
+    
+    return description;
 }
 
 /**
@@ -295,6 +421,12 @@ export default {
     getDiscordTimestamp,
     createHeaderEmbed,
     createLeaderboardEmbed,
+    getRankEmoji,
+    getAwardEmoji,
+    formatTiebreakerDisplay,
+    formatUserDisplayText,
+    validateTiebreakerBreakerConfig,
+    formatTiebreakerDescription,
     parseScoreString,
     parseTimeToSeconds,
     isTimeBasedLeaderboard
