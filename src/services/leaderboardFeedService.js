@@ -81,89 +81,6 @@ class LeaderboardFeedService extends FeedManagerBase {
                 console.error('Leaderboard feed channel not found or inaccessible');
                 return;
             }
-    }
-
-    // New method to generate points overview embed
-    async generatePointsOverviewEmbed() {
-        try {
-            const pointsOverviewEmbed = createHeaderEmbed(
-                'How to Earn Points in Select Start Community',
-                'Complete breakdown of all ways to earn points throughout the year:',
-                {
-                    color: COLORS.INFO,
-                    footer: { text: 'Updates every 15 minutes • Use /help points for detailed information' }
-                }
-            );
-
-            // Monthly Challenge Points
-            pointsOverviewEmbed.addFields({
-                name: '🎮 Monthly Challenge (Additive)',
-                value: `${EMOJIS.PARTICIPATION} **Participation:** 1 point (earn any achievement)\n` +
-                       `${EMOJIS.BEATEN} **Beaten:** +3 points (4 total - includes participation)\n` +
-                       `${EMOJIS.MASTERY} **Mastery:** +3 points (7 total - includes participation + beaten)\n\n` +
-                       `**⚠️ IMPORTANT:** Must be completed within the challenge month in **Hardcore Mode**!`
-            });
-
-            // Shadow Challenge Points
-            pointsOverviewEmbed.addFields({
-                name: '👥 Shadow Challenge (Additive)',
-                value: `${EMOJIS.PARTICIPATION} **Participation:** 1 point (earn any achievement)\n` +
-                       `${EMOJIS.BEATEN} **Beaten:** +3 points (4 total - includes participation)\n\n` +
-                       `Shadow games are capped at "Beaten" status (4 points maximum)\n` +
-                       `**⚠️ IMPORTANT:** Must be completed within the challenge month in **Hardcore Mode**!`
-            });
-
-            // Racing Challenge Points
-            pointsOverviewEmbed.addFields({
-                name: '🏎️ Racing Challenge (Monthly Awards)',
-                value: `${EMOJIS.RANK_1} **1st Place:** 3 points\n` +
-                       `${EMOJIS.RANK_2} **2nd Place:** 2 points\n` +
-                       `${EMOJIS.RANK_3} **3rd Place:** 1 point\n\n` +
-                       `New racing challenges start on the 1st of each month. Points awarded at month end.`
-            });
-
-            // Arcade Leaderboard Points
-            pointsOverviewEmbed.addFields({
-                name: '🎮 Arcade Leaderboards (Year-End Awards)',
-                value: `${EMOJIS.RANK_1} **1st Place:** 3 points per board\n` +
-                       `${EMOJIS.RANK_2} **2nd Place:** 2 points per board\n` +
-                       `${EMOJIS.RANK_3} **3rd Place:** 1 point per board\n\n` +
-                       `Points awarded December 1st for each arcade board. New boards announced 2nd week of each month.`
-            });
-
-            // Arena Battles
-            pointsOverviewEmbed.addFields({
-                name: '⚔️ Arena Battles (GP Wagering)',
-                value: `${EMOJIS.MONEY} **GP System:** Wager Gold Points in head-to-head competitions\n` +
-                       `${EMOJIS.SUCCESS} **Monthly Allowance:** 1,000 GP automatically on the 1st\n` +
-                       `${EMOJIS.WINNER} **Winner Takes All:** GP transferred from loser to winner\n\n` +
-                       `Challenge other members or bet on ongoing battles during first 72 hours.`
-            });
-
-            // Commands and Tracking
-            pointsOverviewEmbed.addFields({
-                name: '📊 Track Your Progress',
-                value: `\`/leaderboard\` - Monthly challenge standings\n` +
-                       `\`/yearlyboard\` - Annual points leaderboard\n` +
-                       `\`/profile [username]\` - Personal achievements and points\n` +
-                       `\`/arena\` - Arena battle history and GP balance\n` +
-                       `\`/help points\` - Detailed points information`
-            });
-
-            return pointsOverviewEmbed;
-        } catch (error) {
-            console.error('Error generating points overview embed:', error);
-            
-            // Fallback embed
-            return createHeaderEmbed(
-                'Points Overview',
-                'Use `/help points` for detailed information about earning points in the Select Start Community.',
-                {
-                    color: COLORS.INFO,
-                    footer: { text: 'Updates every 15 minutes' }
-                }
-            );
-        }
             
             // Generate monthly leaderboard embeds
             const { headerEmbed, participantEmbeds, sortedUsers } = await this.generateLeaderboardEmbeds();
@@ -308,6 +225,89 @@ class LeaderboardFeedService extends FeedManagerBase {
             }
         } catch (error) {
             console.error('Error updating leaderboard:', error);
+        }
+    }
+
+    // New method to generate points overview embed
+    async generatePointsOverviewEmbed() {
+        try {
+            const pointsOverviewEmbed = createHeaderEmbed(
+                'How to Earn Points in Select Start Community',
+                'Complete breakdown of all ways to earn points throughout the year:',
+                {
+                    color: COLORS.INFO,
+                    footer: { text: 'Updates every 15 minutes • Use /help points for detailed information' }
+                }
+            );
+
+            // Monthly Challenge Points
+            pointsOverviewEmbed.addFields({
+                name: '🎮 Monthly Challenge (Additive)',
+                value: `${EMOJIS.PARTICIPATION} **Participation:** 1 point (earn any achievement)\n` +
+                       `${EMOJIS.BEATEN} **Beaten:** +3 points (4 total - includes participation)\n` +
+                       `${EMOJIS.MASTERY} **Mastery:** +3 points (7 total - includes participation + beaten)\n\n` +
+                       `**⚠️ IMPORTANT:** Must be completed within the challenge month in **Hardcore Mode**!`
+            });
+
+            // Shadow Challenge Points
+            pointsOverviewEmbed.addFields({
+                name: '👥 Shadow Challenge (Additive)',
+                value: `${EMOJIS.PARTICIPATION} **Participation:** 1 point (earn any achievement)\n` +
+                       `${EMOJIS.BEATEN} **Beaten:** +3 points (4 total - includes participation)\n\n` +
+                       `Shadow games are capped at "Beaten" status (4 points maximum)\n` +
+                       `**⚠️ IMPORTANT:** Must be completed within the challenge month in **Hardcore Mode**!`
+            });
+
+            // Racing Challenge Points
+            pointsOverviewEmbed.addFields({
+                name: '🏎️ Racing Challenge (Monthly Awards)',
+                value: `${EMOJIS.RANK_1} **1st Place:** 3 points\n` +
+                       `${EMOJIS.RANK_2} **2nd Place:** 2 points\n` +
+                       `${EMOJIS.RANK_3} **3rd Place:** 1 point\n\n` +
+                       `New racing challenges start on the 1st of each month. Points awarded at month end.`
+            });
+
+            // Arcade Leaderboard Points
+            pointsOverviewEmbed.addFields({
+                name: '🎮 Arcade Leaderboards (Year-End Awards)',
+                value: `${EMOJIS.RANK_1} **1st Place:** 3 points per board\n` +
+                       `${EMOJIS.RANK_2} **2nd Place:** 2 points per board\n` +
+                       `${EMOJIS.RANK_3} **3rd Place:** 1 point per board\n\n` +
+                       `Points awarded December 1st for each arcade board. New boards announced 2nd week of each month.`
+            });
+
+            // Arena Battles
+            pointsOverviewEmbed.addFields({
+                name: '⚔️ Arena Battles (GP Wagering)',
+                value: `${EMOJIS.MONEY} **GP System:** Wager Gold Points in head-to-head competitions\n` +
+                       `${EMOJIS.SUCCESS} **Monthly Allowance:** 1,000 GP automatically on the 1st\n` +
+                       `${EMOJIS.WINNER} **Winner Takes All:** GP transferred from loser to winner\n\n` +
+                       `Challenge other members or bet on ongoing battles during first 72 hours.`
+            });
+
+            // Commands and Tracking
+            pointsOverviewEmbed.addFields({
+                name: '📊 Track Your Progress',
+                value: `\`/leaderboard\` - Monthly challenge standings\n` +
+                       `\`/yearlyboard\` - Annual points leaderboard\n` +
+                       `\`/profile [username]\` - Personal achievements and points\n` +
+                       `\`/arena\` - Arena battle history and GP balance\n` +
+                       `\`/help points\` - Detailed points information`
+            });
+
+            return pointsOverviewEmbed;
+        } catch (error) {
+            console.error('Error generating points overview embed:', error);
+            
+            // Fallback embed
+            return createHeaderEmbed(
+                'Points Overview',
+                'Use `/help points` for detailed information about earning points in the Select Start Community.',
+                {
+                    color: COLORS.INFO,
+                    footer: { text: 'Updates every 15 minutes' }
+                }
+            );
         }
     }
 
