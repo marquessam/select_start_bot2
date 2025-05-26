@@ -31,7 +31,30 @@ const TIEBREAKER_EMOJI = '⚔️'; // Emoji to indicate tiebreaker status
 const TIEBREAKER_BREAKER_EMOJI = '⚡'; // Lightning bolt for tiebreaker-breaker
 
 // Number of users to show per page
-const USERS_PER_PAGE = 10;
+const USERS_PER_PAGE = 5; // Clean 5 users per page - first page shows top 5 with tiebreaker info
+
+/**
+ * Helper function to ensure field values don't exceed Discord's 1024 character limit
+ */
+function ensureFieldLength(text, maxLength = 1024) {
+    if (text.length <= maxLength) {
+        return text;
+    }
+    
+    console.warn(`Field text length ${text.length} exceeds Discord limit of ${maxLength}, truncating...`);
+    
+    // If text is too long, truncate and add notice
+    const truncateAt = maxLength - 60; // Leave room for truncation notice
+    const truncated = text.substring(0, truncateAt);
+    
+    // Find the last complete user entry to avoid cutting off mid-entry
+    const lastUserEnd = truncated.lastIndexOf('\n\n');
+    if (lastUserEnd > 0) {
+        return truncated.substring(0, lastUserEnd) + '\n\n*[Use /leaderboard for full view]*';
+    }
+    
+    return truncated + '\n*[Truncated]*';
+}
 
 function isDateInCurrentMonth(dateString) {
     // Parse the input date string more reliably
@@ -732,7 +755,7 @@ export default {
             
             embed.addFields({
                 name: `Final Rankings (${leaderboard.participants.length} participants)`,
-                value: leaderboardText || 'No participants found.'
+                value: ensureFieldLength(leaderboardText) || 'No participants found.'
             });
             
             // Add winners section if this is the first page
@@ -1055,7 +1078,7 @@ export default {
 
             embed.addFields({
                 name: `Rankings (${workingSorted.length} participants)`,
-                value: leaderboardText || 'No rankings available.'
+                value: ensureFieldLength(leaderboardText) || 'No rankings available.'
             });
 
             embeds.push(embed);
