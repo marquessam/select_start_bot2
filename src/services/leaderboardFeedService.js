@@ -58,7 +58,7 @@ class LeaderboardFeedService extends FeedManagerBase {
     constructor() {
         super(null, config.discord.leaderboardFeedChannelId || '1371350718505811989');
         this.alertsChannelId = config.discord.rankAlertsChannelId || this.channelId;
-        this.previousTopRanks = new Map(); // Store previous top positions
+        this.previousDetailedRanks = new Map(); // Enhanced tracking instead of simple previousTopRanks
         
         // Set the alerts channel for notifications
         AlertUtils.setAlertsChannel(this.alertsChannelId);
@@ -92,7 +92,7 @@ class LeaderboardFeedService extends FeedManagerBase {
             // Generate yearly leaderboard embeds
             const { yearlyHeaderEmbed, yearlyParticipantEmbeds } = await this.generateYearlyLeaderboardEmbeds();
 
-            // Check for rank changes before updating the message
+            // Check for rank changes before updating the message (ENHANCED VERSION)
             if (sortedUsers.length > 0) {
                 await this.checkForRankChanges(sortedUsers);
             }
@@ -716,100 +716,267 @@ class LeaderboardFeedService extends FeedManagerBase {
         }
     }
 
-    // Check for rank changes in the top 3 positions and notify affected users
+    // ==========================================
+    // ENHANCED CHANGE DETECTION SYSTEM
+    // ==========================================
+
+    // Enhanced method to check for rank changes including tiebreaker nuances
     async checkForRankChanges(currentRanks) {
         try {
-            // Only process if we have both previous and current ranks
-            if (!this.previousTopRanks.size) {
-                // First run, just store the current top ranks and exit
-                this.storeTopRanks(currentRanks);
+            if (!this.previousDetailedRanks.size) {
+                this.storeDetailedRanks(currentRanks);
                 return;
             }
 
-            // Get top 3 users from current ranks
-            const topUsers = currentRanks.filter(user => user.displayRank <= 3);
-            
-            if (topUsers.length === 0) {
-                return; // No users in top 3, nothing to check
-            }
-
-            // Check for rank changes
             const alerts = [];
+            const topUsers = currentRanks.filter(user => user.displayRank <= 5);
             
-            for (const user of topUsers) {
-                const currentRank = user.displayRank;
-                const username = user.username;
-                const discordId = user.discordId;
-                
-                // Skip if no Discord ID
-                if (!discordId) continue;
+            if (topUsers.length === 0) return;
 
-                // Get previous rank (if any)
-                const previousRank = this.previousTopRanks.get(username);
+            // Enhanced change detection
+            for (const user of topUsers) {
+                const currentState = this.getUserState(user);
+                const previousState = this.previousDetailedRanks.get(user.username);
                 
-                // Check if user has moved up in rank
-                if (previousRank && currentRank < previousRank) {
-                    // Get the user they passed
-                    const passedUser = this.findUserByPreviousRank(currentRank);
-                    if (passedUser) {
+                if (!previousState) {
+                    // New user in top 5
+                    if (user.displayRank <= 3) {
                         alerts.push({
-                            type: 'overtake',
-                            user: { username, discordId },
-                            passedUser: passedUser,
-                            newRank: currentRank, 
-                            oldRank: previousRank
+                            type: 'newEntry',
+                            user: { username: user.username, discordId: user.discordId },
+                            newRank: user.displayRank,
+                            reason: this.determineChangeReason(null, currentState)
                         });
                     }
-                } 
-                // Check if user is new to top 3
-                else if (!previousRank && currentRank <= 3) {
+                    continue;
+                }
+
+                // Detect various types of changes
+                const changeInfo = this.analyzeRankChange(previousState, currentState);
+                
+                if (changeInfo.hasChange) {
                     alerts.push({
-                        type: 'newEntry',
-                        user: { username, discordId },
-                        newRank: currentRank
+                        type: changeInfo.type,
+                        user: { username: user.username, discordId: user.discordId },
+                        previousRank: previousState.displayRank,
+                        newRank: currentState.displayRank,
+                        reason: changeInfo.reason,
+                        details: changeInfo.details,
+                        previousState,
+                        currentState
                     });
                 }
             }
 
-            // Send notifications for any detected changes
+            // Check for users who fell out of top 5
+            for (const [username, previousState] of this.previousDetailedRanks.entries()) {
+                if (previousState.displayRank <= 5) {
+                    const currentUser = currentRanks.find(u => u.username === username);
+                    if (!currentUser || currentUser.displayRank > 5) {
+                        alerts.push({
+                            type: 'fallOut',
+                            user: { username, discordId: previousState.discordId },
+                            previousRank: previousState.displayRank,
+                            newRank: currentUser?.displayRank || 'Outside Top 5'
+                        });
+                    }
+                }
+            }
+
             if (alerts.length > 0) {
-                await this.sendRankChangeAlerts(alerts);
+                await this.sendEnhancedRankChangeAlerts(alerts, currentRanks);
             }
 
-            // Store current ranks for next comparison
-            this.storeTopRanks(currentRanks);
+            this.storeDetailedRanks(currentRanks);
         } catch (error) {
-            console.error('Error checking for rank changes:', error);
+            console.error('Error in enhanced rank change detection:', error);
         }
     }
 
-    // Store top ranks from current leaderboard for future comparison
-    storeTopRanks(ranks) {
-        // Clear previous data
-        this.previousTopRanks.clear();
+    // Create detailed state object for a user
+    getUserState(user) {
+        return {
+            username: user.username,
+            discordId: user.discordId,
+            displayRank: user.displayRank,
+            achieved: user.achieved,
+            percentage: user.percentage,
+            points: user.points,
+            award: user.award,
+            
+            // Tiebreaker information
+            hasTiebreaker: user.hasTiebreaker || false,
+            tiebreakerRank: user.tiebreakerRank || null,
+            tiebreakerScore: user.tiebreakerScore || null,
+            tiebreakerGame: user.tiebreakerGame || null,
+            
+            // Tiebreaker-breaker information
+            hasTiebreakerBreaker: user.hasTiebreakerBreaker || false,
+            tiebreakerBreakerRank: user.tiebreakerBreakerRank || null,
+            tiebreakerBreakerScore: user.tiebreakerBreakerScore || null,
+            tiebreakerBreakerGame: user.tiebreakerBreakerGame || null,
+            
+            // Internal sort position for detecting subtle changes
+            sortIndex: user.originalIndex || 0
+        };
+    }
+
+    // Analyze the type and reason for rank changes
+    analyzeRankChange(previousState, currentState) {
+        // No change if everything is identical
+        if (this.statesAreIdentical(previousState, currentState)) {
+            return { hasChange: false };
+        }
+
+        let changeType = 'update';
+        let reason = 'Unknown';
+        let details = {};
+
+        // Display rank changed
+        if (previousState.displayRank !== currentState.displayRank) {
+            if (currentState.displayRank < previousState.displayRank) {
+                changeType = 'overtake';
+                reason = this.determineChangeReason(previousState, currentState);
+            } else {
+                changeType = 'fallBack';
+                reason = 'Fell behind in the rankings';
+            }
+        }
+        // Same display rank but internal changes
+        else {
+            // Check for achievement progress
+            if (currentState.achieved > previousState.achieved) {
+                changeType = 'achievement_progress';
+                reason = `Earned ${currentState.achieved - previousState.achieved} more achievement(s)`;
+            }
+            // Check for tiebreaker changes
+            else if (this.hasTiebreakerChange(previousState, currentState)) {
+                changeType = 'tiebreaker_change';
+                reason = this.describeTiebreakerChange(previousState, currentState);
+            }
+            // Check for award status change
+            else if (previousState.award !== currentState.award) {
+                changeType = 'award_change';
+                reason = `Achievement status changed: ${currentState.award}`;
+            }
+        }
+
+        return {
+            hasChange: true,
+            type: changeType,
+            reason,
+            details
+        };
+    }
+
+    // Determine the reason for a rank change
+    determineChangeReason(previousState, currentState) {
+        if (!previousState) {
+            return `Entered top rankings with ${currentState.achieved} achievements`;
+        }
+
+        // Achievement progress
+        if (currentState.achieved > previousState.achieved) {
+            const newAchievements = currentState.achieved - previousState.achieved;
+            return `Earned ${newAchievements} new achievement(s)`;
+        }
+
+        // Award status change
+        if (previousState.award !== currentState.award) {
+            return `Achievement status improved: ${currentState.award}`;
+        }
+
+        // Tiebreaker improvement
+        if (this.hasTiebreakerImprovement(previousState, currentState)) {
+            return this.describeTiebreakerChange(previousState, currentState);
+        }
+
+        return 'Ranking position updated';
+    }
+
+    // Check if there's a tiebreaker-related change
+    hasTiebreakerChange(previous, current) {
+        // New tiebreaker participation
+        if (!previous.hasTiebreaker && current.hasTiebreaker) return true;
+        if (!previous.hasTiebreakerBreaker && current.hasTiebreakerBreaker) return true;
+
+        // Tiebreaker rank changes
+        if (previous.tiebreakerRank !== current.tiebreakerRank) return true;
+        if (previous.tiebreakerBreakerRank !== current.tiebreakerBreakerRank) return true;
+
+        // Score changes (even if rank stays same)
+        if (previous.tiebreakerScore !== current.tiebreakerScore) return true;
+        if (previous.tiebreakerBreakerScore !== current.tiebreakerBreakerScore) return true;
+
+        return false;
+    }
+
+    // Check if tiebreaker improved (rank got better)
+    hasTiebreakerImprovement(previous, current) {
+        if (current.hasTiebreaker && previous.hasTiebreaker) {
+            if (current.tiebreakerRank < previous.tiebreakerRank) return true;
+        }
         
-        // Store the username and rank of each user in the top standings
+        if (current.hasTiebreakerBreaker && previous.hasTiebreakerBreaker) {
+            if (current.tiebreakerBreakerRank < previous.tiebreakerBreakerRank) return true;
+        }
+
+        return false;
+    }
+
+    // Describe tiebreaker changes in human-readable form
+    describeTiebreakerChange(previous, current) {
+        let description = '';
+
+        // New tiebreaker participation
+        if (!previous.hasTiebreaker && current.hasTiebreaker) {
+            description += `Joined tiebreaker in ${current.tiebreakerGame}`;
+        }
+        // Tiebreaker rank improvement
+        else if (current.hasTiebreaker && previous.hasTiebreaker && 
+                 current.tiebreakerRank < previous.tiebreakerRank) {
+            description += `Improved tiebreaker rank from #${previous.tiebreakerRank} to #${current.tiebreakerRank}`;
+        }
+
+        // Tiebreaker-breaker changes
+        if (!previous.hasTiebreakerBreaker && current.hasTiebreakerBreaker) {
+            if (description) description += ' and ';
+            description += `joined tiebreaker-breaker in ${current.tiebreakerBreakerGame}`;
+        }
+        else if (current.hasTiebreakerBreaker && previous.hasTiebreakerBreaker && 
+                 current.tiebreakerBreakerRank < previous.tiebreakerBreakerRank) {
+            if (description) description += ' and ';
+            description += `improved tiebreaker-breaker rank from #${previous.tiebreakerBreakerRank} to #${current.tiebreakerBreakerRank}`;
+        }
+
+        return description || 'Tiebreaker position updated';
+    }
+
+    // Check if two states are completely identical
+    statesAreIdentical(state1, state2) {
+        const keys = [
+            'displayRank', 'achieved', 'percentage', 'points', 'award',
+            'hasTiebreaker', 'tiebreakerRank', 'tiebreakerScore',
+            'hasTiebreakerBreaker', 'tiebreakerBreakerRank', 'tiebreakerBreakerScore'
+        ];
+
+        return keys.every(key => state1[key] === state2[key]);
+    }
+
+    // Store detailed state for all top users
+    storeDetailedRanks(ranks) {
+        this.previousDetailedRanks.clear();
+        
         for (const user of ranks) {
-            if (user.displayRank <= 5) { // Store top 5 to catch movements in and out of top 3
-                this.previousTopRanks.set(user.username, user.displayRank);
+            if (user.displayRank <= 7) { // Store top 7 to catch movements in/out of top 5
+                this.previousDetailedRanks.set(user.username, this.getUserState(user));
             }
         }
     }
 
-    // Find which user previously held a specific rank
-    findUserByPreviousRank(rank) {
-        for (const [username, prevRank] of this.previousTopRanks.entries()) {
-            if (prevRank === rank) {
-                return { username };
-            }
-        }
-        return null;
-    }
-
-    // Send alerts for rank changes using AlertUtils
-    async sendRankChangeAlerts(alerts) {
+    // Enhanced alert sending with more detailed information
+    async sendEnhancedRankChangeAlerts(alerts, currentRanks) {
         try {
-            // Get current challenge game info for embedding
             const now = new Date();
             const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
             const nextMonthStart = new Date(now.getFullYear(), now.getMonth() + 1, 1);
@@ -821,59 +988,55 @@ class LeaderboardFeedService extends FeedManagerBase {
                 }
             });
 
-            if (!currentChallenge) {
-                console.log('No active challenge found for the current month.');
-                return;
-            }
+            if (!currentChallenge) return;
 
-            // Get month name
             const monthName = now.toLocaleString('default', { month: 'long' });
 
-            // Format position changes
+            // Group alerts by type for better messaging
+            const groupedAlerts = {
+                overtake: alerts.filter(a => a.type === 'overtake'),
+                newEntry: alerts.filter(a => a.type === 'newEntry'),
+                tiebreakerChange: alerts.filter(a => a.type === 'tiebreaker_change'),
+                achievementProgress: alerts.filter(a => a.type === 'achievement_progress'),
+                other: alerts.filter(a => !['overtake', 'newEntry', 'tiebreaker_change', 'achievement_progress'].includes(a.type))
+            };
+
+            // Create enhanced alert message
             const changes = [];
-            for (const alert of alerts) {
-                if (alert.type === 'overtake') {
+            
+            // Process different types of changes
+            for (const alert of groupedAlerts.overtake) {
+                changes.push({
+                    username: alert.user.username,
+                    newRank: alert.newRank,
+                    reason: alert.reason,
+                    type: 'overtake'
+                });
+            }
+
+            for (const alert of groupedAlerts.newEntry) {
+                changes.push({
+                    username: alert.user.username,
+                    newRank: alert.newRank,
+                    reason: alert.reason,
+                    type: 'newEntry'
+                });
+            }
+
+            // Include significant tiebreaker changes even if rank didn't change
+            for (const alert of groupedAlerts.tiebreakerChange) {
+                if (alert.currentState.displayRank <= 3) { // Only for top 3
                     changes.push({
                         username: alert.user.username,
-                        newRank: alert.newRank
-                    });
-                } else if (alert.type === 'newEntry') {
-                    changes.push({
-                        username: alert.user.username,
-                        newRank: alert.newRank
+                        newRank: alert.newRank,
+                        reason: `🔥 ${alert.reason}`,
+                        type: 'tiebreaker'
                     });
                 }
             }
 
-            // Get current top standings for the alert
-            const { sortedUsers } = await this.generateLeaderboardEmbeds();
-            const currentStandings = [];
-            
-            if (sortedUsers && sortedUsers.length > 0) {
-                // Get top 5
-                const topFive = sortedUsers.slice(0, 5);
-                
-                for (const user of topFive) {
-                    // Create score text with tiebreaker information if available
-                    let scoreText = `${user.achieved}/${currentChallenge.monthly_challange_game_total} achievements (${user.percentage}%)`;
-                    
-                    // Add tiebreaker information if the user has it
-                    if (user.hasTiebreaker && user.tiebreakerScore) {
-                        scoreText += `\n⚔️ Tiebreaker: ${user.tiebreakerScore} in ${user.tiebreakerGame}`;
-                    }
-                    
-                    // Add tiebreaker-breaker information if the user has it
-                    if (user.hasTiebreakerBreaker && user.tiebreakerBreakerScore) {
-                        scoreText += `\n${TIEBREAKER_BREAKER_EMOJI} Tiebreaker-Breaker: ${user.tiebreakerBreakerScore} in ${user.tiebreakerBreakerGame}`;
-                    }
-                    
-                    currentStandings.push({
-                        username: user.username,
-                        rank: user.displayRank,
-                        score: scoreText
-                    });
-                }
-            }
+            // Get current standings with enhanced formatting
+            const currentStandings = this.formatEnhancedStandings(currentRanks, currentChallenge);
 
             // Get thumbnail URL
             let thumbnailUrl = null;
@@ -881,22 +1044,55 @@ class LeaderboardFeedService extends FeedManagerBase {
                 thumbnailUrl = `https://retroachievements.org${currentChallenge.monthly_game_icon_url}`;
             }
 
-            // Send alert using AlertUtils with MONTHLY alert type
+            // Send enhanced alert
             await AlertUtils.sendPositionChangeAlert({
                 title: `📊 ${monthName} Challenge Update!`,
-                description: `The leaderboard for **${currentChallenge.monthly_challange_title || 'the monthly challenge'}** has been updated!`,
+                description: `The leaderboard for **${currentChallenge.monthly_challange_title || 'the monthly challenge'}** has been updated with enhanced tracking!`,
                 changes: changes,
                 currentStandings: currentStandings,
                 thumbnail: thumbnailUrl,
-                color: COLORS.INFO, // Purple to match monthly challenge color scheme
-                footer: { text: 'Data provided by RetroAchievements • Rankings update every 15 minutes' }
-            }, 'monthly'); // Specify 'monthly' alert type for proper channel routing
+                color: COLORS.INFO,
+                footer: { 
+                    text: 'Enhanced alerts now track tiebreaker changes • Data from RetroAchievements • Updates every 15 minutes' 
+                }
+            }, 'monthly');
             
-            console.log(`Sent monthly challenge leaderboard alert to MONTHLY channel with ${changes.length} position changes`);
+            console.log(`Sent enhanced monthly challenge alert with ${changes.length} changes detected`);
         } catch (error) {
-            console.error('Error sending monthly challenge rank change alerts:', error);
+            console.error('Error sending enhanced rank change alerts:', error);
         }
     }
+
+    // Format current standings with enhanced tiebreaker information
+    formatEnhancedStandings(sortedUsers, currentChallenge) {
+        const standings = [];
+        const topFive = sortedUsers.slice(0, 5);
+        
+        for (const user of topFive) {
+            let scoreText = `${user.achieved}/${currentChallenge.monthly_challange_game_total} achievements (${user.percentage}%)`;
+            
+            // Enhanced tiebreaker display
+            if (user.hasTiebreaker && user.tiebreakerScore) {
+                scoreText += `\n⚔️ Tiebreaker: #${user.tiebreakerRank} - ${user.tiebreakerScore} in ${user.tiebreakerGame}`;
+            }
+            
+            if (user.hasTiebreakerBreaker && user.tiebreakerBreakerScore) {
+                scoreText += `\n⚡ TB-Breaker: #${user.tiebreakerBreakerRank} - ${user.tiebreakerBreakerScore} in ${user.tiebreakerBreakerGame}`;
+            }
+            
+            standings.push({
+                username: user.username,
+                rank: user.displayRank,
+                score: scoreText
+            });
+        }
+        
+        return standings;
+    }
+
+    // ==========================================
+    // EXISTING RANK ASSIGNMENT SYSTEM (UNCHANGED)
+    // ==========================================
 
     // Updated assignRanks method to handle tiebreaker-breaker with THREE-TIER hierarchy
     assignRanks(users, tiebreakerEntries, tiebreakerBreakerEntries, activeTiebreaker) {
