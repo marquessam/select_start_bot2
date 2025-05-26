@@ -28,6 +28,7 @@ const RANK_EMOJIS = {
 };
 
 const TIEBREAKER_EMOJI = '⚔️'; // Emoji to indicate tiebreaker status
+const TIEBREAKER_BREAKER_EMOJI = '⚡'; // Lightning bolt for tiebreaker-breaker
 
 // Number of users to show per page
 const USERS_PER_PAGE = 10;
@@ -224,7 +225,7 @@ export default {
                 return null;
             }));
 
-            // Filter out null entries and sort by achievements first, then by points as tiebreaker
+            // Filter out null entries and sort by THREE-TIER hierarchy: Challenge → Tiebreaker → Tiebreaker-Breaker
             const sortedProgress = userProgress
                 .filter(progress => progress !== null)
                 .sort((a, b) => {
@@ -256,9 +257,10 @@ export default {
 
             // Get tiebreaker data if there's an active tiebreaker
             let tiebreakerEntries = [];
+            let tiebreakerBreakerEntries = [];
             if (activeTiebreaker) {
                 try {
-                    // Fetch multiple batches of leaderboard entries
+                    // Fetch multiple batches of leaderboard entries for main tiebreaker
                     const batch1 = await retroAPI.getLeaderboardEntriesDirect(activeTiebreaker.leaderboardId, 0, 500);
                     const batch2 = await retroAPI.getLeaderboardEntriesDirect(activeTiebreaker.leaderboardId, 500, 500);
                     
@@ -298,13 +300,62 @@ export default {
                             apiRank: parseInt(rank, 10)
                         };
                     });
+
+                    // Fetch tiebreaker-breaker data if available
+                    if (activeTiebreaker.hasTiebreakerBreaker()) {
+                        try {
+                            const tiebreakerBreakerInfo = activeTiebreaker.getTiebreakerBreakerInfo();
+                            console.log(`Fetching tiebreaker-breaker entries for leaderboard ${tiebreakerBreakerInfo.leaderboardId}`);
+                            
+                            // Fetch tiebreaker-breaker leaderboard entries
+                            const tbBatch1 = await retroAPI.getLeaderboardEntriesDirect(tiebreakerBreakerInfo.leaderboardId, 0, 500);
+                            const tbBatch2 = await retroAPI.getLeaderboardEntriesDirect(tiebreakerBreakerInfo.leaderboardId, 500, 500);
+                            
+                            // Combine tiebreaker-breaker batches
+                            let tbRawEntries = [];
+                            
+                            if (tbBatch1) {
+                                if (Array.isArray(tbBatch1)) {
+                                    tbRawEntries = [...tbRawEntries, ...tbBatch1];
+                                } else if (tbBatch1.Results && Array.isArray(tbBatch1.Results)) {
+                                    tbRawEntries = [...tbRawEntries, ...tbBatch1.Results];
+                                }
+                            }
+                            
+                            if (tbBatch2) {
+                                if (Array.isArray(tbBatch2)) {
+                                    tbRawEntries = [...tbRawEntries, ...tbBatch2];
+                                } else if (tbBatch2.Results && Array.isArray(tbBatch2.Results)) {
+                                    tbRawEntries = [...tbRawEntries, ...tbBatch2.Results];
+                                }
+                            }
+                            
+                            console.log(`Total tiebreaker-breaker entries fetched: ${tbRawEntries.length}`);
+                            
+                            // Process tiebreaker-breaker entries
+                            tiebreakerBreakerEntries = tbRawEntries.map(entry => {
+                                const user = entry.User || entry.user || '';
+                                const score = entry.Score || entry.score || entry.Value || entry.value || 0;
+                                const formattedScore = entry.FormattedScore || entry.formattedScore || entry.ScoreFormatted || score.toString();
+                                const rank = entry.Rank || entry.rank || 0;
+                                
+                                return {
+                                    username: user.trim().toLowerCase(),
+                                    score: formattedScore,
+                                    apiRank: parseInt(rank, 10)
+                                };
+                            });
+                        } catch (tbError) {
+                            console.error('Error fetching tiebreaker-breaker leaderboard:', tbError);
+                        }
+                    }
                 } catch (error) {
                     console.error('Error fetching tiebreaker leaderboard:', error);
                 }
             }
 
-            // Process tiebreaker and assign ranks correctly
-            this.assignRanks(workingSorted, tiebreakerEntries, activeTiebreaker);
+            // Process tiebreaker and tiebreaker-breaker data, then assign ranks
+            this.assignRanks(workingSorted, tiebreakerEntries, tiebreakerBreakerEntries, activeTiebreaker);
 
             // Save the processed results to the database (for individual users)
             const monthKeyForDB = User.formatDateKey(currentChallenge.date);
@@ -387,6 +438,12 @@ export default {
                 if (activeTiebreaker) {
                     description += `\n\n${TIEBREAKER_EMOJI} **Active Tiebreaker:** ${activeTiebreaker.gameTitle}\n` +
                                 `*Tiebreaker results are used to determine final ranking for tied users in top positions.*`;
+                    
+                    if (activeTiebreaker.hasTiebreakerBreaker()) {
+                        const tiebreakerBreakerInfo = activeTiebreaker.getTiebreakerBreakerInfo();
+                        description += `\n${TIEBREAKER_BREAKER_EMOJI} **Tiebreaker-Breaker:** ${tiebreakerBreakerInfo.gameTitle}\n` +
+                                      `*Used to resolve ties within the tiebreaker itself.*`;
+                    }
                 }
                 
                 description += `\n\n*Note: Only achievements earned during ${monthName} **in Hardcore Mode** count toward challenge status.*`;
@@ -634,6 +691,11 @@ export default {
             if (leaderboard.tiebreakerInfo && leaderboard.tiebreakerInfo.isActive) {
                 description += `\n\n${TIEBREAKER_EMOJI} **Tiebreaker Game:** ${leaderboard.tiebreakerInfo.gameTitle}\n` +
                             `*Tiebreaker results were used to determine final ranking for tied users in top positions.*`;
+                
+                if (leaderboard.tiebreakerInfo.hasTiebreakerBreaker) {
+                    description += `\n${TIEBREAKER_BREAKER_EMOJI} **Tiebreaker-Breaker Game:** ${leaderboard.tiebreakerInfo.tiebreakerBreakerGameTitle}\n` +
+                                  `*Used to resolve ties within the tiebreaker itself.*`;
+                }
             }
                             
             description += `\n\n*This is a historical record of the ${monthName} ${year} challenge.*`;
@@ -652,12 +714,20 @@ export default {
                 leaderboardText += `${rankEmoji} **[${participant.username}](https://retroachievements.org/user/${participant.username})** ${participant.award}\n`;
                 
                 // Add achievement stats
-                if (participant.hasTiebreaker && participant.tiebreakerScore) {
-                    leaderboardText += `${participant.achievements}/${leaderboard.totalAchievements} (${participant.percentage}%)\n`;
-                    leaderboardText += `${TIEBREAKER_EMOJI} ${participant.tiebreakerScore}\n\n`;
-                } else {
-                    leaderboardText += `${participant.achievements}/${leaderboard.totalAchievements} (${participant.percentage}%)\n\n`;
+                leaderboardText += `${participant.achievements}/${leaderboard.totalAchievements} (${participant.percentage}%)\n`;
+                
+                // Show tiebreaker and tiebreaker-breaker scores only for top 5
+                if (participant.displayRank <= 5) {
+                    if (participant.hasTiebreaker && participant.tiebreakerScore) {
+                        leaderboardText += `${TIEBREAKER_EMOJI} ${participant.tiebreakerScore}\n`;
+                    }
+                    
+                    if (participant.hasTiebreakerBreaker && participant.tiebreakerBreakerScore) {
+                        leaderboardText += `${TIEBREAKER_BREAKER_EMOJI} ${participant.tiebreakerBreakerScore}\n`;
+                    }
                 }
+                
+                leaderboardText += '\n';
             }
             
             embed.addFields({
@@ -675,6 +745,11 @@ export default {
                     // Add tiebreaker info if available
                     if (winner.tiebreakerScore) {
                         winnersText += `   ${TIEBREAKER_EMOJI} Tiebreaker: ${winner.tiebreakerScore}\n`;
+                    }
+                    
+                    // Add tiebreaker-breaker info if available
+                    if (winner.tiebreakerBreakerScore) {
+                        winnersText += `   ${TIEBREAKER_BREAKER_EMOJI} Tiebreaker-Breaker: ${winner.tiebreakerBreakerScore}\n`;
                     }
                 });
                 
@@ -938,6 +1013,12 @@ export default {
             if (activeTiebreaker) {
                 description += `\n\n${TIEBREAKER_EMOJI} **Active Tiebreaker:** ${activeTiebreaker.gameTitle}\n` +
                             `*Tiebreaker results are used to determine final ranking for tied users in top positions.*`;
+                
+                if (activeTiebreaker.hasTiebreakerBreaker()) {
+                    const tiebreakerBreakerInfo = activeTiebreaker.getTiebreakerBreakerInfo();
+                    description += `\n${TIEBREAKER_BREAKER_EMOJI} **Tiebreaker-Breaker:** ${tiebreakerBreakerInfo.gameTitle}\n` +
+                                  `*Used to resolve ties within the tiebreaker itself.*`;
+                }
             }
             
             description += `\n\n*Note: Only achievements earned during ${monthName} **in Hardcore Mode** count toward challenge status.*`;
@@ -956,14 +1037,20 @@ export default {
                 leaderboardText += `${rankEmoji} **[${user.username}](https://retroachievements.org/user/${user.username})** ${user.award}\n`;
                 
                 // Add the achievement stats
-                if (user.hasTiebreaker && user.tiebreakerScore) {
-                    // For users with tiebreaker scores, show both regular and tiebreaker stats
-                    leaderboardText += `${user.achieved}/${currentChallenge.monthly_challange_game_total} (${user.percentage}%)\n`;
-                    leaderboardText += `${TIEBREAKER_EMOJI} ${user.tiebreakerScore} in ${user.tiebreakerGame}\n\n`;
-                } else {
-                    // For users without tiebreaker scores, just show regular stats
-                    leaderboardText += `${user.achieved}/${currentChallenge.monthly_challange_game_total} (${user.percentage}%)\n\n`;
+                leaderboardText += `${user.achieved}/${currentChallenge.monthly_challange_game_total} (${user.percentage}%)\n`;
+                
+                // Show tiebreaker and tiebreaker-breaker scores only for top 5
+                if (user.displayRank <= 5) {
+                    if (user.hasTiebreaker && user.tiebreakerScore) {
+                        leaderboardText += `${TIEBREAKER_EMOJI} ${user.tiebreakerScore} in ${user.tiebreakerGame}\n`;
+                    }
+                    
+                    if (user.hasTiebreakerBreaker && user.tiebreakerBreakerScore) {
+                        leaderboardText += `${TIEBREAKER_BREAKER_EMOJI} ${user.tiebreakerBreakerScore} in ${user.tiebreakerBreakerGame}\n`;
+                    }
                 }
+                
+                leaderboardText += '\n';
             }
 
             embed.addFields({
@@ -977,8 +1064,8 @@ export default {
         return embeds;
     },
 
-    // Method to handle assigning ranks with tiebreaker scores
-    assignRanks(users, tiebreakerEntries, activeTiebreaker) {
+    // Method to handle assigning ranks with tiebreaker scores (UPDATED for three-tier hierarchy)
+    assignRanks(users, tiebreakerEntries, tiebreakerBreakerEntries, activeTiebreaker) {
         if (!users || users.length === 0) return;
 
         // First, add tiebreaker info to users
@@ -999,30 +1086,49 @@ export default {
             }
         }
 
+        // Add tiebreaker-breaker info to users
+        if (tiebreakerBreakerEntries && tiebreakerBreakerEntries.length > 0) {
+            const tiebreakerBreakerInfo = activeTiebreaker.getTiebreakerBreakerInfo();
+            for (const user of users) {
+                const entry = tiebreakerBreakerEntries.find(e => 
+                    e.username === user.username.toLowerCase()
+                );
+                
+                if (entry) {
+                    user.tiebreakerBreakerScore = entry.score;
+                    user.tiebreakerBreakerRank = entry.apiRank;
+                    user.tiebreakerBreakerGame = tiebreakerBreakerInfo.gameTitle;
+                    user.hasTiebreakerBreaker = true;
+                } else {
+                    user.hasTiebreakerBreaker = false;
+                }
+            }
+        }
+
         // Store original order for stable sorting
         users.forEach((user, index) => {
             user.originalIndex = index;
         });
 
-        // Identify tied groups and assign ranks
+        // Identify tied groups and assign ranks based on THREE-TIER HIERARCHY
         let currentRank = 1;
         let lastAchieved = -1;
         let lastPoints = -1;
         let currentTieGroup = [];
         let tieGroupStartIdx = 0;
 
-        // First pass: identify tie groups
+        // First pass: identify tie groups based on challenge performance
         for (let i = 0; i < users.length; i++) {
             const user = users[i];
             
-            // Check if this user is tied with the previous user
+            // Check if this user is tied with the previous user in CHALLENGE performance
             if (i > 0 && user.achieved === lastAchieved && user.points === lastPoints) {
                 // Add to current tie group
                 currentTieGroup.push(i);
             } else {
                 // Process previous tie group if it exists
                 if (currentTieGroup.length > 1) {
-                    // This is a tie group - handle it
+                    // This is a tie group - handle it with tiebreaker hierarchy
                     this.processTieGroup(users, currentTieGroup, tieGroupStartIdx);
                 } else if (currentTieGroup.length === 1) {
                     // Single user, just assign the rank
@@ -1065,29 +1171,62 @@ export default {
         });
     },
 
-    // Helper method to process a tie group
+    // Helper method to process a tie group with THREE-TIER hierarchy
     processTieGroup(users, tieGroupIndices, startIdx) {
-        // Only apply special tiebreaker logic to top 3 positions
-        const isTopThree = startIdx < 3;
+        // Only apply special tiebreaker logic to top 5 positions
+        const isTopFive = startIdx < 5;
         
-        if (isTopThree) {
-            // Check if any users in this tie group have tiebreaker scores
+        if (isTopFive) {
+            // Separate users by tiebreaker participation
             const withTiebreaker = tieGroupIndices.filter(idx => users[idx].hasTiebreaker);
             const withoutTiebreaker = tieGroupIndices.filter(idx => !users[idx].hasTiebreaker);
             
             if (withTiebreaker.length > 0) {
-                // Sort users with tiebreakers by their tiebreaker rank
+                // First, sort by tiebreaker rank (TIER 2)
                 withTiebreaker.sort((a, b) => users[a].tiebreakerRank - users[b].tiebreakerRank);
                 
-                // Assign individual ranks to users with tiebreakers
+                // Now check for ties within the tiebreaker and use tiebreaker-breaker (TIER 3)
+                let currentTbRank = users[withTiebreaker[0]].tiebreakerRank;
+                let currentTbGroup = [];
+                let nextAvailableRank = startIdx + 1;
+                
                 for (let i = 0; i < withTiebreaker.length; i++) {
-                    users[withTiebreaker[i]].displayRank = startIdx + 1 + i;
+                    const userIdx = withTiebreaker[i];
+                    const user = users[userIdx];
+                    
+                    if (i > 0 && user.tiebreakerRank !== currentTbRank) {
+                        // Process the previous tiebreaker group
+                        if (currentTbGroup.length > 1) {
+                            // Multiple users tied in tiebreaker - use tiebreaker-breaker
+                            this.processTiebreakerBreakerGroup(users, currentTbGroup, nextAvailableRank);
+                            nextAvailableRank += currentTbGroup.length;
+                        } else {
+                            // Single user, assign rank
+                            users[currentTbGroup[0]].displayRank = nextAvailableRank;
+                            nextAvailableRank++;
+                        }
+                        
+                        // Start new group
+                        currentTbGroup = [userIdx];
+                        currentTbRank = user.tiebreakerRank;
+                    } else {
+                        // Add to current group
+                        currentTbGroup.push(userIdx);
+                    }
+                }
+                
+                // Process the last tiebreaker group
+                if (currentTbGroup.length > 1) {
+                    this.processTiebreakerBreakerGroup(users, currentTbGroup, nextAvailableRank);
+                    nextAvailableRank += currentTbGroup.length;
+                } else if (currentTbGroup.length === 1) {
+                    users[currentTbGroup[0]].displayRank = nextAvailableRank;
+                    nextAvailableRank++;
                 }
                 
                 // All users without tiebreakers share the next rank
-                const nextRank = startIdx + 1 + withTiebreaker.length;
                 for (const idx of withoutTiebreaker) {
-                    users[idx].displayRank = nextRank;
+                    users[idx].displayRank = nextAvailableRank;
                 }
             } else {
                 // No tiebreakers - all share the same rank
@@ -1096,9 +1235,37 @@ export default {
                 }
             }
         } else {
-            // Outside top 3: all users in tie group share the same rank
+            // Outside top 5: all users in tie group share the same rank
             for (const idx of tieGroupIndices) {
                 users[idx].displayRank = startIdx + 1;
+            }
+        }
+    },
+
+    // Method to handle tiebreaker-breaker group processing (TIER 3)
+    processTiebreakerBreakerGroup(users, tieGroupIndices, startRank) {
+        // Separate users by tiebreaker-breaker participation
+        const withTiebreakerBreaker = tieGroupIndices.filter(idx => users[idx].hasTiebreakerBreaker);
+        const withoutTiebreakerBreaker = tieGroupIndices.filter(idx => !users[idx].hasTiebreakerBreaker);
+        
+        if (withTiebreakerBreaker.length > 0) {
+            // Sort by tiebreaker-breaker rank
+            withTiebreakerBreaker.sort((a, b) => users[a].tiebreakerBreakerRank - users[b].tiebreakerBreakerRank);
+            
+            // Assign individual ranks
+            for (let i = 0; i < withTiebreakerBreaker.length; i++) {
+                users[withTiebreakerBreaker[i]].displayRank = startRank + i;
+            }
+            
+            // Users without tiebreaker-breaker share the next rank
+            const nextRank = startRank + withTiebreakerBreaker.length;
+            for (const idx of withoutTiebreakerBreaker) {
+                users[idx].displayRank = nextRank;
+            }
+        } else {
+            // No tiebreaker-breaker scores - all share the same rank
+            for (const idx of tieGroupIndices) {
+                users[idx].displayRank = startRank;
             }
         }
     },
@@ -1262,6 +1429,7 @@ export default {
             
             // Process tiebreaker information if available
             let tiebreakerEntries = [];
+            let tiebreakerBreakerEntries = [];
             let tiebreakerInfo = null;
             
             if (tiebreaker) {
@@ -1301,14 +1469,71 @@ export default {
                             apiRank: parseInt(rank, 10)
                         };
                     });
+
+                    // Fetch tiebreaker-breaker data if available
+                    if (tiebreaker.hasTiebreakerBreaker()) {
+                        try {
+                            const tiebreakerBreakerInfo = tiebreaker.getTiebreakerBreakerInfo();
+                            console.log(`Fetching historical tiebreaker-breaker entries for leaderboard ${tiebreakerBreakerInfo.leaderboardId}`);
+                            
+                            // Fetch tiebreaker-breaker leaderboard entries
+                            const tbBatch1 = await retroAPI.getLeaderboardEntriesDirect(tiebreakerBreakerInfo.leaderboardId, 0, 500);
+                            const tbBatch2 = await retroAPI.getLeaderboardEntriesDirect(tiebreakerBreakerInfo.leaderboardId, 500, 500);
+                            
+                            // Process tiebreaker-breaker entries
+                            let tbRawEntries = [];
+                            
+                            if (tbBatch1) {
+                                if (Array.isArray(tbBatch1)) {
+                                    tbRawEntries = [...tbRawEntries, ...tbBatch1];
+                                } else if (tbBatch1.Results && Array.isArray(tbBatch1.Results)) {
+                                    tbRawEntries = [...tbRawEntries, ...tbBatch1.Results];
+                                }
+                            }
+                            
+                            if (tbBatch2) {
+                                if (Array.isArray(tbBatch2)) {
+                                    tbRawEntries = [...tbRawEntries, ...tbBatch2];
+                                } else if (tbBatch2.Results && Array.isArray(tbBatch2.Results)) {
+                                    tbRawEntries = [...tbRawEntries, ...tbBatch2.Results];
+                                }
+                            }
+                            
+                            tiebreakerBreakerEntries = tbRawEntries.map(entry => {
+                                const user = entry.User || entry.user || '';
+                                const score = entry.Score || entry.score || entry.Value || entry.value || 0;
+                                const formattedScore = entry.FormattedScore || entry.formattedScore || entry.ScoreFormatted || score.toString();
+                                const rank = entry.Rank || entry.rank || 0;
+                                
+                                return {
+                                    username: user.trim().toLowerCase(),
+                                    score: formattedScore,
+                                    apiRank: parseInt(rank, 10)
+                                };
+                            });
+                        } catch (tbError) {
+                            console.error('Error fetching historical tiebreaker-breaker entries:', tbError);
+                        }
+                    }
                     
-                    // Store tiebreaker info
+                    // Store comprehensive tiebreaker info including tiebreaker-breaker
                     tiebreakerInfo = {
                         gameId: tiebreaker.gameId,
                         gameTitle: tiebreaker.gameTitle,
                         leaderboardId: tiebreaker.leaderboardId,
                         isActive: true
                     };
+
+                    // Add tiebreaker-breaker info if available
+                    if (tiebreaker.hasTiebreakerBreaker()) {
+                        const tiebreakerBreakerInfo = tiebreaker.getTiebreakerBreakerInfo();
+                        tiebreakerInfo.tiebreakerBreakerGameId = tiebreakerBreakerInfo.gameId;
+                        tiebreakerInfo.tiebreakerBreakerGameTitle = tiebreakerBreakerInfo.gameTitle;
+                        tiebreakerInfo.tiebreakerBreakerLeaderboardId = tiebreakerBreakerInfo.leaderboardId;
+                        tiebreakerInfo.hasTiebreakerBreaker = true;
+                    } else {
+                        tiebreakerInfo.hasTiebreakerBreaker = false;
+                    }
                 } catch (error) {
                     console.error('Error fetching tiebreaker entries:', error);
                 }
@@ -1335,11 +1560,28 @@ export default {
                     }
                 }
             }
+
+            // Add tiebreaker-breaker info to participants
+            if (tiebreakerBreakerEntries && tiebreakerBreakerEntries.length > 0) {
+                for (const participant of leaderboardParticipants) {
+                    const entry = tiebreakerBreakerEntries.find(e => 
+                        e.username === participant.username.toLowerCase()
+                    );
+                    
+                    if (entry) {
+                        participant.tiebreakerBreakerScore = entry.score;
+                        participant.tiebreakerBreakerRank = entry.apiRank;
+                        participant.hasTiebreakerBreaker = true;
+                    } else {
+                        participant.hasTiebreakerBreaker = false;
+                    }
+                }
+            }
             
             // Apply the same rank calculation logic as in the display function
-            this.assignRanks(leaderboardParticipants, tiebreakerEntries, tiebreaker);
+            this.assignRanks(leaderboardParticipants, tiebreakerEntries, tiebreakerBreakerEntries, tiebreaker);
             
-            // Create winners array (top 3 participants)
+            // Create winners array (top 3 participants) with tiebreaker-breaker support
             const winners = leaderboardParticipants
                 .filter(p => p.displayRank <= 3)
                 .map(p => ({
@@ -1349,7 +1591,8 @@ export default {
                     percentage: p.percentage,
                     award: p.award,
                     points: p.points,
-                    tiebreakerScore: p.tiebreakerScore || null
+                    tiebreakerScore: p.tiebreakerScore || null,
+                    tiebreakerBreakerScore: p.tiebreakerBreakerScore || null
                 }));
             
             // Check for shadow challenge info
@@ -1533,6 +1776,11 @@ export default {
                     // Add tiebreaker info if available
                     if (winner.tiebreakerScore) {
                         winnersText += `   ${TIEBREAKER_EMOJI} Tiebreaker: ${winner.tiebreakerScore}\n`;
+                    }
+                    
+                    // Add tiebreaker-breaker info if available
+                    if (winner.tiebreakerBreakerScore) {
+                        winnersText += `   ${TIEBREAKER_BREAKER_EMOJI} Tiebreaker-Breaker: ${winner.tiebreakerBreakerScore}\n`;
                     }
                 });
                 
