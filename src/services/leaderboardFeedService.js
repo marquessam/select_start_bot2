@@ -19,7 +19,40 @@ const AWARD_EMOJIS = {
 
 const TIEBREAKER_BREAKER_EMOJI = '⚡'; // Lightning bolt for tiebreaker-breaker
 
-const USERS_PER_EMBED = 10; // Number of users to display per embed
+const USERS_PER_EMBED = 5; // Clean 5 users per embed - first embed shows top 5 with tiebreaker info
+
+/**
+ * Helper function to ensure field values don't exceed Discord's 1024 character limit
+ */
+function ensureFieldLength(text, maxLength = 1024) {
+    if (text.length <= maxLength) {
+        return text;
+    }
+    
+    console.warn(`Field text length ${text.length} exceeds Discord limit of ${maxLength}, truncating...`);
+    
+    // If text is too long, truncate and add notice
+    const truncateAt = maxLength - 60; // Leave room for truncation notice
+    const truncated = text.substring(0, truncateAt);
+    
+    // Find the last complete user entry to avoid cutting off mid-entry
+    const lastUserEnd = truncated.lastIndexOf('\n\n');
+    if (lastUserEnd > 0) {
+        return truncated.substring(0, lastUserEnd) + '\n\n*[Use /leaderboard for full view]*';
+    }
+    
+    return truncated + '\n*[Truncated]*';
+}
+
+/**
+ * Calculate optimal user count per embed based on tiebreaker status
+ */
+function calculateOptimalUserCount(activeTiebreaker) {
+    // Consistent 5 users per embed for clean, predictable pagination
+    // First embed shows top 5 (most important with tiebreaker info)
+    // Subsequent embeds show 5 more users each
+    return 5;
+}
 
 class LeaderboardFeedService extends FeedManagerBase {
     constructor() {
@@ -475,14 +508,15 @@ class LeaderboardFeedService extends FeedManagerBase {
                 return { headerEmbed, participantEmbeds: [], sortedUsers: [] };
             }
 
-            // Create participant embeds (one for each group of USERS_PER_EMBED users)
+            // Create participant embeds (one for each group of users)
             const participantEmbeds = [];
-            const totalPages = Math.ceil(workingSorted.length / USERS_PER_EMBED);
+            const usersPerPage = calculateOptimalUserCount(activeTiebreaker);
+            const totalPages = Math.ceil(workingSorted.length / usersPerPage);
             
             for (let page = 0; page < totalPages; page++) {
                 // Get users for this page
-                const startIndex = page * USERS_PER_EMBED;
-                const endIndex = Math.min((page + 1) * USERS_PER_EMBED, workingSorted.length);
+                const startIndex = page * usersPerPage;
+                const endIndex = Math.min((page + 1) * usersPerPage, workingSorted.length);
                 const usersOnPage = workingSorted.slice(startIndex, endIndex);
                 
                 // Create embed for this page
@@ -527,7 +561,7 @@ class LeaderboardFeedService extends FeedManagerBase {
                 
                 participantEmbed.addFields({
                     name: `Rankings ${startIndex + 1}-${endIndex} (${workingSorted.length} total participants)`,
-                    value: leaderboardText || 'No rankings available.'
+                    value: ensureFieldLength(leaderboardText) || 'No rankings available.'
                 });
                 
                 participantEmbeds.push(participantEmbed);
@@ -616,14 +650,14 @@ class LeaderboardFeedService extends FeedManagerBase {
             }
             
             // Create participant embeds (paginated)
-            const USERS_PER_PAGE = 5; // Reduced to stay within Discord's field character limits
+            const YEARLY_USERS_PER_PAGE = 5; // Consistent 5 users per page
             const yearlyParticipantEmbeds = [];
-            const totalPages = Math.ceil(userPoints.length / USERS_PER_PAGE);
+            const totalPages = Math.ceil(userPoints.length / YEARLY_USERS_PER_PAGE);
             
             for (let page = 0; page < totalPages; page++) {
                 // Get users for this page
-                const startIndex = page * USERS_PER_PAGE;
-                const endIndex = Math.min((page + 1) * USERS_PER_PAGE, userPoints.length);
+                const startIndex = page * YEARLY_USERS_PER_PAGE;
+                const endIndex = Math.min((page + 1) * YEARLY_USERS_PER_PAGE, userPoints.length);
                 const usersOnPage = userPoints.slice(startIndex, endIndex);
                 
                 // Create embed for this page
@@ -665,9 +699,11 @@ class LeaderboardFeedService extends FeedManagerBase {
                 }
                 
                 // Add point system explanation to each page
+                let pointSystemText = '✨ Mastery: 7pts | ⭐ Beaten: 4pts | 🏁 Participation: 1pt | Shadow max: 4pts';
+                
                 participantEmbed.addFields({
                     name: 'Point System',
-                    value: '✨ Mastery: 7pts | ⭐ Beaten: 4pts | 🏁 Participation: 1pt | Shadow max: 4pts'
+                    value: pointSystemText
                 });
                 
                 yearlyParticipantEmbeds.push(participantEmbed);
