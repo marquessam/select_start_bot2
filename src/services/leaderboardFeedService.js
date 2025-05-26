@@ -59,6 +59,9 @@ class LeaderboardFeedService extends FeedManagerBase {
         super(null, config.discord.leaderboardFeedChannelId || '1371350718505811989');
         this.alertsChannelId = config.discord.rankAlertsChannelId || this.channelId;
         this.previousDetailedRanks = new Map(); // Enhanced tracking instead of simple previousTopRanks
+        this.lastAlertTime = new Map(); // Track when we last sent alerts for each user
+        this.alertCooldown = 5 * 60 * 1000; // 5 minute cooldown between alerts for same user
+        this.debugMode = process.env.NODE_ENV === 'development'; // Enable debug logging in dev
         
         // Set the alerts channel for notifications
         AlertUtils.setAlertsChannel(this.alertsChannelId);
@@ -824,6 +827,9 @@ class LeaderboardFeedService extends FeedManagerBase {
     async checkForRankChanges(currentRanks) {
         try {
             if (!this.previousDetailedRanks.size) {
+                if (this.debugMode) {
+                    console.log('No previous ranks stored, storing current state for future comparison');
+                }
                 this.storeDetailedRanks(currentRanks);
                 return;
             }
@@ -831,22 +837,45 @@ class LeaderboardFeedService extends FeedManagerBase {
             const alerts = [];
             const topUsers = currentRanks.filter(user => user.displayRank <= 5);
             
-            if (topUsers.length === 0) return;
+            if (topUsers.length === 0) {
+                if (this.debugMode) {
+                    console.log('No users in top 5, skipping change detection');
+                }
+                return;
+            }
 
-            // Enhanced change detection
+            if (this.debugMode) {
+                console.log(`Checking for changes in ${topUsers.length} top users`);
+            }
+
+            // Enhanced change detection with cooldown check
             for (const user of topUsers) {
                 const currentState = this.getUserState(user);
                 const previousState = this.previousDetailedRanks.get(user.username);
                 
+                // Check cooldown for this user
+                const now = Date.now();
+                const lastAlert = this.lastAlertTime.get(user.username) || 0;
+                const timeSinceLastAlert = now - lastAlert;
+                
+                if (timeSinceLastAlert < this.alertCooldown) {
+                    if (this.debugMode) {
+                        console.log(`Skipping alert for ${user.username} - cooldown active (${Math.round((this.alertCooldown - timeSinceLastAlert) / 1000)}s remaining)`);
+                    }
+                    continue;
+                }
+                
                 if (!previousState) {
-                    // New user in top 5
+                    // New user in top 5 - only alert if they're in top 3
                     if (user.displayRank <= 3) {
+                        console.log(`New user ${user.username} entered top 3 at rank ${user.displayRank}`);
                         alerts.push({
                             type: 'newEntry',
                             user: { username: user.username, discordId: user.discordId },
                             newRank: user.displayRank,
                             reason: this.determineChangeReason(null, currentState)
                         });
+                        this.lastAlertTime.set(user.username, now);
                     }
                     continue;
                 }
@@ -854,7 +883,8 @@ class LeaderboardFeedService extends FeedManagerBase {
                 // Detect various types of changes
                 const changeInfo = this.analyzeRankChange(previousState, currentState);
                 
-                if (changeInfo.hasChange) {
+                if (changeInfo.hasChange && this.isSignificantChange(changeInfo, previousState, currentState)) {
+                    console.log(`Significant change detected for ${user.username}: ${changeInfo.type} - ${changeInfo.reason}`);
                     alerts.push({
                         type: changeInfo.type,
                         user: { username: user.username, discordId: user.discordId },
@@ -865,26 +895,40 @@ class LeaderboardFeedService extends FeedManagerBase {
                         previousState,
                         currentState
                     });
+                    this.lastAlertTime.set(user.username, now);
+                } else if (changeInfo.hasChange && this.debugMode) {
+                    console.log(`Minor change detected for ${user.username} (not alerting): ${changeInfo.type}`);
                 }
             }
 
-            // Check for users who fell out of top 5
+            // Check for users who fell out of top 5 (always significant)
             for (const [username, previousState] of this.previousDetailedRanks.entries()) {
                 if (previousState.displayRank <= 5) {
                     const currentUser = currentRanks.find(u => u.username === username);
                     if (!currentUser || currentUser.displayRank > 5) {
-                        alerts.push({
-                            type: 'fallOut',
-                            user: { username, discordId: previousState.discordId },
-                            previousRank: previousState.displayRank,
-                            newRank: currentUser?.displayRank || 'Outside Top 5'
-                        });
+                        const now = Date.now();
+                        const lastAlert = this.lastAlertTime.get(username) || 0;
+                        const timeSinceLastAlert = now - lastAlert;
+                        
+                        if (timeSinceLastAlert >= this.alertCooldown) {
+                            console.log(`User ${username} fell out of top 5 from rank ${previousState.displayRank}`);
+                            alerts.push({
+                                type: 'fallOut',
+                                user: { username, discordId: previousState.discordId },
+                                previousRank: previousState.displayRank,
+                                newRank: currentUser?.displayRank || 'Outside Top 5'
+                            });
+                            this.lastAlertTime.set(username, now);
+                        }
                     }
                 }
             }
 
             if (alerts.length > 0) {
+                console.log(`Sending ${alerts.length} rank change alerts`);
                 await this.sendEnhancedRankChangeAlerts(alerts, currentRanks);
+            } else if (this.debugMode) {
+                console.log('No significant rank changes detected, no alerts sent');
             }
 
             this.storeDetailedRanks(currentRanks);
@@ -893,35 +937,77 @@ class LeaderboardFeedService extends FeedManagerBase {
         }
     }
 
-    // Create detailed state object for a user
+    // Determine if a change is significant enough to warrant an alert
+    isSignificantChange(changeInfo, previousState, currentState) {
+        const { type } = changeInfo;
+        
+        // Always alert on rank changes
+        if (type === 'overtake' || type === 'fallBack') {
+            return true;
+        }
+        
+        // Alert on award status changes (participation -> beaten -> mastery)
+        if (type === 'award_change') {
+            return true;
+        }
+        
+        // Only alert on achievement progress if it's substantial (2+ new achievements)
+        if (type === 'achievement_progress') {
+            const achievementDiff = currentState.achieved - previousState.achieved;
+            return achievementDiff >= 2;
+        }
+        
+        // Only alert on tiebreaker changes if user is in top 3 and it's a rank improvement
+        if (type === 'tiebreaker_change') {
+            if (currentState.displayRank > 3) return false;
+            
+            // Check if tiebreaker rank actually improved
+            if (previousState.hasTiebreaker && currentState.hasTiebreaker) {
+                return currentState.tiebreakerRank < previousState.tiebreakerRank;
+            }
+            
+            // Check if tiebreaker-breaker rank improved
+            if (previousState.hasTiebreakerBreaker && currentState.hasTiebreakerBreaker) {
+                return currentState.tiebreakerBreakerRank < previousState.tiebreakerBreakerRank;
+            }
+            
+            // New tiebreaker participation is significant
+            return !previousState.hasTiebreaker && currentState.hasTiebreaker;
+        }
+        
+        // Other changes are not significant enough for alerts
+        return false;
+    }
+
+    // Create detailed state object for a user with normalized data types
     getUserState(user) {
         return {
-            username: user.username,
-            discordId: user.discordId,
-            displayRank: user.displayRank,
-            achieved: user.achieved,
-            percentage: user.percentage,
-            points: user.points,
-            award: user.award,
+            username: String(user.username || ''),
+            discordId: String(user.discordId || ''),
+            displayRank: Number(user.displayRank || 0),
+            achieved: Number(user.achieved || 0),
+            percentage: String(user.percentage || '0.00'), // Keep as string since it's from toFixed()
+            points: Number(user.points || 0),
+            award: String(user.award || ''),
             
-            // Tiebreaker information
-            hasTiebreaker: user.hasTiebreaker || false,
-            tiebreakerRank: user.tiebreakerRank || null,
-            tiebreakerScore: user.tiebreakerScore || null,
-            tiebreakerGame: user.tiebreakerGame || null,
+            // Tiebreaker information - normalize to consistent types
+            hasTiebreaker: Boolean(user.hasTiebreaker),
+            tiebreakerRank: user.tiebreakerRank ? Number(user.tiebreakerRank) : null,
+            tiebreakerScore: user.tiebreakerScore ? String(user.tiebreakerScore) : null,
+            tiebreakerGame: user.tiebreakerGame ? String(user.tiebreakerGame) : null,
             
-            // Tiebreaker-breaker information
-            hasTiebreakerBreaker: user.hasTiebreakerBreaker || false,
-            tiebreakerBreakerRank: user.tiebreakerBreakerRank || null,
-            tiebreakerBreakerScore: user.tiebreakerBreakerScore || null,
-            tiebreakerBreakerGame: user.tiebreakerBreakerGame || null,
+            // Tiebreaker-breaker information - normalize to consistent types
+            hasTiebreakerBreaker: Boolean(user.hasTiebreakerBreaker),
+            tiebreakerBreakerRank: user.tiebreakerBreakerRank ? Number(user.tiebreakerBreakerRank) : null,
+            tiebreakerBreakerScore: user.tiebreakerBreakerScore ? String(user.tiebreakerBreakerScore) : null,
+            tiebreakerBreakerGame: user.tiebreakerBreakerGame ? String(user.tiebreakerBreakerGame) : null,
             
             // Internal sort position for detecting subtle changes
-            sortIndex: user.originalIndex || 0
+            sortIndex: Number(user.originalIndex || 0)
         };
     }
 
-    // Analyze the type and reason for rank changes
+    // Analyze the type and reason for rank changes (more conservative)
     analyzeRankChange(previousState, currentState) {
         // No change if everything is identical
         if (this.statesAreIdentical(previousState, currentState)) {
@@ -932,7 +1018,7 @@ class LeaderboardFeedService extends FeedManagerBase {
         let reason = 'Unknown';
         let details = {};
 
-        // Display rank changed
+        // Display rank changed (most significant)
         if (previousState.displayRank !== currentState.displayRank) {
             if (currentState.displayRank < previousState.displayRank) {
                 changeType = 'overtake';
@@ -942,22 +1028,32 @@ class LeaderboardFeedService extends FeedManagerBase {
                 reason = 'Fell behind in the rankings';
             }
         }
-        // Same display rank but internal changes
+        // Same display rank but check for other meaningful changes
         else {
-            // Check for achievement progress
+            // Check for achievement progress (only significant if 2+ achievements)
             if (currentState.achieved > previousState.achieved) {
-                changeType = 'achievement_progress';
-                reason = `Earned ${currentState.achieved - previousState.achieved} more achievement(s)`;
+                const achievementDiff = currentState.achieved - previousState.achieved;
+                if (achievementDiff >= 2) {
+                    changeType = 'achievement_progress';
+                    reason = `Earned ${achievementDiff} more achievement(s)`;
+                } else {
+                    // Minor achievement progress - don't alert
+                    return { hasChange: false };
+                }
             }
-            // Check for tiebreaker changes
-            else if (this.hasTiebreakerChange(previousState, currentState)) {
-                changeType = 'tiebreaker_change';
-                reason = this.describeTiebreakerChange(previousState, currentState);
-            }
-            // Check for award status change
+            // Check for award status change (participation -> beaten -> mastery)
             else if (previousState.award !== currentState.award) {
                 changeType = 'award_change';
                 reason = `Achievement status changed: ${currentState.award}`;
+            }
+            // Check for significant tiebreaker changes
+            else if (this.hasSignificantTiebreakerChange(previousState, currentState)) {
+                changeType = 'tiebreaker_change';
+                reason = this.describeTiebreakerChange(previousState, currentState);
+            }
+            // No significant changes detected
+            else {
+                return { hasChange: false };
             }
         }
 
@@ -967,6 +1063,26 @@ class LeaderboardFeedService extends FeedManagerBase {
             reason,
             details
         };
+    }
+
+    // Check for significant tiebreaker changes only
+    hasSignificantTiebreakerChange(previous, current) {
+        // Only care about tiebreaker changes for top 3 users
+        if (current.displayRank > 3) return false;
+        
+        // New tiebreaker participation is significant
+        if (!previous.hasTiebreaker && current.hasTiebreaker) return true;
+        if (!previous.hasTiebreakerBreaker && current.hasTiebreakerBreaker) return true;
+
+        // Tiebreaker rank improvement is significant
+        if (previous.hasTiebreaker && current.hasTiebreaker && 
+            current.tiebreakerRank < previous.tiebreakerRank) return true;
+            
+        // Tiebreaker-breaker rank improvement is significant
+        if (previous.hasTiebreakerBreaker && current.hasTiebreakerBreaker && 
+            current.tiebreakerBreakerRank < previous.tiebreakerBreakerRank) return true;
+
+        return false;
     }
 
     // Determine the reason for a rank change
@@ -1052,15 +1168,41 @@ class LeaderboardFeedService extends FeedManagerBase {
         return description || 'Tiebreaker position updated';
     }
 
-    // Check if two states are completely identical
+    // Check if two states are completely identical with improved comparison
     statesAreIdentical(state1, state2) {
+        if (!state1 || !state2) return false;
+        
+        // Helper function to normalize values for comparison
+        const normalize = (value) => {
+            if (value === null || value === undefined) return null;
+            if (typeof value === 'string' && value.trim() === '') return null;
+            return value;
+        };
+        
         const keys = [
             'displayRank', 'achieved', 'percentage', 'points', 'award',
-            'hasTiebreaker', 'tiebreakerRank', 'tiebreakerScore',
-            'hasTiebreakerBreaker', 'tiebreakerBreakerRank', 'tiebreakerBreakerScore'
+            'hasTiebreaker', 'tiebreakerRank', 'tiebreakerScore', 'tiebreakerGame',
+            'hasTiebreakerBreaker', 'tiebreakerBreakerRank', 'tiebreakerBreakerScore', 'tiebreakerBreakerGame'
         ];
 
-        return keys.every(key => state1[key] === state2[key]);
+        for (const key of keys) {
+            const val1 = normalize(state1[key]);
+            const val2 = normalize(state2[key]);
+            
+            // Handle null/undefined comparison
+            if (val1 === null && val2 === null) continue;
+            if (val1 === null || val2 === null) return false;
+            
+            // Strict equality comparison
+            if (val1 !== val2) {
+                if (this.debugMode) {
+                    console.log(`State difference detected in ${key}: "${val1}" !== "${val2}"`);
+                }
+                return false;
+            }
+        }
+        
+        return true;
     }
 
     // Store detailed state for all top users
@@ -1070,6 +1212,21 @@ class LeaderboardFeedService extends FeedManagerBase {
         for (const user of ranks) {
             if (user.displayRank <= 7) { // Store top 7 to catch movements in/out of top 5
                 this.previousDetailedRanks.set(user.username, this.getUserState(user));
+            }
+        }
+        
+        // Clean up old alert cooldowns (older than 1 hour)
+        this.cleanupOldAlertCooldowns();
+    }
+
+    // Clean up old alert cooldowns to prevent memory leaks
+    cleanupOldAlertCooldowns() {
+        const now = Date.now();
+        const oneHour = 60 * 60 * 1000;
+        
+        for (const [username, lastAlertTime] of this.lastAlertTime.entries()) {
+            if (now - lastAlertTime > oneHour) {
+                this.lastAlertTime.delete(username);
             }
         }
     }
