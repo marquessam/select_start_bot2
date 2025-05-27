@@ -45,7 +45,7 @@ class ArenaFeedService extends FeedManagerBase {
             // Update open challenges (blue)
             await this.updateOpenChallenges();
             
-            // Update GP leaderboard last (yellow)
+            // Update GP leaderboard last (yellow) - NOW STANDARDIZED
             await this.updateGPLeaderboard();
             
             console.log('Arena feed update completed');
@@ -100,19 +100,21 @@ class ArenaFeedService extends FeedManagerBase {
             // Get total GP in circulation
             const systemStats = await gpUtils.getSystemGPStats();
             
-            // Create embed
-            const embed = new EmbedBuilder()
-                .setColor(COLORS.WARNING) // Yellow for overview
-                .setTitle(`${EMOJIS.ARENA} Arena System Overview`)
-                .setDescription(
-                    'The **Arena Challenge System** lets you compete against other players on RetroAchievements leaderboards!\n\n' +
-                    '**How It Works:**\n' +
-                    `• **Create Challenges:** Start direct 1v1 or open challenges\n` +
-                    `• **Place Bets:** Bet GP on who will win active challenges\n` +
-                    `• **Earn GP:** Win challenges and bets to earn Game Points\n` +
-                    `• **Monthly Allowance:** Claim 1,000 GP free each month\n\n` +
-                    '**Current Activity:**'
-                );
+            // Create embed using standardized utility
+            const embed = createHeaderEmbed(
+                `${EMOJIS.ARENA} Arena System Overview`,
+                'The **Arena Challenge System** lets you compete against other players on RetroAchievements leaderboards!\n\n' +
+                '**How It Works:**\n' +
+                `• **Create Challenges:** Start direct 1v1 or open challenges\n` +
+                `• **Place Bets:** Bet GP on who will win active challenges\n` +
+                `• **Earn GP:** Win challenges and bets to earn Game Points\n` +
+                `• **Monthly Allowance:** Claim 1,000 GP free each month\n\n` +
+                '**Current Activity:**',
+                {
+                    color: COLORS.WARNING, // Yellow for overview
+                    timestamp: false
+                }
+            );
                 
             // Add current status
             let statusField = '';
@@ -156,29 +158,28 @@ class ArenaFeedService extends FeedManagerBase {
                 status: { $in: ['pending', 'active'] }
             }).sort({ createdAt: -1 }).limit(10);
 
-            // Create embed
-            const embed = new EmbedBuilder()
-                .setColor(COLORS.DANGER) // Red for direct challenges
-                .setTitle(`⚔️ Direct Challenges (1v1)`)
-                .setTimestamp();
-
-            if (directChallenges.length === 0) {
-                embed.setDescription(
+            // Create embed using standardized utility
+            const embed = createHeaderEmbed(
+                `⚔️ Direct Challenges (1v1)`,
+                directChallenges.length === 0 ?
                     'No active direct challenges at the moment.\n\n' +
                     'Direct challenges are 1v1 competitions where you challenge a specific player. ' +
-                    'The target player has 24 hours to accept, then you compete for 7 days!'
-                );
+                    'The target player has 24 hours to accept, then you compete for 7 days!' :
+                    `Currently **${directChallenges.length}** active direct challenge(s).\n\n` +
+                    'These are 1v1 competitions between specific players. Non-participants can bet on the outcome!',
+                {
+                    color: COLORS.DANGER, // Red for direct challenges
+                    timestamp: true
+                }
+            );
+
+            if (directChallenges.length === 0) {
                 embed.addFields({ 
                     name: 'No Active Challenges', 
                     value: 'Be the first to create a direct challenge with `/arena`!',
                     inline: false 
                 });
             } else {
-                embed.setDescription(
-                    `Currently **${directChallenges.length}** active direct challenge(s).\n\n` +
-                    'These are 1v1 competitions between specific players. Non-participants can bet on the outcome!'
-                );
-
                 // Group challenges by status
                 const pendingChallenges = directChallenges.filter(c => c.status === 'pending');
                 const activeChallenges = directChallenges.filter(c => c.status === 'active');
@@ -252,29 +253,28 @@ class ArenaFeedService extends FeedManagerBase {
                 status: 'active'
             }).sort({ createdAt: -1 }).limit(10);
 
-            // Create embed
-            const embed = new EmbedBuilder()
-                .setColor(COLORS.PRIMARY) // Blue for open challenges
-                .setTitle(`🌍 Open Challenges (Free-for-All)`)
-                .setTimestamp();
-
-            if (openChallenges.length === 0) {
-                embed.setDescription(
+            // Create embed using standardized utility
+            const embed = createHeaderEmbed(
+                `🌍 Open Challenges (Free-for-All)`,
+                openChallenges.length === 0 ?
                     'No open challenges at the moment.\n\n' +
                     'Open challenges are competitions where anyone can join! ' +
-                    'Multiple players compete and the winner takes the entire prize pool.'
-                );
+                    'Multiple players compete and the winner takes the entire prize pool.' :
+                    `Currently **${openChallenges.length}** open challenge(s) accepting participants.\n\n` +
+                    'Anyone can join these challenges! The more participants, the bigger the prize pool.',
+                {
+                    color: COLORS.PRIMARY, // Blue for open challenges
+                    timestamp: true
+                }
+            );
+
+            if (openChallenges.length === 0) {
                 embed.addFields({ 
                     name: 'No Open Challenges', 
                     value: 'Create an open challenge with `/arena` for everyone to join!',
                     inline: false 
                 });
             } else {
-                embed.setDescription(
-                    `Currently **${openChallenges.length}** open challenge(s) accepting participants.\n\n` +
-                    'Anyone can join these challenges! The more participants, the bigger the prize pool.'
-                );
-
                 const challengeText = openChallenges
                     .map(challenge => {
                         const timeLeft = Math.max(0, challenge.endedAt.getTime() - Date.now());
@@ -319,15 +319,15 @@ class ArenaFeedService extends FeedManagerBase {
     }
 
     /**
-     * Update GP leaderboard embed (yellow)
+     * Update GP leaderboard embed (yellow) - STANDARDIZED TO MATCH ARCADE FEED
      */
     async updateGPLeaderboard() {
         try {
             const channel = await this.getChannel();
             if (!channel) return;
 
-            // Get top 5 GP users
-            const gpLeaderboard = await gpUtils.getGPLeaderboard(5);
+            // Get top 10 GP users (increased from 5 to match arcade feed style)
+            const gpLeaderboard = await gpUtils.getGPLeaderboard(10);
             
             // Get system stats
             const systemStats = await gpUtils.getSystemGPStats();
@@ -335,41 +335,60 @@ class ArenaFeedService extends FeedManagerBase {
             // Current timestamp in Discord format
             const timestamp = getDiscordTimestamp(new Date());
 
-            // Create embed
-            const embed = new EmbedBuilder()
-                .setColor(COLORS.WARNING) // Yellow for leaderboard
-                .setTitle('🏆 GP Balance Leaderboard')
-                .setDescription(
-                    `**Top 5 users by current GP balance**\n\n` +
-                    `Game Points (GP) are used to create challenges and place bets. ` +
-                    `Everyone gets 1,000 GP free each month!\n\n` +
-                    `**Last Updated:** ${timestamp}`
-                )
-                .setTimestamp();
+            // Create embed using standardized utility - MATCHING ARCADE FEED STYLE
+            const embed = createHeaderEmbed(
+                '🏆 GP Balance Leaderboard',
+                `**Top 10 users by current GP balance**\n\n` +
+                `Game Points (GP) are used to create challenges and place bets. ` +
+                `Everyone gets 1,000 GP free each month!\n\n` +
+                `**Last Updated:** ${timestamp}\n\n` +
+                `*Note: Only users with GP balances greater than 0 are shown.*`,
+                {
+                    color: COLORS.WARNING, // Yellow for leaderboard - matching arcade feed
+                    timestamp: true,
+                    footer: { 
+                        text: 'GP rankings update every 30 minutes • Use /arena for full leaderboards and stats'
+                    }
+                }
+            );
 
-            if (gpLeaderboard.length === 0) {
+            // STANDARDIZED LEADERBOARD FORMATTING - MATCHING ARCADE FEED EXACTLY
+            if (gpLeaderboard.length > 0) {
+                // Process leaderboard entries to match arcade feed format
+                const displayEntries = gpLeaderboard.slice(0, 10);
+                let leaderboardText = '';
+                
+                displayEntries.forEach((user, index) => {
+                    const displayRank = index + 1;
+                    const medalEmoji = displayRank <= 3 ? EMOJIS[`RANK_${displayRank}`] : `${displayRank}.`;
+                    
+                    // Format additional info (win rate) similar to global rank in arcade
+                    const additionalInfo = user.winRate > 0 ? ` (Win Rate: ${user.winRate}%)` : '';
+                    
+                    // EXACT SAME FORMAT AS ARCADE FEED: emoji + username + score + additional info
+                    leaderboardText += `${medalEmoji} **${user.raUsername}**: ${gpUtils.formatGP(user.gpBalance)}${additionalInfo}\n`;
+                });
+                
+                embed.addFields({ 
+                    name: 'Current Top 10', 
+                    value: leaderboardText,
+                    inline: false 
+                });
+                
+                // Add total participants count - matching arcade feed style
+                embed.addFields({ 
+                    name: 'Participants', 
+                    value: `${systemStats.usersWithGP} registered members have GP balances`
+                });
+            } else {
                 embed.addFields({ 
                     name: 'No GP Rankings', 
                     value: 'No users have GP balances yet. Claim your free 1,000 GP with `/arena claim`!',
                     inline: false 
                 });
-            } else {
-                const leaderboardText = gpLeaderboard
-                    .map(user => {
-                        const medal = user.rank === 1 ? '🥇' : user.rank === 2 ? '🥈' : user.rank === 3 ? '🥉' : `${user.rank}.`;
-                        const winRate = user.winRate > 0 ? ` (${user.winRate}% win rate)` : '';
-                        return `${medal} **${user.raUsername}** - ${gpUtils.formatGP(user.gpBalance)}${winRate}`;
-                    })
-                    .join('\n');
-                
-                embed.addFields({ 
-                    name: 'Current Top 5', 
-                    value: leaderboardText,
-                    inline: false 
-                });
             }
 
-            // Add system statistics
+            // Add system statistics - similar to arcade points summary
             embed.addFields({
                 name: '📊 System Statistics',
                 value: 
@@ -385,10 +404,6 @@ class ArenaFeedService extends FeedManagerBase {
                 name: 'Claim Your GP', 
                 value: 'Use `/arena claim` to get your free 1,000 GP monthly allowance!',
                 inline: false 
-            });
-
-            embed.setFooter({ 
-                text: 'GP rankings update every 30 minutes • Use /arena for full leaderboards and stats'
             });
             
             this.leaderboardMessageId = await this.updateMessage('gp_leaderboard', { embeds: [embed] });
