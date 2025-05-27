@@ -58,14 +58,14 @@ class ArenaService extends FeedManagerBase {
                 });
             }, 15 * 60 * 1000);
             
-            // Set up stuck challenge monitoring (every 30 minutes)
+            // FIXED: Set up stuck challenge monitoring less frequently to prevent duplicates
             setInterval(() => {
                 this.checkAndFixStuckChallenges().catch(error => {
                     console.error('Error checking stuck challenges:', error);
                 });
-            }, 30 * 60 * 1000);
+            }, 2 * 60 * 60 * 1000); // FIXED: Every 2 hours instead of 30 minutes
             
-            console.log('Arena service started with automatic stuck challenge monitoring');
+            console.log('Arena service started with conservative stuck challenge monitoring');
         } catch (error) {
             console.error('Error starting arena service:', error);
         }
@@ -708,30 +708,25 @@ class ArenaService extends FeedManagerBase {
     /**
      * Check for and attempt to fix stuck challenges automatically
      * Runs periodically to catch issues before they become problems
+     * FIXED: Added duplicate prevention and payout tracking
      */
     async checkAndFixStuckChallenges() {
         try {
             console.log('🔍 Checking for stuck challenges...');
             
             const now = new Date();
-            const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+            const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000); // FIXED: More conservative timing
             
-            // Find challenges that might be stuck
+            // FIXED: Only look for truly stuck challenges, not recently completed ones
             const potentiallyStuck = await ArenaChallenge.find({
                 $or: [
                     {
-                        // Open challenges that ended more than 1 hour ago but still show as "open"
+                        // Open challenges that ended more than 2 hours ago but still show as "open"
                         status: 'open',
                         isOpenChallenge: true,
                         participants: { $exists: true, $not: { $size: 0 } },
-                        endDate: { $lte: new Date(now.getTime() - 60 * 60 * 1000) } // Ended over 1 hour ago
-                    },
-                    {
-                        // Completed challenges from last 24 hours that might not have paid out
-                        status: 'completed',
-                        completedAt: { $gte: oneDayAgo },
-                        winnerId: { $exists: true, $ne: null },
-                        winnerUsername: { $nin: ['Tie', 'No Winner', 'Error - Manual Review Required'] }
+                        endDate: { $lte: twoHoursAgo }, // FIXED: More conservative - 2 hours instead of 1
+                        payoutProcessed: { $ne: true } // FIXED: Don't reprocess if already handled
                     }
                 ]
             });
@@ -748,14 +743,11 @@ class ArenaService extends FeedManagerBase {
             
             for (const challenge of potentiallyStuck) {
                 try {
+                    // FIXED: Only process open challenges that are truly stuck
                     if (challenge.status === 'open' && challenge.isOpenChallenge) {
                         console.log(`🔧 Attempting to fix stuck open challenge: ${challenge.gameTitle}`);
-                        await this.fixStuckOpenChallenge(challenge);
-                        fixed++;
-                    } else if (challenge.status === 'completed') {
-                        console.log(`💰 Checking payout status for: ${challenge.gameTitle}`);
-                        const payoutFixed = await this.verifyAndFixPayouts(challenge);
-                        if (payoutFixed) fixed++;
+                        const success = await this.fixStuckOpenChallenge(challenge);
+                        if (success) fixed++;
                     }
                 } catch (error) {
                     console.error(`Error fixing stuck challenge ${challenge._id}:`, error);
@@ -763,7 +755,7 @@ class ArenaService extends FeedManagerBase {
                 }
                 
                 // Small delay to avoid overwhelming the system
-                await new Promise(resolve => setTimeout(resolve, 500));
+                await new Promise(resolve => setTimeout(resolve, 1000)); // FIXED: Longer delay
             }
             
             if (fixed > 0) {
@@ -784,6 +776,7 @@ class ArenaService extends FeedManagerBase {
     /**
      * Fix a specific stuck open challenge
      * @param {Object} challenge - The stuck challenge to fix
+     * FIXED: Added duplicate prevention and payout tracking
      */
     async fixStuckOpenChallenge(challenge) {
         try {
@@ -792,20 +785,56 @@ class ArenaService extends FeedManagerBase {
             console.log(`Current status: ${challenge.status}`);
             console.log(`Participants: ${challenge.participants?.length || 0}`);
             console.log(`End date: ${challenge.endDate}`);
+            console.log(`Payout processed: ${challenge.payoutProcessed || false}`);
             
             if (!challenge.isOpenChallenge || !challenge.participants || challenge.participants.length === 0) {
                 console.log(`❌ Challenge doesn't qualify for open challenge fix`);
                 return false;
             }
             
-            // Force process as completed open challenge
-            await ArenaCompletionUtils.processCompletedOpenChallenge(challenge);
+            // FIXED: Check if already processed to prevent duplicates
+            if (challenge.payoutProcessed) {
+                console.log(`❌ Challenge already processed (payoutProcessed=true)`);
+                return false;
+            }
             
-            console.log(`✅ Stuck open challenge fixed: ${challenge.gameTitle}`);
-            return true;
+            // FIXED: Check if already completed to prevent reprocessing
+            if (challenge.status === 'completed') {
+                console.log(`❌ Challenge already completed`);
+                // Mark as processed if it somehow wasn't marked
+                challenge.payoutProcessed = true;
+                await challenge.save();
+                return false;
+            }
+            
+            // FIXED: Add processing lock to prevent concurrent execution
+            if (challenge._processing) {
+                console.log(`❌ Challenge is already being processed`);
+                return false;
+            }
+            
+            challenge._processing = true;
+            
+            try {
+                // Force process as completed open challenge
+                await ArenaCompletionUtils.processCompletedOpenChallenge(challenge);
+                
+                // FIXED: Mark as processed to prevent future duplicate processing
+                challenge.payoutProcessed = true;
+                await challenge.save();
+                
+                console.log(`✅ Stuck open challenge fixed: ${challenge.gameTitle}`);
+                return true;
+                
+            } finally {
+                // Clear processing lock
+                delete challenge._processing;
+            }
             
         } catch (error) {
             console.error(`Error fixing stuck open challenge:`, error);
+            // Clear processing lock on error
+            delete challenge._processing;
             return false;
         }
     }
