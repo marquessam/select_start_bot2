@@ -15,6 +15,7 @@ import arcadeAlertService from './services/arcadeAlertService.js';
 import arcadeFeedService from './services/arcadeFeedService.js';
 import membershipCheckService from './services/membershipCheckService.js';
 import arenaService from './services/arenaService.js';
+import arenaFeedService from './services/arenaFeedService.js';
 import gameAwardService from './services/gameAwardService.js';
 import { User } from './models/User.js';
 
@@ -395,6 +396,7 @@ client.once(Events.ClientReady, async () => {
         arcadeFeedService.setClient(client);
         membershipCheckService.setClient(client);
         arenaService.setClient(client);
+        arenaFeedService.setClient(client);
         gameAwardService.setClient(client);
 
         // Schedule stats updates every 30 minutes
@@ -471,6 +473,14 @@ client.once(Events.ClientReady, async () => {
         cron.schedule('15 * * * *', () => { // Runs at 15 minutes past every hour
             console.log('Running arena feed update...');
             arenaService.updateArenaFeeds().catch(error => {
+                console.error('Error in arena feed update:', error);
+            });
+        });
+
+        // Schedule arena feed updates every 30 minutes
+        cron.schedule('*/30 * * * *', () => { // Runs every 30 minutes
+            console.log('Running arena feed update...');
+            arenaFeedService.update().catch(error => {
                 console.error('Error in arena feed update:', error);
             });
         });
@@ -624,6 +634,9 @@ client.once(Events.ClientReady, async () => {
         
         // Start the arena service
         await arenaService.start();
+        
+        // Start the arena feed service
+        await arenaFeedService.start();
         
         // Initialize the game award service
         await gameAwardService.initialize();
