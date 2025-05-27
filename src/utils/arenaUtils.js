@@ -420,7 +420,7 @@ class ArenaUtils {
     }
 
     /**
-     * Format a challenge for display
+     * Format a challenge for display - UPDATED to include description
      */
     formatChallengeDisplay(challenge) {
         const statusEmoji = {
@@ -434,6 +434,12 @@ class ArenaUtils {
         
         let description = `${statusEmoji[challenge.status]} ${typeEmoji} **${challenge.gameTitle}**\n`;
         description += `📊 ${challenge.leaderboardTitle}\n`;
+        
+        // ADD CHALLENGE DESCRIPTION IF PROVIDED
+        if (challenge.description && challenge.description.trim()) {
+            description += `📝 ${challenge.description}\n`;
+        }
+        
         description += `💰 Wager: ${challenge.participants[0]?.wager || 0} GP\n`;
         description += `👥 Participants: ${challenge.participants.length}`;
         
@@ -459,7 +465,7 @@ class ArenaUtils {
     }
 
     /**
-     * Create challenge embed for Discord
+     * Create challenge embed for Discord - UPDATED to include description field
      */
     createChallengeEmbed(challenge, color = '#0099ff') {
         const { EmbedBuilder } = require('discord.js');
@@ -472,8 +478,18 @@ class ArenaUtils {
                 { name: 'Challenge ID', value: challenge.challengeId, inline: true },
                 { name: 'Created by', value: challenge.creatorRaUsername, inline: true },
                 { name: 'Status', value: challenge.status.charAt(0).toUpperCase() + challenge.status.slice(1), inline: true }
-            )
-            .setTimestamp(challenge.createdAt);
+            );
+
+        // ADD DESCRIPTION AS SEPARATE FIELD IF PROVIDED
+        if (challenge.description && challenge.description.trim()) {
+            embed.addFields({
+                name: '📝 Challenge Description',
+                value: challenge.description,
+                inline: false
+            });
+        }
+
+        embed.setTimestamp(challenge.createdAt);
 
         // Add game thumbnail if available
         if (challenge.gameId) {
