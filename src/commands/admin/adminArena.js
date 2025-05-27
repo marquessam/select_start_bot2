@@ -993,12 +993,13 @@ export default {
         }
     },
 
-    /**
+  /**
      * NUCLEAR OPTION: Reset the entire arena system
      * @private
      */
     async systemResetEntireSystem(interaction) {
-        await interaction.deferReply();
+        // REMOVED: await interaction.deferReply(); 
+        // The interaction is already deferred in handleSystemAction()
 
         const confirmReset = interaction.options.getBoolean('confirm_reset');
         
