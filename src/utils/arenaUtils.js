@@ -3,54 +3,145 @@ import { config } from '../config/config.js';
 
 class ArenaUtils {
     /**
-     * Fetch leaderboard scores for specific users
+     * Get RetroAchievements API credentials using environment variables (like retroAPI)
+     * @private
+     */
+    getRACredentials() {
+        const username = process.env.RA_USERNAME;
+        const apiKey = process.env.RA_API_KEY;
+        
+        if (!username || !apiKey) {
+            throw new Error('RetroAchievements API credentials not found. Please set RA_USERNAME and RA_API_KEY environment variables.');
+        }
+        
+        return { username, apiKey };
+    }
+
+    /**
+     * Get leaderboard entries using direct API request (following retroAPI pattern)
+     * @param {number} leaderboardId - RetroAchievements leaderboard ID
+     * @param {number} offset - Starting position (0-based)
+     * @param {number} count - Number of entries to retrieve
+     * @returns {Promise<Object>} Leaderboard data object with Results array
+     */
+    async getLeaderboardEntriesDirect(leaderboardId, offset = 0, count = 1000) {
+        try {
+            const { username, apiKey } = this.getRACredentials();
+            
+            // Make direct API request to the RetroAchievements leaderboard endpoint (same as retroAPI)
+            const url = `https://retroachievements.org/API/API_GetLeaderboardEntries.php?i=${leaderboardId}&o=${offset}&c=${count}&z=${username}&y=${apiKey}`;
+            
+            console.log(`Fetching leaderboard entries for leaderboard ${leaderboardId} (offset: ${offset}, count: ${count})`);
+            
+            const response = await fetch(url);
+            if (!response.ok) {
+                throw new Error(`API request failed with status ${response.status}`);
+            }
+            
+            const data = await response.json();
+            console.log(`Successfully fetched ${data?.Results?.length || 0} leaderboard entries`);
+            
+            return data;
+        } catch (error) {
+            console.error(`Error fetching direct leaderboard entries for ${leaderboardId}:`, error);
+            return { Results: [] }; // Return empty Results array for consistent structure
+        }
+    }
+
+    /**
+     * Process leaderboard entries to standardize the format (following retroAPI pattern)
+     * @param {Object|Array} data - Raw API response
+     * @returns {Array} Standardized leaderboard entries
+     */
+    processLeaderboardEntries(data) {
+        // Check if we have a Results array (API sometimes returns different formats)
+        const entries = data.Results || data;
+        
+        if (!entries || !Array.isArray(entries)) {
+            return [];
+        }
+        
+        // Convert entries to a standard format (same as retroAPI)
+        return entries.map(entry => {
+            // Handle different API response formats
+            const user = entry.User || entry.user || '';
+            const apiRank = entry.Rank || entry.rank || '0';
+            
+            // For scores, check all possible properties
+            let score = null;
+            
+            // Check for numeric scores first (points-based leaderboards)
+            if (entry.Score !== undefined) score = entry.Score;
+            else if (entry.score !== undefined) score = entry.score;
+            else if (entry.Value !== undefined) score = entry.Value;
+            else if (entry.value !== undefined) score = entry.value;
+            
+            // Get the formatted version if available
+            let formattedScore = null;
+            if (entry.FormattedScore) formattedScore = entry.FormattedScore;
+            else if (entry.formattedScore) formattedScore = entry.formattedScore;
+            else if (entry.ScoreFormatted) formattedScore = entry.ScoreFormatted;
+            else if (entry.scoreFormatted) formattedScore = entry.scoreFormatted;
+            
+            // Use the appropriate score representation
+            let trackTime;
+            if (formattedScore !== null) {
+                trackTime = formattedScore;
+            } else if (score !== null) {
+                trackTime = score.toString();
+            } else {
+                // Last resort fallback
+                trackTime = "No Score";
+            }
+            
+            return {
+                ApiRank: parseInt(apiRank, 10),
+                User: user.trim(),
+                TrackTime: trackTime.toString().trim(),
+                DateSubmitted: entry.DateSubmitted || entry.dateSubmitted || null,
+                RawScore: score, // Keep raw score for sorting
+                FormattedScore: formattedScore // Keep formatted score
+            };
+        }).filter(entry => entry.User.length > 0);
+    }
+
+    /**
+     * Fetch leaderboard scores for specific users (updated to use 1000 entries like arcade)
      */
     async fetchLeaderboardScores(gameId, leaderboardId, raUsernames) {
         try {
             console.log(`Fetching leaderboard scores for game ${gameId}, leaderboard ${leaderboardId}`);
             console.log('Target users:', raUsernames);
 
-            const url = `https://retroachievements.org/API/API_GetLeaderboardEntries.php`;
-            const params = new URLSearchParams({
-                z: config.retroachievements.username,
-                y: config.retroachievements.apiKey,
-                i: leaderboardId,
-                o: 1, // Offset
-                c: 500 // Count - get more entries to ensure we find all users
-            });
-
-            const response = await fetch(`${url}?${params}`);
+            // Fetch up to 1000 entries like the arcade service does
+            const data = await this.getLeaderboardEntriesDirect(leaderboardId, 0, 1000);
             
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-
-            const data = await response.json();
+            // Process entries to standardized format
+            const processedEntries = this.processLeaderboardEntries(data);
             
-            if (!data || !Array.isArray(data)) {
+            if (!processedEntries || processedEntries.length === 0) {
                 console.log('No leaderboard data received or invalid format');
                 return this.createNoScoreResults(raUsernames);
             }
 
-            console.log(`Fetched ${data.length} leaderboard entries`);
+            console.log(`Processed ${processedEntries.length} leaderboard entries`);
 
-            // Find entries for our target users
+            // Find entries for our target users (same logic as before)
             const userScores = [];
             
             for (const username of raUsernames) {
-                const entry = data.find(entry => {
-                    const entryUser = entry.User || entry.user || entry.UserName || entry.username;
-                    return entryUser && entryUser.toLowerCase() === username.toLowerCase();
+                const entry = processedEntries.find(entry => {
+                    return entry.User && entry.User.toLowerCase() === username.toLowerCase();
                 });
 
                 if (entry) {
                     userScores.push({
                         raUsername: username,
-                        rank: this.parseRank(entry.Rank || entry.rank),
-                        score: this.formatScore(entry.Score || entry.score),
+                        rank: entry.ApiRank,
+                        score: entry.TrackTime,
                         fetchedAt: new Date()
                     });
-                    console.log(`Found score for ${username}: rank ${entry.Rank || entry.rank}, score ${entry.Score || entry.score}`);
+                    console.log(`Found score for ${username}: rank ${entry.ApiRank}, score ${entry.TrackTime}`);
                 } else {
                     userScores.push({
                         raUsername: username,
@@ -198,29 +289,36 @@ class ArenaUtils {
     }
 
     /**
-     * Get game information from RetroAchievements API
+     * Get game information from RetroAchievements API (following retroAPI pattern)
      */
     async getGameInfo(gameId) {
         try {
+            const { username, apiKey } = this.getRACredentials();
+
             const url = `https://retroachievements.org/API/API_GetGame.php`;
             const params = new URLSearchParams({
-                z: config.retroachievements.username,
-                y: config.retroachievements.apiKey,
+                z: username,
+                y: apiKey,
                 i: gameId
             });
 
+            console.log(`Fetching game info for ID ${gameId}...`);
             const response = await fetch(`${url}?${params}`);
             
             if (!response.ok) {
+                console.error(`HTTP error fetching game ${gameId}! status: ${response.status}`);
                 throw new Error(`HTTP error! status: ${response.status}`);
             }
 
             const data = await response.json();
             
+            // Check if we got valid game data
             if (!data || !data.Title) {
+                console.error(`No valid game data received for ID ${gameId}:`, data);
                 return null;
             }
 
+            console.log(`✅ Successfully fetched game: ${data.Title} (ID: ${gameId})`);
             return {
                 id: data.ID || gameId,
                 title: data.Title,
@@ -235,28 +333,35 @@ class ArenaUtils {
     }
 
     /**
-     * Get leaderboard information for a specific game
+     * Get leaderboard information for a specific game (following retroAPI pattern)
      */
     async getLeaderboardInfo(gameId, leaderboardId) {
         try {
+            const { username, apiKey } = this.getRACredentials();
+
             const url = `https://retroachievements.org/API/API_GetGameLeaderboards.php`;
             const params = new URLSearchParams({
-                z: config.retroachievements.username,
-                y: config.retroachievements.apiKey,
+                z: username,
+                y: apiKey,
                 i: gameId
             });
 
+            console.log(`Fetching leaderboards for game ID ${gameId}...`);
             const response = await fetch(`${url}?${params}`);
             
             if (!response.ok) {
+                console.error(`HTTP error fetching leaderboards for game ${gameId}! status: ${response.status}`);
                 throw new Error(`HTTP error! status: ${response.status}`);
             }
 
             const data = await response.json();
             
             if (!data || !Array.isArray(data)) {
+                console.error(`No valid leaderboard data received for game ${gameId}:`, data);
                 return null;
             }
+
+            console.log(`Fetched ${data.length} leaderboards for game ${gameId}`);
 
             // Find the specific leaderboard
             const leaderboard = data.find(lb => 
@@ -265,9 +370,11 @@ class ArenaUtils {
             );
 
             if (!leaderboard) {
+                console.error(`Leaderboard ${leaderboardId} not found in game ${gameId} leaderboards`);
                 return null;
             }
 
+            console.log(`✅ Found leaderboard: ${leaderboard.Title || leaderboard.title} (ID: ${leaderboardId})`);
             return {
                 id: leaderboard.ID || leaderboard.id,
                 title: leaderboard.Title || leaderboard.title,
