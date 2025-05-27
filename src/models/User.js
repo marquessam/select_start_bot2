@@ -141,8 +141,8 @@ const userSchema = new mongoose.Schema({
         min: 0
     },
     
-    // Monthly GP claim tracking
-    lastMonthlyGpClaim: {
+    // Monthly GP grant tracking (AUTOMATIC - replaces manual claims)
+    lastMonthlyGpGrant: {
         type: Date,
         default: null
     },
@@ -151,7 +151,7 @@ const userSchema = new mongoose.Schema({
     gpTransactions: [{
         type: {
             type: String,
-            enum: ['claim', 'wager', 'bet', 'win', 'refund', 'admin_adjust'],
+            enum: ['monthly_grant', 'wager', 'bet', 'win', 'refund', 'admin_adjust'],
             required: true
         },
         amount: {
@@ -217,7 +217,7 @@ const userSchema = new mongoose.Schema({
 userSchema.index({ 'arenaStats.challengesWon': -1 });
 userSchema.index({ 'arenaStats.totalGpWon': -1 });
 userSchema.index({ gpBalance: -1 });
-userSchema.index({ lastMonthlyGpClaim: 1 });
+userSchema.index({ lastMonthlyGpGrant: 1 }); // Changed from lastMonthlyGpClaim
 
 // ===== STATIC METHODS =====
 
@@ -369,18 +369,6 @@ userSchema.methods.addMasteredGame = function(gameId, gameTitle, consoleName, to
 
 // ===== ARENA SYSTEM METHODS =====
 
-// Check if user can claim monthly GP
-userSchema.methods.canClaimMonthlyGp = function() {
-    if (!this.lastMonthlyGpClaim) return true;
-    
-    const now = new Date();
-    const lastClaim = new Date(this.lastMonthlyGpClaim);
-    
-    // Check if it's a different month/year
-    return now.getMonth() !== lastClaim.getMonth() || 
-           now.getFullYear() !== lastClaim.getFullYear();
-};
-
 // Add GP transaction and update balance
 userSchema.methods.addGpTransaction = function(type, amount, description, challengeId = null) {
     if (!this.gpTransactions) {
@@ -424,19 +412,6 @@ userSchema.methods.getGpWinRate = function() {
 userSchema.methods.getBetWinRate = function() {
     if (!this.arenaStats || this.arenaStats.betsPlaced === 0) return 0;
     return (this.arenaStats.betsWon / this.arenaStats.betsPlaced * 100).toFixed(1);
-};
-
-// Legacy compatibility methods (for existing code that might use the old field names)
-userSchema.methods.hasClaimedMonthlyGp = function() {
-    return !this.canClaimMonthlyGp();
-};
-
-userSchema.methods.claimMonthlyGp = function(amount = 1000) {
-    if (!this.canClaimMonthlyGp()) return false;
-    
-    this.addGpTransaction('claim', amount, 'Monthly GP allowance');
-    this.lastMonthlyGpClaim = new Date();
-    return true;
 };
 
 // Virtual field for backwards compatibility with existing `gp` field references
