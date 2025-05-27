@@ -106,8 +106,14 @@ export default {
                             { name: 'Process Timeouts', value: 'process_timeouts' },
                             { name: 'Update Feeds', value: 'update_feeds' },
                             { name: 'Emergency Stop', value: 'emergency_stop' },
-                            { name: 'System Stats', value: 'stats' }
+                            { name: 'System Stats', value: 'stats' },
+                            { name: 'RESET ENTIRE SYSTEM', value: 'reset_system' }
                         )
+                )
+                .addBooleanOption(option =>
+                    option.setName('confirm_reset')
+                        .setDescription('REQUIRED: Set to true to confirm system reset (DESTRUCTIVE!)')
+                        .setRequired(false)
                 )
         ),
 
@@ -985,6 +991,159 @@ export default {
     },
 
     /**
+     * NUCLEAR OPTION: Reset the entire arena system
+     * @private
+     */
+    async systemResetEntireSystem(interaction) {
+        await interaction.deferReply();
+
+        const confirmReset = interaction.options.getBoolean('confirm_reset');
+        
+        if (!confirmReset) {
+            const embed = new EmbedBuilder()
+                .setTitle('⚠️ Arena System Reset')
+                .setDescription(
+                    `**WARNING: This will COMPLETELY RESET the Arena system!**\n\n` +
+                    `This action will:\n` +
+                    `• ❌ Delete ALL challenges (pending, active, completed)\n` +
+                    `• ❌ Reset ALL user GP balances to 0\n` +
+                    `• ❌ Clear ALL user arena statistics\n` +
+                    `• ❌ Remove ALL GP transaction history\n` +
+                    `• ❌ Reset ALL monthly GP claims\n\n` +
+                    `**THIS CANNOT BE UNDONE!**\n\n` +
+                    `To confirm this destructive action, run the command again with \`confirm_reset: True\``
+                )
+                .setColor('#FF0000')
+                .setTimestamp();
+
+            return interaction.editReply({ embeds: [embed] });
+        }
+
+        try {
+            await interaction.editReply('🔄 **RESETTING ENTIRE ARENA SYSTEM...**\nThis may take a few minutes...');
+
+            let deletedChallenges = 0;
+            let resetUsers = 0;
+            let errors = 0;
+
+            // Step 1: Delete all challenges
+            try {
+                const challengeDeleteResult = await ArenaChallenge.deleteMany({});
+                deletedChallenges = challengeDeleteResult.deletedCount;
+                console.log(`Deleted ${deletedChallenges} challenges`);
+            } catch (error) {
+                console.error('Error deleting challenges:', error);
+                errors++;
+            }
+
+            // Step 2: Reset all users' arena data
+            try {
+                const users = await User.find({});
+                
+                for (const user of users) {
+                    // Reset GP balance
+                    user.gpBalance = 0;
+                    
+                    // Reset monthly claim
+                    user.lastMonthlyGpClaim = null;
+                    
+                    // Clear GP transactions
+                    user.gpTransactions = [];
+                    
+                    // Reset arena stats
+                    user.arenaStats = {
+                        challengesCreated: 0,
+                        challengesWon: 0,
+                        challengesParticipated: 0,
+                        totalGpWon: 0,
+                        totalGpWagered: 0,
+                        totalGpBet: 0,
+                        betsWon: 0,
+                        betsPlaced: 0
+                    };
+                    
+                    await user.save();
+                    resetUsers++;
+                    
+                    // Progress update every 50 users
+                    if (resetUsers % 50 === 0) {
+                        await interaction.editReply(
+                            `🔄 **RESETTING ARENA SYSTEM...**\n` +
+                            `Progress: ${resetUsers}/${users.length} users reset...`
+                        );
+                    }
+                }
+                
+                console.log(`Reset arena data for ${resetUsers} users`);
+            } catch (error) {
+                console.error('Error resetting users:', error);
+                errors++;
+            }
+
+            // Step 3: Reset arena service state
+            try {
+                arenaService.isProcessing = false;
+                console.log('Reset arena service processing state');
+            } catch (error) {
+                console.error('Error resetting service state:', error);
+                errors++;
+            }
+
+            // Create completion report
+            const embed = new EmbedBuilder()
+                .setTitle(errors > 0 ? '⚠️ Arena System Reset Completed with Errors' : '✅ Arena System Reset Complete')
+                .setDescription(
+                    `**ARENA SYSTEM HAS BEEN COMPLETELY RESET**\n\n` +
+                    `**Results:**\n` +
+                    `• 🗑️ Challenges Deleted: ${deletedChallenges}\n` +
+                    `• 👥 Users Reset: ${resetUsers}\n` +
+                    `• ❌ Errors Encountered: ${errors}\n\n` +
+                    `**What was reset:**\n` +
+                    `• All challenge data removed\n` +
+                    `• All GP balances set to 0\n` +
+                    `• All arena statistics cleared\n` +
+                    `• All transaction history wiped\n` +
+                    `• All monthly claims reset\n\n` +
+                    `**The Arena system is now in a fresh state.**\n` +
+                    `Users can start claiming their monthly 1,000 GP immediately.`
+                )
+                .setColor(errors > 0 ? '#FFA500' : '#00FF00')
+                .setTimestamp();
+
+            if (errors > 0) {
+                embed.addFields({
+                    name: '⚠️ Errors Encountered',
+                    value: `${errors} error(s) occurred during reset. Check console logs for details.`,
+                    inline: false
+                });
+            }
+
+            await interaction.editReply({ embeds: [embed] });
+
+            // Log the reset action
+            console.log(`ARENA SYSTEM RESET completed by ${interaction.user.username} (${interaction.user.id})`);
+            console.log(`Results: ${deletedChallenges} challenges deleted, ${resetUsers} users reset, ${errors} errors`);
+
+        } catch (error) {
+            console.error('Critical error during arena system reset:', error);
+            
+            const errorEmbed = new EmbedBuilder()
+                .setTitle('❌ Arena System Reset Failed')
+                .setDescription(
+                    `**CRITICAL ERROR DURING RESET**\n\n` +
+                    `The reset process encountered a critical error and may have been partially completed.\n\n` +
+                    `**Error:** ${error.message}\n\n` +
+                    `**IMPORTANT:** The arena system may be in an inconsistent state. ` +
+                    `Manual database inspection and cleanup may be required.`
+                )
+                .setColor('#FF0000')
+                .setTimestamp();
+
+            await interaction.editReply({ embeds: [errorEmbed] });
+        }
+    },
+
+    /**
      * Emergency stop arena processing
      * @private
      */
@@ -1000,5 +1159,5 @@ export default {
             .setTimestamp();
 
         await interaction.editReply({ embeds: [embed] });
-    }
+    },
 };
