@@ -1,9 +1,10 @@
-// src/services/arenaService.js - UPDATED createChallenge method
+// src/services/arenaService.js
 import { ArenaChallenge } from '../models/ArenaChallenge.js';
 import { User } from '../models/User.js';
 import { config } from '../config/config.js';
 import arenaUtils from '../utils/arenaUtils.js';
 import gpUtils from '../utils/gpUtils.js';
+import AlertUtils, { ALERT_TYPES } from '../utils/AlertUtils.js';
 import { EmbedBuilder, ButtonBuilder, ActionRowBuilder, ButtonStyle } from 'discord.js';
 
 class ArenaService {
@@ -32,7 +33,7 @@ class ArenaService {
     }
 
     /**
-     * Create a new arena challenge - UPDATED to accept description
+     * Create a new arena challenge - UPDATED to accept description and send immediate alerts
      */
     async createChallenge(creatorUser, gameInfo, leaderboardInfo, wager, targetRaUsername = null, discordUsername = null, description = '') {
         try {
@@ -85,13 +86,64 @@ class ArenaService {
             });
 
             await challenge.save();
+
+            // SEND IMMEDIATE NEW CHALLENGE ALERT
+            try {
+                // Get game info for thumbnail
+                let thumbnailUrl = null;
+                try {
+                    const gameInfo_alert = await arenaUtils.getGameInfo(challenge.gameId);
+                    if (gameInfo_alert?.imageIcon) {
+                        thumbnailUrl = `https://retroachievements.org${gameInfo_alert.imageIcon}`;
+                    }
+                } catch (error) {
+                    console.error('Error fetching game info for new challenge alert:', error);
+                }
+                
+                // Determine alert title and description based on challenge type
+                let title, alertDescription;
+                if (challenge.type === 'direct') {
+                    title = '⚔️ New Direct Challenge!';
+                    alertDescription = `**${creatorUser.raUsername}** has challenged **${targetRaUsername}** to a duel!\n\n` +
+                                     `**Game:** ${challenge.gameTitle}\n` +
+                                     `**Leaderboard:** ${challenge.leaderboardTitle}\n` +
+                                     `**Description:** ${description || 'No description provided'}\n` +
+                                     `**Wager:** ${wager} GP each\n\n` +
+                                     `The challenge expires in 24 hours if not accepted!`;
+                } else {
+                    title = '🌍 New Open Challenge!';
+                    alertDescription = `**${creatorUser.raUsername}** has created an open challenge for everyone!\n\n` +
+                                     `**Game:** ${challenge.gameTitle}\n` +
+                                     `**Leaderboard:** ${challenge.leaderboardTitle}\n` +
+                                     `**Description:** ${description || 'No description provided'}\n` +
+                                     `**Wager:** ${wager} GP to join\n\n` +
+                                     `Anyone can join this challenge!`;
+                }
+                
+                // Send the immediate new challenge alert
+                await AlertUtils.sendPositionChangeAlert({
+                    title: title,
+                    description: alertDescription,
+                    thumbnail: thumbnailUrl,
+                    footer: { 
+                        text: `Challenge ID: ${challengeId} • Use /arena to participate` 
+                    }
+                }, ALERT_TYPES.ARENA);
+                
+            } catch (alertError) {
+                console.error('Error sending immediate new challenge alert:', alertError);
+                // Don't throw - alert failures shouldn't break challenge creation
+            }
+
             // Deduct wager from creator
             await gpUtils.deductGP(creatorUser, wager, 'wager', `Wager for challenge ${challengeId}`, challengeId);
+            
             // Update creator stats
             if (!creatorUser.arenaStats) creatorUser.arenaStats = {};
             creatorUser.arenaStats.challengesCreated = (creatorUser.arenaStats.challengesCreated || 0) + 1;
             creatorUser.arenaStats.totalGpWagered = (creatorUser.arenaStats.totalGpWagered || 0) + wager;
             await creatorUser.save();
+            
             return challenge;
         } catch (error) {
             console.error('Error creating challenge:', error);
@@ -100,7 +152,7 @@ class ArenaService {
     }
 
     /**
-     * Accept a direct challenge
+     * Accept a direct challenge - UPDATED to send immediate alerts
      */
     async acceptChallenge(challengeId, acceptingUser) {
         try {
@@ -142,6 +194,42 @@ class ArenaService {
 
             await challenge.save();
 
+            // SEND IMMEDIATE CHALLENGE ACCEPTED ALERT
+            try {
+                // Get game info for thumbnail
+                let thumbnailUrl = null;
+                try {
+                    const gameInfo = await arenaUtils.getGameInfo(challenge.gameId);
+                    if (gameInfo?.imageIcon) {
+                        thumbnailUrl = `https://retroachievements.org${gameInfo.imageIcon}`;
+                    }
+                } catch (error) {
+                    console.error('Error fetching game info for challenge accepted alert:', error);
+                }
+                
+                const title = '⚔️ Challenge Accepted!';
+                const alertDescription = `**${acceptingUser.raUsername}** has accepted the challenge from **${challenge.creatorRaUsername}**!\n\n` +
+                                       `**Game:** ${challenge.gameTitle}\n` +
+                                       `**Description:** ${challenge.description || 'No description provided'}\n` +
+                                       `**Wager:** ${wager} GP each\n` +
+                                       `**Total Prize Pool:** ${challenge.getTotalWager()} GP\n\n` +
+                                       `Let the battle begin! The challenge runs for 7 days. 🔥`;
+                
+                // Send the challenge accepted alert
+                await AlertUtils.sendPositionChangeAlert({
+                    title: title,
+                    description: alertDescription,
+                    thumbnail: thumbnailUrl,
+                    footer: { 
+                        text: `Challenge ID: ${challengeId} • Battle duration: 7 days` 
+                    }
+                }, ALERT_TYPES.ARENA);
+                
+            } catch (alertError) {
+                console.error('Error sending challenge accepted alert:', alertError);
+                // Don't throw - alert failures shouldn't break challenge acceptance
+            }
+
             // Deduct wager from accepting user
             await gpUtils.deductGP(acceptingUser, wager, 'wager', `Wager for challenge ${challengeId}`, challengeId);
 
@@ -167,7 +255,7 @@ class ArenaService {
     }
 
     /**
-     * Join an open challenge
+     * Join an open challenge - UPDATED to send immediate alerts
      */
     async joinChallenge(challengeId, joiningUser) {
         try {
@@ -199,6 +287,42 @@ class ArenaService {
             });
 
             await challenge.save();
+
+            // SEND IMMEDIATE NEW PARTICIPANT ALERT
+            try {
+                // Get game info for thumbnail
+                let thumbnailUrl = null;
+                try {
+                    const gameInfo = await arenaUtils.getGameInfo(challenge.gameId);
+                    if (gameInfo?.imageIcon) {
+                        thumbnailUrl = `https://retroachievements.org${gameInfo.imageIcon}`;
+                    }
+                } catch (error) {
+                    console.error('Error fetching game info for new participant alert:', error);
+                }
+                
+                const title = '👥 New Challenger Approaches!';
+                const alertDescription = `**${joiningUser.raUsername}** has joined the arena challenge!\n\n` +
+                                       `**Challenge:** ${challenge.gameTitle}\n` +
+                                       `**Description:** ${challenge.description || 'No description provided'}\n` +
+                                       `**Total Participants:** ${challenge.participants.length}\n` +
+                                       `**Total Prize Pool:** ${challenge.getTotalWager()} GP\n\n` +
+                                       `The competition heats up! 🔥`;
+                
+                // Send the new participant alert
+                await AlertUtils.sendPositionChangeAlert({
+                    title: title,
+                    description: alertDescription,
+                    thumbnail: thumbnailUrl,
+                    footer: { 
+                        text: `Challenge ID: ${challengeId} • Battle duration: 7 days` 
+                    }
+                }, ALERT_TYPES.ARENA);
+                
+            } catch (alertError) {
+                console.error('Error sending new participant alert:', alertError);
+                // Don't throw - alert failures shouldn't break joining
+            }
 
             // Deduct wager from joining user
             await gpUtils.deductGP(joiningUser, wager, 'wager', `Wager for challenge ${challengeId}`, challengeId);
