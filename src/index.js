@@ -17,6 +17,7 @@ import membershipCheckService from './services/membershipCheckService.js';
 import arenaService from './services/arenaService.js';
 import arenaFeedService from './services/arenaFeedService.js';
 import gameAwardService from './services/gameAwardService.js';
+import monthlyGPService from './services/monthlyGPService.js'; // NEW: Import monthly GP service
 import { User } from './models/User.js';
 
 // Import nomination and restriction handlers
@@ -246,43 +247,6 @@ client.on(Events.InteractionCreate, async interaction => {
     }
 });
 
-// Function to handle monthly GP allowance reset
-async function handleMonthlyGpAllowance() {
-    try {
-        const now = new Date();
-        // Only run on the 1st day of each month
-        if (now.getDate() === 1) {
-            console.log('Starting monthly GP allowance process...');
-            
-            // Reset lastMonthlyGpClaim for all users
-            await User.updateMany(
-                {}, 
-                { $set: { lastMonthlyGpClaim: null } }
-            );
-            
-            console.log('Reset monthly GP claim status for all users');
-            
-            // Optionally send a notification to the Arena channel
-            try {
-                const arenaChannel = await client.channels.fetch(config.discord.arenaChannelId);
-                if (arenaChannel) {
-                    await arenaChannel.send({
-                        content: 
-                            `# 🎉 Monthly GP Allowance Reset!\n` +
-                            `It's a new month, and your GP allowance has been reset!\n` +
-                            `Use \`/arena claim\` to claim your 1,000 GP for this month.\n\n` +
-                            `Don't forget to check the Arena leaderboard - who will be on top this month?`
-                    });
-                }
-            } catch (notifyError) {
-                console.error('Error sending GP reset notification:', notifyError);
-            }
-        }
-    } catch (error) {
-        console.error('Error handling monthly GP allowance:', error);
-    }
-}
-
 // Function to handle weekly comprehensive yearly sync
 async function handleWeeklyComprehensiveSync() {
     try {
@@ -399,6 +363,10 @@ client.once(Events.ClientReady, async () => {
         arenaFeedService.setClient(client);
         gameAwardService.setClient(client);
 
+        // START NEW MONTHLY GP SERVICE
+        monthlyGPService.start();
+        console.log('✅ Monthly GP Service initialized - automatic grants on 1st of each month');
+
         // Schedule stats updates every 30 minutes
         cron.schedule('*/30 * * * *', () => {
             console.log('Running scheduled stats update...');
@@ -430,10 +398,8 @@ client.once(Events.ClientReady, async () => {
                 console.error('Error clearing nominations:', error);
             });
             
-            // Add the GP allowance reset to monthly tasks
-            handleMonthlyGpAllowance().catch(error => {
-                console.error('Error in monthly GP allowance reset:', error);
-            });
+            // NOTE: Monthly GP is now handled automatically by monthlyGPService
+            // No need for manual GP allowance reset
         });
 
         // Schedule arcade service to run daily at 00:15 (just after midnight)
@@ -641,9 +607,6 @@ client.once(Events.ClientReady, async () => {
         // Initialize the game award service
         await gameAwardService.initialize();
         console.log('Game Award Service initialized');
-        
-        // Check if monthly GP allowance should be handled on startup
-        await handleMonthlyGpAllowance();
 
         // Check for any arena timeouts that may have occurred while the bot was offline
         console.log('Checking for any arena timeouts that occurred while offline...');
@@ -656,6 +619,7 @@ client.once(Events.ClientReady, async () => {
         console.log('  • Stats updates: Every 30 minutes');
         console.log('  • Achievement feeds: Every 15 minutes');
         console.log('  • Arena completed challenges: Every 15 minutes');
+        console.log('  • Monthly GP grants: Automatic on 1st of each month');
         console.log('  • Weekly comprehensive yearly sync: Sundays at 3:00 AM');
         console.log('  • Monthly tasks: 1st of each month');
         console.log('  • Arcade service: Daily at 12:15 AM');
@@ -676,6 +640,19 @@ client.on(Events.Error, error => {
 
 process.on('unhandledRejection', error => {
     console.error('Unhandled promise rejection:', error);
+});
+
+// Graceful shutdown handling for Monthly GP Service
+process.on('SIGINT', () => {
+    console.log('Shutting down...');
+    monthlyGPService.stop();
+    process.exit(0);
+});
+
+process.on('SIGTERM', () => {
+    console.log('Shutting down...');
+    monthlyGPService.stop();
+    process.exit(0);
 });
 
 // Login to Discord
