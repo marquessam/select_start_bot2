@@ -51,12 +51,21 @@ class ArenaService extends FeedManagerBase {
             // Run initial updates and set up intervals using the parent class method
             await super.start(UPDATE_INTERVAL);
             
-            // Also set up a check for completed challenges
+            // Set up a check for completed challenges (every 15 minutes)
             setInterval(() => {
                 this.checkCompletedChallenges().catch(error => {
                     console.error('Error checking completed challenges:', error);
                 });
-            }, 15 * 60 * 1000); // Every 15 minutes
+            }, 15 * 60 * 1000);
+            
+            // Set up stuck challenge monitoring (every 30 minutes)
+            setInterval(() => {
+                this.checkAndFixStuckChallenges().catch(error => {
+                    console.error('Error checking stuck challenges:', error);
+                });
+            }, 30 * 60 * 1000);
+            
+            console.log('Arena service started with automatic stuck challenge monitoring');
         } catch (error) {
             console.error('Error starting arena service:', error);
         }
@@ -651,37 +660,225 @@ class ArenaService extends FeedManagerBase {
         try {
             const now = new Date();
             
-            // FIXED: Check for BOTH active challenges AND open challenges with participants that have ended
+            // FIXED: Properly check for ALL types of ended challenges
             const endedChallenges = await ArenaChallenge.find({
                 $or: [
                     {
-                        // Active challenges that have ended
+                        // Regular active challenges that have ended
                         status: 'active',
                         endDate: { $lte: now }
                     },
                     {
-                        // Open challenges with participants that have ended
+                        // CRITICAL FIX: Open challenges with participants that have ended
                         status: 'open',
                         isOpenChallenge: true,
-                        participants: { $exists: true, $not: { $size: 0 } }, // Has participants
-                        endDate: { $lte: now }
+                        $and: [
+                            { participants: { $exists: true, $not: { $size: 0 } } }, // Has participants
+                            { endDate: { $lte: now } }, // Time has expired
+                            { startDate: { $exists: true } } // Actually started
+                        ]
                     }
                 ]
             });
             
-            if (endedChallenges.length === 0) return;
+            if (endedChallenges.length === 0) {
+                // Also check for stuck challenges and try to unstick them
+                await this.checkAndFixStuckChallenges();
+                return;
+            }
             
             console.log(`Found ${endedChallenges.length} ended challenges to process for completion`);
             
             for (const challenge of endedChallenges) {
+                console.log(`Processing challenge ${challenge._id}: ${challenge.gameTitle} (${challenge.status})`);
                 await this.processCompletedChallenge(challenge);
                 await new Promise(resolve => setTimeout(resolve, 1000));
             }
+            
+            // Also check for stuck challenges
+            await this.checkAndFixStuckChallenges();
             
             // Refresh the feed to remove completed challenges
             await this.refreshEntireFeed();
         } catch (error) {
             console.error('Error checking completed challenges:', error);
+        }
+    }
+
+    /**
+     * Check for and attempt to fix stuck challenges automatically
+     * Runs periodically to catch issues before they become problems
+     */
+    async checkAndFixStuckChallenges() {
+        try {
+            console.log('🔍 Checking for stuck challenges...');
+            
+            const now = new Date();
+            const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+            
+            // Find challenges that might be stuck
+            const potentiallyStuck = await ArenaChallenge.find({
+                $or: [
+                    {
+                        // Open challenges that ended more than 1 hour ago but still show as "open"
+                        status: 'open',
+                        isOpenChallenge: true,
+                        participants: { $exists: true, $not: { $size: 0 } },
+                        endDate: { $lte: new Date(now.getTime() - 60 * 60 * 1000) } // Ended over 1 hour ago
+                    },
+                    {
+                        // Completed challenges from last 24 hours that might not have paid out
+                        status: 'completed',
+                        completedAt: { $gte: oneDayAgo },
+                        winnerId: { $exists: true, $ne: null },
+                        winnerUsername: { $nin: ['Tie', 'No Winner', 'Error - Manual Review Required'] }
+                    }
+                ]
+            });
+            
+            if (potentiallyStuck.length === 0) {
+                console.log('✅ No stuck challenges found');
+                return;
+            }
+            
+            console.log(`⚠️ Found ${potentiallyStuck.length} potentially stuck challenges`);
+            
+            let fixed = 0;
+            let errors = 0;
+            
+            for (const challenge of potentiallyStuck) {
+                try {
+                    if (challenge.status === 'open' && challenge.isOpenChallenge) {
+                        console.log(`🔧 Attempting to fix stuck open challenge: ${challenge.gameTitle}`);
+                        await this.fixStuckOpenChallenge(challenge);
+                        fixed++;
+                    } else if (challenge.status === 'completed') {
+                        console.log(`💰 Checking payout status for: ${challenge.gameTitle}`);
+                        const payoutFixed = await this.verifyAndFixPayouts(challenge);
+                        if (payoutFixed) fixed++;
+                    }
+                } catch (error) {
+                    console.error(`Error fixing stuck challenge ${challenge._id}:`, error);
+                    errors++;
+                }
+                
+                // Small delay to avoid overwhelming the system
+                await new Promise(resolve => setTimeout(resolve, 500));
+            }
+            
+            if (fixed > 0) {
+                console.log(`✅ Auto-fixed ${fixed} stuck challenges`);
+                // Refresh feed after fixes
+                await this.refreshEntireFeed();
+            }
+            
+            if (errors > 0) {
+                console.log(`❌ ${errors} challenges could not be auto-fixed (may need manual intervention)`);
+            }
+            
+        } catch (error) {
+            console.error('Error in stuck challenge check:', error);
+        }
+    }
+
+    /**
+     * Fix a specific stuck open challenge
+     * @param {Object} challenge - The stuck challenge to fix
+     */
+    async fixStuckOpenChallenge(challenge) {
+        try {
+            console.log(`=== FIXING STUCK OPEN CHALLENGE ===`);
+            console.log(`Challenge: ${challenge.gameTitle}`);
+            console.log(`Current status: ${challenge.status}`);
+            console.log(`Participants: ${challenge.participants?.length || 0}`);
+            console.log(`End date: ${challenge.endDate}`);
+            
+            if (!challenge.isOpenChallenge || !challenge.participants || challenge.participants.length === 0) {
+                console.log(`❌ Challenge doesn't qualify for open challenge fix`);
+                return false;
+            }
+            
+            // Force process as completed open challenge
+            await ArenaCompletionUtils.processCompletedOpenChallenge(challenge);
+            
+            console.log(`✅ Stuck open challenge fixed: ${challenge.gameTitle}`);
+            return true;
+            
+        } catch (error) {
+            console.error(`Error fixing stuck open challenge:`, error);
+            return false;
+        }
+    }
+
+    /**
+     * Verify and fix missing payouts for completed challenges
+     * @param {Object} challenge - The completed challenge to verify
+     */
+    async verifyAndFixPayouts(challenge) {
+        try {
+            if (!challenge.winnerId || challenge.winnerUsername === 'Tie') {
+                return false; // No payouts needed for ties
+            }
+            
+            // Check if winner was actually paid
+            const winner = await User.findOne({ discordId: challenge.winnerId });
+            if (!winner) {
+                console.log(`⚠️ Winner user not found: ${challenge.winnerId}`);
+                return false;
+            }
+            
+            // Check recent transactions for this challenge
+            const recentTransactions = winner.gpTransactions?.filter(t => 
+                t.timestamp >= challenge.completedAt &&
+                t.context && t.context.includes(challenge._id.toString())
+            ) || [];
+            
+            let payoutFixed = false;
+            
+            if (recentTransactions.length === 0) {
+                console.log(`💰 Missing winner payout detected for ${challenge.winnerUsername}`);
+                
+                // Calculate expected payout
+                let payoutAmount = 0;
+                if (challenge.isOpenChallenge) {
+                    payoutAmount = challenge.wagerAmount * (1 + (challenge.participants?.length || 0));
+                } else {
+                    payoutAmount = challenge.wagerAmount * 2;
+                }
+                
+                // Process missing payout
+                await ArenaTransactionUtils.trackGpTransaction(
+                    winner,
+                    payoutAmount,
+                    'Auto-recovery payout',
+                    `Challenge ID: ${challenge._id}, Auto-detected missing payout`
+                );
+                
+                console.log(`✅ Auto-recovery payout completed: ${payoutAmount} GP to ${challenge.winnerUsername}`);
+                payoutFixed = true;
+            }
+            
+            // Check betting payouts
+            if (challenge.bets && challenge.bets.length > 0) {
+                const unpaidBets = challenge.bets.filter(bet => !bet.paid);
+                if (unpaidBets.length > 0) {
+                    console.log(`🎰 Auto-fixing ${unpaidBets.length} unpaid bets`);
+                    
+                    await ArenaBettingUtils.processBetsForChallenge(
+                        challenge,
+                        challenge.winnerId,
+                        challenge.winnerUsername
+                    );
+                    
+                    payoutFixed = true;
+                }
+            }
+            
+            return payoutFixed;
+            
+        } catch (error) {
+            console.error(`Error verifying payouts for challenge ${challenge._id}:`, error);
+            return false;
         }
     }
 
@@ -885,6 +1082,53 @@ class ArenaService extends FeedManagerBase {
     }
 
     /**
+     * MANUAL FIX for stuck open challenges
+     * @param {string} challengeId - ID of the stuck challenge
+     */
+    async manualFixStuckOpenChallenge(challengeId) {
+        console.log(`🔧 MANUAL FIX: Processing stuck open challenge ${challengeId}`);
+        
+        try {
+            const challenge = await ArenaChallenge.findById(challengeId);
+            if (!challenge) {
+                console.log(`Challenge not found`);
+                return false;
+            }
+            
+            console.log(`Found challenge: ${challenge.gameTitle}`);
+            console.log(`Current status: ${challenge.status}`);
+            console.log(`Participants: ${challenge.participants?.length || 0}`);
+            console.log(`End date: ${challenge.endDate}`);
+            
+            // Force process as completed open challenge
+            if (challenge.isOpenChallenge && challenge.participants && challenge.participants.length > 0) {
+                console.log(`Force processing as completed open challenge...`);
+                
+                await ArenaCompletionUtils.processCompletedOpenChallenge(challenge);
+                
+                console.log(`✅ Manual fix completed`);
+                console.log(`New status: ${challenge.status}`);
+                console.log(`Winner: ${challenge.winnerUsername}`);
+                
+                // Send completion notification
+                await this.notifyChallengeUpdate(challenge);
+                
+                // Refresh feed
+                await this.refreshEntireFeed();
+                
+                return true;
+            } else {
+                console.log(`❌ Challenge doesn't qualify for open challenge completion`);
+                return false;
+            }
+            
+        } catch (error) {
+            console.error(`Manual fix failed:`, error);
+            return false;
+        }
+    }
+
+    /**
      * EMERGENCY FUNCTION - Call this to refund all bets for a specific challenge
      */
     async emergencyRefundChallengeBets(challengeId) {
@@ -985,29 +1229,31 @@ class ArenaService extends FeedManagerBase {
             await this.updateArenaOverview();
             await new Promise(resolve => setTimeout(resolve, 500));
             
-            // 3. Update active challenge feeds - FIXED: Exclude completed challenges
+            // 3. Update ACTIVE challenges (including open challenges that started)
             const activeChallengers = await ArenaChallenge.find({
                 status: 'active',
-                endDate: { $gt: new Date() } // Only show challenges that haven't ended
+                endDate: { $gt: new Date() }
             }).sort({ gameTitle: 1 });
             
+            console.log(`Found ${activeChallengers.length} active challenges`);
+            
             for (const challenge of activeChallengers) {
-                await this.createOrUpdateArenaFeed(challenge);
+                if (challenge.isOpenChallenge) {
+                    await this.createOrUpdateOpenChallengeFeed(challenge);
+                } else {
+                    await this.createOrUpdateArenaFeed(challenge);
+                }
                 await new Promise(resolve => setTimeout(resolve, 800));
             }
             
-            // 4. Update open challenge feeds - FIXED: Exclude completed and ended challenges
+            // 4. Update OPEN challenges (waiting for participants)
             const openChallenges = await ArenaChallenge.find({
                 status: 'open',
                 isOpenChallenge: true,
-                $or: [
-                    { participants: { $size: 0 } }, // No participants yet
-                    { 
-                        participants: { $not: { $size: 0 } }, // Has participants
-                        endDate: { $gt: new Date() } // But hasn't ended yet
-                    }
-                ]
+                participants: { $size: 0 } // Only show challenges with no participants yet
             }).sort({ gameTitle: 1 });
+            
+            console.log(`Found ${openChallenges.length} open challenges waiting for participants`);
             
             for (const challenge of openChallenges) {
                 await this.createOrUpdateOpenChallengeFeed(challenge);
