@@ -184,7 +184,7 @@ async function handleLeaderboardSelect(interaction) {
     await arenaCommand.default.displayLeaderboard(interaction, type);
 }
 
-// Show create challenge modal
+// Show create challenge modal - UPDATED to include description field
 async function showCreateChallengeModal(interaction) {
     const modal = new ModalBuilder()
         .setCustomId('arena_create_modal')
@@ -204,6 +204,15 @@ async function showCreateChallengeModal(interaction) {
         .setPlaceholder('e.g., 1234')
         .setRequired(true);
 
+    // NEW: Description input field
+    const descriptionInput = new TextInputBuilder()
+        .setCustomId('description')
+        .setLabel('Challenge Description')
+        .setStyle(TextInputStyle.Short)
+        .setPlaceholder('e.g., Mario Raceway - Time Trial! or High score - Medium Difficulty')
+        .setMaxLength(200)
+        .setRequired(false);
+
     const wagerInput = new TextInputBuilder()
         .setCustomId('wager')
         .setLabel('Wager Amount (GP)')
@@ -220,10 +229,11 @@ async function showCreateChallengeModal(interaction) {
 
     const firstRow = new ActionRowBuilder().addComponents(gameIdInput);
     const secondRow = new ActionRowBuilder().addComponents(leaderboardIdInput);
-    const thirdRow = new ActionRowBuilder().addComponents(wagerInput);
-    const fourthRow = new ActionRowBuilder().addComponents(targetInput);
+    const thirdRow = new ActionRowBuilder().addComponents(descriptionInput); // NEW
+    const fourthRow = new ActionRowBuilder().addComponents(wagerInput);
+    const fifthRow = new ActionRowBuilder().addComponents(targetInput);
 
-    modal.addComponents(firstRow, secondRow, thirdRow, fourthRow);
+    modal.addComponents(firstRow, secondRow, thirdRow, fourthRow, fifthRow);
 
     await interaction.showModal(modal);
 }
@@ -250,7 +260,7 @@ async function showBettingOptions(interaction) {
             .addOptions(
                 activeChallenges.map(challenge => ({
                     label: `${challenge.gameTitle} (${challenge.participants.length} players)`,
-                    description: `Wager pool: ${challenge.getTotalWager()} GP | Ends in ${Math.ceil((challenge.endedAt - new Date()) / (1000 * 60 * 60 * 24))} days`,
+                    description: `${challenge.description || 'No description'} | Pool: ${challenge.getTotalWager()} GP`,
                     value: challenge.challengeId,
                     emoji: '🎰'
                 }))
@@ -339,6 +349,7 @@ async function handleBettingSelect(interaction) {
         .setStyle(TextInputStyle.Paragraph)
         .setValue(
             `Game: ${challenge.gameTitle}\n` +
+            `Description: ${challenge.description || 'No description provided'}\n` +
             `Participants: ${participantsList}\n` +
             `Total Wager Pool: ${challenge.getTotalWager()} GP\n` +
             `Betting closes: ${challenge.bettingClosedAt.toLocaleDateString()}`
@@ -367,6 +378,7 @@ async function handleAcceptChallenge(interaction, user, challengeId) {
                 `You have accepted the challenge!\n\n` +
                 `**Challenge ID:** ${challenge.challengeId}\n` +
                 `**Game:** ${challenge.gameTitle}\n` +
+                `**Description:** ${challenge.description || 'No description provided'}\n` +
                 `**Your Wager:** ${gpUtils.formatGP(challenge.participants.find(p => p.userId === user.discordId).wager)}\n` +
                 `**Duration:** 7 days\n` +
                 `**Betting Closes:** In 3 days\n\n` +
@@ -414,6 +426,7 @@ async function handleJoinChallenge(interaction, user, challengeId) {
                 `You have joined the open challenge!\n\n` +
                 `**Challenge ID:** ${challenge.challengeId}\n` +
                 `**Game:** ${challenge.gameTitle}\n` +
+                `**Description:** ${challenge.description || 'No description provided'}\n` +
                 `**Your Wager:** ${gpUtils.formatGP(wager)}\n` +
                 `**Total Participants:** ${challenge.participants.length}\n` +
                 `**Total Prize Pool:** ${gpUtils.formatGP(challenge.getTotalWager())}\n\n` +
@@ -434,13 +447,14 @@ async function handlePlaceBetButton(interaction, user, challengeId) {
     await showBettingOptions(interaction);
 }
 
-// Modal submission handlers
+// Modal submission handlers - UPDATED to handle description
 async function handleCreateChallengeModal(interaction) {
     await interaction.deferReply({ ephemeral: true });
 
     try {
         const gameId = interaction.fields.getTextInputValue('game_id');
         const leaderboardId = interaction.fields.getTextInputValue('leaderboard_id');
+        const description = interaction.fields.getTextInputValue('description') || ''; // NEW
         const wagerText = interaction.fields.getTextInputValue('wager');
         const targetUser = interaction.fields.getTextInputValue('target_user') || null;
 
@@ -455,14 +469,15 @@ async function handleCreateChallengeModal(interaction) {
         // Validate game and leaderboard
         const validation = await arenaUtils.validateGameAndLeaderboard(gameId, leaderboardId);
         
-        // Create challenge with Discord username
+        // Create challenge with description and Discord username
         const challenge = await arenaService.createChallenge(
             user,
             validation.game,
             validation.leaderboard,
             wager,
             targetUser,
-            interaction.user.username // Pass Discord username
+            interaction.user.username, // Pass Discord username
+            description // NEW: Pass description
         );
 
         const embed = new EmbedBuilder()
@@ -472,6 +487,7 @@ async function handleCreateChallengeModal(interaction) {
                 `**Challenge ID:** ${challenge.challengeId}\n` +
                 `**Game:** ${challenge.gameTitle}\n` +
                 `**Leaderboard:** ${challenge.leaderboardTitle}\n` +
+                `**Description:** ${challenge.description || 'No description provided'}\n` +
                 `**Wager:** ${gpUtils.formatGP(wager)}\n` +
                 (targetUser ? `**Target:** ${targetUser}\n` : '') +
                 `**Status:** ${challenge.status}\n\n` +
@@ -520,6 +536,7 @@ async function handlePlaceBetModal(interaction) {
             .setDescription(
                 `Your bet has been placed successfully!\n\n` +
                 `**Challenge ID:** ${challenge.challengeId}\n` +
+                `**Challenge:** ${challenge.description || challenge.gameTitle}\n` +
                 `**Betting On:** ${betTarget}\n` +
                 `**Bet Amount:** ${gpUtils.formatGP(betAmount)}\n` +
                 `**Total Bets on ${betTarget}:** ${gpUtils.formatGP(challenge.getBetsForUser(betTarget).reduce((sum, bet) => sum + bet.amount, 0))}\n\n` +
