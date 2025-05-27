@@ -5,9 +5,6 @@ import {
     ButtonBuilder, 
     ActionRowBuilder, 
     ButtonStyle,
-    ModalBuilder,
-    TextInputBuilder,
-    TextInputStyle,
     StringSelectMenuBuilder
 } from 'discord.js';
 import { User } from '../../models/User.js';
@@ -19,57 +16,9 @@ import gpUtils from '../../utils/gpUtils.js';
 export default {
     data: new SlashCommandBuilder()
         .setName('arena')
-        .setDescription('Arena challenge system - create challenges, place bets, and compete!')
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('menu')
-                .setDescription('Open the main arena menu')
-        )
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('claim')
-                .setDescription('Claim your monthly 1,000 GP allowance')
-        )
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('balance')
-                .setDescription('Check your GP balance and recent transactions')
-        )
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('leaderboard')
-                .setDescription('View GP and arena statistics leaderboards')
-                .addStringOption(option =>
-                    option.setName('type')
-                        .setDescription('Type of leaderboard to display')
-                        .setRequired(false)
-                        .addChoices(
-                            { name: 'GP Balance', value: 'gp' },
-                            { name: 'Challenges Won', value: 'wins' },
-                            { name: 'Total GP Won', value: 'total_won' },
-                            { name: 'Bet Win Rate', value: 'bet_rate' }
-                        )
-                )
-        )
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('challenge')
-                .setDescription('View details of a specific challenge')
-                .addStringOption(option =>
-                    option.setName('id')
-                        .setDescription('Challenge ID')
-                        .setRequired(true)
-                )
-        )
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('history')
-                .setDescription('View your challenge history')
-        ),
+        .setDescription('Access the Arena challenge system - create challenges, place bets, and compete!'),
 
     async execute(interaction) {
-        const subcommand = interaction.options.getSubcommand();
-
         // Get or create user
         let user = await User.findOne({ discordId: interaction.user.id });
         if (!user) {
@@ -79,78 +28,115 @@ export default {
             });
         }
 
-        switch (subcommand) {
-            case 'menu':
-                await this.handleMainMenu(interaction, user);
-                break;
-            case 'claim':
-                await this.handleClaimGP(interaction, user);
-                break;
-            case 'balance':
-                await this.handleBalance(interaction, user);
-                break;
-            case 'leaderboard':
-                await this.handleLeaderboard(interaction);
-                break;
-            case 'challenge':
-                await this.handleViewChallenge(interaction);
-                break;
-            case 'history':
-                await this.handleHistory(interaction, user);
-                break;
-            default:
-                await interaction.reply({
-                    content: 'Invalid subcommand.',
-                    ephemeral: true
-                });
-        }
+        await this.showArenaMenu(interaction, user);
     },
 
-    async handleMainMenu(interaction, user) {
+    async showArenaMenu(interaction, user) {
+        // Get active challenges count
+        const activeChallenges = await arenaService.getActiveChallenges(5);
+        const userChallenges = await arenaService.getUserChallenges(user.discordId, 3);
+        
         const embed = new EmbedBuilder()
-            .setTitle('🏟️ Arena Challenge System')
+            .setTitle('🏟️ Welcome to the Arena!')
             .setDescription(
-                `Welcome to the Arena, **${user.raUsername}**!\n\n` +
-                `💰 **Your GP Balance:** ${gpUtils.formatGP(user.gpBalance)}\n` +
+                `**${user.raUsername}**, ready to compete?\n\n` +
+                `💰 **Your GP Balance:** ${gpUtils.formatGP(user.gpBalance || 0)}\n` +
                 `🏆 **Challenges Won:** ${user.arenaStats?.challengesWon || 0}\n` +
-                `📊 **Win Rate:** ${user.getGpWinRate()}%\n\n` +
-                `Choose an action below:`
+                `🎯 **Win Rate:** ${user.getGpWinRate()}%\n` +
+                `📊 **Monthly Claim:** ${user.canClaimMonthlyGp() ? '✅ Available (1,000 GP)' : '❌ Already claimed'}\n\n` +
+                `🔥 **Active Challenges:** ${activeChallenges.length}\n` +
+                `📋 **Your Active:** ${userChallenges.filter(c => c.status === 'active' || c.status === 'pending').length}\n\n` +
+                `Select an action from the menu below:`
             )
             .setColor('#00FF00')
+            .setThumbnail('https://cdn.discordapp.com/emojis/853287407997755412.png') // Arena icon
             .setTimestamp();
 
-        const buttons = new ActionRowBuilder()
+        const selectMenu = new StringSelectMenuBuilder()
+            .setCustomId('arena_action_select')
+            .setPlaceholder('🎮 Choose your arena action...')
+            .addOptions([
+                {
+                    label: 'Create Challenge',
+                    description: 'Start a new 1v1 or open challenge',
+                    value: 'create_challenge',
+                    emoji: '⚔️'
+                },
+                {
+                    label: 'View Active Challenges',
+                    description: 'See all current challenges you can join',
+                    value: 'view_active',
+                    emoji: '🔥'
+                },
+                {
+                    label: 'My Challenges',
+                    description: 'View your challenge history and status',
+                    value: 'my_challenges',
+                    emoji: '📋'
+                },
+                {
+                    label: 'Place Bet',
+                    description: 'Browse challenges to bet on',
+                    value: 'browse_betting',
+                    emoji: '🎰'
+                },
+                {
+                    label: 'Claim Monthly GP',
+                    description: 'Claim your 1,000 GP monthly allowance',
+                    value: 'claim_gp',
+                    emoji: '🎁'
+                },
+                {
+                    label: 'View Balance & Transactions',
+                    description: 'Check your GP balance and transaction history',
+                    value: 'view_balance',
+                    emoji: '💰'
+                },
+                {
+                    label: 'Leaderboards',
+                    description: 'View GP and arena statistics rankings',
+                    value: 'leaderboards',
+                    emoji: '🏆'
+                },
+                {
+                    label: 'How to Play',
+                    description: 'Learn how the Arena system works',
+                    value: 'help',
+                    emoji: '❓'
+                }
+            ]);
+
+        const row = new ActionRowBuilder().addComponents(selectMenu);
+
+        // Quick action buttons for the most common actions
+        const quickButtons = new ActionRowBuilder()
             .addComponents(
                 new ButtonBuilder()
-                    .setCustomId('arena_create_challenge')
-                    .setLabel('Create Challenge')
+                    .setCustomId('arena_quick_create')
+                    .setLabel('Quick Challenge')
                     .setStyle(ButtonStyle.Primary)
                     .setEmoji('⚔️'),
                 new ButtonBuilder()
-                    .setCustomId('arena_view_active')
-                    .setLabel('View Active')
+                    .setCustomId('arena_quick_claim')
+                    .setLabel('Claim GP')
+                    .setStyle(ButtonStyle.Success)
+                    .setEmoji('🎁')
+                    .setDisabled(!user.canClaimMonthlyGp()),
+                new ButtonBuilder()
+                    .setCustomId('arena_quick_active')
+                    .setLabel('Active Challenges')
                     .setStyle(ButtonStyle.Secondary)
                     .setEmoji('🔥'),
                 new ButtonBuilder()
-                    .setCustomId('arena_claim_gp')
-                    .setLabel('Claim GP')
-                    .setStyle(ButtonStyle.Success)
-                    .setEmoji('🎁'),
-                new ButtonBuilder()
-                    .setCustomId('arena_leaderboard')
-                    .setLabel('Leaderboard')
+                    .setCustomId('arena_refresh')
+                    .setLabel('Refresh')
                     .setStyle(ButtonStyle.Secondary)
-                    .setEmoji('🏆'),
-                new ButtonBuilder()
-                    .setCustomId('arena_my_challenges')
-                    .setLabel('My Challenges')
-                    .setStyle(ButtonStyle.Secondary)
-                    .setEmoji('📋')
+                    .setEmoji('🔄')
             );
 
         await interaction.reply({
             embeds: [embed],
-            components: [buttons],
+            components: [row, quickButtons],
             ephemeral: false
         });
     },
@@ -187,7 +173,7 @@ export default {
         const embed = new EmbedBuilder()
             .setTitle('💰 Your Arena Balance')
             .setDescription(
-                `**Current Balance:** ${gpUtils.formatGP(user.gpBalance)}\n` +
+                `**Current Balance:** ${gpUtils.formatGP(user.gpBalance || 0)}\n` +
                 `**Monthly Claim:** ${user.canClaimMonthlyGp() ? '✅ Available' : '❌ Already claimed'}\n\n` +
                 `**Arena Stats:**\n` +
                 `🏆 Challenges Won: ${user.arenaStats?.challengesWon || 0}\n` +
@@ -219,9 +205,48 @@ export default {
     },
 
     async handleLeaderboard(interaction) {
-        await interaction.deferReply();
+        const selectMenu = new StringSelectMenuBuilder()
+            .setCustomId('arena_leaderboard_select')
+            .setPlaceholder('Choose leaderboard type')
+            .addOptions([
+                {
+                    label: 'GP Balance',
+                    description: 'Top users by current GP balance',
+                    value: 'gp',
+                    emoji: '💰'
+                },
+                {
+                    label: 'Challenges Won',
+                    description: 'Top users by challenges won',
+                    value: 'wins',
+                    emoji: '🏆'
+                },
+                {
+                    label: 'Total GP Won',
+                    description: 'Top users by total GP won',
+                    value: 'total_won',
+                    emoji: '💎'
+                },
+                {
+                    label: 'Bet Win Rate',
+                    description: 'Top users by betting success',
+                    value: 'bet_rate',
+                    emoji: '🎰'
+                }
+            ]);
 
-        const type = interaction.options.getString('type') || 'gp';
+        const row = new ActionRowBuilder().addComponents(selectMenu);
+
+        await interaction.reply({
+            content: '🏆 **Arena Leaderboards**\nSelect which leaderboard you\'d like to view:',
+            components: [row],
+            ephemeral: true
+        });
+    },
+
+    async displayLeaderboard(interaction, type) {
+        await interaction.deferUpdate();
+
         let leaderboard, title, description;
 
         try {
@@ -295,111 +320,49 @@ export default {
                 inline: false
             });
 
-            await interaction.editReply({ embeds: [embed] });
+            await interaction.editReply({ embeds: [embed], components: [] });
         } catch (error) {
             console.error('Error fetching leaderboard:', error);
             await interaction.editReply({
                 content: 'An error occurred while fetching the leaderboard. Please try again.',
+                components: []
             });
         }
     },
 
-    async handleViewChallenge(interaction) {
-        const challengeId = interaction.options.getString('id');
-        
+    async handleViewActive(interaction) {
+        await interaction.deferReply({ ephemeral: true });
+
         try {
-            const challenge = await arenaService.getChallengeById(challengeId);
+            const activeChallenges = await arenaService.getActiveChallenges(10);
             
-            if (!challenge) {
-                return interaction.reply({
-                    content: `❌ Challenge "${challengeId}" not found.`,
-                    ephemeral: true
+            const embed = new EmbedBuilder()
+                .setTitle('🔥 Active Challenges')
+                .setDescription('Current challenges you can join or bet on')
+                .setColor('#FF6600')
+                .setTimestamp();
+
+            if (activeChallenges.length === 0) {
+                embed.addFields({ 
+                    name: 'No Active Challenges', 
+                    value: 'No challenges are currently active. Be the first to create one!', 
+                    inline: false 
                 });
+            } else {
+                for (const challenge of activeChallenges) {
+                    const description = arenaUtils.formatChallengeDisplay(challenge);
+                    embed.addFields({
+                        name: `${challenge.challengeId || 'Unknown'} - ${challenge.gameTitle}`,
+                        value: description,
+                        inline: false
+                    });
+                }
             }
 
-            const embed = arenaUtils.createChallengeEmbed(challenge);
-            
-            // Add participants
-            if (challenge.participants.length > 0) {
-                const participantsText = challenge.participants
-                    .map(p => `• **${p.raUsername}** (${gpUtils.formatGP(p.wager)})`)
-                    .join('\n');
-                embed.addFields({ name: '👥 Participants', value: participantsText, inline: false });
-            }
-
-            // Add bets if any
-            if (challenge.bets.length > 0) {
-                const betsText = challenge.bets
-                    .map(b => `• **${b.username}** bet ${gpUtils.formatGP(b.amount)} on **${b.targetRaUsername}**`)
-                    .join('\n');
-                embed.addFields({ name: '🎰 Bets', value: betsText.length > 1024 ? betsText.substring(0, 1021) + '...' : betsText, inline: false });
-            }
-
-            // Add final scores if completed
-            if (challenge.status === 'completed' && challenge.finalScores.length > 0) {
-                const scoresText = challenge.finalScores
-                    .sort((a, b) => (a.rank || 999) - (b.rank || 999))
-                    .map(score => `• **${score.raUsername}**: Rank ${score.rank || 'N/A'} (${score.score})`)
-                    .join('\n');
-                embed.addFields({ name: '📊 Final Scores', value: scoresText, inline: false });
-            }
-
-            // Add action buttons if applicable
-            let components = [];
-            
-            if (challenge.status === 'pending' && challenge.targetId === interaction.user.id) {
-                components.push(
-                    new ActionRowBuilder()
-                        .addComponents(
-                            new ButtonBuilder()
-                                .setCustomId(`arena_accept_${challenge.challengeId}`)
-                                .setLabel('Accept Challenge')
-                                .setStyle(ButtonStyle.Success)
-                                .setEmoji('✅'),
-                            new ButtonBuilder()
-                                .setCustomId(`arena_decline_${challenge.challengeId}`)
-                                .setLabel('Decline Challenge')
-                                .setStyle(ButtonStyle.Danger)
-                                .setEmoji('❌')
-                        )
-                );
-            } else if (challenge.canJoin() && !challenge.isParticipant(interaction.user.id)) {
-                components.push(
-                    new ActionRowBuilder()
-                        .addComponents(
-                            new ButtonBuilder()
-                                .setCustomId(`arena_join_${challenge.challengeId}`)
-                                .setLabel('Join Challenge')
-                                .setStyle(ButtonStyle.Primary)
-                                .setEmoji('🔥')
-                        )
-                );
-            }
-
-            if (challenge.canBet() && !challenge.isParticipant(interaction.user.id)) {
-                components.push(
-                    new ActionRowBuilder()
-                        .addComponents(
-                            new ButtonBuilder()
-                                .setCustomId(`arena_bet_${challenge.challengeId}`)
-                                .setLabel('Place Bet')
-                                .setStyle(ButtonStyle.Secondary)
-                                .setEmoji('🎰')
-                        )
-                );
-            }
-
-            await interaction.reply({
-                embeds: [embed],
-                components: components,
-                ephemeral: false
-            });
+            await interaction.editReply({ embeds: [embed] });
         } catch (error) {
-            console.error('Error viewing challenge:', error);
-            await interaction.reply({
-                content: 'An error occurred while fetching the challenge details.',
-                ephemeral: true
-            });
+            console.error('Error fetching active challenges:', error);
+            await interaction.editReply({ content: 'Error fetching active challenges.' });
         }
     },
 
@@ -443,8 +406,11 @@ export default {
                         `Wager: ${challenge.participants.find(p => p.userId === user.discordId)?.wager || 0} GP\n` +
                         `Created: ${challenge.createdAt.toLocaleDateString()}`;
 
+                    // Fix for the error - ensure challengeId exists and is a string
+                    const fieldName = (challenge.challengeId || `Challenge-${challenge._id || 'Unknown'}`).toString();
+
                     embed.addFields({
-                        name: challenge.challengeId,
+                        name: fieldName,
                         value: value,
                         inline: true
                     });
@@ -458,5 +424,68 @@ export default {
                 content: 'An error occurred while fetching your challenge history.'
             });
         }
+    },
+
+    async handleHelp(interaction) {
+        const embed = new EmbedBuilder()
+            .setTitle('❓ How to Play Arena')
+            .setDescription('Learn the Arena challenge system!')
+            .setColor('#00BFFF')
+            .addFields(
+                {
+                    name: '💰 GP (Game Points)',
+                    value: 
+                        '• Get 1,000 GP free each month\n' +
+                        '• Use GP to create challenges and place bets\n' +
+                        '• Win challenges to earn more GP',
+                    inline: false
+                },
+                {
+                    name: '⚔️ Direct Challenges',
+                    value: 
+                        '• Challenge a specific player\n' +
+                        '• They have 24 hours to accept\n' +
+                        '• Winner takes both wagers',
+                    inline: true
+                },
+                {
+                    name: '🌍 Open Challenges',
+                    value: 
+                        '• Anyone can join your challenge\n' +
+                        '• Multiple participants possible\n' +
+                        '• Winner takes all wagers',
+                    inline: true
+                },
+                {
+                    name: '🎰 Betting System',
+                    value: 
+                        '• Bet on active challenges\n' +
+                        '• Non-participants only\n' +
+                        '• Betting closes 3 days after start\n' +
+                        '• Winners split losing bets proportionally',
+                    inline: false
+                },
+                {
+                    name: '🏆 How Winners Are Determined',
+                    value: 
+                        '• Based on RetroAchievements leaderboard rank\n' +
+                        '• Lower rank wins (Rank 1 beats Rank 2)\n' +
+                        '• Challenges run for 7 days\n' +
+                        '• Ties result in refunds',
+                    inline: false
+                },
+                {
+                    name: '📊 Tips for Success',
+                    value: 
+                        '• Start small with low wagers\n' +
+                        '• Check leaderboards before challenging\n' +
+                        '• Bet wisely on other challenges\n' +
+                        '• Claim your monthly GP regularly',
+                    inline: false
+                }
+            )
+            .setTimestamp();
+
+        await interaction.reply({ embeds: [embed], ephemeral: true });
     }
 };
