@@ -11,6 +11,7 @@ import { config } from '../../config/config.js';
 import { User } from '../../models/User.js';
 import { ArenaChallenge } from '../../models/ArenaChallenge.js';
 import arenaService from '../../services/arenaService.js';
+import monthlyGPService from '../../services/monthlyGPService.js';
 import gpUtils from '../../utils/gpUtils.js';
 import arenaUtils from '../../utils/arenaUtils.js';
 
@@ -79,7 +80,7 @@ export default {
                             { name: 'View Stats', value: 'view' },
                             { name: 'Adjust GP', value: 'adjust' },
                             { name: 'Reset Stats', value: 'reset' },
-                            { name: 'Force Monthly Claim', value: 'claim' }
+                            { name: 'Force Monthly Grant', value: 'grant' }
                         )
                 )
                 .addIntegerOption(option =>
@@ -104,8 +105,8 @@ export default {
                         .addChoices(
                             { name: 'Check Completed Challenges', value: 'check_completed' },
                             { name: 'Process Timeouts', value: 'process_timeouts' },
-                            { name: 'Update Feeds', value: 'update_feeds' },
-                            { name: 'Emergency Stop', value: 'emergency_stop' },
+                            { name: 'Monthly GP Service Status', value: 'gp_service_status' },
+                            { name: 'Force Monthly GP Grant', value: 'force_monthly_grant' },
                             { name: 'System Stats', value: 'stats' },
                             { name: 'Reset All GP to 0', value: 'reset_gp_only' },
                             { name: 'RESET ENTIRE SYSTEM', value: 'reset_system' }
@@ -181,6 +182,9 @@ export default {
                 .limit(5)
                 .select('challengeId gameTitle status createdAt participants');
 
+            // Get monthly GP service status
+            const gpServiceStatus = monthlyGPService.getStatus();
+
             const embed = new EmbedBuilder()
                 .setTitle('🏟️ Arena System Status')
                 .setDescription('Complete overview of the Arena challenge system')
@@ -197,6 +201,17 @@ export default {
                     `**Average GP per User:** ${gpUtils.formatGP(systemStats.avgGP)}\n` +
                     `**Richest User:** ${gpUtils.formatGP(systemStats.maxGP)}`,
                 inline: false
+            });
+
+            // Monthly GP Service Status
+            embed.addFields({
+                name: '🎁 Monthly GP Service',
+                value: 
+                    `**Status:** ${gpServiceStatus.isProcessing ? '🔄 Processing' : '✅ Ready'}\n` +
+                    `**Last Processed Month:** ${gpServiceStatus.lastProcessedMonth || 'None'}\n` +
+                    `**Next Check:** ${gpServiceStatus.nextCheckDue}\n` +
+                    `**System:** Automatic grants on 1st of each month`,
+                inline: true
             });
 
             // Challenge Statistics
@@ -238,7 +253,7 @@ export default {
                     `**Total GP Wagered:** ${gpUtils.formatGP(systemStats.totalGpWagered)}\n` +
                     `**Bets Placed:** ${systemStats.totalBetsPlaced}\n` +
                     `**Bets Won:** ${systemStats.totalBetsWon}`,
-                inline: true
+                inline: false
             });
 
             // Recent Challenges
@@ -438,7 +453,6 @@ export default {
 
     /**
      * View detailed challenge information
-     * @private
      */
     async viewChallengeDetails(interaction, challenge) {
         const embed = new EmbedBuilder()
@@ -543,7 +557,6 @@ export default {
 
     /**
      * Force complete a challenge
-     * @private
      */
     async forceCompleteChallenge(interaction, challenge) {
         if (challenge.status !== 'active') {
@@ -576,7 +589,6 @@ export default {
 
     /**
      * Cancel and refund a challenge
-     * @private
      */
     async cancelChallenge(interaction, challenge) {
         if (challenge.status === 'completed' || challenge.status === 'cancelled') {
@@ -608,7 +620,6 @@ export default {
 
     /**
      * Reprocess a completed challenge
-     * @private
      */
     async reprocessChallenge(interaction, challenge) {
         if (challenge.status !== 'completed') {
@@ -680,8 +691,8 @@ export default {
                 case 'reset':
                     await this.resetUserStats(interaction, user);
                     break;
-                case 'claim':
-                    await this.forceMonthlyGP(interaction, user);
+                case 'grant':
+                    await this.forceUserMonthlyGP(interaction, user);
                     break;
                 default:
                     await interaction.editReply('Invalid action specified.');
@@ -694,7 +705,6 @@ export default {
 
     /**
      * View detailed user statistics
-     * @private
      */
     async viewUserStats(interaction, user) {
         const embed = new EmbedBuilder()
@@ -711,8 +721,8 @@ export default {
                 `**Username:** ${user.username}\n` +
                 `**RA Username:** ${user.raUsername}\n` +
                 `**GP Balance:** ${gpUtils.formatGP(user.gpBalance)}\n` +
-                `**Last Monthly Claim:** ${user.lastMonthlyGpClaim ? user.lastMonthlyGpClaim.toLocaleDateString() : 'Never'}\n` +
-                `**Can Claim Now:** ${user.canClaimMonthlyGp() ? '✅ Yes' : '❌ No'}`,
+                `**Last Monthly Grant:** ${user.lastMonthlyGpGrant ? user.lastMonthlyGpGrant.toLocaleDateString() : 'Never'}\n` +
+                `**Next Grant Due:** Automatic on 1st of next month`,
             inline: false
         });
 
@@ -783,7 +793,6 @@ export default {
 
     /**
      * Adjust user's GP balance
-     * @private
      */
     async adjustUserGP(interaction, user, amount, reason) {
         const oldBalance = user.gpBalance;
@@ -813,7 +822,6 @@ export default {
 
     /**
      * Reset user's arena statistics
-     * @private
      */
     async resetUserStats(interaction, user) {
         try {
@@ -847,24 +855,36 @@ export default {
     },
 
     /**
-     * Force monthly GP claim for user
-     * @private
+     * Force monthly GP grant for user
      */
-    async forceMonthlyGP(interaction, user) {
+    async forceUserMonthlyGP(interaction, user) {
         try {
-            // Reset the claim date to allow claiming
-            user.lastMonthlyGpClaim = null;
-            await user.save();
+            const now = new Date();
             
-            // Now claim the GP
-            const result = await gpUtils.claimMonthlyGP(user);
+            // Use atomic update to grant GP
+            const result = await User.findOneAndUpdate(
+                { _id: user._id },
+                {
+                    $inc: { gpBalance: 1000 },
+                    $push: {
+                        gpTransactions: {
+                            type: 'monthly_grant',
+                            amount: 1000,
+                            description: `Force monthly GP grant by admin (${interaction.user.username})`,
+                            timestamp: now
+                        }
+                    },
+                    $set: { lastMonthlyGpGrant: now }
+                },
+                { new: true }
+            );
             
             const embed = new EmbedBuilder()
-                .setTitle('✅ Forced Monthly GP Claim')
+                .setTitle('✅ Forced Monthly GP Grant')
                 .setDescription(
                     `Monthly GP forcibly granted to **${user.raUsername}**\n\n` +
-                    `**Amount Granted:** ${gpUtils.formatGP(result.amount)}\n` +
-                    `**New Balance:** ${gpUtils.formatGP(result.newBalance)}\n` +
+                    `**Amount Granted:** ${gpUtils.formatGP(1000)}\n` +
+                    `**New Balance:** ${gpUtils.formatGP(result.gpBalance)}\n` +
                     `**Forced By:** ${interaction.user.username}`
                 )
                 .setColor('#00FF00')
@@ -872,8 +892,8 @@ export default {
 
             await interaction.editReply({ embeds: [embed] });
         } catch (error) {
-            console.error('Error forcing monthly GP claim:', error);
-            await interaction.editReply(`❌ Error forcing monthly claim: ${error.message}`);
+            console.error('Error forcing monthly GP grant:', error);
+            await interaction.editReply(`❌ Error forcing monthly grant: ${error.message}`);
         }
     },
 
@@ -893,11 +913,11 @@ export default {
                 case 'process_timeouts':
                     await this.systemProcessTimeouts(interaction);
                     break;
-                case 'update_feeds':
-                    await this.systemUpdateFeeds(interaction);
+                case 'gp_service_status':
+                    await this.systemGPServiceStatus(interaction);
                     break;
-                case 'emergency_stop':
-                    await this.systemEmergencyStop(interaction);
+                case 'force_monthly_grant':
+                    await this.systemForceMonthlyGrant(interaction);
                     break;
                 case 'stats':
                     await this.handleSystemStatus(interaction);
@@ -918,8 +938,74 @@ export default {
     },
 
     /**
+     * Check monthly GP service status
+     */
+    async systemGPServiceStatus(interaction) {
+        const status = monthlyGPService.getStatus();
+        
+        const embed = new EmbedBuilder()
+            .setTitle('🎁 Monthly GP Service Status')
+            .setDescription('Current status of the automatic monthly GP grant system')
+            .setColor('#0099FF')
+            .setTimestamp();
+
+        embed.addFields({
+            name: '📊 Service Status',
+            value: 
+                `**Processing:** ${status.isProcessing ? '🔄 Currently Running' : '✅ Idle'}\n` +
+                `**Last Processed Month:** ${status.lastProcessedMonth || 'None'}\n` +
+                `**Next Check:** ${status.nextCheckDue}\n` +
+                `**Grant Amount:** 1,000 GP per user\n` +
+                `**Grant Date:** 1st of each month`,
+            inline: false
+        });
+
+        // Get next grant info
+        const now = new Date();
+        const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+        const daysUntilGrant = Math.ceil((nextMonth - now) / (1000 * 60 * 60 * 24));
+
+        embed.addFields({
+            name: '📅 Next Monthly Grant',
+            value: 
+                `**Date:** ${nextMonth.toLocaleDateString()}\n` +
+                `**Days Until:** ${daysUntilGrant} days\n` +
+                `**Eligible Users:** Users who haven't received GP this month`,
+            inline: false
+        });
+
+        await interaction.editReply({ embeds: [embed] });
+    },
+
+    /**
+     * Force monthly grant for all users
+     */
+    async systemForceMonthlyGrant(interaction) {
+        await interaction.editReply('🔄 **Forcing monthly GP grant for all eligible users...**\nThis may take a few minutes...');
+
+        try {
+            await monthlyGPService.forceGrantMonthlyGP();
+            
+            const embed = new EmbedBuilder()
+                .setTitle('✅ Monthly GP Grant Completed')
+                .setDescription(
+                    `Monthly GP grant has been forcibly processed for all eligible users.\n\n` +
+                    `**Forced By:** ${interaction.user.username}\n` +
+                    `**Amount:** 1,000 GP per eligible user\n\n` +
+                    `Check the console logs for detailed results.`
+                )
+                .setColor('#00FF00')
+                .setTimestamp();
+
+            await interaction.editReply({ embeds: [embed] });
+        } catch (error) {
+            console.error('Error forcing monthly GP grant:', error);
+            await interaction.editReply(`❌ Error forcing monthly grant: ${error.message}`);
+        }
+    },
+
+    /**
      * Manually trigger completed challenges check
-     * @private
      */
     async systemCheckCompleted(interaction) {
         await interaction.editReply('🔄 Checking for completed challenges...');
@@ -946,7 +1032,6 @@ export default {
 
     /**
      * Manually trigger timeout processing
-     * @private
      */
     async systemProcessTimeouts(interaction) {
         await interaction.editReply('🔄 Processing challenge timeouts...');
@@ -972,34 +1057,7 @@ export default {
     },
 
     /**
-     * Manually update arena feeds
-     * @private
-     */
-    async systemUpdateFeeds(interaction) {
-        await interaction.editReply('🔄 Updating arena feeds...');
-
-        try {
-            await arenaService.updateArenaFeeds();
-            
-            const embed = new EmbedBuilder()
-                .setTitle('✅ Arena Feeds Updated')
-                .setDescription(
-                    `Arena feeds have been manually updated.\n\n` +
-                    `This includes any embedded arena status messages and feed updates.`
-                )
-                .setColor('#00FF00')
-                .setTimestamp();
-
-            await interaction.editReply({ embeds: [embed] });
-        } catch (error) {
-            console.error('Error updating arena feeds:', error);
-            await interaction.editReply(`❌ Error updating arena feeds: ${error.message}`);
-        }
-    },
-
-    /**
-     * Reset only GP balances to 0 (lighter than full system reset)
-     * @private
+     * Reset only GP balances to 0
      */
     async systemResetGPOnly(interaction) {
         const confirmReset = interaction.options.getBoolean('confirm_reset');
@@ -1011,7 +1069,7 @@ export default {
                     `**WARNING: This will reset ALL user GP balances to 0!**\n\n` +
                     `This action will:\n` +
                     `• ❌ Reset ALL user GP balances to 0\n` +
-                    `• ❌ Reset ALL monthly GP claims (allow immediate claiming)\n` +
+                    `• ❌ Reset ALL monthly GP grants (allow immediate granting)\n` +
                     `• ❌ Clear ALL GP transaction history\n\n` +
                     `**This will NOT affect:**\n` +
                     `• ✅ Existing challenges (will remain active)\n` +
@@ -1029,141 +1087,36 @@ export default {
         try {
             await interaction.editReply('🔄 **RESETTING ALL GP BALANCES...**\nThis may take a few minutes...');
 
-            let resetUsers = 0;
-            let errors = 0;
-            let detailedErrors = [];
-
-            // Reset all users' GP data
-            try {
-                console.log('GP Reset: Starting GP balance reset for all users...');
-                const users = await User.find({});
-                console.log(`GP Reset: Found ${users.length} users to reset`);
-                
-                for (let i = 0; i < users.length; i++) {
-                    const user = users[i];
-                    
-                    try {
-                        // Log original values for debugging
-                        const originalBalance = user.gpBalance;
-                        
-                        // Reset GP balance - be explicit about the assignment
-                        user.gpBalance = 0;
-                        
-                        // Reset monthly claim to allow immediate claiming
-                        user.lastMonthlyGpClaim = null;
-                        
-                        // Clear GP transactions - ensure it's an empty array
-                        user.gpTransactions = [];
-                        
-                        // Mark fields as modified to ensure they're saved
-                        user.markModified('gpBalance');
-                        user.markModified('gpTransactions');
-                        user.markModified('lastMonthlyGpClaim');
-                        
-                        // Save with validation disabled to avoid any schema issues
-                        await user.save({ validateBeforeSave: false });
-                        
-                        // Verify the save worked by refetching
-                        const savedUser = await User.findById(user._id).select('gpBalance raUsername');
-                        if (savedUser.gpBalance !== 0) {
-                            console.error(`⚠️ WARNING: User ${user.raUsername} still has balance ${savedUser.gpBalance} after GP reset!`);
-                            detailedErrors.push(`User ${user.raUsername}: GP balance not reset (still ${savedUser.gpBalance})`);
-                            errors++;
-                        } else {
-                            console.log(`✅ GP Reset: ${user.raUsername}: ${originalBalance} → 0 GP`);
-                        }
-                        
-                        resetUsers++;
-                        
-                        // Progress update every 25 users
-                        if (resetUsers % 25 === 0) {
-                            await interaction.editReply(
-                                `🔄 **RESETTING GP BALANCES...**\n` +
-                                `Progress: ${resetUsers}/${users.length} users reset...\n` +
-                                `Errors so far: ${errors}`
-                            );
-                        }
-                        
-                    } catch (userError) {
-                        console.error(`❌ Error resetting GP for user ${user.raUsername}:`, userError);
-                        detailedErrors.push(`User ${user.raUsername}: ${userError.message}`);
-                        errors++;
+            // Use atomic bulk update for all users
+            const result = await User.updateMany(
+                {},
+                {
+                    $set: {
+                        gpBalance: 0,
+                        lastMonthlyGpGrant: null,
+                        gpTransactions: []
                     }
                 }
-                
-                console.log(`✅ GP Reset: Completed. ${resetUsers} users processed, ${errors} errors`);
-            } catch (error) {
-                console.error('❌ Critical error in GP reset phase:', error);
-                detailedErrors.push(`GP reset phase: ${error.message}`);
-                errors++;
-            }
+            );
 
-            // Verification - check that GP balances are actually 0
-            try {
-                console.log('GP Reset: Verifying all balances are 0...');
-                const usersWithGP = await User.find({ gpBalance: { $gt: 0 } }).select('raUsername gpBalance');
-                
-                if (usersWithGP.length > 0) {
-                    console.error(`❌ GP RESET VERIFICATION FAILED: ${usersWithGP.length} users still have GP balances!`);
-                    usersWithGP.forEach(user => {
-                        console.error(`  - ${user.raUsername}: ${user.gpBalance} GP`);
-                        detailedErrors.push(`VERIFICATION: ${user.raUsername} still has ${user.gpBalance} GP`);
-                    });
-                    errors += usersWithGP.length;
-                } else {
-                    console.log('✅ GP Reset: Verification passed - All users have 0 GP balance');
-                }
-            } catch (error) {
-                console.error('❌ Error during GP reset verification:', error);
-                detailedErrors.push(`Verification: ${error.message}`);
-                errors++;
-            }
-
-            // Create completion report
             const embed = new EmbedBuilder()
-                .setTitle(errors > 0 ? '⚠️ GP Reset Completed with Errors' : '✅ GP Reset Complete')
+                .setTitle('✅ GP Reset Complete')
                 .setDescription(
-                    `**ALL GP BALANCES RESET ${errors > 0 ? 'WITH ISSUES' : 'SUCCESSFULLY'}**\n\n` +
+                    `**ALL GP BALANCES RESET SUCCESSFULLY**\n\n` +
                     `**Results:**\n` +
-                    `• 👥 Users Processed: ${resetUsers}\n` +
-                    `• ❌ Errors Encountered: ${errors}\n\n` +
-                    `**What was reset:**\n` +
-                    `• All GP balances set to 0\n` +
-                    `• All monthly GP claims reset\n` +
-                    `• All GP transaction history cleared\n\n` +
-                    `${errors === 0 ? '**All users can now claim their monthly 1,000 GP immediately.**' : '**ATTENTION: Some GP balances may not have been reset!**\nSee error details below.'}`
+                    `• 👥 Users Reset: ${result.modifiedCount}\n` +
+                    `• 💰 All GP balances set to 0\n` +
+                    `• 🎁 All monthly grants reset\n` +
+                    `• 📝 All transaction history cleared\n\n` +
+                    `**All users can now receive their monthly 1,000 GP automatically on the 1st.**`
                 )
-                .setColor(errors > 0 ? '#FF0000' : '#00FF00')
+                .setColor('#00FF00')
                 .setTimestamp();
-
-            // Add detailed error information if there were errors
-            if (errors > 0 && detailedErrors.length > 0) {
-                const errorText = detailedErrors.slice(0, 10).join('\n'); // Limit to first 10 errors
-                embed.addFields({
-                    name: `⚠️ Error Details (${detailedErrors.length} total)`,
-                    value: errorText.length > 1000 ? errorText.substring(0, 997) + '...' : errorText,
-                    inline: false
-                });
-                
-                if (detailedErrors.length > 10) {
-                    embed.addFields({
-                        name: 'Additional Errors',
-                        value: `${detailedErrors.length - 10} more errors occurred. Check console logs for full details.`,
-                        inline: false
-                    });
-                }
-            }
 
             await interaction.editReply({ embeds: [embed] });
 
-            // Log the reset action
             console.log(`GP RESET completed by ${interaction.user.username} (${interaction.user.id})`);
-            console.log(`Results: ${resetUsers} users processed, ${errors} errors`);
-            
-            if (detailedErrors.length > 0) {
-                console.log('GP Reset detailed errors:');
-                detailedErrors.forEach((error, index) => console.log(`  ${index + 1}. ${error}`));
-            }
+            console.log(`Results: ${result.modifiedCount} users reset`);
 
         } catch (error) {
             console.error('💥 CRITICAL ERROR during GP reset:', error);
@@ -1174,7 +1127,6 @@ export default {
                     `**CRITICAL ERROR DURING GP RESET**\n\n` +
                     `The reset process encountered a critical error.\n\n` +
                     `**Error:** ${error.message}\n\n` +
-                    `**Stack Trace:** \`\`\`${error.stack?.substring(0, 1000) || 'Not available'}\`\`\`\n\n` +
                     `**IMPORTANT:** Some GP balances may be in an inconsistent state.`
                 )
                 .setColor('#FF0000')
@@ -1185,8 +1137,7 @@ export default {
     },
 
     /**
-     * NUCLEAR OPTION: Reset the entire arena system - IMPROVED VERSION
-     * @private
+     * NUCLEAR OPTION: Reset the entire arena system
      */
     async systemResetEntireSystem(interaction) {
         const confirmReset = interaction.options.getBoolean('confirm_reset');
@@ -1201,7 +1152,7 @@ export default {
                     `• ❌ Reset ALL user GP balances to 0\n` +
                     `• ❌ Clear ALL user arena statistics\n` +
                     `• ❌ Remove ALL GP transaction history\n` +
-                    `• ❌ Reset ALL monthly GP claims\n\n` +
+                    `• ❌ Reset ALL monthly GP grants\n\n` +
                     `**THIS CANNOT BE UNDONE!**\n\n` +
                     `To confirm this destructive action, run the command again with \`confirm_reset: True\``
                 )
@@ -1217,7 +1168,6 @@ export default {
             let deletedChallenges = 0;
             let resetUsers = 0;
             let errors = 0;
-            let detailedErrors = [];
 
             // Step 1: Delete all challenges
             try {
@@ -1227,85 +1177,34 @@ export default {
                 console.log(`✅ Deleted ${deletedChallenges} challenges`);
             } catch (error) {
                 console.error('❌ Error deleting challenges:', error);
-                detailedErrors.push(`Challenge deletion: ${error.message}`);
                 errors++;
             }
 
-            // Step 2: Reset all users' arena data with improved error handling
+            // Step 2: Reset all users' arena data
             try {
                 console.log('Step 2: Resetting user data...');
-                const users = await User.find({});
-                console.log(`Found ${users.length} users to reset`);
-                
-                for (let i = 0; i < users.length; i++) {
-                    const user = users[i];
-                    
-                    try {
-                        // Log original values for debugging
-                        const originalBalance = user.gpBalance;
-                        
-                        // Reset GP balance - be explicit about the assignment
-                        user.gpBalance = 0;
-                        
-                        // Reset monthly claim
-                        user.lastMonthlyGpClaim = null;
-                        
-                        // Clear GP transactions - ensure it's an empty array
-                        user.gpTransactions = [];
-                        
-                        // Reset arena stats - ensure all fields are explicitly set
-                        user.arenaStats = {
-                            challengesCreated: 0,
-                            challengesWon: 0,
-                            challengesParticipated: 0,
-                            totalGpWon: 0,
-                            totalGpWagered: 0,
-                            totalGpBet: 0,
-                            betsWon: 0,
-                            betsPlaced: 0
-                        };
-                        
-                        // Mark fields as modified to ensure they're saved
-                        user.markModified('gpBalance');
-                        user.markModified('gpTransactions');
-                        user.markModified('arenaStats');
-                        user.markModified('lastMonthlyGpClaim');
-                        
-                        // Save with validation disabled to avoid any schema issues
-                        await user.save({ validateBeforeSave: false });
-                        
-                        // Verify the save worked by refetching
-                        const savedUser = await User.findById(user._id).select('gpBalance raUsername');
-                        if (savedUser.gpBalance !== 0) {
-                            console.error(`⚠️ WARNING: User ${user.raUsername} still has balance ${savedUser.gpBalance} after save!`);
-                            detailedErrors.push(`User ${user.raUsername}: Balance not reset (still ${savedUser.gpBalance})`);
-                            errors++;
-                        } else {
-                            console.log(`✅ Reset user ${user.raUsername}: ${originalBalance} → 0 GP`);
+                const userUpdateResult = await User.updateMany(
+                    {},
+                    {
+                        $set: {
+                            gpBalance: 0,
+                            lastMonthlyGpGrant: null,
+                            gpTransactions: [],
+                            'arenaStats.challengesCreated': 0,
+                            'arenaStats.challengesWon': 0,
+                            'arenaStats.challengesParticipated': 0,
+                            'arenaStats.totalGpWon': 0,
+                            'arenaStats.totalGpWagered': 0,
+                            'arenaStats.totalGpBet': 0,
+                            'arenaStats.betsWon': 0,
+                            'arenaStats.betsPlaced': 0
                         }
-                        
-                        resetUsers++;
-                        
-                        // Progress update every 20 users (more frequent for better feedback)
-                        if (resetUsers % 20 === 0) {
-                            await interaction.editReply(
-                                `🔄 **RESETTING ARENA SYSTEM...**\n` +
-                                `Progress: ${resetUsers}/${users.length} users reset...\n` +
-                                `Errors so far: ${errors}`
-                            );
-                        }
-                        
-                    } catch (userError) {
-                        console.error(`❌ Error resetting user ${user.raUsername}:`, userError);
-                        detailedErrors.push(`User ${user.raUsername}: ${userError.message}`);
-                        errors++;
                     }
-                }
-                
-                console.log(`✅ Completed user reset: ${resetUsers} users processed, ${errors} errors`);
+                );
+                resetUsers = userUpdateResult.modifiedCount;
+                console.log(`✅ Reset ${resetUsers} users`);
             } catch (error) {
-                console.error('❌ Critical error in user reset phase:', error);
-                detailedErrors.push(`User reset phase: ${error.message}`);
+                console.error('❌ Error resetting users:', error);
                 errors++;
             }
 
@@ -1315,37 +1214,18 @@ export default {
                 if (arenaService && typeof arenaService.isProcessing !== 'undefined') {
                     arenaService.isProcessing = false;
                     console.log('✅ Reset arena service processing state');
-                } else {
-                    console.log('⚠️ Arena service not available or does not have isProcessing property');
                 }
+                
+                // Reset monthly GP service state
+                monthlyGPService.stop();
+                monthlyGPService.start();
+                console.log('✅ Reset monthly GP service state');
             } catch (error) {
                 console.error('❌ Error resetting service state:', error);
-                detailedErrors.push(`Service reset: ${error.message}`);
                 errors++;
             }
 
-            // Step 4: Verification - check that GP balances are actually 0
-            try {
-                console.log('Step 4: Verifying reset...');
-                const usersWithGP = await User.find({ gpBalance: { $gt: 0 } }).select('raUsername gpBalance');
-                
-                if (usersWithGP.length > 0) {
-                    console.error(`❌ VERIFICATION FAILED: ${usersWithGP.length} users still have GP balances!`);
-                    usersWithGP.forEach(user => {
-                        console.error(`  - ${user.raUsername}: ${user.gpBalance} GP`);
-                        detailedErrors.push(`VERIFICATION: ${user.raUsername} still has ${user.gpBalance} GP`);
-                    });
-                    errors += usersWithGP.length;
-                } else {
-                    console.log('✅ Verification passed: All users have 0 GP balance');
-                }
-            } catch (error) {
-                console.error('❌ Error during verification:', error);
-                detailedErrors.push(`Verification: ${error.message}`);
-                errors++;
-            }
-
-            // Create completion report with detailed error information
+            // Create completion report
             const embed = new EmbedBuilder()
                 .setTitle(errors > 0 ? '⚠️ Arena System Reset Completed with Errors' : '✅ Arena System Reset Complete')
                 .setDescription(
@@ -1359,40 +1239,16 @@ export default {
                     `• All GP balances set to 0\n` +
                     `• All arena statistics cleared\n` +
                     `• All transaction history wiped\n` +
-                    `• All monthly claims reset\n\n` +
-                    `${errors === 0 ? '**The Arena system is now in a fresh state.**\nUsers can start claiming their monthly 1,000 GP immediately.' : '**ATTENTION: Errors occurred during reset!**\nSome data may not have been properly reset. See error details below.'}`
+                    `• All monthly grants reset\n\n` +
+                    `${errors === 0 ? '**The Arena system is now in a fresh state.**\nUsers will receive their monthly 1,000 GP automatically on the 1st.' : '**ATTENTION: Errors occurred during reset!**\nSome data may not have been properly reset.'}`
                 )
                 .setColor(errors > 0 ? '#FF0000' : '#00FF00')
                 .setTimestamp();
 
-            // Add detailed error information if there were errors
-            if (errors > 0 && detailedErrors.length > 0) {
-                const errorText = detailedErrors.slice(0, 10).join('\n'); // Limit to first 10 errors
-                embed.addFields({
-                    name: `⚠️ Error Details (${detailedErrors.length} total)`,
-                    value: errorText.length > 1000 ? errorText.substring(0, 997) + '...' : errorText,
-                    inline: false
-                });
-                
-                if (detailedErrors.length > 10) {
-                    embed.addFields({
-                        name: 'Additional Errors',
-                        value: `${detailedErrors.length - 10} more errors occurred. Check console logs for full details.`,
-                        inline: false
-                    });
-                }
-            }
-
             await interaction.editReply({ embeds: [embed] });
 
-            // Log the reset action with full details
             console.log(`ARENA SYSTEM RESET completed by ${interaction.user.username} (${interaction.user.id})`);
             console.log(`Results: ${deletedChallenges} challenges deleted, ${resetUsers} users reset, ${errors} errors`);
-            
-            if (detailedErrors.length > 0) {
-                console.log('Detailed errors:');
-                detailedErrors.forEach((error, index) => console.log(`  ${index + 1}. ${error}`));
-            }
 
         } catch (error) {
             console.error('💥 CRITICAL ERROR during arena system reset:', error);
@@ -1403,7 +1259,6 @@ export default {
                     `**CRITICAL ERROR DURING RESET**\n\n` +
                     `The reset process encountered a critical error and may have been partially completed.\n\n` +
                     `**Error:** ${error.message}\n\n` +
-                    `**Stack Trace:** \`\`\`${error.stack?.substring(0, 1000) || 'Not available'}\`\`\`\n\n` +
                     `**IMPORTANT:** The arena system may be in an inconsistent state. ` +
                     `Manual database inspection and cleanup may be required.`
                 )
@@ -1412,23 +1267,5 @@ export default {
 
             await interaction.editReply({ embeds: [errorEmbed] });
         }
-    },
-
-    /**
-     * Emergency stop arena processing
-     * @private
-     */
-    async systemEmergencyStop(interaction) {
-        const embed = new EmbedBuilder()
-            .setTitle('🚨 Emergency Stop Not Implemented')
-            .setDescription(
-                `Emergency stop functionality is not implemented in this simple system.\n\n` +
-                `The arena service is designed to be stateless and safe.\n` +
-                `If needed, restart the bot to reset any processing flags.`
-            )
-            .setColor('#FF0000')
-            .setTimestamp();
-
-        await interaction.editReply({ embeds: [embed] });
     },
 };
