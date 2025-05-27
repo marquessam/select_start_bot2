@@ -62,7 +62,7 @@ class ArenaFeedService extends FeedManagerBase {
             `# ${EMOJIS.ARENA} Arena Challenges\n` + 
             `All active arena challenges and GP leaderboard are shown below.\n` +
             `**Last Updated:** ${timestamp} | **Updates:** Every 30 minutes\n` +
-            `Create challenges, place bets, and compete for GP (Game Points)!`;
+            `Create challenges, place bets, and compete for GP (Gold Points)!`;
         
         // Use the base class method to update the header
         this.headerMessageId = await this.updateHeader({ content: headerContent });
@@ -97,7 +97,7 @@ class ArenaFeedService extends FeedManagerBase {
                     `• **Direct Challenges:** Challenge a specific player to a 1v1 duel\n` +
                     `• **Open Challenges:** Create challenges anyone can join\n` +
                     `• **Betting System:** Bet GP on active challenges you're not participating in\n` +
-                    `• **GP (Game Points):** Earn 1,000 GP automatically each month\n\n` +
+                    `• **GP (Gold Points):** Earn 1,000 GP automatically each month\n\n` +
                     '**Current Status:**'
                 );
                 
