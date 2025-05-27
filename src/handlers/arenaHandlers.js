@@ -96,16 +96,13 @@ export async function handleArenaSelectMenu(interaction) {
     }
 }
 
-// Quick action handlers
+// Quick action handlers (REMOVED 'claim' action)
 async function handleQuickActions(interaction, user, action) {
     const arenaCommand = await import('../commands/user/arena.js');
     
     switch (action) {
         case 'create':
             await showCreateChallengeModal(interaction);
-            break;
-        case 'claim':
-            await arenaCommand.default.handleClaimGP(interaction, user);
             break;
         case 'active':
             await arenaCommand.default.handleViewActive(interaction);
@@ -134,7 +131,7 @@ async function handleRefreshMenu(interaction, user) {
     await arenaCommand.default.showArenaMenu(mockInteraction, updatedUser);
 }
 
-// Main menu select handler
+// Main menu select handler (REMOVED 'claim_gp' case)
 async function handleMainMenuSelect(interaction) {
     const action = interaction.values[0];
     
@@ -154,9 +151,6 @@ async function handleMainMenuSelect(interaction) {
                 break;
             case 'browse_betting':
                 await showBettingOptions(interaction);
-                break;
-            case 'claim_gp':
-                await arenaCommand.default.handleClaimGP(interaction, user);
                 break;
             case 'view_balance':
                 await arenaCommand.default.handleBalance(interaction, user);
