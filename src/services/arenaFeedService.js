@@ -413,10 +413,10 @@ class ArenaFeedService extends FeedManagerBase {
     }
 
     /**
-     * Override shouldClearOnStart to prevent clearing the arena feed on startup
+     * Override shouldClearOnStart to match arcade feed behavior
      */
     shouldClearOnStart() {
-        return false; // Don't clear the arena feed on startup to preserve message IDs
+        return true; // Clear the arena feed on startup like the arcade feed
     }
 
     /**
