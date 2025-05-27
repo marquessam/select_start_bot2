@@ -126,7 +126,7 @@ export default {
                         .setRequired(true)
                 )
         )
-        // === NEW RECOVERY COMMANDS ===
+        // === RECOVERY COMMANDS ===
         .addSubcommand(subcommand =>
             subcommand
                 .setName('manual_payout')
@@ -181,6 +181,23 @@ export default {
                         .setDescription('ID of the challenge to force payout')
                         .setRequired(true)
                 )
+        )
+        // === NEW GP DUPLICATE CLEANUP COMMANDS ===
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('diagnose_gp_duplicates')
+                .setDescription('🔍 Diagnose GP duplicate issues across all users')
+        )
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('cleanup_gp_duplicates')
+                .setDescription('🧹 Clean up duplicate GP awards (automatic duplicate detection)')
+                .addBooleanOption(option =>
+                    option
+                        .setName('execute')
+                        .setDescription('Actually remove duplicates (default: false for preview)')
+                        .setRequired(false)
+                )
         ),
 
     async execute(interaction) {
@@ -217,7 +234,7 @@ export default {
                 case 'adjust_gp':
                     await this.handleAdjustGP(interaction);
                     break;
-                // === NEW RECOVERY HANDLERS ===
+                // === RECOVERY HANDLERS ===
                 case 'manual_payout':
                     await this.handleManualPayout(interaction);
                     break;
@@ -233,6 +250,13 @@ export default {
                 case 'force_payout':
                     await this.handleForcePayout(interaction);
                     break;
+                // === NEW GP DUPLICATE HANDLERS ===
+                case 'diagnose_gp_duplicates':
+                    await this.handleDiagnoseGpDuplicates(interaction);
+                    break;
+                case 'cleanup_gp_duplicates':
+                    await this.handleCleanupGpDuplicates(interaction);
+                    break;
                 default:
                     await interaction.reply({ 
                         content: 'Unknown subcommand. Please try again.', 
@@ -245,6 +269,440 @@ export default {
                 content: `An error occurred: ${error.message}`, 
                 ephemeral: true 
             });
+        }
+    },
+
+    // === GP DUPLICATE DIAGNOSTIC AND CLEANUP METHODS ===
+
+    async diagnoseGpDuplicates() {
+        console.log('🔍 Starting GP duplicate diagnosis...');
+        
+        const users = await User.find({
+            $and: [
+                { gp: { $gt: 0 } },
+                { gpTransactions: { $exists: true, $ne: [] } }
+            ]
+        });
+        
+        const analysis = {
+            totalUsers: users.length,
+            usersWithIssues: 0,
+            totalExcessGp: 0,
+            duplicateTypes: {
+                monthlyAwards: 0,
+                challengePayouts: 0,
+                rapidFire: 0
+            },
+            topOffenders: []
+        };
+        
+        for (const user of users) {
+            let userExcessGp = 0;
+            let userIssues = [];
+            
+            // Check for duplicate monthly awards
+            const monthlyAwards = user.gpTransactions.filter(t => 
+                t.reason && t.reason.includes('Monthly GP')
+            );
+            
+            if (monthlyAwards.length > 1) {
+                const monthlyGroups = {};
+                monthlyAwards.forEach(award => {
+                    const month = award.timestamp.toISOString().substring(0, 7); // YYYY-MM
+                    if (!monthlyGroups[month]) monthlyGroups[month] = [];
+                    monthlyGroups[month].push(award);
+                });
+                
+                let monthlyDuplicates = 0;
+                Object.values(monthlyGroups).forEach(group => {
+                    if (group.length > 1) {
+                        monthlyDuplicates += group.length - 1;
+                        userExcessGp += (group.length - 1) * 1000; // Monthly awards are 1000 GP
+                    }
+                });
+                
+                if (monthlyDuplicates > 0) {
+                    userIssues.push(`${monthlyDuplicates} duplicate monthly awards`);
+                    analysis.duplicateTypes.monthlyAwards += monthlyDuplicates;
+                }
+            }
+            
+            // Check for duplicate challenge payouts
+            const challengePayouts = user.gpTransactions.filter(t => 
+                t.reason && (t.reason.includes('Won') || t.reason.includes('Challenge'))
+            );
+            
+            if (challengePayouts.length > 1) {
+                const challengeGroups = {};
+                challengePayouts.forEach(payout => {
+                    const key = `${payout.reason}_${payout.amount}_${payout.timestamp.toISOString().substring(0, 10)}`;
+                    if (!challengeGroups[key]) challengeGroups[key] = [];
+                    challengeGroups[key].push(payout);
+                });
+                
+                let challengeDuplicates = 0;
+                Object.values(challengeGroups).forEach(group => {
+                    if (group.length > 1) {
+                        challengeDuplicates += group.length - 1;
+                        userExcessGp += (group.length - 1) * group[0].amount;
+                    }
+                });
+                
+                if (challengeDuplicates > 0) {
+                    userIssues.push(`${challengeDuplicates} duplicate challenge payouts`);
+                    analysis.duplicateTypes.challengePayouts += challengeDuplicates;
+                }
+            }
+            
+            // Check for rapid-fire identical transactions (within 1 minute)
+            const sortedTransactions = user.gpTransactions.sort((a, b) => a.timestamp - b.timestamp);
+            let rapidFireDuplicates = 0;
+            
+            for (let i = 1; i < sortedTransactions.length; i++) {
+                const current = sortedTransactions[i];
+                const previous = sortedTransactions[i - 1];
+                
+                const timeDiff = current.timestamp - previous.timestamp;
+                const sameAmount = current.amount === previous.amount;
+                const sameReason = current.reason === previous.reason;
+                
+                if (timeDiff < 60000 && sameAmount && sameReason) { // Within 1 minute
+                    rapidFireDuplicates++;
+                    userExcessGp += current.amount;
+                }
+            }
+            
+            if (rapidFireDuplicates > 0) {
+                userIssues.push(`${rapidFireDuplicates} rapid-fire duplicates`);
+                analysis.duplicateTypes.rapidFire += rapidFireDuplicates;
+            }
+            
+            if (userIssues.length > 0) {
+                analysis.usersWithIssues++;
+                analysis.totalExcessGp += userExcessGp;
+                
+                analysis.topOffenders.push({
+                    username: user.raUsername,
+                    discordId: user.discordId,
+                    currentGp: user.gp,
+                    excessGp: userExcessGp,
+                    legitimateGp: user.gp - userExcessGp,
+                    issues: userIssues
+                });
+            }
+        }
+        
+        // Sort top offenders by excess GP
+        analysis.topOffenders.sort((a, b) => b.excessGp - a.excessGp);
+        analysis.topOffenders = analysis.topOffenders.slice(0, 10); // Top 10
+        
+        return analysis;
+    },
+
+    async cleanupDuplicateGp(dryRun = true) {
+        console.log(`🧹 Starting GP cleanup (${dryRun ? 'DRY RUN' : 'EXECUTING'})...`);
+        
+        const users = await User.find({
+            $and: [
+                { gp: { $gt: 0 } },
+                { gpTransactions: { $exists: true, $ne: [] } }
+            ]
+        });
+        
+        const cleanupResults = {
+            usersProcessed: 0,
+            totalGpRemoved: 0,
+            transactionsRemoved: 0,
+            userResults: []
+        };
+        
+        for (const user of users) {
+            let userGpRemoved = 0;
+            let userTransactionsRemoved = 0;
+            let cleanedTransactions = [...user.gpTransactions];
+            const removedTransactions = [];
+            
+            // Remove duplicate monthly awards (keep only 1 per month)
+            const monthlyGroups = {};
+            const monthlyIndices = [];
+            
+            cleanedTransactions.forEach((transaction, index) => {
+                if (transaction.reason && transaction.reason.includes('Monthly GP')) {
+                    const month = transaction.timestamp.toISOString().substring(0, 7);
+                    if (!monthlyGroups[month]) {
+                        monthlyGroups[month] = { kept: index, duplicates: [] };
+                    } else {
+                        monthlyGroups[month].duplicates.push(index);
+                    }
+                    monthlyIndices.push(index);
+                }
+            });
+            
+            // Mark monthly duplicates for removal
+            Object.values(monthlyGroups).forEach(group => {
+                group.duplicates.forEach(index => {
+                    removedTransactions.push({
+                        index,
+                        transaction: cleanedTransactions[index],
+                        reason: 'Duplicate monthly award'
+                    });
+                    userGpRemoved += cleanedTransactions[index].amount;
+                    userTransactionsRemoved++;
+                });
+            });
+            
+            // Remove duplicate challenge payouts
+            const challengeGroups = {};
+            cleanedTransactions.forEach((transaction, index) => {
+                if (transaction.reason && (transaction.reason.includes('Won') || transaction.reason.includes('Challenge'))) {
+                    // Group by challenge context if available, otherwise by reason + amount + day
+                    const key = transaction.context || 
+                               `${transaction.reason}_${transaction.amount}_${transaction.timestamp.toISOString().substring(0, 10)}`;
+                    
+                    if (!challengeGroups[key]) {
+                        challengeGroups[key] = { kept: index, duplicates: [] };
+                    } else {
+                        challengeGroups[key].duplicates.push(index);
+                    }
+                }
+            });
+            
+            // Mark challenge duplicates for removal
+            Object.values(challengeGroups).forEach(group => {
+                group.duplicates.forEach(index => {
+                    removedTransactions.push({
+                        index,
+                        transaction: cleanedTransactions[index],
+                        reason: 'Duplicate challenge payout'
+                    });
+                    userGpRemoved += cleanedTransactions[index].amount;
+                    userTransactionsRemoved++;
+                });
+            });
+            
+            // Remove rapid-fire duplicates (identical transactions within 1 minute)
+            const sortedIndices = cleanedTransactions
+                .map((_, index) => index)
+                .sort((a, b) => cleanedTransactions[a].timestamp - cleanedTransactions[b].timestamp);
+            
+            for (let i = 1; i < sortedIndices.length; i++) {
+                const currentIndex = sortedIndices[i];
+                const previousIndex = sortedIndices[i - 1];
+                
+                const current = cleanedTransactions[currentIndex];
+                const previous = cleanedTransactions[previousIndex];
+                
+                // Skip if already marked for removal
+                if (removedTransactions.some(r => r.index === currentIndex)) continue;
+                
+                const timeDiff = current.timestamp - previous.timestamp;
+                const sameAmount = current.amount === previous.amount;
+                const sameReason = current.reason === previous.reason;
+                
+                if (timeDiff < 60000 && sameAmount && sameReason) { // Within 1 minute
+                    removedTransactions.push({
+                        index: currentIndex,
+                        transaction: current,
+                        reason: 'Rapid-fire duplicate'
+                    });
+                    userGpRemoved += current.amount;
+                    userTransactionsRemoved++;
+                }
+            }
+            
+            // Apply cleanup if not dry run
+            if (!dryRun && userTransactionsRemoved > 0) {
+                // Remove marked transactions (sort by index descending to maintain indices)
+                const indicesToRemove = removedTransactions
+                    .map(r => r.index)
+                    .sort((a, b) => b - a);
+                
+                indicesToRemove.forEach(index => {
+                    cleanedTransactions.splice(index, 1);
+                });
+                
+                // Update user GP and transactions
+                const newGp = Math.max(0, user.gp - userGpRemoved);
+                
+                await User.findByIdAndUpdate(user._id, {
+                    $set: {
+                        gp: newGp,
+                        gpTransactions: cleanedTransactions
+                    }
+                });
+                
+                // Add cleanup transaction record
+                await User.findByIdAndUpdate(user._id, {
+                    $push: {
+                        gpTransactions: {
+                            amount: -userGpRemoved,
+                            oldBalance: user.gp,
+                            newBalance: newGp,
+                            reason: 'Admin cleanup - duplicate removal',
+                            context: `Removed ${userTransactionsRemoved} duplicate transactions`,
+                            timestamp: new Date()
+                        }
+                    }
+                });
+            }
+            
+            if (userTransactionsRemoved > 0) {
+                cleanupResults.usersProcessed++;
+                cleanupResults.totalGpRemoved += userGpRemoved;
+                cleanupResults.transactionsRemoved += userTransactionsRemoved;
+                
+                cleanupResults.userResults.push({
+                    username: user.raUsername,
+                    discordId: user.discordId,
+                    oldGp: user.gp,
+                    newGp: user.gp - userGpRemoved,
+                    gpRemoved: userGpRemoved,
+                    transactionsRemoved: userTransactionsRemoved,
+                    removedDetails: removedTransactions.map(r => ({
+                        amount: r.transaction.amount,
+                        reason: r.transaction.reason,
+                        removalReason: r.reason,
+                        timestamp: r.transaction.timestamp
+                    }))
+                });
+            }
+        }
+        
+        return cleanupResults;
+    },
+
+    async handleDiagnoseGpDuplicates(interaction) {
+        await interaction.deferReply({ ephemeral: true });
+        
+        try {
+            console.log(`🔍 ADMIN: GP duplicate diagnosis requested by ${interaction.user.username}`);
+            
+            const analysis = await this.diagnoseGpDuplicates();
+            
+            const embed = new EmbedBuilder()
+                .setTitle('🔍 GP Duplicate Diagnosis')
+                .setColor('#FFA500')
+                .setDescription('Analysis of GP duplicate issues across all users')
+                .setTimestamp();
+            
+            embed.addFields({
+                name: '📊 Overview',
+                value: 
+                    `• Total users with GP: ${analysis.totalUsers}\n` +
+                    `• Users with duplicate issues: ${analysis.usersWithIssues}\n` +
+                    `• Total excess GP: ${analysis.totalExcessGp.toLocaleString()}\n` +
+                    `• Percentage affected: ${((analysis.usersWithIssues / analysis.totalUsers) * 100).toFixed(1)}%`,
+                inline: false
+            });
+            
+            embed.addFields({
+                name: '🔢 Duplicate Types',
+                value: 
+                    `• Monthly award duplicates: ${analysis.duplicateTypes.monthlyAwards}\n` +
+                    `• Challenge payout duplicates: ${analysis.duplicateTypes.challengePayouts}\n` +
+                    `• Rapid-fire duplicates: ${analysis.duplicateTypes.rapidFire}`,
+                inline: false
+            });
+            
+            if (analysis.topOffenders.length > 0) {
+                let offendersText = '';
+                analysis.topOffenders.slice(0, 5).forEach((user, index) => {
+                    offendersText += `${index + 1}. **${user.username}**\n`;
+                    offendersText += `   Current: ${user.currentGp} GP → Legitimate: ${user.legitimateGp} GP\n`;
+                    offendersText += `   Excess: ${user.excessGp} GP (${user.issues.join(', ')})\n\n`;
+                });
+                
+                embed.addFields({ name: '🎯 Top Affected Users', value: offendersText, inline: false });
+            }
+            
+            embed.addFields({
+                name: '🔧 Recommended Action',
+                value: 
+                    analysis.usersWithIssues > 0 
+                        ? 'Run `/adminarena cleanup_gp_duplicates execute:false` to preview cleanup, then with `execute:true` to apply.'
+                        : '✅ No duplicate issues found! Your GP system is clean.',
+                inline: false
+            });
+            
+            await interaction.editReply({ embeds: [embed] });
+            
+        } catch (error) {
+            console.error(`Error diagnosing GP duplicates: ${error}`);
+            await interaction.editReply(`Error diagnosing GP duplicates: ${error.message}`);
+        }
+    },
+
+    async handleCleanupGpDuplicates(interaction) {
+        await interaction.deferReply({ ephemeral: true });
+        
+        const execute = interaction.options.getBoolean('execute') || false;
+        
+        try {
+            console.log(`🧹 ADMIN: GP cleanup requested (${execute ? 'EXECUTE' : 'PREVIEW'}) by ${interaction.user.username}`);
+            
+            const results = await this.cleanupDuplicateGp(!execute); // dryRun = !execute
+            
+            const embed = new EmbedBuilder()
+                .setTitle(execute ? '🧹 GP Cleanup Complete' : '🔍 GP Cleanup Preview')
+                .setColor(execute ? '#00FF00' : '#FFA500')
+                .setDescription(execute ? 'Duplicate GP cleanup has been executed.' : 'Preview of what would be cleaned up.')
+                .setTimestamp();
+            
+            embed.addFields({
+                name: '📊 Summary',
+                value: 
+                    `• Users processed: ${results.usersProcessed}\n` +
+                    `• Total GP ${execute ? 'removed' : 'to be removed'}: ${results.totalGpRemoved.toLocaleString()}\n` +
+                    `• Transactions ${execute ? 'removed' : 'to be removed'}: ${results.transactionsRemoved}`,
+                inline: false
+            });
+            
+            if (results.userResults.length > 0) {
+                let resultsText = '';
+                const maxResults = 8;
+                
+                results.userResults.slice(0, maxResults).forEach((user, index) => {
+                    resultsText += `${index + 1}. **${user.username}**\n`;
+                    resultsText += `   ${user.oldGp} GP → ${user.newGp} GP (-${user.gpRemoved})\n`;
+                    resultsText += `   Removed ${user.transactionsRemoved} duplicate transactions\n\n`;
+                });
+                
+                if (results.userResults.length > maxResults) {
+                    resultsText += `... and ${results.userResults.length - maxResults} more users`;
+                }
+                
+                embed.addFields({ 
+                    name: execute ? '✅ Users Cleaned Up' : '👀 Users To Be Cleaned Up', 
+                    value: resultsText, 
+                    inline: false 
+                });
+            }
+            
+            if (!execute && results.usersProcessed > 0) {
+                embed.addFields({
+                    name: '⚠️ Next Step',
+                    value: 'To actually perform the cleanup, run this command again with `execute:true`',
+                    inline: false
+                });
+            } else if (execute && results.usersProcessed > 0) {
+                embed.addFields({
+                    name: '✅ Cleanup Complete',
+                    value: 'All duplicate GP issues have been resolved. Users have been notified via transaction logs.',
+                    inline: false
+                });
+            } else {
+                embed.addFields({
+                    name: '✅ Status',
+                    value: 'No duplicate GP issues found. Your system is clean!',
+                    inline: false
+                });
+            }
+            
+            await interaction.editReply({ embeds: [embed] });
+            
+        } catch (error) {
+            console.error(`Error cleaning up GP duplicates: ${error}`);
+            await interaction.editReply(`Error cleaning up GP duplicates: ${error.message}`);
         }
     },
 
@@ -432,7 +890,7 @@ export default {
         }
     },
 
-    // === NEW RECOVERY METHODS ===
+    // === RECOVERY METHODS ===
 
     async handleManualPayout(interaction) {
         await interaction.deferReply({ ephemeral: true });
@@ -661,7 +1119,7 @@ export default {
                 { name: 'Status', value: challenge.status, inline: true },
                 { name: 'Type', value: challenge.isOpenChallenge ? 'Open Challenge' : 'Direct Challenge', inline: true },
                 { name: 'Winner', value: challenge.winnerUsername || 'None', inline: true },
-                { name: 'Payout Processed', value: challenge.payoutProcessed ? '✅ Yes' : '❌ No', inline: true } // FIXED: Show payout status
+                { name: 'Payout Processed', value: challenge.payoutProcessed ? '✅ Yes' : '❌ No', inline: true }
             );
             
             // Dates
@@ -984,26 +1442,32 @@ export default {
         }
     },
 
-    // === EXISTING METHODS (truncated for brevity - include all the original methods) ===
+    // === PLACEHOLDER METHODS FOR EXISTING FUNCTIONALITY ===
+    // Note: Add the complete implementations of these methods from your original file
     
     async handleCancelChallenge(interaction) {
-        // ... (keep existing implementation)
+        // Implementation needed - copy from original file
+        await interaction.editReply('Cancel challenge functionality - implementation needed');
     },
     
     async handleEditChallenge(interaction) {
-        // ... (keep existing implementation)  
+        // Implementation needed - copy from original file
+        await interaction.editReply('Edit challenge functionality - implementation needed');
     },
     
     async handleForceComplete(interaction) {
-        // ... (keep existing implementation)
+        // Implementation needed - copy from original file
+        await interaction.editReply('Force complete functionality - implementation needed');
     },
     
     async handleResetGP(interaction) {
-        // ... (keep existing implementation)
+        // Implementation needed - copy from original file
+        await interaction.editReply('Reset GP functionality - implementation needed');
     },
     
     async handleAdjustGP(interaction) {
-        // ... (keep existing implementation)
+        // Implementation needed - copy from original file
+        await interaction.editReply('Adjust GP functionality - implementation needed');
     },
     
     // === BUTTON/INTERACTION HANDLERS ===
