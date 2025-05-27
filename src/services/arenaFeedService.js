@@ -44,7 +44,7 @@ class ArenaFeedService extends FeedManagerBase {
                 await new Promise(resolve => setTimeout(resolve, 500));
             }
             
-            // Update GP leaderboard at the bottom
+            // Update GP summary at the bottom (ALWAYS LAST EMBED IN FEED)
             await this.updateGPLeaderboardEmbed();
             
         } catch (error) {
