@@ -73,12 +73,12 @@ const userSchema = new mongoose.Schema({
         type: [{ type: String }],
         default: []
     },
-    // NEW: Field for tracking announced awards (mastery/beaten) to prevent duplicates
+    // Field for tracking announced awards (mastery/beaten) to prevent duplicates
     announcedAwards: {
         type: [{ type: String }],
         default: []
     },
-    // Add this new field to track the last time achievements were checked
+    // Add this field to track the last time achievements were checked
     lastAchievementCheck: {
         type: Date,
         default: function() {
@@ -87,12 +87,12 @@ const userSchema = new mongoose.Schema({
     },
     communityAwards: [communityAwardSchema],
     nominations: [nominationSchema],
-    // New field to track if historical data has been processed
+    // Field to track if historical data has been processed
     historicalDataProcessed: {
         type: Boolean,
         default: false
     },
-    // New field to store annual records for yearly leaderboard caching
+    // Field to store annual records for yearly leaderboard caching
     annualRecords: {
         type: Map,
         of: {
@@ -105,52 +105,7 @@ const userSchema = new mongoose.Schema({
         },
         default: () => new Map()
     },
-    // New field for Arena Gold Points (GP)
-    gp: {
-        type: Number,
-        default: 1000 // Default starting GP
-    },
-    // New field to track when the user last claimed their monthly GP allowance
-    lastMonthlyGpClaim: {
-        type: Date,
-        default: null
-    },
-    // New field to track arena statistics
-    arenaStats: {
-        wins: { 
-            type: Number, 
-            default: 0 
-        },
-        losses: { 
-            type: Number, 
-            default: 0 
-        },
-        challengesIssued: { 
-            type: Number, 
-            default: 0 
-        },
-        challengesAccepted: { 
-            type: Number, 
-            default: 0 
-        },
-        gpWon: { 
-            type: Number, 
-            default: 0 
-        },
-        gpLost: { 
-            type: Number, 
-            default: 0 
-        },
-        betsPlaced: { 
-            type: Number, 
-            default: 0 
-        },
-        betsWon: { 
-            type: Number, 
-            default: 0 
-        }
-    },
-    // NEW: Field for tracking mastered games
+    // Field for tracking mastered games
     masteredGames: {
         type: [{
             gameId: {
@@ -175,11 +130,96 @@ const userSchema = new mongoose.Schema({
             }
         }],
         default: []
+    },
+
+    // ===== ARENA SYSTEM FIELDS =====
+    
+    // GP (Game Points) balance for Arena system
+    gpBalance: {
+        type: Number,
+        default: 0,
+        min: 0
+    },
+    
+    // Monthly GP claim tracking
+    lastMonthlyGpClaim: {
+        type: Date,
+        default: null
+    },
+    
+    // GP transaction history (keep last 100 transactions)
+    gpTransactions: [{
+        type: {
+            type: String,
+            enum: ['claim', 'wager', 'bet', 'win', 'refund', 'admin_adjust'],
+            required: true
+        },
+        amount: {
+            type: Number,
+            required: true
+        },
+        description: {
+            type: String,
+            required: true
+        },
+        challengeId: {
+            type: String,
+            default: null
+        },
+        timestamp: {
+            type: Date,
+            default: Date.now
+        }
+    }],
+    
+    // Arena statistics
+    arenaStats: {
+        challengesCreated: {
+            type: Number,
+            default: 0
+        },
+        challengesWon: {
+            type: Number,
+            default: 0
+        },
+        challengesParticipated: {
+            type: Number,
+            default: 0
+        },
+        totalGpWon: {
+            type: Number,
+            default: 0
+        },
+        totalGpWagered: {
+            type: Number,
+            default: 0
+        },
+        totalGpBet: {
+            type: Number,
+            default: 0
+        },
+        betsWon: {
+            type: Number,
+            default: 0
+        },
+        betsPlaced: {
+            type: Number,
+            default: 0
+        }
     }
 }, {
     timestamps: true,
     strict: false // Allow additional fields to be added
 });
+
+// ===== INDEXES =====
+// Add indexes for Arena system
+userSchema.index({ 'arenaStats.challengesWon': -1 });
+userSchema.index({ 'arenaStats.totalGpWon': -1 });
+userSchema.index({ gpBalance: -1 });
+userSchema.index({ lastMonthlyGpClaim: 1 });
+
+// ===== STATIC METHODS =====
 
 // Static method to find user by RetroAchievements username (case insensitive)
 userSchema.statics.findByRAUsername = function(username) {
@@ -196,9 +236,7 @@ userSchema.statics.formatDateKey = function(date) {
     return date.toISOString().split('T')[0];
 };
 
-// raUsername is already indexed due to unique: true
-// Add index for discordId if it's not already indexed by sparse: true
-// userSchema.index({ discordId: 1 });
+// ===== INSTANCE METHODS =====
 
 // Method to update standard challenge points
 userSchema.methods.updatePoints = function(date, points) {
@@ -237,7 +275,7 @@ userSchema.methods.getCommunityPointsForYear = function(year) {
         .reduce((total, award) => total + award.points, 0);
 };
 
-// UPDATED: Method to get current month's nominations with validation
+// Method to get current month's nominations with validation
 userSchema.methods.getCurrentNominations = function() {
     if (!this.nominations || !Array.isArray(this.nominations)) {
         return [];
@@ -293,44 +331,24 @@ userSchema.methods.clearCurrentNominations = function() {
     });
 };
 
-// New method to check if user has claimed their monthly GP allowance
-userSchema.methods.hasClaimedMonthlyGp = function() {
-    if (!this.lastMonthlyGpClaim) return false;
-    
-    const now = new Date();
-    const lastClaim = new Date(this.lastMonthlyGpClaim);
-    
-    return lastClaim.getMonth() === now.getMonth() && 
-           lastClaim.getFullYear() === now.getFullYear();
-};
-
-// New method to claim monthly GP allowance
-userSchema.methods.claimMonthlyGp = function(amount = 1000) {
-    if (this.hasClaimedMonthlyGp()) return false;
-    
-    this.gp = (this.gp || 0) + amount;
-    this.lastMonthlyGpClaim = new Date();
-    return true;
-};
-
-// NEW: Method to check if a game is mastered
+// Method to check if a game is mastered
 userSchema.methods.isGameMastered = function(gameId) {
     if (!this.masteredGames) return false;
     
     return this.masteredGames.some(game => game.gameId === String(gameId));
 };
 
-// NEW: Method to get all mastered games
+// Method to get all mastered games
 userSchema.methods.getMasteredGames = function() {
     return this.masteredGames || [];
 };
 
-// NEW: Method to count mastered games
+// Method to count mastered games
 userSchema.methods.getMasteredGameCount = function() {
     return this.masteredGames?.length || 0;
 };
 
-// NEW: Method to add a mastered game
+// Method to add a mastered game
 userSchema.methods.addMasteredGame = function(gameId, gameTitle, consoleName, totalAchievements) {
     if (this.isGameMastered(gameId)) return false;
     
@@ -348,6 +366,85 @@ userSchema.methods.addMasteredGame = function(gameId, gameTitle, consoleName, to
     
     return true;
 };
+
+// ===== ARENA SYSTEM METHODS =====
+
+// Check if user can claim monthly GP
+userSchema.methods.canClaimMonthlyGp = function() {
+    if (!this.lastMonthlyGpClaim) return true;
+    
+    const now = new Date();
+    const lastClaim = new Date(this.lastMonthlyGpClaim);
+    
+    // Check if it's a different month/year
+    return now.getMonth() !== lastClaim.getMonth() || 
+           now.getFullYear() !== lastClaim.getFullYear();
+};
+
+// Add GP transaction and update balance
+userSchema.methods.addGpTransaction = function(type, amount, description, challengeId = null) {
+    if (!this.gpTransactions) {
+        this.gpTransactions = [];
+    }
+    
+    this.gpTransactions.push({
+        type,
+        amount,
+        description,
+        challengeId,
+        timestamp: new Date()
+    });
+    
+    // Keep only the last 100 transactions
+    if (this.gpTransactions.length > 100) {
+        this.gpTransactions = this.gpTransactions.slice(-100);
+    }
+    
+    // Update balance
+    this.gpBalance += amount;
+    
+    // Ensure balance doesn't go below 0
+    if (this.gpBalance < 0) {
+        this.gpBalance = 0;
+    }
+};
+
+// Check if user has enough GP
+userSchema.methods.hasEnoughGp = function(amount) {
+    return this.gpBalance >= amount;
+};
+
+// Get win rate percentage
+userSchema.methods.getGpWinRate = function() {
+    if (!this.arenaStats || this.arenaStats.challengesParticipated === 0) return 0;
+    return (this.arenaStats.challengesWon / this.arenaStats.challengesParticipated * 100).toFixed(1);
+};
+
+// Get bet win rate percentage
+userSchema.methods.getBetWinRate = function() {
+    if (!this.arenaStats || this.arenaStats.betsPlaced === 0) return 0;
+    return (this.arenaStats.betsWon / this.arenaStats.betsPlaced * 100).toFixed(1);
+};
+
+// Legacy compatibility methods (for existing code that might use the old field names)
+userSchema.methods.hasClaimedMonthlyGp = function() {
+    return !this.canClaimMonthlyGp();
+};
+
+userSchema.methods.claimMonthlyGp = function(amount = 1000) {
+    if (!this.canClaimMonthlyGp()) return false;
+    
+    this.addGpTransaction('claim', amount, 'Monthly GP allowance');
+    this.lastMonthlyGpClaim = new Date();
+    return true;
+};
+
+// Virtual field for backwards compatibility with existing `gp` field references
+userSchema.virtual('gp').get(function() {
+    return this.gpBalance;
+}).set(function(value) {
+    this.gpBalance = value;
+});
 
 export const User = mongoose.model('User', userSchema);
 export default User;
