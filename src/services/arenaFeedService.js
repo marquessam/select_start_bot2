@@ -1,21 +1,18 @@
 // src/services/arenaFeedService.js
-import { User } from '../models/User.js';
 import { ArenaChallenge } from '../models/ArenaChallenge.js';
+import { User } from '../models/User.js';
 import { config } from '../config/config.js';
 import { FeedManagerBase } from '../utils/FeedManagerBase.js';
-import { COLORS, EMOJIS, createHeaderEmbed, createLeaderboardEmbed, getDiscordTimestamp } from '../utils/FeedUtils.js';
+import { COLORS, EMOJIS, createHeaderEmbed, getDiscordTimestamp } from '../utils/FeedUtils.js';
 import { EmbedBuilder } from 'discord.js';
-import gpUtils from '../utils/gpUtils.js';
 import arenaUtils from '../utils/arenaUtils.js';
+import gpUtils from '../utils/gpUtils.js';
 
 class ArenaFeedService extends FeedManagerBase {
     constructor() {
         super(null, config.discord.arenaFeedChannelId || '1373570913882214410');
         this.headerMessageId = null;
-        this.overviewMessageId = null;
-        this.directChallengesMessageId = null;
-        this.openChallengesMessageId = null;
-        this.leaderboardMessageId = null;
+        this.overviewEmbedId = null;
     }
 
     // Override the update method from base class
@@ -31,26 +28,27 @@ class ArenaFeedService extends FeedManagerBase {
                 return;
             }
             
-            console.log('Updating arena feed...');
-            
             // Update header first
             await this.updateArenaHeader();
             
-            // Update overview embed (yellow)
+            // Update overview embed
             await this.updateArenaOverview();
             
-            // Update direct challenges (red)
-            await this.updateDirectChallenges();
+            // Update active challenges (pending and active)
+            const activeChallenges = await ArenaChallenge.find({
+                status: { $in: ['pending', 'active'] }
+            }).sort({ createdAt: -1 }); // Sort by creation date, newest first
             
-            // Update open challenges (blue)
-            await this.updateOpenChallenges();
+            for (const challenge of activeChallenges) {
+                await this.createOrUpdateChallengeEmbed(challenge);
+                await new Promise(resolve => setTimeout(resolve, 500));
+            }
             
-            // Update GP leaderboard last (yellow) - NOW STANDARDIZED
-            await this.updateGPLeaderboard();
+            // Update GP leaderboard at the bottom
+            await this.updateGPLeaderboardEmbed();
             
-            console.log('Arena feed update completed');
         } catch (error) {
-            console.error('Error updating arena feed:', error);
+            console.error('Error updating arena feeds:', error);
         }
     }
 
@@ -59,19 +57,19 @@ class ArenaFeedService extends FeedManagerBase {
         const now = new Date();
         const timestamp = getDiscordTimestamp(now);
         
-        // Create header content
+        // Create header content with cleaner formatting and update frequency note
         const headerContent = 
-            `# ${EMOJIS.ARENA} Arena Challenge System\n` + 
-            `Active challenges, betting opportunities, and GP rankings are shown below.\n` +
+            `# ${EMOJIS.ARENA} Arena Challenges\n` + 
+            `All active arena challenges and GP leaderboard are shown below.\n` +
             `**Last Updated:** ${timestamp} | **Updates:** Every 30 minutes\n` +
-            `Use \`/arena\` to participate in challenges, place bets, and claim your monthly GP!`;
+            `Create challenges, place bets, and compete for GP (Game Points)!`;
         
         // Use the base class method to update the header
         this.headerMessageId = await this.updateHeader({ content: headerContent });
     }
 
     /**
-     * Create or update the arena overview embed
+     * Create or update the arena overview embed at the top of the feed
      */
     async updateArenaOverview() {
         try {
@@ -79,357 +77,306 @@ class ArenaFeedService extends FeedManagerBase {
             if (!channel) return;
 
             // Get stats for the overview
-            const now = new Date();
-            
-            // Count challenges by type and status
-            const directChallenges = await ArenaChallenge.countDocuments({
-                type: 'direct',
+            const activeChallengeCount = await ArenaChallenge.countDocuments({
                 status: { $in: ['pending', 'active'] }
             });
             
-            const openChallenges = await ArenaChallenge.countDocuments({
-                type: 'open',
-                status: 'active'
-            });
+            const totalUsers = await User.countDocuments({});
+            const usersWithGP = await User.countDocuments({ gpBalance: { $gt: 0 } });
             
-            const completedToday = await ArenaChallenge.countDocuments({
-                status: 'completed',
-                processedAt: { $gte: new Date(now.getTime() - 24 * 60 * 60 * 1000) }
-            });
-            
-            // Get total GP in circulation
+            // Get system GP stats
             const systemStats = await gpUtils.getSystemGPStats();
             
-            // Create embed using standardized utility
-            const embed = createHeaderEmbed(
-                `${EMOJIS.ARENA} Arena System Overview`,
-                'The **Arena Challenge System** lets you compete against other players on RetroAchievements leaderboards!\n\n' +
-                '**How It Works:**\n' +
-                `• **Create Challenges:** Start direct 1v1 or open challenges\n` +
-                `• **Place Bets:** Bet GP on who will win active challenges\n` +
-                `• **Earn GP:** Win challenges and bets to earn Game Points\n` +
-                `• **Monthly Allowance:** Claim 1,000 GP free each month\n\n` +
-                '**Current Activity:**',
-                {
-                    color: COLORS.WARNING, // Yellow for overview
-                    timestamp: false
-                }
-            );
+            // Create embed
+            const embed = new EmbedBuilder()
+                .setColor(COLORS.WARNING) // Yellow for overview
+                .setTitle(`${EMOJIS.ARENA} Arena System Overview`)
+                .setDescription(
+                    'The **Arena System** lets you create challenges and bet GP on RetroAchievements leaderboards.\n\n' +
+                    '**How It Works:**\n' +
+                    `• **Direct Challenges:** Challenge a specific player to a 1v1 duel\n` +
+                    `• **Open Challenges:** Create challenges anyone can join\n` +
+                    `• **Betting System:** Bet GP on active challenges you're not participating in\n` +
+                    `• **GP (Game Points):** Earn 1,000 GP automatically each month\n\n` +
+                    '**Current Status:**'
+                );
                 
-            // Add current status
-            let statusField = '';
-            statusField += `• **Direct Challenges:** ${directChallenges} (1v1 pending/active)\n`;
-            statusField += `• **Open Challenges:** ${openChallenges} (anyone can join)\n`;
-            statusField += `• **Completed Today:** ${completedToday} challenges\n`;
-            statusField += `• **Total GP in System:** ${gpUtils.formatGP(systemStats.totalGP)}\n`;
-            statusField += `• **Active Users:** ${systemStats.usersWithGP} with GP balances`;
+            // Add active challenges info
+            let contentField = '';
+            contentField += `• **Active Challenges:** ${activeChallengeCount} challenges accepting participants/bets\n`;
+            contentField += `• **Registered Users:** ${totalUsers} total, ${usersWithGP} with GP\n`;
+            contentField += `• **Total GP in System:** ${gpUtils.formatGP(systemStats.totalGP)}\n`;
+            contentField += `• **GP Leaderboard:** See bottom of feed for current standings`;
             
-            embed.addFields({ name: 'System Status', value: statusField });
+            embed.addFields({ name: 'Current Status', value: contentField });
             
             // Add participation info
             embed.addFields({ 
                 name: 'How to Participate', 
-                value: 'Use `/arena` to access the full Arena menu where you can create challenges, place bets, claim your monthly GP, and view leaderboards!\n\nOnly registered RetroAchievements users can participate. Use `/register` to link your account.'
+                value: 'Use `/arena` to create challenges, join existing ones, or place bets! You automatically receive 1,000 GP on the 1st of each month.\n\nChallenges run for 7 days, and betting closes 3 days after a challenge starts.'
             });
             
             // Add footer
             embed.setFooter({ 
-                text: 'Challenges run for 7 days • Betting closes 3 days after start • Winners determined by RA leaderboard rank'
+                text: 'Winners take all wagers • Bet winners split losing bets proportionally'
             });
             
             // Send or update the overview embed
-            this.overviewMessageId = await this.updateMessage('arena_overview', { embeds: [embed] });
+            if (this.overviewEmbedId) {
+                try {
+                    const message = await channel.messages.fetch(this.overviewEmbedId);
+                    await message.edit({ embeds: [embed] });
+                } catch (error) {
+                    if (error.message.includes('Unknown Message')) {
+                        const message = await channel.send({ embeds: [embed] });
+                        this.overviewEmbedId = message.id;
+                    } else {
+                        throw error;
+                    }
+                }
+            } else {
+                const message = await channel.send({ embeds: [embed] });
+                this.overviewEmbedId = message.id;
+            }
         } catch (error) {
             console.error('Error updating arena overview:', error);
         }
     }
 
     /**
-     * Update direct challenges embed (red)
+     * Create or update a challenge embed
      */
-    async updateDirectChallenges() {
+    async createOrUpdateChallengeEmbed(challenge) {
         try {
             const channel = await this.getChannel();
             if (!channel) return;
-
-            // Get direct challenges (pending and active)
-            const directChallenges = await ArenaChallenge.find({
-                type: 'direct',
-                status: { $in: ['pending', 'active'] }
-            }).sort({ createdAt: -1 }).limit(10);
-
-            // Create embed using standardized utility
-            const embed = createHeaderEmbed(
-                `⚔️ Direct Challenges (1v1)`,
-                directChallenges.length === 0 ?
-                    'No active direct challenges at the moment.\n\n' +
-                    'Direct challenges are 1v1 competitions where you challenge a specific player. ' +
-                    'The target player has 24 hours to accept, then you compete for 7 days!' :
-                    `Currently **${directChallenges.length}** active direct challenge(s).\n\n` +
-                    'These are 1v1 competitions between specific players. Non-participants can bet on the outcome!',
-                {
-                    color: COLORS.DANGER, // Red for direct challenges
-                    timestamp: true
-                }
-            );
-
-            if (directChallenges.length === 0) {
-                embed.addFields({ 
-                    name: 'No Active Challenges', 
-                    value: 'Be the first to create a direct challenge with `/arena`!',
-                    inline: false 
-                });
+            
+            // Determine color based on status
+            let embedColor;
+            if (challenge.status === 'pending') {
+                embedColor = COLORS.WARNING; // Yellow for pending
+            } else if (challenge.status === 'active') {
+                embedColor = COLORS.PRIMARY; // Blue for active
             } else {
-                // Group challenges by status
-                const pendingChallenges = directChallenges.filter(c => c.status === 'pending');
-                const activeChallenges = directChallenges.filter(c => c.status === 'active');
-
-                // Add pending challenges
-                if (pendingChallenges.length > 0) {
-                    const pendingText = pendingChallenges
-                        .map(challenge => {
-                            const timeLeft = Math.max(0, (challenge.createdAt.getTime() + 24 * 60 * 60 * 1000) - Date.now());
-                            const hoursLeft = Math.floor(timeLeft / (1000 * 60 * 60));
-                            return `**${challenge.challengeId}** - ${challenge.gameTitle}\n` +
-                                   `${challenge.creatorRaUsername} → ${challenge.targetRaUsername}\n` +
-                                   `Wager: ${gpUtils.formatGP(challenge.participants[0]?.wager || 0)} | ` +
-                                   `Expires: ${hoursLeft}h`;
-                        })
-                        .join('\n\n');
-                    
-                    embed.addFields({ 
-                        name: `⏳ Pending Acceptance (${pendingChallenges.length})`, 
-                        value: pendingText,
-                        inline: false 
-                    });
-                }
-
-                // Add active challenges
-                if (activeChallenges.length > 0) {
-                    const activeText = activeChallenges
-                        .map(challenge => {
-                            const timeLeft = Math.max(0, challenge.endedAt.getTime() - Date.now());
-                            const daysLeft = Math.floor(timeLeft / (1000 * 60 * 60 * 24));
-                            const canBet = challenge.canBet() ? ' 🎰' : '';
-                            return `**${challenge.challengeId}** - ${challenge.gameTitle}${canBet}\n` +
-                                   `${challenge.participants.map(p => p.raUsername).join(' vs ')}\n` +
-                                   `Prize Pool: ${gpUtils.formatGP(challenge.getTotalWager())} | ` +
-                                   `${daysLeft}d left` +
-                                   (challenge.bets.length > 0 ? ` | Bets: ${gpUtils.formatGP(challenge.getTotalBets())}` : '');
-                        })
-                        .join('\n\n');
-                    
-                    embed.addFields({ 
-                        name: `🔥 Active Competition (${activeChallenges.length})`, 
-                        value: activeText,
-                        inline: false 
-                    });
-                }
+                embedColor = COLORS.NEUTRAL; // Gray for other statuses
             }
-
-            embed.addFields({ 
-                name: 'Create Your Own', 
-                value: 'Use `/arena` → "Create Challenge" to start a direct 1v1 challenge!',
-                inline: false 
-            });
             
-            this.directChallengesMessageId = await this.updateMessage('direct_challenges', { embeds: [embed] });
-        } catch (error) {
-            console.error('Error updating direct challenges:', error);
-        }
-    }
-
-    /**
-     * Update open challenges embed (blue)
-     */
-    async updateOpenChallenges() {
-        try {
-            const channel = await this.getChannel();
-            if (!channel) return;
-
-            // Get open challenges (active only)
-            const openChallenges = await ArenaChallenge.find({
-                type: 'open',
-                status: 'active'
-            }).sort({ createdAt: -1 }).limit(10);
-
-            // Create embed using standardized utility
-            const embed = createHeaderEmbed(
-                `🌍 Open Challenges (Free-for-All)`,
-                openChallenges.length === 0 ?
-                    'No open challenges at the moment.\n\n' +
-                    'Open challenges are competitions where anyone can join! ' +
-                    'Multiple players compete and the winner takes the entire prize pool.' :
-                    `Currently **${openChallenges.length}** open challenge(s) accepting participants.\n\n` +
-                    'Anyone can join these challenges! The more participants, the bigger the prize pool.',
-                {
-                    color: COLORS.PRIMARY, // Blue for open challenges
-                    timestamp: true
+            // Get game info for thumbnail
+            let thumbnailUrl = null;
+            try {
+                const gameInfo = await arenaUtils.getGameInfo(challenge.gameId);
+                if (gameInfo?.imageIcon) {
+                    thumbnailUrl = `https://retroachievements.org${gameInfo.imageIcon}`;
                 }
-            );
-
-            if (openChallenges.length === 0) {
-                embed.addFields({ 
-                    name: 'No Open Challenges', 
-                    value: 'Create an open challenge with `/arena` for everyone to join!',
-                    inline: false 
-                });
-            } else {
-                const challengeText = openChallenges
-                    .map(challenge => {
-                        const timeLeft = Math.max(0, challenge.endedAt.getTime() - Date.now());
-                        const daysLeft = Math.floor(timeLeft / (1000 * 60 * 60 * 24));
-                        const canJoin = challenge.canJoin() ? ' 🚀' : '';
-                        const canBet = challenge.canBet() ? ' 🎰' : '';
-                        
-                        return `**${challenge.challengeId}** - ${challenge.gameTitle}${canJoin}${canBet}\n` +
-                               `Created by: ${challenge.creatorRaUsername}\n` +
-                               `Participants: ${challenge.participants.length} | ` +
-                               `Prize Pool: ${gpUtils.formatGP(challenge.getTotalWager())}\n` +
-                               `Entry Fee: ${gpUtils.formatGP(challenge.participants[0]?.wager || 0)} | ` +
-                               `${daysLeft}d left` +
-                               (challenge.bets.length > 0 ? `\nBets: ${gpUtils.formatGP(challenge.getTotalBets())} from ${challenge.bets.length} bettor(s)` : '');
-                    })
-                    .join('\n\n');
-                
-                embed.addFields({ 
-                    name: `🎯 Join the Competition!`, 
-                    value: challengeText,
-                    inline: false 
-                });
-
-                // Add legend
-                embed.addFields({ 
-                    name: 'Symbols', 
-                    value: '🚀 = Can join | 🎰 = Can bet | Use `/arena challenge <id>` for details',
-                    inline: false 
-                });
+            } catch (error) {
+                console.error(`Error fetching game info for challenge ${challenge.challengeId}:`, error);
             }
-
-            embed.addFields({ 
-                name: 'Create Your Own', 
-                value: 'Use `/arena` → "Create Challenge" and leave target empty for an open challenge!',
-                inline: false 
-            });
             
-            this.openChallengesMessageId = await this.updateMessage('open_challenges', { embeds: [embed] });
-        } catch (error) {
-            console.error('Error updating open challenges:', error);
-        }
-    }
-
-    /**
-     * Update GP leaderboard embed (yellow) - STANDARDIZED TO MATCH ARCADE FEED
-     */
-    async updateGPLeaderboard() {
-        try {
-            const channel = await this.getChannel();
-            if (!channel) return;
-
-            // Get top 10 GP users (increased from 5 to match arcade feed style)
-            const gpLeaderboard = await gpUtils.getGPLeaderboard(10);
+            // Create clickable link to RetroAchievements leaderboard
+            const leaderboardUrl = `https://retroachievements.org/leaderboardinfo.php?i=${challenge.leaderboardId}`;
             
-            // Get system stats
-            const systemStats = await gpUtils.getSystemGPStats();
-
-            // Current timestamp in Discord format
-            const timestamp = getDiscordTimestamp(new Date());
-
-            // Create embed using standardized utility - MATCHING ARCADE FEED STYLE
+            // Determine title based on challenge type
+            const typeEmoji = challenge.type === 'direct' ? '⚔️' : '🌍';
+            const typeText = challenge.type === 'direct' ? 'Direct Challenge' : 'Open Challenge';
+            const statusEmoji = challenge.status === 'pending' ? '⏳' : '🔥';
+            
+            // Create embed using our utility functions
             const embed = createHeaderEmbed(
-                '🏆 GP Balance Leaderboard',
-                `**Top 10 users by current GP balance**\n\n` +
-                `Game Points (GP) are used to create challenges and place bets. ` +
-                `Everyone gets 1,000 GP free each month!\n\n` +
-                `**Last Updated:** ${timestamp}\n\n` +
-                `*Note: Only users with GP balances greater than 0 are shown.*`,
+                `${typeEmoji} ${typeText} - ${challenge.gameTitle}`,
+                `${statusEmoji} **${challenge.status.toUpperCase()}** | ${challenge.leaderboardTitle}\n\n` +
+                `**Description:** ${challenge.description || 'No description provided'}\n` +
+                `**Created by:** ${challenge.creatorRaUsername}\n` +
+                (challenge.type === 'direct' ? `**Opponent:** ${challenge.targetRaUsername || 'Unknown'}\n` : '') +
+                `**Wager:** ${challenge.participants[0]?.wager || 0} GP ${challenge.type === 'direct' ? 'each' : 'to join'}\n` +
+                `**Total Prize Pool:** ${challenge.getTotalWager()} GP`,
                 {
-                    color: COLORS.WARNING, // Yellow for leaderboard - matching arcade feed
-                    timestamp: true,
+                    color: embedColor,
+                    thumbnail: thumbnailUrl,
+                    url: leaderboardUrl,
                     footer: { 
-                        text: 'GP rankings update every 30 minutes • Use /arena for full leaderboards and stats'
+                        text: `Challenge ID: ${challenge.challengeId} • Data from RetroAchievements.org` 
                     }
                 }
             );
-
-            // STANDARDIZED LEADERBOARD FORMATTING - MATCHING ARCADE FEED EXACTLY
-            if (gpLeaderboard.length > 0) {
-                // Process leaderboard entries to match arcade feed format
-                const displayEntries = gpLeaderboard.slice(0, 10);
-                let leaderboardText = '';
+            
+            // Add timing information
+            let timingInfo = '';
+            if (challenge.status === 'pending') {
+                const timeoutDate = new Date(challenge.createdAt.getTime() + 24 * 60 * 60 * 1000);
+                const timeoutTimestamp = getDiscordTimestamp(timeoutDate, 'R');
+                timingInfo = `**Expires:** ${timeoutTimestamp} if not accepted`;
+            } else if (challenge.status === 'active') {
+                const endTimestamp = getDiscordTimestamp(challenge.endedAt, 'R');
+                const bettingEndTimestamp = getDiscordTimestamp(challenge.bettingClosedAt, 'R');
+                timingInfo = `**Challenge Ends:** ${endTimestamp}\n**Betting Closes:** ${bettingEndTimestamp}`;
+            }
+            
+            if (timingInfo) {
+                embed.addFields({ name: 'Timing', value: timingInfo });
+            }
+            
+            // Add participants information
+            if (challenge.participants.length > 0) {
+                let participantsText = '';
                 
-                displayEntries.forEach((user, index) => {
-                    const displayRank = index + 1;
-                    const medalEmoji = displayRank <= 3 ? EMOJIS[`RANK_${displayRank}`] : `${displayRank}.`;
-                    
-                    // Format additional info (win rate) similar to global rank in arcade
-                    const additionalInfo = user.winRate > 0 ? ` (Win Rate: ${user.winRate}%)` : '';
-                    
-                    // EXACT SAME FORMAT AS ARCADE FEED: emoji + username + score + additional info
-                    leaderboardText += `${medalEmoji} **${user.raUsername}**: ${gpUtils.formatGP(user.gpBalance)}${additionalInfo}\n`;
-                });
+                // If challenge is active, try to get current scores
+                if (challenge.status === 'active') {
+                    try {
+                        const participantUsernames = challenge.participants.map(p => p.raUsername);
+                        const currentScores = await arenaUtils.fetchLeaderboardScores(
+                            challenge.gameId,
+                            challenge.leaderboardId,
+                            participantUsernames
+                        );
+                        
+                        if (currentScores && currentScores.length > 0) {
+                            // Sort by rank (lower is better, null ranks go to end)
+                            currentScores.sort((a, b) => {
+                                if (a.rank === null && b.rank === null) return 0;
+                                if (a.rank === null) return 1;
+                                if (b.rank === null) return -1;
+                                return a.rank - b.rank;
+                            });
+                            
+                            currentScores.forEach((score, index) => {
+                                const rank = index + 1;
+                                const rankEmoji = rank <= 3 ? EMOJIS[`RANK_${rank}`] : `${rank}.`;
+                                const globalRank = score.rank ? ` (Global: #${score.rank})` : '';
+                                const scoreText = score.score !== 'No score' ? `: ${score.score}` : ': No score yet';
+                                
+                                participantsText += `${rankEmoji} **${score.raUsername}**${scoreText}${globalRank}\n`;
+                            });
+                        } else {
+                            // Fallback to participant list without scores
+                            challenge.participants.forEach((participant, index) => {
+                                const rank = index + 1;
+                                const rankEmoji = rank <= 3 ? EMOJIS[`RANK_${rank}`] : `${rank}.`;
+                                participantsText += `${rankEmoji} **${participant.raUsername}**: No score yet\n`;
+                            });
+                        }
+                    } catch (error) {
+                        console.error(`Error fetching scores for challenge ${challenge.challengeId}:`, error);
+                        // Fallback to participant list without scores
+                        challenge.participants.forEach((participant, index) => {
+                            const rank = index + 1;
+                            const rankEmoji = rank <= 3 ? EMOJIS[`RANK_${rank}`] : `${rank}.`;
+                            participantsText += `${rankEmoji} **${participant.raUsername}**: No score yet\n`;
+                        });
+                    }
+                } else {
+                    // For pending challenges, just list participants
+                    challenge.participants.forEach((participant, index) => {
+                        const number = index + 1;
+                        participantsText += `${number}. **${participant.raUsername}**\n`;
+                    });
+                }
                 
                 embed.addFields({ 
-                    name: 'Current Top 10', 
-                    value: leaderboardText,
-                    inline: false 
-                });
-                
-                // Add total participants count - matching arcade feed style
-                embed.addFields({ 
-                    name: 'Participants', 
-                    value: `${systemStats.usersWithGP} registered members have GP balances`
-                });
-            } else {
-                embed.addFields({ 
-                    name: 'No GP Rankings', 
-                    value: 'No users have GP balances yet. Claim your free 1,000 GP with `/arena claim`!',
-                    inline: false 
+                    name: `Participants (${challenge.participants.length})`, 
+                    value: participantsText || 'No participants yet'
                 });
             }
-
-            // Add system statistics - similar to arcade points summary
-            embed.addFields({
-                name: '📊 System Statistics',
-                value: 
-                    `**Total Users:** ${systemStats.totalUsers}\n` +
-                    `**Users with GP:** ${systemStats.usersWithGP}\n` +
-                    `**Total GP in Circulation:** ${gpUtils.formatGP(systemStats.totalGP)}\n` +
-                    `**Total Challenges Created:** ${systemStats.totalChallengesCreated}\n` +
-                    `**Average GP per User:** ${gpUtils.formatGP(systemStats.avgGP)}`,
-                inline: false
-            });
-
-            embed.addFields({ 
-                name: 'Claim Your GP', 
-                value: 'Use `/arena claim` to get your free 1,000 GP monthly allowance!',
-                inline: false 
-            });
             
-            this.leaderboardMessageId = await this.updateMessage('gp_leaderboard', { embeds: [embed] });
+            // Add betting information if there are bets
+            if (challenge.bets.length > 0) {
+                const totalBets = challenge.getTotalBets();
+                let bettingText = `**Total Betting Pool:** ${gpUtils.formatGP(totalBets)}\n`;
+                bettingText += `**Number of Bets:** ${challenge.bets.length}\n\n`;
+                
+                // Group bets by target
+                const betsByTarget = new Map();
+                challenge.bets.forEach(bet => {
+                    if (!betsByTarget.has(bet.targetRaUsername)) {
+                        betsByTarget.set(bet.targetRaUsername, []);
+                    }
+                    betsByTarget.get(bet.targetRaUsername).push(bet);
+                });
+                
+                // Show betting distribution
+                for (const [targetUser, bets] of betsByTarget.entries()) {
+                    const totalBetsOnUser = bets.reduce((sum, bet) => sum + bet.amount, 0);
+                    bettingText += `**${targetUser}:** ${gpUtils.formatGP(totalBetsOnUser)} (${bets.length} bet${bets.length !== 1 ? 's' : ''})\n`;
+                }
+                
+                embed.addFields({ name: 'Betting Pool', value: bettingText });
+            }
+            
+            // Use our base class updateMessage method
+            await this.updateMessage(
+                `challenge_${challenge.challengeId}`, 
+                { embeds: [embed] }
+            );
         } catch (error) {
-            console.error('Error updating GP leaderboard:', error);
+            console.error(`Error creating challenge embed for ${challenge.challengeId}:`, error);
         }
     }
 
     /**
-     * Override shouldClearOnStart to match arcade feed behavior
+     * Update the GP leaderboard embed at the bottom
      */
-    shouldClearOnStart() {
-        return true; // Clear the arena feed on startup like the arcade feed
-    }
-
-    /**
-     * Manual method to clear and reset the feed (for admin use)
-     */
-    async clearAndResetFeed() {
-        await this.clearChannel();
-        this.headerMessageId = null;
-        this.overviewMessageId = null;
-        this.directChallengesMessageId = null;
-        this.openChallengesMessageId = null;
-        this.leaderboardMessageId = null;
-        console.log('Arena feed cleared and reset');
+    async updateGPLeaderboardEmbed() {
+        try {
+            // Get GP leaderboard
+            const leaderboard = await gpUtils.getGPLeaderboard(15);
+            
+            if (!leaderboard || leaderboard.length === 0) {
+                return; // No GP data to display
+            }
+            
+            // Current timestamp in Discord format
+            const timestamp = getDiscordTimestamp(new Date());
+            
+            // Create the GP leaderboard embed
+            const embed = createHeaderEmbed(
+                '💰 GP (Game Points) Leaderboard',
+                `**Current GP standings for all arena participants**\n\n` +
+                `GP is earned by winning challenges and is automatically granted (1,000 GP) on the 1st of each month.\n\n` +
+                `**Last Updated:** ${timestamp} | **Updates:** Every 30 minutes\n\n` +
+                `*Use the </arena:1234567890> command to participate in challenges and earn GP.*`,
+                {
+                    color: COLORS.GOLD, // Use gold for GP leaderboard
+                    footer: { 
+                        text: 'GP balances update in real-time • Monthly GP grants are automatic' 
+                    }
+                }
+            );
+            
+            // Create the standings field
+            let standingsText = '';
+            
+            leaderboard.forEach(user => {
+                const rankEmoji = user.rank <= 3 ? EMOJIS[`RANK_${user.rank}`] : `${user.rank}.`;
+                standingsText += `${rankEmoji} **${user.raUsername}**: ${gpUtils.formatGP(user.gpBalance)}\n`;
+            });
+            
+            embed.addFields({ 
+                name: 'Current Standings', 
+                value: standingsText
+            });
+            
+            // Add system statistics
+            try {
+                const systemStats = await gpUtils.getSystemGPStats();
+                embed.addFields({
+                    name: 'System Statistics',
+                    value: 
+                        `**Total Users:** ${systemStats.totalUsers}\n` +
+                        `**Users with GP:** ${systemStats.usersWithGP}\n` +
+                        `**Total GP in Circulation:** ${gpUtils.formatGP(systemStats.totalGP)}\n` +
+                        `**Total Challenges Created:** ${systemStats.totalChallengesCreated || 0}`
+                });
+            } catch (error) {
+                console.error('Error fetching system GP stats:', error);
+            }
+            
+            // Update or create the GP leaderboard message
+            await this.updateMessage(
+                'gp_leaderboard',
+                { embeds: [embed] }
+            );
+        } catch (error) {
+            console.error('Error creating GP leaderboard embed:', error);
+        }
     }
 }
 
