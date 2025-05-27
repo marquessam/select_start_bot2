@@ -72,13 +72,10 @@ class ArenaAlertService extends FeedManagerBase {
             // Process each challenge
             for (const challenge of activeChallenges) {
                 try {
-                    // Check for new challenges
-                    if (sendAlerts && !this.processedChallenges.has(challenge.challengeId)) {
-                        await this.handleNewChallenge(challenge);
-                        this.processedChallenges.add(challenge.challengeId);
-                    }
+                    // NOTE: We DON'T check for new challenges here since immediate alerts
+                    // are sent directly from arenaService.js when challenges are created
                     
-                    // Check for participant changes and rank updates
+                    // Check for participant changes and rank updates (only for active challenges)
                     if (challenge.status === 'active') {
                         await this.checkChallengeRankChanges(challenge, alerts, sendAlerts);
                     }
@@ -104,56 +101,6 @@ class ArenaAlertService extends FeedManagerBase {
             
         } catch (error) {
             console.error('Error checking arena changes:', error);
-        }
-    }
-
-    async handleNewChallenge(challenge) {
-        try {
-            console.log(`New arena challenge detected: ${challenge.challengeId}`);
-            
-            // Get game info for thumbnail
-            let thumbnailUrl = null;
-            try {
-                const gameInfo = await arenaUtils.getGameInfo(challenge.gameId);
-                if (gameInfo?.imageIcon) {
-                    thumbnailUrl = `https://retroachievements.org${gameInfo.imageIcon}`;
-                }
-            } catch (error) {
-                console.error('Error fetching game info for new challenge alert:', error);
-            }
-            
-            // Determine alert title and description based on challenge type
-            let title, description;
-            if (challenge.type === 'direct') {
-                title = '⚔️ New Direct Challenge!';
-                description = `**${challenge.creatorRaUsername}** has challenged **${challenge.targetRaUsername}** to a duel!\n\n` +
-                             `**Game:** ${challenge.gameTitle}\n` +
-                             `**Leaderboard:** ${challenge.leaderboardTitle}\n` +
-                             `**Description:** ${challenge.description || 'No description provided'}\n` +
-                             `**Wager:** ${challenge.participants[0]?.wager || 0} GP each\n\n` +
-                             `The challenge expires in 24 hours if not accepted!`;
-            } else {
-                title = '🌍 New Open Challenge!';
-                description = `**${challenge.creatorRaUsername}** has created an open challenge for everyone!\n\n` +
-                             `**Game:** ${challenge.gameTitle}\n` +
-                             `**Leaderboard:** ${challenge.leaderboardTitle}\n` +
-                             `**Description:** ${challenge.description || 'No description provided'}\n` +
-                             `**Wager:** ${challenge.participants[0]?.wager || 0} GP to join\n\n` +
-                             `Anyone can join this challenge!`;
-            }
-            
-            // Send the new challenge alert using AlertUtils
-            await AlertUtils.sendPositionChangeAlert({
-                title: title,
-                description: description,
-                thumbnail: thumbnailUrl,
-                footer: { 
-                    text: `Challenge ID: ${challenge.challengeId} • Use /arena to participate` 
-                }
-            }, ALERT_TYPES.ARENA);
-            
-        } catch (error) {
-            console.error(`Error sending new challenge alert for ${challenge.challengeId}:`, error);
         }
     }
 
@@ -185,20 +132,6 @@ class ArenaAlertService extends FeedManagerBase {
             if (sendAlerts && previousScores) {
                 // Check for rank changes
                 await this.detectChallengeRankChanges(challenge, currentScores, previousScores, alerts);
-                
-                // Check for new participants (someone joined an open challenge)
-                const previousParticipants = new Set(previousScores.map(s => s.raUsername.toLowerCase()));
-                const currentParticipants = new Set(currentScores.map(s => s.raUsername.toLowerCase()));
-                
-                for (const currentUser of currentParticipants) {
-                    if (!previousParticipants.has(currentUser)) {
-                        // New participant joined!
-                        const userScore = currentScores.find(s => s.raUsername.toLowerCase() === currentUser);
-                        if (userScore) {
-                            await this.handleNewParticipant(challenge, userScore.raUsername);
-                        }
-                    }
-                }
             }
             
             // Update stored state
@@ -222,7 +155,7 @@ class ArenaAlertService extends FeedManagerBase {
                 currentRankMap.set(score.raUsername.toLowerCase(), score.rank);
             });
             
-            // Check for rank improvements or new leaders
+            // Check for rank improvements
             for (const currentScore of currentScores) {
                 const username = currentScore.raUsername.toLowerCase();
                 const prevRank = prevRankMap.get(username);
@@ -246,48 +179,10 @@ class ArenaAlertService extends FeedManagerBase {
                 }
             }
             
-            console.log(`Challenge ${challenge.challengeId}: ${alerts.length} rank changes detected`);
+            console.log(`Challenge ${challenge.challengeId}: ${alerts.filter(a => a.challengeId === challenge.challengeId).length} rank changes detected`);
             
         } catch (error) {
             console.error(`Error detecting rank changes for challenge ${challenge.challengeId}:`, error);
-        }
-    }
-
-    async handleNewParticipant(challenge, username) {
-        try {
-            console.log(`New participant joined challenge ${challenge.challengeId}: ${username}`);
-            
-            // Get game info for thumbnail
-            let thumbnailUrl = null;
-            try {
-                const gameInfo = await arenaUtils.getGameInfo(challenge.gameId);
-                if (gameInfo?.imageIcon) {
-                    thumbnailUrl = `https://retroachievements.org${gameInfo.imageIcon}`;
-                }
-            } catch (error) {
-                console.error('Error fetching game info for new participant alert:', error);
-            }
-            
-            const title = '👥 New Challenger Approaches!';
-            const description = `**${username}** has joined the arena challenge!\n\n` +
-                               `**Challenge:** ${challenge.gameTitle}\n` +
-                               `**Description:** ${challenge.description || 'No description provided'}\n` +
-                               `**Total Participants:** ${challenge.participants.length}\n` +
-                               `**Total Prize Pool:** ${challenge.getTotalWager()} GP\n\n` +
-                               `The competition heats up! 🔥`;
-            
-            // Send the new participant alert
-            await AlertUtils.sendPositionChangeAlert({
-                title: title,
-                description: description,
-                thumbnail: thumbnailUrl,
-                footer: { 
-                    text: `Challenge ID: ${challenge.challengeId} • Battle duration: 7 days` 
-                }
-            }, ALERT_TYPES.ARENA);
-            
-        } catch (error) {
-            console.error(`Error sending new participant alert for ${challenge.challengeId}:`, error);
         }
     }
 
