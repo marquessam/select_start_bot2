@@ -33,20 +33,11 @@ export async function handleArenaButtonInteraction(interaction) {
 
     try {
         switch (action) {
-            case 'create':
-                await handleCreateChallengeButton(interaction);
+            case 'quick':
+                await handleQuickActions(interaction, user, param);
                 break;
-            case 'view':
-                await handleViewActiveButton(interaction);
-                break;
-            case 'claim':
-                await handleClaimGPButton(interaction, user);
-                break;
-            case 'leaderboard':
-                await handleLeaderboardButton(interaction);
-                break;
-            case 'my':
-                await handleMyChallengesButton(interaction, user);
+            case 'refresh':
+                await handleRefreshMenu(interaction, user);
                 break;
             case 'accept':
                 await handleAcceptChallenge(interaction, user, param);
@@ -60,19 +51,10 @@ export async function handleArenaButtonInteraction(interaction) {
             case 'bet':
                 await handlePlaceBetButton(interaction, user, param);
                 break;
-            case 'refresh':
-                if (param === 'challenges' && interaction.member.roles.cache.has(process.env.ADMIN_ROLE_ID)) {
-                    await handleAdminRefreshChallenges(interaction);
-                }
-                break;
-            case 'check':
-                if (param === 'completed' && interaction.member.roles.cache.has(process.env.ADMIN_ROLE_ID)) {
-                    await handleAdminCheckCompleted(interaction);
-                }
-                break;
-            case 'process':
-                if (param === 'timeouts' && interaction.member.roles.cache.has(process.env.ADMIN_ROLE_ID)) {
-                    await handleAdminProcessTimeouts(interaction);
+            // Admin actions
+            case 'admin':
+                if (interaction.member.roles.cache.has(process.env.ADMIN_ROLE_ID)) {
+                    await handleAdminActions(interaction, param);
                 }
                 break;
             default:
@@ -105,13 +87,111 @@ export async function handleArenaModalSubmit(interaction) {
  * Handle arena-related select menu interactions
  */
 export async function handleArenaSelectMenu(interaction) {
-    if (interaction.customId === 'arena_leaderboard_select') {
+    if (interaction.customId === 'arena_action_select') {
+        await handleMainMenuSelect(interaction);
+    } else if (interaction.customId === 'arena_leaderboard_select') {
         await handleLeaderboardSelect(interaction);
+    } else if (interaction.customId === 'arena_betting_select') {
+        await handleBettingSelect(interaction);
     }
 }
 
-// Button handlers
-async function handleCreateChallengeButton(interaction) {
+// Quick action handlers
+async function handleQuickActions(interaction, user, action) {
+    const arenaCommand = await import('../commands/user/arena.js');
+    
+    switch (action) {
+        case 'create':
+            await showCreateChallengeModal(interaction);
+            break;
+        case 'claim':
+            await arenaCommand.default.handleClaimGP(interaction, user);
+            break;
+        case 'active':
+            await arenaCommand.default.handleViewActive(interaction);
+            break;
+        default:
+            await interaction.reply({
+                content: 'Unknown quick action.',
+                ephemeral: true
+            });
+    }
+}
+
+async function handleRefreshMenu(interaction, user) {
+    const arenaCommand = await import('../commands/user/arena.js');
+    await interaction.deferUpdate();
+    
+    // Update the user data
+    const updatedUser = await User.findOne({ discordId: interaction.user.id });
+    
+    // Use a mock interaction object to call showArenaMenu
+    const mockInteraction = {
+        ...interaction,
+        reply: (options) => interaction.editReply(options)
+    };
+    
+    await arenaCommand.default.showArenaMenu(mockInteraction, updatedUser);
+}
+
+// Main menu select handler
+async function handleMainMenuSelect(interaction) {
+    const action = interaction.values[0];
+    
+    let user = await User.findOne({ discordId: interaction.user.id });
+    const arenaCommand = await import('../commands/user/arena.js');
+
+    try {
+        switch (action) {
+            case 'create_challenge':
+                await showCreateChallengeModal(interaction);
+                break;
+            case 'view_active':
+                await arenaCommand.default.handleViewActive(interaction);
+                break;
+            case 'my_challenges':
+                await arenaCommand.default.handleHistory(interaction, user);
+                break;
+            case 'browse_betting':
+                await showBettingOptions(interaction);
+                break;
+            case 'claim_gp':
+                await arenaCommand.default.handleClaimGP(interaction, user);
+                break;
+            case 'view_balance':
+                await arenaCommand.default.handleBalance(interaction, user);
+                break;
+            case 'leaderboards':
+                await arenaCommand.default.handleLeaderboard(interaction);
+                break;
+            case 'help':
+                await arenaCommand.default.handleHelp(interaction);
+                break;
+            default:
+                await interaction.reply({
+                    content: 'Unknown action selected.',
+                    ephemeral: true
+                });
+        }
+    } catch (error) {
+        console.error('Error handling menu selection:', error);
+        await interaction.reply({
+            content: 'An error occurred processing your selection. Please try again.',
+            ephemeral: true
+        });
+    }
+}
+
+// Leaderboard select handler
+async function handleLeaderboardSelect(interaction) {
+    const type = interaction.values[0];
+    const arenaCommand = await import('../commands/user/arena.js');
+    
+    await arenaCommand.default.displayLeaderboard(interaction, type);
+}
+
+// Show create challenge modal
+async function showCreateChallengeModal(interaction) {
     const modal = new ModalBuilder()
         .setCustomId('arena_create_modal')
         .setTitle('Create Arena Challenge');
@@ -154,169 +234,133 @@ async function handleCreateChallengeButton(interaction) {
     await interaction.showModal(modal);
 }
 
-async function handleViewActiveButton(interaction) {
+// Show betting options
+async function showBettingOptions(interaction) {
     await interaction.deferReply({ ephemeral: true });
 
     try {
-        const activeChallenges = await arenaService.getActiveChallenges(5);
-        
+        const activeChallenges = await ArenaChallenge.find({
+            status: 'active',
+            bettingClosedAt: { $gt: new Date() }
+        }).limit(10);
+
+        if (activeChallenges.length === 0) {
+            return interaction.editReply({
+                content: '🎰 **No Betting Opportunities**\n\nThere are currently no active challenges accepting bets. Check back later or create your own challenge!'
+            });
+        }
+
+        const selectMenu = new StringSelectMenuBuilder()
+            .setCustomId('arena_betting_select')
+            .setPlaceholder('Choose a challenge to bet on...')
+            .addOptions(
+                activeChallenges.map(challenge => ({
+                    label: `${challenge.gameTitle} (${challenge.participants.length} players)`,
+                    description: `Wager pool: ${challenge.getTotalWager()} GP | Ends in ${Math.ceil((challenge.endedAt - new Date()) / (1000 * 60 * 60 * 24))} days`,
+                    value: challenge.challengeId,
+                    emoji: '🎰'
+                }))
+            );
+
+        const row = new ActionRowBuilder().addComponents(selectMenu);
+
         const embed = new EmbedBuilder()
-            .setTitle('🔥 Active Challenges')
-            .setDescription('Current pending and active challenges')
+            .setTitle('🎰 Available Betting Opportunities')
+            .setDescription(
+                `Select a challenge below to place your bet!\n\n` +
+                `**How Betting Works:**\n` +
+                `• Bet on who you think will win\n` +
+                `• Winners split losing bets proportionally\n` +
+                `• House guarantees 50% profit for sole bettors\n` +
+                `• Betting closes 3 days after challenge start`
+            )
             .setColor('#FF6600')
             .setTimestamp();
 
-        if (activeChallenges.length === 0) {
-            embed.addFields({ 
-                name: 'No Active Challenges', 
-                value: 'No challenges are currently active. Create one!', 
-                inline: false 
-            });
-        } else {
-            for (const challenge of activeChallenges) {
-                const description = arenaUtils.formatChallengeDisplay(challenge);
-                embed.addFields({
-                    name: `${challenge.challengeId} - ${challenge.gameTitle}`,
-                    value: description,
-                    inline: false
-                });
-            }
-        }
-
-        await interaction.editReply({ embeds: [embed] });
-    } catch (error) {
-        console.error('Error fetching active challenges:', error);
-        await interaction.editReply({ content: 'Error fetching active challenges.' });
-    }
-}
-
-async function handleClaimGPButton(interaction, user) {
-    try {
-        const result = await gpUtils.claimMonthlyGP(user);
-        
-        const embed = new EmbedBuilder()
-            .setTitle('🎁 Monthly GP Claimed!')
-            .setDescription(
-                `You've successfully claimed your monthly GP allowance!\n\n` +
-                `💰 **Amount Received:** ${gpUtils.formatGP(result.amount)}\n` +
-                `💳 **New Balance:** ${gpUtils.formatGP(result.newBalance)}\n\n` +
-                `You can claim your next allowance at the start of next month.`
-            )
-            .setColor('#00FF00')
-            .setTimestamp();
-
-        await interaction.reply({ embeds: [embed], ephemeral: true });
-    } catch (error) {
-        const embed = new EmbedBuilder()
-            .setTitle('❌ GP Claim Failed')
-            .setDescription(error.message)
-            .setColor('#FF0000');
-
-        await interaction.reply({ embeds: [embed], ephemeral: true });
-    }
-}
-
-async function handleLeaderboardButton(interaction) {
-    const selectMenu = new StringSelectMenuBuilder()
-        .setCustomId('arena_leaderboard_select')
-        .setPlaceholder('Choose leaderboard type')
-        .addOptions([
-            {
-                label: 'GP Balance',
-                description: 'Top users by current GP balance',
-                value: 'gp',
-                emoji: '💰'
-            },
-            {
-                label: 'Challenges Won',
-                description: 'Top users by challenges won',
-                value: 'wins',
-                emoji: '🏆'
-            },
-            {
-                label: 'Total GP Won',
-                description: 'Top users by total GP won',
-                value: 'total_won',
-                emoji: '💎'
-            },
-            {
-                label: 'Bet Win Rate',
-                description: 'Top users by betting success',
-                value: 'bet_rate',
-                emoji: '🎰'
-            }
-        ]);
-
-    const row = new ActionRowBuilder().addComponents(selectMenu);
-
-    await interaction.reply({
-        content: 'Select which leaderboard you\'d like to view:',
-        components: [row],
-        ephemeral: true
-    });
-}
-
-async function handleMyChallengesButton(interaction, user) {
-    await interaction.deferReply({ ephemeral: true });
-
-    try {
-        const challenges = await arenaService.getUserChallenges(user.discordId, 10);
-        
-        const embed = new EmbedBuilder()
-            .setTitle('📋 Your Challenge History')
-            .setDescription(`Recent challenges for **${user.raUsername}**`)
-            .setColor('#0099FF')
-            .setTimestamp();
-
-        if (challenges.length === 0) {
-            embed.addFields({ 
-                name: 'No Challenges', 
-                value: 'You haven\'t participated in any challenges yet.', 
-                inline: false 
-            });
-        } else {
-            for (const challenge of challenges) {
-                const statusEmoji = {
-                    'pending': '⏳',
-                    'active': '🔥',
-                    'completed': '✅',
-                    'cancelled': '❌'
-                };
-
-                let resultText = '';
-                if (challenge.status === 'completed') {
-                    if (challenge.winnerUserId === user.discordId) {
-                        resultText = ' 🏆 **WON**';
-                    } else if (challenge.winnerUserId) {
-                        resultText = ' 😔 Lost';
-                    } else {
-                        resultText = ' 🤝 No winner';
-                    }
-                }
-
-                const value = 
-                    `${statusEmoji[challenge.status]} **${challenge.gameTitle}**${resultText}\n` +
-                    `Type: ${challenge.type === 'direct' ? 'Direct' : 'Open'} | ` +
-                    `Wager: ${challenge.participants.find(p => p.userId === user.discordId)?.wager || 0} GP\n` +
-                    `Created: ${challenge.createdAt.toLocaleDateString()}`;
-
-                embed.addFields({
-                    name: challenge.challengeId,
-                    value: value,
-                    inline: true
-                });
-            }
-        }
-
-        await interaction.editReply({ embeds: [embed] });
-    } catch (error) {
-        console.error('Error fetching user challenge history:', error);
         await interaction.editReply({
-            content: 'An error occurred while fetching your challenge history.'
+            embeds: [embed],
+            components: [row]
+        });
+    } catch (error) {
+        console.error('Error showing betting options:', error);
+        await interaction.editReply({
+            content: 'An error occurred while loading betting options. Please try again.'
         });
     }
 }
 
+// Handle betting challenge selection
+async function handleBettingSelect(interaction) {
+    const challengeId = interaction.values[0];
+    
+    const challenge = await ArenaChallenge.findOne({ challengeId });
+    if (!challenge) {
+        return interaction.reply({
+            content: '❌ Challenge not found.',
+            ephemeral: true
+        });
+    }
+
+    if (!challenge.canBet()) {
+        return interaction.reply({
+            content: '❌ Betting is closed for this challenge.',
+            ephemeral: true
+        });
+    }
+
+    // Check if user is a participant
+    if (challenge.isParticipant(interaction.user.id)) {
+        return interaction.reply({
+            content: '❌ You cannot bet on a challenge you\'re participating in.',
+            ephemeral: true
+        });
+    }
+
+    // Show betting modal
+    const modal = new ModalBuilder()
+        .setCustomId(`arena_bet_modal_${challengeId}`)
+        .setTitle(`Bet on: ${challenge.gameTitle}`);
+
+    const amountInput = new TextInputBuilder()
+        .setCustomId('bet_amount')
+        .setLabel('Bet Amount (GP)')
+        .setStyle(TextInputStyle.Short)
+        .setPlaceholder('e.g., 50')
+        .setRequired(true);
+
+    const participantsList = challenge.participants
+        .map(p => p.raUsername)
+        .join(', ');
+
+    const targetInput = new TextInputBuilder()
+        .setCustomId('bet_target')
+        .setLabel('Bet On (RetroAchievements username)')
+        .setStyle(TextInputStyle.Short)
+        .setPlaceholder(`Choose from: ${participantsList}`)
+        .setRequired(true);
+
+    const infoInput = new TextInputBuilder()
+        .setCustomId('bet_info')
+        .setLabel('Challenge Info (READ ONLY)')
+        .setStyle(TextInputStyle.Paragraph)
+        .setValue(
+            `Game: ${challenge.gameTitle}\n` +
+            `Participants: ${participantsList}\n` +
+            `Total Wager Pool: ${challenge.getTotalWager()} GP\n` +
+            `Betting closes: ${challenge.bettingClosedAt.toLocaleDateString()}`
+        )
+        .setRequired(false);
+
+    const firstRow = new ActionRowBuilder().addComponents(amountInput);
+    const secondRow = new ActionRowBuilder().addComponents(targetInput);
+    const thirdRow = new ActionRowBuilder().addComponents(infoInput);
+
+    modal.addComponents(firstRow, secondRow, thirdRow);
+
+    await interaction.showModal(modal);
+}
+
+// Challenge action handlers
 async function handleAcceptChallenge(interaction, user, challengeId) {
     await interaction.deferReply({ ephemeral: true });
 
@@ -353,8 +397,6 @@ async function handleDeclineChallenge(interaction, user, challengeId) {
             return interaction.editReply('❌ Challenge not found.');
         }
 
-        // Instead of a full decline system, we'll just inform the user
-        // The challenge will timeout after 24 hours automatically
         await interaction.editReply({
             content: `❌ Challenge declined. The challenge will automatically timeout and refund the creator if not accepted within 24 hours.`
         });
@@ -394,112 +436,8 @@ async function handleJoinChallenge(interaction, user, challengeId) {
 }
 
 async function handlePlaceBetButton(interaction, user, challengeId) {
-    const challenge = await arenaService.getChallengeById(challengeId);
-    if (!challenge) {
-        return interaction.reply({
-            content: '❌ Challenge not found.',
-            ephemeral: true
-        });
-    }
-
-    if (!challenge.canBet()) {
-        return interaction.reply({
-            content: '❌ Betting is closed for this challenge.',
-            ephemeral: true
-        });
-    }
-
-    // Create modal for betting
-    const modal = new ModalBuilder()
-        .setCustomId(`arena_bet_modal_${challengeId}`)
-        .setTitle('Place Bet');
-
-    const amountInput = new TextInputBuilder()
-        .setCustomId('bet_amount')
-        .setLabel('Bet Amount (GP)')
-        .setStyle(TextInputStyle.Short)
-        .setPlaceholder('e.g., 50')
-        .setRequired(true);
-
-    const targetInput = new TextInputBuilder()
-        .setCustomId('bet_target')
-        .setLabel('Bet On (RetroAchievements username)')
-        .setStyle(TextInputStyle.Short)
-        .setPlaceholder('Choose from: ' + challenge.participants.map(p => p.raUsername).join(', '))
-        .setRequired(true);
-
-    const firstRow = new ActionRowBuilder().addComponents(amountInput);
-    const secondRow = new ActionRowBuilder().addComponents(targetInput);
-
-    modal.addComponents(firstRow, secondRow);
-
-    await interaction.showModal(modal);
-}
-
-// Admin button handlers
-async function handleAdminRefreshChallenges(interaction) {
-    await interaction.deferUpdate();
-    
-    // Re-execute the challenges view command
-    try {
-        const mockInteraction = {
-            ...interaction,
-            options: {
-                getString: () => 'all'
-            },
-            deferReply: () => Promise.resolve(),
-            editReply: (options) => interaction.editReply(options)
-        };
-        
-        // This would need to be imported from the admin command
-        // For now, just send a simple update message
-        await interaction.editReply({
-            content: '🔄 Challenges refreshed! Use `/adminarena challenges` to see updated list.',
-            components: []
-        });
-    } catch (error) {
-        console.error('Error refreshing challenges:', error);
-        await interaction.editReply({
-            content: '❌ Error refreshing challenges.',
-            components: []
-        });
-    }
-}
-
-async function handleAdminCheckCompleted(interaction) {
-    await interaction.deferUpdate();
-    
-    try {
-        await arenaService.checkCompletedChallenges();
-        await interaction.editReply({
-            content: '✅ Completed challenges check executed. Check console for results.',
-            components: []
-        });
-    } catch (error) {
-        console.error('Error checking completed challenges:', error);
-        await interaction.editReply({
-            content: '❌ Error checking completed challenges.',
-            components: []
-        });
-    }
-}
-
-async function handleAdminProcessTimeouts(interaction) {
-    await interaction.deferUpdate();
-    
-    try {
-        await arenaService.checkAndProcessTimeouts();
-        await interaction.editReply({
-            content: '✅ Timeout processing executed. Check console for results.',
-            components: []
-        });
-    } catch (error) {
-        console.error('Error processing timeouts:', error);
-        await interaction.editReply({
-            content: '❌ Error processing timeouts.',
-            components: []
-        });
-    }
+    // This is called from challenge detail views
+    await showBettingOptions(interaction);
 }
 
 // Modal submission handlers
@@ -602,102 +540,20 @@ async function handlePlaceBetModal(interaction) {
     }
 }
 
-// Select menu handlers
-async function handleLeaderboardSelect(interaction) {
-    await interaction.deferUpdate();
-    
-    const type = interaction.values[0];
-    
-    try {
-        let leaderboard, title, description;
-
-        switch (type) {
-            case 'gp':
-                leaderboard = await gpUtils.getGPLeaderboard(10);
-                title = '💰 GP Balance Leaderboard';
-                description = 'Top users by current GP balance';
-                break;
-            case 'wins':
-                leaderboard = await gpUtils.getArenaStatsLeaderboard('challengesWon', 10);
-                title = '🏆 Challenge Winners Leaderboard';
-                description = 'Top users by challenges won';
-                break;
-            case 'total_won':
-                leaderboard = await gpUtils.getArenaStatsLeaderboard('totalGpWon', 10);
-                title = '💎 Total GP Won Leaderboard';
-                description = 'Top users by total GP won from challenges';
-                break;
-            case 'bet_rate':
-                leaderboard = await gpUtils.getArenaStatsLeaderboard('betsWon', 10);
-                title = '🎰 Betting Champions Leaderboard';
-                description = 'Top users by betting success';
-                break;
-            default:
-                leaderboard = await gpUtils.getGPLeaderboard(10);
-                title = '💰 GP Balance Leaderboard';
-                description = 'Top users by current GP balance';
-        }
-
-        const embed = new EmbedBuilder()
-            .setTitle(title)
-            .setDescription(description)
-            .setColor('#FFD700')
-            .setTimestamp();
-
-        if (leaderboard.length === 0) {
-            embed.addFields({ 
-                name: 'No Data', 
-                value: 'No users found for this leaderboard.', 
-                inline: false 
+// Admin handlers
+async function handleAdminActions(interaction, action) {
+    // Basic admin action handling
+    switch (action) {
+        case 'refresh':
+            await interaction.update({
+                content: '🔄 Refreshed! Use `/adminarena` commands for detailed admin functions.',
+                components: []
             });
-        } else {
-            const leaderboardText = leaderboard
-                .map(user => {
-                    const medal = user.rank === 1 ? '🥇' : user.rank === 2 ? '🥈' : user.rank === 3 ? '🥉' : `${user.rank}.`;
-                    
-                    switch (type) {
-                        case 'gp':
-                            return `${medal} **${user.raUsername}** - ${gpUtils.formatGP(user.gpBalance)}`;
-                        case 'wins':
-                            return `${medal} **${user.raUsername}** - ${user.challengesWon} wins (${user.winRate}% win rate)`;
-                        case 'total_won':
-                            return `${medal} **${user.raUsername}** - ${gpUtils.formatGP(user.totalGpWon)} total won`;
-                        case 'bet_rate':
-                            return `${medal} **${user.raUsername}** - ${user.betsWon}/${user.betsPlaced} bets (${user.betWinRate}%)`;
-                        default:
-                            return `${medal} **${user.raUsername}** - ${gpUtils.formatGP(user.gpBalance)}`;
-                    }
-                })
-                .join('\n');
-
-            embed.addFields({ 
-                name: 'Rankings', 
-                value: leaderboardText, 
-                inline: false 
+            break;
+        default:
+            await interaction.reply({
+                content: 'Use `/adminarena` for admin functions.',
+                ephemeral: true
             });
-        }
-
-        // Add system stats
-        const systemStats = await gpUtils.getSystemGPStats();
-        embed.addFields({
-            name: '📊 System Statistics',
-            value: 
-                `Total Users: ${systemStats.totalUsers}\n` +
-                `Users with GP: ${systemStats.usersWithGP}\n` +
-                `Total GP in circulation: ${gpUtils.formatGP(systemStats.totalGP)}\n` +
-                `Total challenges created: ${systemStats.totalChallengesCreated}`,
-            inline: false
-        });
-
-        await interaction.editReply({ 
-            embeds: [embed],
-            components: [] // Remove the select menu after selection
-        });
-    } catch (error) {
-        console.error('Error fetching leaderboard:', error);
-        await interaction.editReply({
-            content: 'An error occurred while fetching the leaderboard. Please try again.',
-            components: []
-        });
     }
 }
