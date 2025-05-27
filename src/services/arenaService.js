@@ -1,4 +1,4 @@
-// src/services/arenaService.js
+// src/services/arenaService.js - UPDATED createChallenge method
 import { ArenaChallenge } from '../models/ArenaChallenge.js';
 import { User } from '../models/User.js';
 import { config } from '../config/config.js';
@@ -32,9 +32,9 @@ class ArenaService {
     }
 
     /**
-     * Create a new arena challenge
+     * Create a new arena challenge - UPDATED to accept description
      */
-    async createChallenge(creatorUser, gameInfo, leaderboardInfo, wager, targetRaUsername = null, discordUsername = null) {
+    async createChallenge(creatorUser, gameInfo, leaderboardInfo, wager, targetRaUsername = null, discordUsername = null, description = '') {
         try {
             // Validate creator has enough GP
             if (!creatorUser.hasEnoughGp(wager)) {
@@ -55,7 +55,8 @@ class ArenaService {
             const challengeId = this.generateChallengeId();
             const type = targetRaUsername ? 'direct' : 'open';
             const now = new Date();
-            // Create challenge with proper field mapping
+            
+            // Create challenge with proper field mapping including description
             const challenge = new ArenaChallenge({
                 challengeId,
                 type,
@@ -64,15 +65,16 @@ class ArenaService {
                 gameTitle: gameInfo.title || gameInfo.Title,
                 leaderboardId: leaderboardInfo.id || leaderboardInfo.ID,
                 leaderboardTitle: leaderboardInfo.title || leaderboardInfo.Title,
+                description: description || '', // NEW: Set description field
                 creatorId: creatorUser.discordId,
-                creatorUsername: discordUsername || creatorUser.username || 'Unknown', // FIX: Set creatorUsername
+                creatorUsername: discordUsername || creatorUser.username || 'Unknown',
                 creatorRaUsername: creatorUser.raUsername,
                 targetId: targetUser?.discordId || null,
                 targetUsername: targetUser?.username || null,
                 targetRaUsername: targetRaUsername || null,
                 participants: [{
                     userId: creatorUser.discordId,
-                    username: discordUsername || creatorUser.username || 'Unknown', // FIX: Use Discord username
+                    username: discordUsername || creatorUser.username || 'Unknown',
                     raUsername: creatorUser.raUsername,
                     wager,
                     joinedAt: now
@@ -531,6 +533,11 @@ class ArenaService {
                     { name: 'Game', value: challenge.gameTitle, inline: true },
                     { name: 'Leaderboard', value: challenge.leaderboardTitle, inline: true }
                 );
+
+            // Add description if available
+            if (challenge.description) {
+                embed.addFields({ name: 'Description', value: challenge.description, inline: false });
+            }
 
             if (winner) {
                 embed.addFields(
