@@ -15,9 +15,10 @@ import arcadeAlertService from './services/arcadeAlertService.js';
 import arcadeFeedService from './services/arcadeFeedService.js';
 import membershipCheckService from './services/membershipCheckService.js';
 import arenaService from './services/arenaService.js';
+import arenaAlertService from './services/arenaAlertService.js';
 import arenaFeedService from './services/arenaFeedService.js';
 import gameAwardService from './services/gameAwardService.js';
-import monthlyGPService from './services/monthlyGPService.js'; // NEW: Import monthly GP service
+import monthlyGPService from './services/monthlyGPService.js';
 import { User } from './models/User.js';
 
 // Import nomination and restriction handlers
@@ -360,10 +361,11 @@ client.once(Events.ClientReady, async () => {
         arcadeFeedService.setClient(client);
         membershipCheckService.setClient(client);
         arenaService.setClient(client);
+        arenaAlertService.setClient(client);
         arenaFeedService.setClient(client);
         gameAwardService.setClient(client);
 
-        // START NEW MONTHLY GP SERVICE
+        // START MONTHLY GP SERVICE
         monthlyGPService.start();
         console.log('✅ Monthly GP Service initialized - automatic grants on 1st of each month');
 
@@ -435,11 +437,11 @@ client.once(Events.ClientReady, async () => {
             });
         });
 
-        // Schedule arena feed updates every hour
-        cron.schedule('15 * * * *', () => { // Runs at 15 minutes past every hour
-            console.log('Running arena feed update...');
-            arenaService.updateArenaFeeds().catch(error => {
-                console.error('Error in arena feed update:', error);
+        // Schedule arena alert checks every 15 minutes
+        cron.schedule('*/15 * * * *', () => {
+            console.log('Running arena alerts check...');
+            arenaAlertService.update().catch(error => {
+                console.error('Error in arena alerts check:', error);
             });
         });
 
@@ -601,6 +603,9 @@ client.once(Events.ClientReady, async () => {
         // Start the arena service
         await arenaService.start();
         
+        // Start the arena alert service
+        await arenaAlertService.start();
+        
         // Start the arena feed service
         await arenaFeedService.start();
         
@@ -619,11 +624,12 @@ client.once(Events.ClientReady, async () => {
         console.log('  • Stats updates: Every 30 minutes');
         console.log('  • Achievement feeds: Every 15 minutes');
         console.log('  • Arena completed challenges: Every 15 minutes');
+        console.log('  • Arena alerts: Every 15 minutes');
         console.log('  • Monthly GP grants: Automatic on 1st of each month');
         console.log('  • Weekly comprehensive yearly sync: Sundays at 3:00 AM');
         console.log('  • Monthly tasks: 1st of each month');
         console.log('  • Arcade service: Daily at 12:15 AM');
-        console.log('  • Arena feeds: Hourly at 15 minutes past');
+        console.log('  • Arena feeds: Every 30 minutes');
         console.log('  • Arena timeouts: Hourly at 45 minutes past');
         console.log('  • Various other feeds: Hourly');
         
