@@ -901,6 +901,9 @@ export default {
                 case 'stats':
                     await this.handleSystemStatus(interaction);
                     break;
+                       case 'reset_system':  // <-- ADD THIS CASE
+                    await this.systemResetEntireSystem(interaction);
+                    break;
                 default:
                     await interaction.editReply('Invalid system action specified.');
             }
