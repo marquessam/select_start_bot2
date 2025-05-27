@@ -30,6 +30,13 @@ import {
     handleRestrictionSelectMenu 
 } from './handlers/restrictionHandlers.js';
 
+// Import arena handlers
+import { 
+    handleArenaButtonInteraction, 
+    handleArenaModalSubmit, 
+    handleArenaSelectMenu 
+} from './handlers/arenaHandlers.js';
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // Validate environment variables
@@ -117,6 +124,12 @@ client.on(Events.InteractionCreate, async interaction => {
             return;
         }
         
+        // Check if this is an arena-related button
+        if (interaction.customId.startsWith('arena_') || interaction.customId.startsWith('admin_arena_')) {
+            await handleArenaButtonInteraction(interaction);
+            return;
+        }
+        
         // Handle other button interactions
         const commandName = interaction.customId.split('_')[0];
         const command = client.commands.get(commandName);
@@ -157,6 +170,12 @@ client.on(Events.InteractionCreate, async interaction => {
             return;
         }
         
+        // Check if this is an arena-related select menu
+        if (interaction.customId.startsWith('arena_')) {
+            await handleArenaSelectMenu(interaction);
+            return;
+        }
+        
         // Handle other select menu interactions
         const commandName = interaction.customId.split('_')[0];
         const command = client.commands.get(commandName);
@@ -194,6 +213,12 @@ client.on(Events.InteractionCreate, async interaction => {
         // Check if this is a restriction-related modal
         if (interaction.customId.startsWith('restrictions_')) {
             await handleRestrictionModalSubmit(interaction);
+            return;
+        }
+        
+        // Check if this is an arena-related modal
+        if (interaction.customId.startsWith('arena_')) {
+            await handleArenaModalSubmit(interaction);
             return;
         }
         
@@ -450,8 +475,8 @@ client.once(Events.ClientReady, async () => {
             });
         });
 
-        // Schedule completed arena challenges check every hour at 30 minutes past
-        cron.schedule('30 * * * *', () => {
+        // Schedule completed arena challenges check every 15 minutes
+        cron.schedule('*/15 * * * *', () => {
             console.log('Running arena completed challenges check...');
             arenaService.checkCompletedChallenges().catch(error => {
                 console.error('Error in arena completed challenges check:', error);
@@ -617,11 +642,11 @@ client.once(Events.ClientReady, async () => {
         console.log('📅 Scheduled tasks:');
         console.log('  • Stats updates: Every 30 minutes');
         console.log('  • Achievement feeds: Every 15 minutes');
+        console.log('  • Arena completed challenges: Every 15 minutes');
         console.log('  • Weekly comprehensive yearly sync: Sundays at 3:00 AM');
         console.log('  • Monthly tasks: 1st of each month');
         console.log('  • Arcade service: Daily at 12:15 AM');
         console.log('  • Arena feeds: Hourly at 15 minutes past');
-        console.log('  • Arena completed challenges: Hourly at 30 minutes past');
         console.log('  • Arena timeouts: Hourly at 45 minutes past');
         console.log('  • Various other feeds: Hourly');
         
