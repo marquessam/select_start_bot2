@@ -134,10 +134,11 @@ export default {
                     .setEmoji('🔄')
             );
 
+        // Make the response ephemeral (only visible to the user who used the command)
         await interaction.reply({
             embeds: [embed],
             components: [row, quickButtons],
-            ephemeral: false
+            ephemeral: true // This makes it only visible to the user
         });
     },
 
