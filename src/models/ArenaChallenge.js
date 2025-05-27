@@ -146,8 +146,7 @@ const arenaChallengeSchema = new mongoose.Schema({
     timestamps: true
 });
 
-// Indexes for efficient queries
-arenaChallengeSchema.index({ challengeId: 1 });
+// Indexes for efficient queries (removed duplicate challengeId index since it's already unique)
 arenaChallengeSchema.index({ status: 1 });
 arenaChallengeSchema.index({ creatorId: 1 });
 arenaChallengeSchema.index({ 'participants.userId': 1 });
