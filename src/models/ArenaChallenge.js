@@ -37,6 +37,13 @@ const arenaChallengeSchema = new mongoose.Schema({
         required: true
     },
     
+    // NEW: Challenge description field
+    description: {
+        type: String,
+        default: '',
+        maxlength: 200 // Limit to 200 characters to keep it concise
+    },
+    
     // Creator info
     creatorId: {
         type: String,
@@ -146,7 +153,7 @@ const arenaChallengeSchema = new mongoose.Schema({
     timestamps: true
 });
 
-// Indexes for efficient queries (removed duplicate challengeId index since it's already unique)
+// Indexes for efficient queries
 arenaChallengeSchema.index({ status: 1 });
 arenaChallengeSchema.index({ creatorId: 1 });
 arenaChallengeSchema.index({ 'participants.userId': 1 });
