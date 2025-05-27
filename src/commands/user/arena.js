@@ -36,6 +36,11 @@ export default {
         const activeChallenges = await arenaService.getActiveChallenges(5);
         const userChallenges = await arenaService.getUserChallenges(user.discordId, 3);
         
+        // Format last GP grant date
+        const lastGrantText = user.lastMonthlyGpGrant 
+            ? user.lastMonthlyGpGrant.toLocaleDateString()
+            : 'Never';
+        
         const embed = new EmbedBuilder()
             .setTitle('🏟️ Welcome to the Arena!')
             .setDescription(
@@ -43,7 +48,8 @@ export default {
                 `💰 **Your GP Balance:** ${gpUtils.formatGP(user.gpBalance || 0)}\n` +
                 `🏆 **Challenges Won:** ${user.arenaStats?.challengesWon || 0}\n` +
                 `🎯 **Win Rate:** ${user.getGpWinRate()}%\n` +
-                `📊 **Monthly Claim:** ${user.canClaimMonthlyGp() ? '✅ Available (1,000 GP)' : '❌ Already claimed'}\n\n` +
+                `📅 **Last GP Grant:** ${lastGrantText}\n` +
+                `🎁 **Next GP Grant:** Automatic on 1st of next month\n\n` +
                 `🔥 **Active Challenges:** ${activeChallenges.length}\n` +
                 `📋 **Your Active:** ${userChallenges.filter(c => c.status === 'active' || c.status === 'pending').length}\n\n` +
                 `Select an action from the menu below:`
@@ -81,12 +87,6 @@ export default {
                     emoji: '🎰'
                 },
                 {
-                    label: 'Claim Monthly GP',
-                    description: 'Claim your 1,000 GP monthly allowance',
-                    value: 'claim_gp',
-                    emoji: '🎁'
-                },
-                {
                     label: 'View Balance & Transactions',
                     description: 'Check your GP balance and transaction history',
                     value: 'view_balance',
@@ -108,7 +108,7 @@ export default {
 
         const row = new ActionRowBuilder().addComponents(selectMenu);
 
-        // Quick action buttons for the most common actions
+        // Quick action buttons (removed claim button)
         const quickButtons = new ActionRowBuilder()
             .addComponents(
                 new ButtonBuilder()
@@ -116,12 +116,6 @@ export default {
                     .setLabel('Quick Challenge')
                     .setStyle(ButtonStyle.Primary)
                     .setEmoji('⚔️'),
-                new ButtonBuilder()
-                    .setCustomId('arena_quick_claim')
-                    .setLabel('Claim GP')
-                    .setStyle(ButtonStyle.Success)
-                    .setEmoji('🎁')
-                    .setDisabled(!user.canClaimMonthlyGp()),
                 new ButtonBuilder()
                     .setCustomId('arena_quick_active')
                     .setLabel('Active Challenges')
@@ -142,40 +136,20 @@ export default {
         });
     },
 
-    async handleClaimGP(interaction, user) {
-        try {
-            const result = await gpUtils.claimMonthlyGP(user);
-            
-            const embed = new EmbedBuilder()
-                .setTitle('🎁 Monthly GP Claimed!')
-                .setDescription(
-                    `You've successfully claimed your monthly GP allowance!\n\n` +
-                    `💰 **Amount Received:** ${gpUtils.formatGP(result.amount)}\n` +
-                    `💳 **New Balance:** ${gpUtils.formatGP(result.newBalance)}\n\n` +
-                    `You can claim your next allowance at the start of next month.`
-                )
-                .setColor('#00FF00')
-                .setTimestamp();
-
-            await interaction.reply({ embeds: [embed], ephemeral: true });
-        } catch (error) {
-            const embed = new EmbedBuilder()
-                .setTitle('❌ GP Claim Failed')
-                .setDescription(error.message)
-                .setColor('#FF0000');
-
-            await interaction.reply({ embeds: [embed], ephemeral: true });
-        }
-    },
-
     async handleBalance(interaction, user) {
         const transactions = await gpUtils.getTransactionHistory(user, 10);
+        
+        // Format last GP grant date
+        const lastGrantText = user.lastMonthlyGpGrant 
+            ? user.lastMonthlyGpGrant.toLocaleDateString()
+            : 'Never';
         
         const embed = new EmbedBuilder()
             .setTitle('💰 Your Arena Balance')
             .setDescription(
                 `**Current Balance:** ${gpUtils.formatGP(user.gpBalance || 0)}\n` +
-                `**Monthly Claim:** ${user.canClaimMonthlyGp() ? '✅ Available' : '❌ Already claimed'}\n\n` +
+                `**Last GP Grant:** ${lastGrantText}\n` +
+                `**Next GP Grant:** Automatic on 1st of next month (1,000 GP)\n\n` +
                 `**Arena Stats:**\n` +
                 `🏆 Challenges Won: ${user.arenaStats?.challengesWon || 0}\n` +
                 `🎯 Challenges Participated: ${user.arenaStats?.challengesParticipated || 0}\n` +
@@ -436,7 +410,7 @@ export default {
                 {
                     name: '💰 GP (Game Points)',
                     value: 
-                        '• Get 1,000 GP free each month\n' +
+                        '• Get 1,000 GP automatically each month on the 1st\n' +
                         '• Use GP to create challenges and place bets\n' +
                         '• Win challenges to earn more GP',
                     inline: false
@@ -481,7 +455,7 @@ export default {
                         '• Start small with low wagers\n' +
                         '• Check leaderboards before challenging\n' +
                         '• Bet wisely on other challenges\n' +
-                        '• Claim your monthly GP regularly',
+                        '• GP is granted automatically each month',
                     inline: false
                 }
             )
