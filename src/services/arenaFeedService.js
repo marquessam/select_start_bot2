@@ -144,19 +144,21 @@ class ArenaFeedService extends FeedManagerBase {
     }
 
     /**
-     * Create or update a challenge embed
+     * Create or update a challenge embed - MATCHING ARCADE FEED STYLE EXACTLY
      */
     async createOrUpdateChallengeEmbed(challenge) {
         try {
             const channel = await this.getChannel();
             if (!channel) return;
             
-            // Determine color based on status
+            // Determine color based on status and type - MATCHING ARCADE COLORS
             let embedColor;
             if (challenge.status === 'pending') {
                 embedColor = COLORS.WARNING; // Yellow for pending
-            } else if (challenge.status === 'active') {
-                embedColor = COLORS.PRIMARY; // Blue for active
+            } else if (challenge.type === 'direct') {
+                embedColor = COLORS.DANGER; // Red for direct challenges
+            } else if (challenge.type === 'open') {
+                embedColor = COLORS.PRIMARY; // Blue for open challenges
             } else {
                 embedColor = COLORS.NEUTRAL; // Gray for other statuses
             }
@@ -175,20 +177,41 @@ class ArenaFeedService extends FeedManagerBase {
             // Create clickable link to RetroAchievements leaderboard
             const leaderboardUrl = `https://retroachievements.org/leaderboardinfo.php?i=${challenge.leaderboardId}`;
             
-            // Determine title based on challenge type
+            // Determine title and status info
             const typeEmoji = challenge.type === 'direct' ? '⚔️' : '🌍';
-            const typeText = challenge.type === 'direct' ? 'Direct Challenge' : 'Open Challenge';
             const statusEmoji = challenge.status === 'pending' ? '⏳' : '🔥';
+            const typeText = challenge.type === 'direct' ? 'Direct Challenge' : 'Open Challenge';
             
-            // Create embed using our utility functions
+            // Create description with timing info
+            let description = `${statusEmoji} **${challenge.status.toUpperCase()}** ${typeText}\n` +
+                             `${challenge.leaderboardTitle}\n\n` +
+                             `**Description:** ${challenge.description || 'No description provided'}\n` +
+                             `**Created by:** ${challenge.creatorRaUsername}\n`;
+            
+            if (challenge.type === 'direct' && challenge.targetRaUsername) {
+                description += `**Opponent:** ${challenge.targetRaUsername}\n`;
+            }
+            
+            description += `**Entry Wager:** ${gpUtils.formatGP(challenge.participants[0]?.wager || 0)}\n` +
+                          `**Total Prize Pool:** ${gpUtils.formatGP(challenge.getTotalWager())}`;
+            
+            // Add timing information
+            if (challenge.status === 'pending') {
+                const timeoutDate = new Date(challenge.createdAt.getTime() + 24 * 60 * 60 * 1000);
+                const timeoutTimestamp = getDiscordTimestamp(timeoutDate, 'R');
+                description += `\n\n**Expires:** ${timeoutTimestamp} if not accepted`;
+            } else if (challenge.status === 'active') {
+                const endTimestamp = getDiscordTimestamp(challenge.endedAt, 'R');
+                const bettingEndTimestamp = getDiscordTimestamp(challenge.bettingClosedAt, 'R');
+                description += `\n\n**Challenge Ends:** ${endTimestamp}\n**Betting Closes:** ${bettingEndTimestamp}`;
+            }
+            
+            description += `\n\n*Note: Only users ranked 999 or lower in the global leaderboard are shown.*`;
+            
+            // Create embed using standardized utility - EXACT ARCADE STYLE
             const embed = createHeaderEmbed(
-                `${typeEmoji} ${typeText} - ${challenge.gameTitle}`,
-                `${statusEmoji} **${challenge.status.toUpperCase()}** | ${challenge.leaderboardTitle}\n\n` +
-                `**Description:** ${challenge.description || 'No description provided'}\n` +
-                `**Created by:** ${challenge.creatorRaUsername}\n` +
-                (challenge.type === 'direct' ? `**Opponent:** ${challenge.targetRaUsername || 'Unknown'}\n` : '') +
-                `**Wager:** ${challenge.participants[0]?.wager || 0} GP ${challenge.type === 'direct' ? 'each' : 'to join'}\n` +
-                `**Total Prize Pool:** ${challenge.getTotalWager()} GP`,
+                `${typeEmoji} ${challenge.gameTitle}`,
+                description,
                 {
                     color: embedColor,
                     thumbnail: thumbnailUrl,
@@ -199,23 +222,7 @@ class ArenaFeedService extends FeedManagerBase {
                 }
             );
             
-            // Add timing information
-            let timingInfo = '';
-            if (challenge.status === 'pending') {
-                const timeoutDate = new Date(challenge.createdAt.getTime() + 24 * 60 * 60 * 1000);
-                const timeoutTimestamp = getDiscordTimestamp(timeoutDate, 'R');
-                timingInfo = `**Expires:** ${timeoutTimestamp} if not accepted`;
-            } else if (challenge.status === 'active') {
-                const endTimestamp = getDiscordTimestamp(challenge.endedAt, 'R');
-                const bettingEndTimestamp = getDiscordTimestamp(challenge.bettingClosedAt, 'R');
-                timingInfo = `**Challenge Ends:** ${endTimestamp}\n**Betting Closes:** ${bettingEndTimestamp}`;
-            }
-            
-            if (timingInfo) {
-                embed.addFields({ name: 'Timing', value: timingInfo });
-            }
-            
-            // Add participants information
+            // Add current standings/participants - MATCHING ARCADE LEADERBOARD FORMAT
             if (challenge.participants.length > 0) {
                 let participantsText = '';
                 
@@ -238,67 +245,58 @@ class ArenaFeedService extends FeedManagerBase {
                                 return a.rank - b.rank;
                             });
                             
+                            // FORMAT EXACTLY LIKE ARCADE FEED
                             currentScores.forEach((score, index) => {
-                                const rank = index + 1;
-                                const rankEmoji = rank <= 3 ? EMOJIS[`RANK_${rank}`] : `${rank}.`;
-                                const globalRank = score.rank ? ` (Global: #${score.rank})` : '';
+                                const displayRank = index + 1;
+                                const medalEmoji = displayRank <= 3 ? EMOJIS[`RANK_${displayRank}`] : `${displayRank}.`;
+                                const globalRank = score.rank ? ` (Global Rank: #${score.rank})` : '';
                                 const scoreText = score.score !== 'No score' ? `: ${score.score}` : ': No score yet';
                                 
-                                participantsText += `${rankEmoji} **${score.raUsername}**${scoreText}${globalRank}\n`;
+                                participantsText += `${medalEmoji} **${score.raUsername}**${scoreText}${globalRank}\n`;
                             });
                         } else {
                             // Fallback to participant list without scores
                             challenge.participants.forEach((participant, index) => {
-                                const rank = index + 1;
-                                const rankEmoji = rank <= 3 ? EMOJIS[`RANK_${rank}`] : `${rank}.`;
-                                participantsText += `${rankEmoji} **${participant.raUsername}**: No score yet\n`;
+                                const displayRank = index + 1;
+                                const medalEmoji = displayRank <= 3 ? EMOJIS[`RANK_${displayRank}`] : `${displayRank}.`;
+                                participantsText += `${medalEmoji} **${participant.raUsername}**: No score yet\n`;
                             });
                         }
                     } catch (error) {
                         console.error(`Error fetching scores for challenge ${challenge.challengeId}:`, error);
                         // Fallback to participant list without scores
                         challenge.participants.forEach((participant, index) => {
-                            const rank = index + 1;
-                            const rankEmoji = rank <= 3 ? EMOJIS[`RANK_${rank}`] : `${rank}.`;
-                            participantsText += `${rankEmoji} **${participant.raUsername}**: No score yet\n`;
+                            const displayRank = index + 1;
+                            const medalEmoji = displayRank <= 3 ? EMOJIS[`RANK_${displayRank}`] : `${displayRank}.`;
+                            participantsText += `${medalEmoji} **${participant.raUsername}**: No score yet\n`;
                         });
                     }
                 } else {
-                    // For pending challenges, just list participants
+                    // For pending challenges, just list participants with numbers
                     challenge.participants.forEach((participant, index) => {
                         const number = index + 1;
                         participantsText += `${number}. **${participant.raUsername}**\n`;
                     });
                 }
                 
+                // Add participants count like arcade feed
+                participantsText += `\n${challenge.participants.length} registered member${challenge.participants.length !== 1 ? 's' : ''} participating in this challenge`;
+                
                 embed.addFields({ 
-                    name: `Participants (${challenge.participants.length})`, 
-                    value: participantsText || 'No participants yet'
+                    name: challenge.status === 'active' ? 'Current Standings' : `Participants (${challenge.participants.length})`, 
+                    value: participantsText || 'No participants yet',
+                    inline: false 
                 });
             }
             
-            // Add betting information if there are bets
+            // Add betting information if there are bets - MATCHING ARCADE STYLE
             if (challenge.bets.length > 0) {
                 const totalBets = challenge.getTotalBets();
-                let bettingText = `**Total Betting Pool:** ${gpUtils.formatGP(totalBets)}\n`;
-                bettingText += `**Number of Bets:** ${challenge.bets.length}\n\n`;
-                
-                // Group bets by target
-                const betsByTarget = new Map();
-                challenge.bets.forEach(bet => {
-                    if (!betsByTarget.has(bet.targetRaUsername)) {
-                        betsByTarget.set(bet.targetRaUsername, []);
-                    }
-                    betsByTarget.get(bet.targetRaUsername).push(bet);
+                embed.addFields({
+                    name: '🎰 Total Bets',
+                    value: `${gpUtils.formatGP(totalBets)} from ${challenge.bets.length} bet${challenge.bets.length !== 1 ? 's' : ''}`,
+                    inline: true
                 });
-                
-                // Show betting distribution
-                for (const [targetUser, bets] of betsByTarget.entries()) {
-                    const totalBetsOnUser = bets.reduce((sum, bet) => sum + bet.amount, 0);
-                    bettingText += `**${targetUser}:** ${gpUtils.formatGP(totalBetsOnUser)} (${bets.length} bet${bets.length !== 1 ? 's' : ''})\n`;
-                }
-                
-                embed.addFields({ name: 'Betting Pool', value: bettingText });
             }
             
             // Use our base class updateMessage method
@@ -312,7 +310,7 @@ class ArenaFeedService extends FeedManagerBase {
     }
 
     /**
-     * Update the GP leaderboard embed at the bottom
+     * Update the GP leaderboard embed - MATCHING ARCADE POINTS SUMMARY EXACTLY
      */
     async updateGPLeaderboardEmbed() {
         try {
@@ -326,47 +324,53 @@ class ArenaFeedService extends FeedManagerBase {
             // Current timestamp in Discord format
             const timestamp = getDiscordTimestamp(new Date());
             
-            // Create the GP leaderboard embed
+            // Create the GP leaderboard embed - MATCHING ARCADE POINTS SUMMARY STYLE
             const embed = createHeaderEmbed(
-                '💰 GP (Game Points) Leaderboard',
+                '🏆 GP (Game Points) Leaderboard',
                 `**Current GP standings for all arena participants**\n\n` +
-                `GP is earned by winning challenges and is automatically granted (1,000 GP) on the 1st of each month.\n\n` +
+                `Game Points (GP) are earned by winning challenges and used to create new challenges or place bets.\n\n` +
                 `**Last Updated:** ${timestamp} | **Updates:** Every 30 minutes\n\n` +
                 `*Use the </arena:1234567890> command to participate in challenges and earn GP.*`,
                 {
-                    color: COLORS.GOLD, // Use gold for GP leaderboard
+                    color: COLORS.WARNING, // Yellow for leaderboard - matching arcade
                     footer: { 
-                        text: 'GP balances update in real-time • Monthly GP grants are automatic' 
+                        text: 'GP balances update in real-time • Monthly 1,000 GP grants are automatic' 
                     }
                 }
             );
             
-            // Create the standings field
-            let standingsText = '';
-            
-            leaderboard.forEach(user => {
-                const rankEmoji = user.rank <= 3 ? EMOJIS[`RANK_${user.rank}`] : `${user.rank}.`;
-                standingsText += `${rankEmoji} **${user.raUsername}**: ${gpUtils.formatGP(user.gpBalance)}\n`;
-            });
-            
-            embed.addFields({ 
-                name: 'Current Standings', 
-                value: standingsText
-            });
-            
-            // Add system statistics
-            try {
-                const systemStats = await gpUtils.getSystemGPStats();
-                embed.addFields({
-                    name: 'System Statistics',
-                    value: 
-                        `**Total Users:** ${systemStats.totalUsers}\n` +
-                        `**Users with GP:** ${systemStats.usersWithGP}\n` +
-                        `**Total GP in Circulation:** ${gpUtils.formatGP(systemStats.totalGP)}\n` +
-                        `**Total Challenges Created:** ${systemStats.totalChallengesCreated || 0}`
+            // Create the standings field - EXACT ARCADE FORMAT
+            if (leaderboard.length > 0) {
+                // Break standings into groups of 15 to avoid embed field size limits (matching arcade)
+                const maxUsersPerField = 15;
+                const numFields = Math.ceil(leaderboard.length / maxUsersPerField);
+                
+                for (let fieldIndex = 0; fieldIndex < numFields; fieldIndex++) {
+                    const startIndex = fieldIndex * maxUsersPerField;
+                    const endIndex = Math.min((fieldIndex + 1) * maxUsersPerField, leaderboard.length);
+                    const usersInThisField = leaderboard.slice(startIndex, endIndex);
+                    
+                    let standingsText = '';
+                    
+                    // Add each user with GP balance - EXACT ARCADE FORMAT
+                    usersInThisField.forEach(user => {
+                        standingsText += `**${user.raUsername}**: ${gpUtils.formatGP(user.gpBalance)}\n`;
+                    });
+                    
+                    const fieldTitle = numFields > 1 
+                        ? `Standings (${startIndex + 1}-${endIndex})`
+                        : 'Current Standings';
+                    
+                    embed.addFields({ 
+                        name: fieldTitle, 
+                        value: standingsText || 'No users have GP yet.' 
+                    });
+                }
+            } else {
+                embed.addFields({ 
+                    name: 'No Standings', 
+                    value: 'No users have GP balances yet.' 
                 });
-            } catch (error) {
-                console.error('Error fetching system GP stats:', error);
             }
             
             // Update or create the GP leaderboard message
