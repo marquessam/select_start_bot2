@@ -356,21 +356,36 @@ class ArenaUtils {
 
             const data = await response.json();
             
-            if (!data || !Array.isArray(data)) {
+            // Handle different API response formats - check for Results array first
+            let leaderboards = [];
+            if (data && data.Results && Array.isArray(data.Results)) {
+                leaderboards = data.Results;
+                console.log(`Fetched ${leaderboards.length} leaderboards for game ${gameId} (from Results array)`);
+            } else if (Array.isArray(data)) {
+                leaderboards = data;
+                console.log(`Fetched ${leaderboards.length} leaderboards for game ${gameId} (direct array)`);
+            } else {
                 console.error(`No valid leaderboard data received for game ${gameId}:`, data);
                 return null;
             }
 
-            console.log(`Fetched ${data.length} leaderboards for game ${gameId}`);
+            if (leaderboards.length === 0) {
+                console.error(`No leaderboards found for game ${gameId}`);
+                return null;
+            }
 
             // Find the specific leaderboard
-            const leaderboard = data.find(lb => 
+            const leaderboard = leaderboards.find(lb => 
                 String(lb.ID) === String(leaderboardId) || 
                 String(lb.id) === String(leaderboardId)
             );
 
             if (!leaderboard) {
                 console.error(`Leaderboard ${leaderboardId} not found in game ${gameId} leaderboards`);
+                console.log(`Available leaderboards:`, leaderboards.map(lb => ({
+                    ID: lb.ID || lb.id,
+                    Title: lb.Title || lb.title
+                })));
                 return null;
             }
 
