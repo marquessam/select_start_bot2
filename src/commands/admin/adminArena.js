@@ -1442,32 +1442,422 @@ export default {
         }
     },
 
-    // === PLACEHOLDER METHODS FOR EXISTING FUNCTIONALITY ===
-    // Note: Add the complete implementations of these methods from your original file
+    // === ORIGINAL ADMIN METHODS ===
     
     async handleCancelChallenge(interaction) {
-        // Implementation needed - copy from original file
-        await interaction.editReply('Cancel challenge functionality - implementation needed');
+        await interaction.deferReply({ ephemeral: true });
+
+        const challengeId = interaction.options.getString('challenge_id');
+        
+        try {
+            const challenge = await ArenaChallenge.findById(challengeId);
+            
+            if (!challenge) {
+                return interaction.editReply(`Challenge with ID ${challengeId} not found.`);
+            }
+            
+            if (challenge.status === 'completed' || challenge.status === 'cancelled') {
+                return interaction.editReply(`Cannot cancel a challenge that is already ${challenge.status}.`);
+            }
+            
+            // Return GP to participants
+            const refunds = [];
+            
+            // Refund challenger
+            if (challenge.challengerId) {
+                const challenger = await User.findOne({ discordId: challenge.challengerId });
+                if (challenger) {
+                    await ArenaTransactionUtils.trackGpTransaction(
+                        challenger,
+                        challenge.wagerAmount,
+                        'Challenge cancelled - refund',
+                        `Challenge ID: ${challengeId}, Admin: ${interaction.user.username}`
+                    );
+                    refunds.push(`${challenge.challengerUsername}: ${challenge.wagerAmount} GP`);
+                }
+            }
+            
+            // Refund challengee (if direct challenge)
+            if (challenge.challengeeId && !challenge.isOpenChallenge) {
+                const challengee = await User.findOne({ discordId: challenge.challengeeId });
+                if (challengee) {
+                    await ArenaTransactionUtils.trackGpTransaction(
+                        challengee,
+                        challenge.wagerAmount,
+                        'Challenge cancelled - refund',
+                        `Challenge ID: ${challengeId}, Admin: ${interaction.user.username}`
+                    );
+                    refunds.push(`${challenge.challengeeUsername}: ${challenge.wagerAmount} GP`);
+                }
+            }
+            
+            // Refund open challenge participants
+            if (challenge.isOpenChallenge && challenge.participants) {
+                for (const participant of challenge.participants) {
+                    const user = await User.findOne({ discordId: participant.discordId });
+                    if (user) {
+                        await ArenaTransactionUtils.trackGpTransaction(
+                            user,
+                            challenge.wagerAmount,
+                            'Challenge cancelled - refund',
+                            `Challenge ID: ${challengeId}, Admin: ${interaction.user.username}`
+                        );
+                        refunds.push(`${participant.username}: ${challenge.wagerAmount} GP`);
+                    }
+                }
+            }
+            
+            // Refund all bets
+            if (challenge.bets && challenge.bets.length > 0) {
+                await ArenaBettingUtils.refundAllBets(challenge);
+            }
+            
+            // Update challenge status
+            await ArenaChallenge.findByIdAndUpdate(challengeId, {
+                status: 'cancelled',
+                completedAt: new Date()
+            });
+            
+            const embed = new EmbedBuilder()
+                .setTitle('Challenge Cancelled')
+                .setColor('#FF0000')
+                .setDescription(`Successfully cancelled challenge: **${challenge.gameTitle}**`)
+                .addFields(
+                    { name: 'Challenge ID', value: `\`${challengeId}\``, inline: false },
+                    { name: 'Refunds Processed', value: refunds.join('\n') || 'No refunds needed', inline: false },
+                    { name: 'Cancelled By', value: interaction.user.username, inline: true }
+                )
+                .setTimestamp();
+            
+            await interaction.editReply({ embeds: [embed] });
+            
+        } catch (error) {
+            console.error(`Error cancelling challenge: ${error}`);
+            await interaction.editReply(`Error cancelling challenge: ${error.message}`);
+        }
     },
     
     async handleEditChallenge(interaction) {
-        // Implementation needed - copy from original file
-        await interaction.editReply('Edit challenge functionality - implementation needed');
+        await interaction.deferReply({ ephemeral: true });
+
+        const challengeId = interaction.options.getString('challenge_id');
+        
+        try {
+            const challenge = await ArenaChallenge.findById(challengeId);
+            
+            if (!challenge) {
+                return interaction.editReply(`Challenge with ID ${challengeId} not found.`);
+            }
+            
+            // Create modal for editing challenge details
+            const modal = new ModalBuilder()
+                .setCustomId(`admin_edit_challenge_modal_${challengeId}`)
+                .setTitle('Edit Challenge Details');
+            
+            const descriptionInput = new TextInputBuilder()
+                .setCustomId('description')
+                .setLabel('Challenge Description')
+                .setStyle(TextInputStyle.Paragraph)
+                .setValue(challenge.description || '')
+                .setRequired(false);
+            
+            const wagerInput = new TextInputBuilder()
+                .setCustomId('wager')
+                .setLabel('Wager Amount (GP)')
+                .setStyle(TextInputStyle.Short)
+                .setValue(challenge.wagerAmount.toString())
+                .setRequired(true);
+            
+            const endDateInput = new TextInputBuilder()
+                .setCustomId('endDate')
+                .setLabel('End Date (YYYY-MM-DD HH:MM)')
+                .setStyle(TextInputStyle.Short)
+                .setValue(challenge.endDate ? challenge.endDate.toISOString().slice(0, 16).replace('T', ' ') : '')
+                .setRequired(false);
+            
+            const row1 = new ActionRowBuilder().addComponents(descriptionInput);
+            const row2 = new ActionRowBuilder().addComponents(wagerInput);
+            const row3 = new ActionRowBuilder().addComponents(endDateInput);
+            
+            modal.addComponents(row1, row2, row3);
+            
+            await interaction.showModal(modal);
+            
+        } catch (error) {
+            console.error(`Error preparing edit challenge: ${error}`);
+            await interaction.editReply(`Error preparing edit challenge: ${error.message}`);
+        }
+    },
+
+    async handleEditChallengeSubmit(interaction) {
+        await interaction.deferReply({ ephemeral: true });
+        
+        const challengeId = interaction.customId.replace('admin_edit_challenge_modal_', '');
+        const description = interaction.fields.getTextInputValue('description');
+        const wagerAmount = parseInt(interaction.fields.getTextInputValue('wager'));
+        const endDateString = interaction.fields.getTextInputValue('endDate');
+        
+        try {
+            const challenge = await ArenaChallenge.findById(challengeId);
+            
+            if (!challenge) {
+                return interaction.editReply(`Challenge with ID ${challengeId} not found.`);
+            }
+            
+            const updateData = {
+                description: description || challenge.description,
+                wagerAmount: wagerAmount || challenge.wagerAmount
+            };
+            
+            if (endDateString) {
+                const endDate = new Date(endDateString);
+                if (!isNaN(endDate.getTime())) {
+                    updateData.endDate = endDate;
+                }
+            }
+            
+            await ArenaChallenge.findByIdAndUpdate(challengeId, updateData);
+            
+            const embed = new EmbedBuilder()
+                .setTitle('Challenge Updated')
+                .setColor('#00FF00')
+                .setDescription(`Successfully updated challenge: **${challenge.gameTitle}**`)
+                .addFields(
+                    { name: 'Challenge ID', value: `\`${challengeId}\``, inline: false },
+                    { name: 'Description', value: updateData.description || 'None', inline: false },
+                    { name: 'Wager Amount', value: `${updateData.wagerAmount} GP`, inline: true },
+                    { name: 'End Date', value: updateData.endDate ? updateData.endDate.toLocaleString() : 'No change', inline: true },
+                    { name: 'Updated By', value: interaction.user.username, inline: true }
+                )
+                .setTimestamp();
+            
+            await interaction.editReply({ embeds: [embed] });
+            
+        } catch (error) {
+            console.error(`Error updating challenge: ${error}`);
+            await interaction.editReply(`Error updating challenge: ${error.message}`);
+        }
     },
     
     async handleForceComplete(interaction) {
-        // Implementation needed - copy from original file
-        await interaction.editReply('Force complete functionality - implementation needed');
+        await interaction.deferReply({ ephemeral: true });
+
+        const challengeId = interaction.options.getString('challenge_id');
+        const winnerUsername = interaction.options.getString('winner');
+        
+        try {
+            const challenge = await ArenaChallenge.findById(challengeId);
+            
+            if (!challenge) {
+                return interaction.editReply(`Challenge with ID ${challengeId} not found.`);
+            }
+            
+            if (challenge.status === 'completed') {
+                return interaction.editReply(`Challenge ${challengeId} is already completed.`);
+            }
+            
+            let winnerId = null;
+            let finalWinnerUsername = 'Tie';
+            
+            // Determine winner
+            if (winnerUsername && winnerUsername !== 'tie') {
+                if (winnerUsername === challenge.challengerUsername) {
+                    winnerId = challenge.challengerId;
+                    finalWinnerUsername = challenge.challengerUsername;
+                } else if (winnerUsername === challenge.challengeeUsername) {
+                    winnerId = challenge.challengeeId;
+                    finalWinnerUsername = challenge.challengeeUsername;
+                } else if (challenge.isOpenChallenge) {
+                    // Find participant with matching username
+                    const participant = challenge.participants?.find(p => p.username === winnerUsername);
+                    if (participant) {
+                        winnerId = participant.discordId;
+                        finalWinnerUsername = participant.username;
+                    }
+                }
+            }
+            
+            // Update challenge
+            await ArenaChallenge.findByIdAndUpdate(challengeId, {
+                status: 'completed',
+                completedAt: new Date(),
+                winnerId: winnerId,
+                winnerUsername: finalWinnerUsername
+            });
+            
+            // Process payouts
+            if (winnerId && finalWinnerUsername !== 'Tie') {
+                const winner = await User.findOne({ discordId: winnerId });
+                if (winner) {
+                    let payoutAmount = 0;
+                    if (challenge.isOpenChallenge) {
+                        payoutAmount = challenge.wagerAmount * (1 + (challenge.participants?.length || 0));
+                    } else {
+                        payoutAmount = challenge.wagerAmount * 2;
+                    }
+                    
+                    await ArenaTransactionUtils.trackGpTransaction(
+                        winner,
+                        payoutAmount,
+                        'Force complete - admin payout',
+                        `Challenge ID: ${challengeId}, Admin: ${interaction.user.username}`
+                    );
+                }
+            }
+            
+            // Process betting payouts
+            if (challenge.bets && challenge.bets.length > 0) {
+                await ArenaBettingUtils.processBetsForChallenge(
+                    challenge,
+                    winnerId,
+                    finalWinnerUsername
+                );
+            }
+            
+            const embed = new EmbedBuilder()
+                .setTitle('Challenge Force Completed')
+                .setColor('#00FF00')
+                .setDescription(`Successfully force completed challenge: **${challenge.gameTitle}**`)
+                .addFields(
+                    { name: 'Challenge ID', value: `\`${challengeId}\``, inline: false },
+                    { name: 'Winner', value: finalWinnerUsername, inline: true },
+                    { name: 'Completed By', value: interaction.user.username, inline: true }
+                )
+                .setTimestamp();
+            
+            await interaction.editReply({ embeds: [embed] });
+            
+        } catch (error) {
+            console.error(`Error force completing challenge: ${error}`);
+            await interaction.editReply(`Error force completing challenge: ${error.message}`);
+        }
     },
     
     async handleResetGP(interaction) {
-        // Implementation needed - copy from original file
-        await interaction.editReply('Reset GP functionality - implementation needed');
+        await interaction.deferReply({ ephemeral: true });
+
+        const targetUser = interaction.options.getUser('user');
+        const amount = interaction.options.getInteger('amount') || 1000;
+        
+        try {
+            if (targetUser) {
+                // Reset specific user
+                const user = await User.findOne({ discordId: targetUser.id });
+                if (!user) {
+                    return interaction.editReply(`User ${targetUser.username} not found in database.`);
+                }
+                
+                const oldGp = user.gp || 0;
+                
+                await User.findByIdAndUpdate(user._id, {
+                    $set: { gp: amount },
+                    $push: {
+                        gpTransactions: {
+                            amount: amount - oldGp,
+                            oldBalance: oldGp,
+                            newBalance: amount,
+                            reason: 'Admin GP reset',
+                            context: `Reset by admin: ${interaction.user.username}`,
+                            timestamp: new Date()
+                        }
+                    }
+                });
+                
+                const embed = new EmbedBuilder()
+                    .setTitle('GP Reset Complete')
+                    .setColor('#FFA500')
+                    .setDescription(`Reset GP for user: **${user.raUsername || targetUser.username}**`)
+                    .addFields(
+                        { name: 'Old GP', value: `${oldGp} GP`, inline: true },
+                        { name: 'New GP', value: `${amount} GP`, inline: true },
+                        { name: 'Reset By', value: interaction.user.username, inline: true }
+                    )
+                    .setTimestamp();
+                
+                await interaction.editReply({ embeds: [embed] });
+                
+            } else {
+                // Reset all users
+                const users = await User.find({ gp: { $exists: true } });
+                
+                for (const user of users) {
+                    const oldGp = user.gp || 0;
+                    
+                    await User.findByIdAndUpdate(user._id, {
+                        $set: { gp: amount },
+                        $push: {
+                            gpTransactions: {
+                                amount: amount - oldGp,
+                                oldBalance: oldGp,
+                                newBalance: amount,
+                                reason: 'Admin GP reset - all users',
+                                context: `Mass reset by admin: ${interaction.user.username}`,
+                                timestamp: new Date()
+                            }
+                        }
+                    });
+                }
+                
+                const embed = new EmbedBuilder()
+                    .setTitle('Mass GP Reset Complete')
+                    .setColor('#FF5722')
+                    .setDescription(`Reset GP for **${users.length}** users`)
+                    .addFields(
+                        { name: 'New GP Amount', value: `${amount} GP`, inline: true },
+                        { name: 'Users Affected', value: `${users.length}`, inline: true },
+                        { name: 'Reset By', value: interaction.user.username, inline: true }
+                    )
+                    .setTimestamp();
+                
+                await interaction.editReply({ embeds: [embed] });
+            }
+            
+        } catch (error) {
+            console.error(`Error resetting GP: ${error}`);
+            await interaction.editReply(`Error resetting GP: ${error.message}`);
+        }
     },
     
     async handleAdjustGP(interaction) {
-        // Implementation needed - copy from original file
-        await interaction.editReply('Adjust GP functionality - implementation needed');
+        await interaction.deferReply({ ephemeral: true });
+
+        const targetUser = interaction.options.getUser('user');
+        const amount = interaction.options.getInteger('amount');
+        
+        try {
+            const user = await User.findOne({ discordId: targetUser.id });
+            if (!user) {
+                return interaction.editReply(`User ${targetUser.username} not found in database.`);
+            }
+            
+            const oldGp = user.gp || 0;
+            const newGp = Math.max(0, oldGp + amount);
+            
+            await ArenaTransactionUtils.trackGpTransaction(
+                user,
+                amount,
+                amount > 0 ? 'Admin GP adjustment (addition)' : 'Admin GP adjustment (removal)',
+                `Adjusted by admin: ${interaction.user.username}`
+            );
+            
+            const embed = new EmbedBuilder()
+                .setTitle('GP Adjustment Complete')
+                .setColor(amount > 0 ? '#00FF00' : '#FF0000')
+                .setDescription(`Adjusted GP for user: **${user.raUsername || targetUser.username}**`)
+                .addFields(
+                    { name: 'Old GP', value: `${oldGp} GP`, inline: true },
+                    { name: 'Adjustment', value: `${amount > 0 ? '+' : ''}${amount} GP`, inline: true },
+                    { name: 'New GP', value: `${newGp} GP`, inline: true },
+                    { name: 'Adjusted By', value: interaction.user.username, inline: true }
+                )
+                .setTimestamp();
+            
+            await interaction.editReply({ embeds: [embed] });
+            
+        } catch (error) {
+            console.error(`Error adjusting GP: ${error}`);
+            await interaction.editReply(`Error adjusting GP: ${error.message}`);
+        }
     },
     
     // === BUTTON/INTERACTION HANDLERS ===
