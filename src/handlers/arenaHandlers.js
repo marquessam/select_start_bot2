@@ -365,7 +365,7 @@ async function handleAcceptChallenge(interaction, user, challengeId) {
     await interaction.deferReply({ ephemeral: true });
 
     try {
-        const challenge = await arenaService.acceptChallenge(challengeId, user);
+        const challenge = await arenaService.acceptChallenge(challengeId, user, interaction.user.username);
         
         const embed = new EmbedBuilder()
             .setTitle('✅ Challenge Accepted!')
@@ -410,7 +410,7 @@ async function handleJoinChallenge(interaction, user, challengeId) {
     await interaction.deferReply({ ephemeral: true });
 
     try {
-        const challenge = await arenaService.joinChallenge(challengeId, user);
+        const challenge = await arenaService.joinChallenge(challengeId, user, interaction.user.username);
         
         const wager = challenge.participants.find(p => p.userId === user.discordId).wager;
         
@@ -461,13 +461,14 @@ async function handleCreateChallengeModal(interaction) {
         // Validate game and leaderboard
         const validation = await arenaUtils.validateGameAndLeaderboard(gameId, leaderboardId);
         
-        // Create challenge
+        // Create challenge with Discord username
         const challenge = await arenaService.createChallenge(
             user,
             validation.game,
             validation.leaderboard,
             wager,
-            targetUser
+            targetUser,
+            interaction.user.username // Pass Discord username
         );
 
         const embed = new EmbedBuilder()
@@ -518,7 +519,7 @@ async function handlePlaceBetModal(interaction) {
         
         let user = await User.findOne({ discordId: interaction.user.id });
         
-        const challenge = await arenaService.placeBet(challengeId, user, betTarget, betAmount);
+        const challenge = await arenaService.placeBet(challengeId, user, betTarget, betAmount, interaction.user.username);
         
         const embed = new EmbedBuilder()
             .setTitle('✅ Bet Placed!')
