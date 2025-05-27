@@ -31,76 +31,72 @@ class ArenaService {
         return `arena_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
     }
 
-/**
-
- * Create a new arena challenge
-
- */
-
-async createChallenge(creatorUser, gameInfo, leaderboardInfo, wager, targetRaUsername = null, discordUsername = null) {
-
-    try {
-        // Validate creator has enough GP
-        if (!creatorUser.hasEnoughGp(wager)) {
-            throw new Error(`Insufficient GP. You have ${creatorUser.gpBalance} GP but need ${wager} GP.`);
-        }
-        // Validate target user exists if specified (direct challenge)
-        let targetUser = null;
-        if (targetRaUsername) {
-            targetUser = await User.findOne({ raUsername: targetRaUsername });
-            if (!targetUser) {
-                throw new Error(`Target user "${targetRaUsername}" not found in the database.`);
+    /**
+     * Create a new arena challenge
+     */
+    async createChallenge(creatorUser, gameInfo, leaderboardInfo, wager, targetRaUsername = null, discordUsername = null) {
+        try {
+            // Validate creator has enough GP
+            if (!creatorUser.hasEnoughGp(wager)) {
+                throw new Error(`Insufficient GP. You have ${creatorUser.gpBalance} GP but need ${wager} GP.`);
             }
-            if (targetUser.discordId === creatorUser.discordId) {
-                throw new Error(`You cannot challenge yourself.`);
+            // Validate target user exists if specified (direct challenge)
+            let targetUser = null;
+            if (targetRaUsername) {
+                targetUser = await User.findOne({ raUsername: targetRaUsername });
+                if (!targetUser) {
+                    throw new Error(`Target user "${targetRaUsername}" not found in the database.`);
+                }
+                if (targetUser.discordId === creatorUser.discordId) {
+                    throw new Error(`You cannot challenge yourself.`);
+                }
             }
+
+            const challengeId = this.generateChallengeId();
+            const type = targetRaUsername ? 'direct' : 'open';
+            const now = new Date();
+            // Create challenge with proper field mapping
+            const challenge = new ArenaChallenge({
+                challengeId,
+                type,
+                status: type === 'direct' ? 'pending' : 'active',
+                gameId: gameInfo.id || gameInfo.ID,
+                gameTitle: gameInfo.title || gameInfo.Title,
+                leaderboardId: leaderboardInfo.id || leaderboardInfo.ID,
+                leaderboardTitle: leaderboardInfo.title || leaderboardInfo.Title,
+                creatorId: creatorUser.discordId,
+                creatorUsername: discordUsername || creatorUser.username || 'Unknown', // FIX: Set creatorUsername
+                creatorRaUsername: creatorUser.raUsername,
+                targetId: targetUser?.discordId || null,
+                targetUsername: targetUser?.username || null,
+                targetRaUsername: targetRaUsername || null,
+                participants: [{
+                    userId: creatorUser.discordId,
+                    username: discordUsername || creatorUser.username || 'Unknown', // FIX: Use Discord username
+                    raUsername: creatorUser.raUsername,
+                    wager,
+                    joinedAt: now
+                }],
+                startedAt: type === 'open' ? now : null,
+                endedAt: type === 'open' ? new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000) : null,
+                bettingClosedAt: type === 'open' ? new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000) : null
+            });
+
+            await challenge.save();
+            // Deduct wager from creator
+            await gpUtils.deductGP(creatorUser, wager, 'wager', `Wager for challenge ${challengeId}`, challengeId);
+            // Update creator stats
+            if (!creatorUser.arenaStats) creatorUser.arenaStats = {};
+            creatorUser.arenaStats.challengesCreated = (creatorUser.arenaStats.challengesCreated || 0) + 1;
+            creatorUser.arenaStats.totalGpWagered = (creatorUser.arenaStats.totalGpWagered || 0) + wager;
+            await creatorUser.save();
+            return challenge;
+        } catch (error) {
+            console.error('Error creating challenge:', error);
+            throw error;
         }
-
-        const challengeId = this.generateChallengeId();
-        const type = targetRaUsername ? 'direct' : 'open';
-        const now = new Date();
-        // Create challenge with proper field mapping
-        const challenge = new ArenaChallenge({
-            challengeId,
-            type,
-            status: type === 'direct' ? 'pending' : 'active',
-            gameId: gameInfo.id || gameInfo.ID,
-            gameTitle: gameInfo.title || gameInfo.Title,
-            leaderboardId: leaderboardInfo.id || leaderboardInfo.ID,
-            leaderboardTitle: leaderboardInfo.title || leaderboardInfo.Title,
-            creatorId: creatorUser.discordId,
-            creatorUsername: discordUsername || creatorUser.username || 'Unknown', // FIX: Set creatorUsername
-            creatorRaUsername: creatorUser.raUsername,
-            targetId: targetUser?.discordId || null,
-            targetUsername: targetUser?.username || null,
-            targetRaUsername: targetRaUsername || null,
-            participants: [{
-
-                userId: creatorUser.discordId,
-                username: discordUsername || creatorUser.username || 'Unknown', // FIX: Use Discord username
-                raUsername: creatorUser.raUsername,
-                wager,
-                joinedAt: now
-            }],
-            startedAt: type === 'open' ? now : null,
-            endedAt: type === 'open' ? new Date(now.getTime() + 7  24  60  60  1000) : null,
-            bettingClosedAt: type === 'open' ? new Date(now.getTime() + 3  24  60  60  1000) : null
-        });
-
-        await challenge.save();
-        // Deduct wager from creator
-        await gpUtils.deductGP(creatorUser, wager, 'wager', Wager for challenge ${challengeId}, challengeId);
-        // Update creator stats
-        if (!creatorUser.arenaStats) creatorUser.arenaStats = {};
-        creatorUser.arenaStats.challengesCreated = (creatorUser.arenaStats.challengesCreated || 0) + 1;
-        creatorUser.arenaStats.totalGpWagered = (creatorUser.arenaStats.totalGpWagered || 0) + wager;
-        await creatorUser.save();
-        return challenge;
-    } catch (error) {
-        console.error('Error creating challenge:', error);
-        throw error;
     }
-}
+
     /**
      * Accept a direct challenge
      */
