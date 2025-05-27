@@ -297,20 +297,27 @@ export default {
         };
         
         for (const user of users) {
+            // Safety check for gpTransactions
+            if (!user.gpTransactions || !Array.isArray(user.gpTransactions) || user.gpTransactions.length === 0) {
+                continue;
+            }
+            
             let userExcessGp = 0;
             let userIssues = [];
             
             // Check for duplicate monthly awards
             const monthlyAwards = user.gpTransactions.filter(t => 
-                t.reason && t.reason.includes('Monthly GP')
+                t && t.reason && t.reason.includes('Monthly GP')
             );
             
             if (monthlyAwards.length > 1) {
                 const monthlyGroups = {};
                 monthlyAwards.forEach(award => {
-                    const month = award.timestamp.toISOString().substring(0, 7); // YYYY-MM
-                    if (!monthlyGroups[month]) monthlyGroups[month] = [];
-                    monthlyGroups[month].push(award);
+                    if (award && award.timestamp) {
+                        const month = award.timestamp.toISOString().substring(0, 7); // YYYY-MM
+                        if (!monthlyGroups[month]) monthlyGroups[month] = [];
+                        monthlyGroups[month].push(award);
+                    }
                 });
                 
                 let monthlyDuplicates = 0;
@@ -329,22 +336,24 @@ export default {
             
             // Check for duplicate challenge payouts
             const challengePayouts = user.gpTransactions.filter(t => 
-                t.reason && (t.reason.includes('Won') || t.reason.includes('Challenge'))
+                t && t.reason && (t.reason.includes('Won') || t.reason.includes('Challenge'))
             );
             
             if (challengePayouts.length > 1) {
                 const challengeGroups = {};
                 challengePayouts.forEach(payout => {
-                    const key = `${payout.reason}_${payout.amount}_${payout.timestamp.toISOString().substring(0, 10)}`;
-                    if (!challengeGroups[key]) challengeGroups[key] = [];
-                    challengeGroups[key].push(payout);
+                    if (payout && payout.timestamp && payout.amount && payout.reason) {
+                        const key = `${payout.reason}_${payout.amount}_${payout.timestamp.toISOString().substring(0, 10)}`;
+                        if (!challengeGroups[key]) challengeGroups[key] = [];
+                        challengeGroups[key].push(payout);
+                    }
                 });
                 
                 let challengeDuplicates = 0;
                 Object.values(challengeGroups).forEach(group => {
                     if (group.length > 1) {
                         challengeDuplicates += group.length - 1;
-                        userExcessGp += (group.length - 1) * group[0].amount;
+                        userExcessGp += (group.length - 1) * (group[0].amount || 0);
                     }
                 });
                 
@@ -355,20 +364,25 @@ export default {
             }
             
             // Check for rapid-fire identical transactions (within 1 minute)
-            const sortedTransactions = user.gpTransactions.sort((a, b) => a.timestamp - b.timestamp);
+            const validTransactions = user.gpTransactions.filter(t => 
+                t && t.timestamp && t.amount !== undefined && t.reason
+            );
+            const sortedTransactions = validTransactions.sort((a, b) => a.timestamp - b.timestamp);
             let rapidFireDuplicates = 0;
             
             for (let i = 1; i < sortedTransactions.length; i++) {
                 const current = sortedTransactions[i];
                 const previous = sortedTransactions[i - 1];
                 
-                const timeDiff = current.timestamp - previous.timestamp;
-                const sameAmount = current.amount === previous.amount;
-                const sameReason = current.reason === previous.reason;
-                
-                if (timeDiff < 60000 && sameAmount && sameReason) { // Within 1 minute
-                    rapidFireDuplicates++;
-                    userExcessGp += current.amount;
+                if (current && previous && current.timestamp && previous.timestamp) {
+                    const timeDiff = current.timestamp - previous.timestamp;
+                    const sameAmount = current.amount === previous.amount;
+                    const sameReason = current.reason === previous.reason;
+                    
+                    if (timeDiff < 60000 && sameAmount && sameReason) { // Within 1 minute
+                        rapidFireDuplicates++;
+                        userExcessGp += current.amount || 0;
+                    }
                 }
             }
             
@@ -382,11 +396,11 @@ export default {
                 analysis.totalExcessGp += userExcessGp;
                 
                 analysis.topOffenders.push({
-                    username: user.raUsername,
+                    username: user.raUsername || user.discordId || 'Unknown',
                     discordId: user.discordId,
-                    currentGp: user.gp,
+                    currentGp: user.gp || 0,
                     excessGp: userExcessGp,
-                    legitimateGp: user.gp - userExcessGp,
+                    legitimateGp: Math.max(0, (user.gp || 0) - userExcessGp),
                     issues: userIssues
                 });
             }
@@ -417,6 +431,11 @@ export default {
         };
         
         for (const user of users) {
+            // Safety check for gpTransactions
+            if (!user.gpTransactions || !Array.isArray(user.gpTransactions) || user.gpTransactions.length === 0) {
+                continue;
+            }
+            
             let userGpRemoved = 0;
             let userTransactionsRemoved = 0;
             let cleanedTransactions = [...user.gpTransactions];
@@ -427,7 +446,7 @@ export default {
             const monthlyIndices = [];
             
             cleanedTransactions.forEach((transaction, index) => {
-                if (transaction.reason && transaction.reason.includes('Monthly GP')) {
+                if (transaction && transaction.reason && transaction.reason.includes('Monthly GP') && transaction.timestamp) {
                     const month = transaction.timestamp.toISOString().substring(0, 7);
                     if (!monthlyGroups[month]) {
                         monthlyGroups[month] = { kept: index, duplicates: [] };
@@ -441,20 +460,26 @@ export default {
             // Mark monthly duplicates for removal
             Object.values(monthlyGroups).forEach(group => {
                 group.duplicates.forEach(index => {
-                    removedTransactions.push({
-                        index,
-                        transaction: cleanedTransactions[index],
-                        reason: 'Duplicate monthly award'
-                    });
-                    userGpRemoved += cleanedTransactions[index].amount;
-                    userTransactionsRemoved++;
+                    const transaction = cleanedTransactions[index];
+                    if (transaction) {
+                        removedTransactions.push({
+                            index,
+                            transaction: transaction,
+                            reason: 'Duplicate monthly award'
+                        });
+                        userGpRemoved += transaction.amount || 0;
+                        userTransactionsRemoved++;
+                    }
                 });
             });
             
             // Remove duplicate challenge payouts
             const challengeGroups = {};
             cleanedTransactions.forEach((transaction, index) => {
-                if (transaction.reason && (transaction.reason.includes('Won') || transaction.reason.includes('Challenge'))) {
+                if (transaction && transaction.reason && 
+                    (transaction.reason.includes('Won') || transaction.reason.includes('Challenge')) &&
+                    transaction.timestamp && transaction.amount !== undefined) {
+                    
                     // Group by challenge context if available, otherwise by reason + amount + day
                     const key = transaction.context || 
                                `${transaction.reason}_${transaction.amount}_${transaction.timestamp.toISOString().substring(0, 10)}`;
@@ -470,20 +495,27 @@ export default {
             // Mark challenge duplicates for removal
             Object.values(challengeGroups).forEach(group => {
                 group.duplicates.forEach(index => {
-                    removedTransactions.push({
-                        index,
-                        transaction: cleanedTransactions[index],
-                        reason: 'Duplicate challenge payout'
-                    });
-                    userGpRemoved += cleanedTransactions[index].amount;
-                    userTransactionsRemoved++;
+                    const transaction = cleanedTransactions[index];
+                    if (transaction) {
+                        removedTransactions.push({
+                            index,
+                            transaction: transaction,
+                            reason: 'Duplicate challenge payout'
+                        });
+                        userGpRemoved += transaction.amount || 0;
+                        userTransactionsRemoved++;
+                    }
                 });
             });
             
             // Remove rapid-fire duplicates (identical transactions within 1 minute)
-            const sortedIndices = cleanedTransactions
-                .map((_, index) => index)
-                .sort((a, b) => cleanedTransactions[a].timestamp - cleanedTransactions[b].timestamp);
+            const validTransactions = cleanedTransactions
+                .map((transaction, index) => ({ transaction, index }))
+                .filter(item => item.transaction && item.transaction.timestamp && item.transaction.amount !== undefined && item.transaction.reason);
+            
+            const sortedIndices = validTransactions
+                .sort((a, b) => a.transaction.timestamp - b.transaction.timestamp)
+                .map(item => item.index);
             
             for (let i = 1; i < sortedIndices.length; i++) {
                 const currentIndex = sortedIndices[i];
@@ -492,21 +524,23 @@ export default {
                 const current = cleanedTransactions[currentIndex];
                 const previous = cleanedTransactions[previousIndex];
                 
-                // Skip if already marked for removal
-                if (removedTransactions.some(r => r.index === currentIndex)) continue;
+                // Skip if already marked for removal or invalid
+                if (!current || !previous || removedTransactions.some(r => r.index === currentIndex)) continue;
                 
-                const timeDiff = current.timestamp - previous.timestamp;
-                const sameAmount = current.amount === previous.amount;
-                const sameReason = current.reason === previous.reason;
-                
-                if (timeDiff < 60000 && sameAmount && sameReason) { // Within 1 minute
-                    removedTransactions.push({
-                        index: currentIndex,
-                        transaction: current,
-                        reason: 'Rapid-fire duplicate'
-                    });
-                    userGpRemoved += current.amount;
-                    userTransactionsRemoved++;
+                if (current.timestamp && previous.timestamp) {
+                    const timeDiff = current.timestamp - previous.timestamp;
+                    const sameAmount = current.amount === previous.amount;
+                    const sameReason = current.reason === previous.reason;
+                    
+                    if (timeDiff < 60000 && sameAmount && sameReason) { // Within 1 minute
+                        removedTransactions.push({
+                            index: currentIndex,
+                            transaction: current,
+                            reason: 'Rapid-fire duplicate'
+                        });
+                        userGpRemoved += current.amount || 0;
+                        userTransactionsRemoved++;
+                    }
                 }
             }
             
@@ -522,7 +556,7 @@ export default {
                 });
                 
                 // Update user GP and transactions
-                const newGp = Math.max(0, user.gp - userGpRemoved);
+                const newGp = Math.max(0, (user.gp || 0) - userGpRemoved);
                 
                 await User.findByIdAndUpdate(user._id, {
                     $set: {
@@ -536,7 +570,7 @@ export default {
                     $push: {
                         gpTransactions: {
                             amount: -userGpRemoved,
-                            oldBalance: user.gp,
+                            oldBalance: user.gp || 0,
                             newBalance: newGp,
                             reason: 'Admin cleanup - duplicate removal',
                             context: `Removed ${userTransactionsRemoved} duplicate transactions`,
@@ -552,17 +586,17 @@ export default {
                 cleanupResults.transactionsRemoved += userTransactionsRemoved;
                 
                 cleanupResults.userResults.push({
-                    username: user.raUsername,
+                    username: user.raUsername || user.discordId || 'Unknown',
                     discordId: user.discordId,
-                    oldGp: user.gp,
-                    newGp: user.gp - userGpRemoved,
+                    oldGp: user.gp || 0,
+                    newGp: Math.max(0, (user.gp || 0) - userGpRemoved),
                     gpRemoved: userGpRemoved,
                     transactionsRemoved: userTransactionsRemoved,
                     removedDetails: removedTransactions.map(r => ({
-                        amount: r.transaction.amount,
-                        reason: r.transaction.reason,
+                        amount: r.transaction.amount || 0,
+                        reason: r.transaction.reason || 'Unknown',
                         removalReason: r.reason,
-                        timestamp: r.transaction.timestamp
+                        timestamp: r.transaction.timestamp || new Date()
                     }))
                 });
             }
