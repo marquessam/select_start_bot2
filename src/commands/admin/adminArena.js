@@ -660,7 +660,8 @@ export default {
             embed.addFields(
                 { name: 'Status', value: challenge.status, inline: true },
                 { name: 'Type', value: challenge.isOpenChallenge ? 'Open Challenge' : 'Direct Challenge', inline: true },
-                { name: 'Winner', value: challenge.winnerUsername || 'None', inline: true }
+                { name: 'Winner', value: challenge.winnerUsername || 'None', inline: true },
+                { name: 'Payout Processed', value: challenge.payoutProcessed ? '✅ Yes' : '❌ No', inline: true } // FIXED: Show payout status
             );
             
             // Dates
