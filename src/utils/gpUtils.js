@@ -47,32 +47,6 @@ class GPUtils {
     }
 
     /**
-     * Claim monthly GP allowance
-     */
-    async claimMonthlyGP(user) {
-        try {
-            if (!user.canClaimMonthlyGp()) {
-                throw new Error('Monthly GP already claimed this month');
-            }
-
-            const monthlyAmount = 1000;
-            user.addGpTransaction('claim', monthlyAmount, 'Monthly GP allowance');
-            user.lastMonthlyGpClaim = new Date();
-            await user.save();
-
-            console.log(`${user.raUsername} claimed monthly GP allowance: ${monthlyAmount} GP`);
-            return {
-                success: true,
-                amount: monthlyAmount,
-                newBalance: user.gpBalance
-            };
-        } catch (error) {
-            console.error('Error claiming monthly GP:', error);
-            throw error;
-        }
-    }
-
-    /**
      * Get GP leaderboard
      */
     async getGPLeaderboard(limit = 10) {
@@ -262,7 +236,7 @@ class GPUtils {
      */
     formatTransaction(transaction) {
         const typeEmojis = {
-            'claim': '🎁',
+            'monthly_grant': '🎁',
             'wager': '⚔️',
             'bet': '🎰',
             'win': '🏆',
