@@ -293,7 +293,8 @@ export default {
     },
 
     async handleTrophyCaseButton(interaction, user) {
-        const trophies = user.trophyCase || [];
+        // Generate trophies dynamically from existing data
+        const trophies = this.generateTrophiesFromExistingData(user);
         
         if (trophies.length === 0) {
             return interaction.editReply({
@@ -301,9 +302,8 @@ export default {
                          '**How to earn trophies:**\n' +
                          '• Complete monthly challenges (mastery, beaten, or participation)\n' +
                          '• Complete shadow challenges when they\'re revealed\n' +
-                         '• Master or beat any RetroAchievements game\n' +
                          '• Earn community awards\n\n' +
-                         '💡 **Tip:** If you have existing achievements, ask an admin to run `/gacha-admin populate-trophies` to retroactively award trophies!',
+                         '💡 **Trophies are automatically generated from your existing achievements!**',
                 ephemeral: true
             });
         }
@@ -312,8 +312,7 @@ export default {
         const groupedTrophies = {
             monthly: { mastery: [], beaten: [], participation: [] },
             shadow: { mastery: [], beaten: [], participation: [] },
-            community: { special: [] },
-            regular: { mastery: [], beaten: [] }
+            community: { special: [] }
         };
 
         trophies.forEach(trophy => {
@@ -329,7 +328,7 @@ export default {
             .setTimestamp();
 
         // Add fields for each category
-        ['monthly', 'shadow', 'community', 'regular'].forEach(challengeType => {
+        ['monthly', 'shadow', 'community'].forEach(challengeType => {
             const categoryTrophies = groupedTrophies[challengeType];
             if (!categoryTrophies) return;
 
@@ -373,12 +372,107 @@ export default {
         });
 
         embed.setFooter({ 
-            text: 'Trophies are earned by completing challenges and earning community awards' 
+            text: 'Trophies are automatically generated from your achievements and awards' 
         });
 
         await interaction.editReply({
             embeds: [embed],
             ephemeral: true
         });
+    },
+
+    // NEW: Generate trophies dynamically from existing user data
+    generateTrophiesFromExistingData(user) {
+        const trophies = [];
+
+        // Process monthly challenges
+        for (const [monthKey, data] of user.monthlyChallenges.entries()) {
+            if (data.progress > 0) {
+                let awardLevel = 'participation';
+                if (data.progress === 3) awardLevel = 'mastery';
+                else if (data.progress === 2) awardLevel = 'beaten';
+
+                // Create a date from monthKey (YYYY-MM format)
+                const dateParts = monthKey.split('-');
+                const year = parseInt(dateParts[0]);
+                const month = parseInt(dateParts[1]) - 1; // Month is 0-based
+                const trophyDate = new Date(year, month, 15); // 15th of the month
+
+                const gameTitle = data.gameTitle || `Monthly Challenge ${monthKey}`;
+
+                trophies.push({
+                    gameId: `monthly_${monthKey}`,
+                    gameTitle: gameTitle,
+                    consoleName: 'Monthly Challenge',
+                    awardLevel: awardLevel,
+                    challengeType: 'monthly',
+                    emojiId: null, // Will be filled when custom emoji is uploaded
+                    emojiName: this.getTrophyEmoji(awardLevel),
+                    earnedAt: trophyDate,
+                    monthKey: monthKey
+                });
+            }
+        }
+
+        // Process shadow challenges
+        for (const [monthKey, data] of user.shadowChallenges.entries()) {
+            if (data.progress > 0) {
+                let awardLevel = 'participation';
+                if (data.progress === 2) awardLevel = 'beaten'; // Shadow max is beaten
+
+                // Create a date from monthKey (YYYY-MM format)
+                const dateParts = monthKey.split('-');
+                const year = parseInt(dateParts[0]);
+                const month = parseInt(dateParts[1]) - 1; // Month is 0-based
+                const trophyDate = new Date(year, month, 15); // 15th of the month
+
+                const gameTitle = data.gameTitle || `Shadow Challenge ${monthKey}`;
+
+                trophies.push({
+                    gameId: `shadow_${monthKey}`,
+                    gameTitle: gameTitle,
+                    consoleName: 'Shadow Challenge',
+                    awardLevel: awardLevel,
+                    challengeType: 'shadow',
+                    emojiId: null, // Will be filled when custom emoji is uploaded
+                    emojiName: this.getTrophyEmoji(awardLevel),
+                    earnedAt: trophyDate,
+                    monthKey: monthKey
+                });
+            }
+        }
+
+        // Process community awards
+        const currentYear = new Date().getFullYear();
+        const communityAwards = user.getCommunityAwardsForYear(currentYear);
+        
+        for (const award of communityAwards) {
+            trophies.push({
+                gameId: `community_${award.title.replace(/\s+/g, '_').toLowerCase()}`,
+                gameTitle: award.title,
+                consoleName: 'Community',
+                awardLevel: 'special',
+                challengeType: 'community',
+                emojiId: null, // Will be filled when custom emoji is uploaded
+                emojiName: '🏆',
+                earnedAt: award.awardedAt,
+                monthKey: null
+            });
+        }
+
+        // Sort by earned date (most recent first)
+        trophies.sort((a, b) => new Date(b.earnedAt) - new Date(a.earnedAt));
+
+        return trophies;
+    },
+
+    // Helper method to get default trophy emoji based on award level
+    getTrophyEmoji(awardLevel) {
+        const emojiMap = {
+            mastery: '✨',
+            beaten: '⭐', 
+            participation: '🏁'
+        };
+        return emojiMap[awardLevel] || '🏆';
     }
 };
