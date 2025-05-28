@@ -90,7 +90,7 @@ class GachaIntegration {
     }
 
     /**
-     * Retroactively award trophies based on existing user data
+     * Retroactively award trophies based on existing user data (SIMPLIFIED)
      */
     async populateExistingTrophies(user) {
         try {
@@ -107,23 +107,31 @@ class GachaIntegration {
                     if (data.progress === 3) awardLevel = 'mastery';
                     else if (data.progress === 2) awardLevel = 'beaten';
 
-                    // Check if trophy already exists
+                    // Check if trophy already exists for this month/type
                     const existingTrophy = user.trophyCase.find(trophy => 
                         trophy.challengeType === 'monthly' && 
-                        trophy.monthKey === monthKey
+                        trophy.monthKey === monthKey &&
+                        trophy.awardLevel === awardLevel
                     );
 
                     if (!existingTrophy) {
-                        const gameTitle = data.gameTitle || 'Monthly Challenge Game';
+                        const gameTitle = data.gameTitle || 'Monthly Challenge';
+                        
+                        // Create a proper date from monthKey (YYYY-MM format)
+                        const dateParts = monthKey.split('-');
+                        const year = parseInt(dateParts[0]);
+                        const month = parseInt(dateParts[1]) - 1; // Month is 0-based
+                        const trophyDate = new Date(year, month, 15); // 15th of the month
+                        
                         user.trophyCase.push({
-                            gameId: 'monthly_' + monthKey,
+                            gameId: `monthly_${monthKey}`,
                             gameTitle: gameTitle,
                             consoleName: 'Unknown',
                             awardLevel: awardLevel,
                             challengeType: 'monthly',
                             emojiId: null,
                             emojiName: this.getTrophyEmoji(awardLevel),
-                            earnedAt: new Date(monthKey + '-15'), // Mid-month as approximation
+                            earnedAt: trophyDate,
                             monthKey: monthKey
                         });
                         trophiesAdded++;
@@ -137,27 +145,62 @@ class GachaIntegration {
                     let awardLevel = 'participation';
                     if (data.progress === 2) awardLevel = 'beaten'; // Shadow max is beaten
 
-                    // Check if trophy already exists
+                    // Check if trophy already exists for this month/type
                     const existingTrophy = user.trophyCase.find(trophy => 
                         trophy.challengeType === 'shadow' && 
-                        trophy.monthKey === monthKey
+                        trophy.monthKey === monthKey &&
+                        trophy.awardLevel === awardLevel
                     );
 
                     if (!existingTrophy) {
-                        const gameTitle = data.gameTitle || 'Shadow Challenge Game';
+                        const gameTitle = data.gameTitle || 'Shadow Challenge';
+                        
+                        // Create a proper date from monthKey (YYYY-MM format)
+                        const dateParts = monthKey.split('-');
+                        const year = parseInt(dateParts[0]);
+                        const month = parseInt(dateParts[1]) - 1; // Month is 0-based
+                        const trophyDate = new Date(year, month, 15); // 15th of the month
+                        
                         user.trophyCase.push({
-                            gameId: 'shadow_' + monthKey,
+                            gameId: `shadow_${monthKey}`,
                             gameTitle: gameTitle,
                             consoleName: 'Unknown',
                             awardLevel: awardLevel,
                             challengeType: 'shadow',
                             emojiId: null,
                             emojiName: this.getTrophyEmoji(awardLevel),
-                            earnedAt: new Date(monthKey + '-15'), // Mid-month as approximation
+                            earnedAt: trophyDate,
                             monthKey: monthKey
                         });
                         trophiesAdded++;
                     }
+                }
+            }
+
+            // Award trophies for community awards
+            const currentYear = new Date().getFullYear();
+            const communityAwards = user.getCommunityAwardsForYear(currentYear);
+            
+            for (const award of communityAwards) {
+                // Check if trophy already exists for this community award
+                const existingTrophy = user.trophyCase.find(trophy => 
+                    trophy.challengeType === 'community' && 
+                    trophy.gameTitle === award.title
+                );
+
+                if (!existingTrophy) {
+                    user.trophyCase.push({
+                        gameId: `community_${award.title.replace(/\s+/g, '_').toLowerCase()}`,
+                        gameTitle: award.title,
+                        consoleName: 'Community',
+                        awardLevel: 'special',
+                        challengeType: 'community',
+                        emojiId: null,
+                        emojiName: '🏆',
+                        earnedAt: award.awardedAt,
+                        monthKey: null
+                    });
+                    trophiesAdded++;
                 }
             }
 
