@@ -110,40 +110,52 @@ client.on(Events.InteractionCreate, async interaction => {
     }
 });
 
-// Handle button interactions
+// Handle button interactions - UPDATED WITH DEBUG LOGGING
 client.on(Events.InteractionCreate, async interaction => {
     if (!interaction.isButton()) return;
+    
+    console.log('=== BUTTON INTERACTION RECEIVED ===');
+    console.log('CustomId:', interaction.customId);
+    console.log('User:', interaction.user.username);
+    console.log('Channel:', interaction.channel?.name);
     
     try {
         // Check if this is a nomination-related button
         if (interaction.customId.startsWith('nominate_')) {
+            console.log('Routing to nomination handler');
             await handleNominationButtonInteraction(interaction);
             return;
         }
         
         // Check if this is a restriction-related button
         if (interaction.customId.startsWith('restrictions_')) {
+            console.log('Routing to restriction handler');
             await handleRestrictionButtonInteraction(interaction);
             return;
         }
         
         // Check if this is an arena-related button
         if (interaction.customId.startsWith('arena_') || interaction.customId.startsWith('admin_arena_')) {
+            console.log('Routing to arena handler');
             await handleArenaButtonInteraction(interaction);
             return;
         }
         
         // Handle other button interactions
+        console.log('Checking for command-based button handler');
         const commandName = interaction.customId.split('_')[0];
         const command = client.commands.get(commandName);
         
         if (command && typeof command.handleButtonInteraction === 'function') {
+            console.log(`Found command handler for: ${commandName}`);
             await command.handleButtonInteraction(interaction);
         } else {
             console.log(`No button handler found for customId: ${interaction.customId}`);
+            console.log(`Available commands:`, Array.from(client.commands.keys()));
         }
     } catch (error) {
         console.error('Error handling button interaction:', error);
+        console.error('Error stack:', error.stack);
         try {
             if (interaction.replied || interaction.deferred) {
                 await interaction.followUp({ content: 'There was an error processing this button.', ephemeral: true });
