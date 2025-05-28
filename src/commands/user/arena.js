@@ -1,4 +1,4 @@
-// src/commands/user/arena.js - FIXED WITH JOIN FUNCTIONALITY
+// src/commands/user/arena.js - FIXED WITH JOIN FUNCTIONALITY AND DEBUG LOGGING
 import { 
     SlashCommandBuilder, 
     EmbedBuilder, 
@@ -305,12 +305,16 @@ export default {
         }
     },
 
-    // FIXED: Now includes join buttons for open challenges
+    // FIXED: Now includes join buttons for open challenges WITH DEBUG LOGGING
     async handleViewActive(interaction) {
+        console.log('=== HANDLE VIEW ACTIVE CALLED ===');
+        console.log('User:', interaction.user.username);
+        
         await interaction.deferReply({ ephemeral: true });
 
         try {
             const activeChallenges = await arenaService.getActiveChallenges(10);
+            console.log(`Found ${activeChallenges.length} active challenges`);
             
             if (activeChallenges.length === 0) {
                 return interaction.editReply({
@@ -329,6 +333,7 @@ export default {
             let embedDescription = '';
             
             challengesToShow.forEach((challenge, index) => {
+                console.log(`Processing challenge ${index + 1}: ${challenge.challengeId}`);
                 const typeEmoji = challenge.type === 'direct' ? '⚔️' : '🌍';
                 const statusEmoji = challenge.status === 'pending' ? '⏳' : '🔥';
                 
@@ -347,7 +352,7 @@ export default {
 
             embed.setDescription(embedDescription);
 
-            // Create action buttons for each challenge
+            // Create action buttons for each challenge WITH DEBUG LOGGING
             const actionRows = [];
             
             // Group buttons by 5 per row (Discord limit)
@@ -358,29 +363,50 @@ export default {
                 challengeGroup.forEach((challenge, groupIndex) => {
                     const challengeIndex = i + groupIndex + 1;
                     
+                    console.log(`=== CREATING BUTTON FOR CHALLENGE ${challengeIndex} ===`);
+                    console.log('Challenge ID:', challenge.challengeId);
+                    console.log('Challenge Type:', challenge.type);
+                    console.log('Challenge Status:', challenge.status);
+                    
                     // Determine button style and label based on challenge type and user eligibility
                     let buttonStyle = ButtonStyle.Secondary;
                     let buttonLabel = `${challengeIndex}. Info`;
                     let buttonEmoji = 'ℹ️';
+                    let buttonAction = 'info';
                     
                     // Check if user can join this challenge
                     const isParticipant = challenge.isParticipant(interaction.user.id);
                     const canJoin = challenge.type === 'open' && challenge.status === 'active' && !isParticipant;
                     const canBet = challenge.status === 'active' && !isParticipant && challenge.canBet();
                     
+                    console.log('User ID:', interaction.user.id);
+                    console.log('Is Participant:', isParticipant);
+                    console.log('Can Join:', canJoin);
+                    console.log('Can Bet:', canBet);
+                    
                     if (canJoin) {
                         buttonStyle = ButtonStyle.Success;
                         buttonLabel = `${challengeIndex}. Join (${gpUtils.formatGP(challenge.participants[0].wager)})`;
                         buttonEmoji = '⚔️';
+                        buttonAction = 'join';
+                        console.log('Setting button action to JOIN');
                     } else if (canBet) {
                         buttonStyle = ButtonStyle.Primary;
                         buttonLabel = `${challengeIndex}. Bet`;
                         buttonEmoji = '🎰';
+                        buttonAction = 'bet';
+                        console.log('Setting button action to BET');
+                    } else {
+                        console.log('Setting button action to INFO (default)');
                     }
+                    
+                    const customId = `arena_challenge_${challenge.challengeId}_${buttonAction}`;
+                    console.log(`Generated customId: ${customId}`);
+                    console.log('=====================================');
                     
                     row.addComponents(
                         new ButtonBuilder()
-                            .setCustomId(`arena_challenge_${challenge.challengeId}_${canJoin ? 'join' : (canBet ? 'bet' : 'info')}`)
+                            .setCustomId(customId)
                             .setLabel(buttonLabel)
                             .setStyle(buttonStyle)
                             .setEmoji(buttonEmoji)
@@ -401,6 +427,8 @@ export default {
                 );
             
             actionRows.push(refreshRow);
+
+            console.log(`Created ${actionRows.length} action rows with buttons`);
 
             await interaction.editReply({
                 embeds: [embed],
