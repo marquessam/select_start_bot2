@@ -14,7 +14,7 @@ import { COLORS, EMOJIS } from '../utils/FeedUtils.js';
 class GachaMachine {
     constructor() {
         this.client = null;
-        this.channelId = '1304814893857374270'; // Admin channel for testing
+        this.channelId = '1377092881885696022'; // Gacha channel
         this.machineMessageId = null;
         this.isRunning = false;
     }
