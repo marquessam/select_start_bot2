@@ -1,10 +1,15 @@
 // src/commands/user/profile.js
 import { 
     SlashCommandBuilder, 
-    EmbedBuilder
+    EmbedBuilder,
+    ActionRowBuilder,
+    ButtonBuilder,
+    ButtonStyle
 } from 'discord.js';
 import { User } from '../../models/User.js';
 import retroAPI from '../../services/retroAPI.js';
+import gachaService from '../../services/gachaService.js';
+import { COLORS, EMOJIS } from '../../utils/FeedUtils.js';
 
 // Award points constants - matching yearlyLeaderboard.js exactly
 const POINTS = {
@@ -59,9 +64,16 @@ export default {
             const currentYear = new Date().getFullYear();
             const communityAwards = user.getCommunityAwardsForYear(currentYear);
             
-            // Create and send the profile embed
+            // Create the profile embed
             const profileEmbed = this.createProfileEmbed(user, raUserInfo, pointsData, communityAwards);
-            return interaction.editReply({ embeds: [profileEmbed] });
+            
+            // Create buttons for trophy case and collection
+            const buttons = this.createProfileButtons(user);
+            
+            return interaction.editReply({ 
+                embeds: [profileEmbed], 
+                components: buttons.length > 0 ? [buttons] : []
+            });
 
         } catch (error) {
             console.error('Error displaying profile:', error);
@@ -161,7 +173,7 @@ export default {
             value: `**Total Points:** ${pointsData.totalPoints}\n` + 
                    `• Challenge Points: ${pointsData.challengePoints}\n` +
                    `• Community Points: ${pointsData.communityPoints}\n` +
-                   `**GP Balance:** ${(user.gp || 0).toLocaleString()} GP`
+                   `**GP Balance:** ${(user.gpBalance || 0).toLocaleString()} GP`
         });
         
         // Point Breakdown
@@ -178,8 +190,8 @@ export default {
         // Arena Stats (if available)
         if (user.arenaStats) {
             const arenaStats = user.arenaStats;
-            const challengesIssued = arenaStats.challengesIssued || 0;
-            const challengesAccepted = arenaStats.challengesAccepted || 0;
+            const challengesIssued = arenaStats.challengesCreated || 0;
+            const challengesAccepted = arenaStats.challengesParticipated - challengesIssued || 0;
             const challengesWon = arenaStats.challengesWon || 0;
             const betsPlaced = arenaStats.betsPlaced || 0;
             const betsWon = arenaStats.betsWon || 0;
@@ -225,9 +237,193 @@ export default {
             });
         }
         
-        embed.setFooter({ text: 'Use /yearlyboard to see the full leaderboard' })
+        embed.setFooter({ text: 'Use /yearlyboard to see the full leaderboard • Click buttons below to explore more!' })
              .setTimestamp();
         
         return embed;
+    },
+
+    createProfileButtons(user) {
+        const buttons = [];
+
+        // Trophy Case Button
+        const trophyButton = new ButtonBuilder()
+            .setCustomId(`profile_trophy_case_${user.raUsername}`)
+            .setLabel('🏆 Trophy Case')
+            .setStyle(ButtonStyle.Primary);
+        
+        buttons.push(trophyButton);
+
+        // Collection Button (only show if user has items)
+        if (user.gachaCollection && user.gachaCollection.length > 0) {
+            const collectionButton = new ButtonBuilder()
+                .setCustomId(`profile_collection_${user.raUsername}`)
+                .setLabel('📦 Collection')
+                .setStyle(ButtonStyle.Secondary);
+            
+            buttons.push(collectionButton);
+        }
+
+        // If no buttons, return empty array
+        if (buttons.length === 0) return [];
+
+        return new ActionRowBuilder().addComponents(buttons);
+    },
+
+    // Handle button interactions
+    async handleButtonInteraction(interaction) {
+        if (!interaction.customId.startsWith('profile_')) return;
+
+        await interaction.deferReply({ ephemeral: true });
+
+        try {
+            // Extract username from customId
+            const parts = interaction.customId.split('_');
+            const action = parts[1]; // trophy_case or collection
+            const username = parts.slice(2).join('_'); // Handle usernames with underscores
+
+            // Find the user
+            const user = await User.findOne({ 
+                raUsername: { $regex: new RegExp(`^${username}$`, 'i') }
+            });
+
+            if (!user) {
+                return interaction.editReply({
+                    content: '❌ User not found.',
+                    ephemeral: true
+                });
+            }
+
+            if (action === 'trophy') {
+                // Handle trophy case
+                await this.handleTrophyCaseButton(interaction, user);
+            } else if (action === 'collection') {
+                // Handle collection
+                await this.handleCollectionButton(interaction, user);
+            }
+
+        } catch (error) {
+            console.error('Error handling profile button:', error);
+            await interaction.editReply({
+                content: '❌ An error occurred while processing your request.',
+                ephemeral: true
+            });
+        }
+    },
+
+    async handleTrophyCaseButton(interaction, user) {
+        const trophies = user.trophyCase || [];
+        
+        if (trophies.length === 0) {
+            return interaction.editReply({
+                content: '🏆 This trophy case is empty! Complete monthly and shadow challenges to earn trophies.',
+                ephemeral: true
+            });
+        }
+
+        // Group trophies by type and award level
+        const groupedTrophies = {
+            monthly: { mastery: [], beaten: [], participation: [] },
+            shadow: { mastery: [], beaten: [], participation: [] }
+        };
+
+        trophies.forEach(trophy => {
+            if (groupedTrophies[trophy.challengeType] && groupedTrophies[trophy.challengeType][trophy.awardLevel]) {
+                groupedTrophies[trophy.challengeType][trophy.awardLevel].push(trophy);
+            }
+        });
+
+        const embed = new EmbedBuilder()
+            .setTitle(`🏆 ${user.raUsername}'s Trophy Case`)
+            .setColor(COLORS.GOLD)
+            .setDescription(`**Total Trophies:** ${trophies.length}`)
+            .setTimestamp();
+
+        // Add fields for each category
+        ['monthly', 'shadow'].forEach(challengeType => {
+            ['mastery', 'beaten', 'participation'].forEach(awardLevel => {
+                const categoryTrophies = groupedTrophies[challengeType][awardLevel];
+                if (categoryTrophies.length > 0) {
+                    const emoji = awardLevel === 'mastery' ? '✨' : (awardLevel === 'beaten' ? '⭐' : '🏁');
+                    const typeName = challengeType.charAt(0).toUpperCase() + challengeType.slice(1);
+                    const levelName = awardLevel.charAt(0).toUpperCase() + awardLevel.slice(1);
+                    const fieldName = `${emoji} ${typeName} ${levelName} (${categoryTrophies.length})`;
+                    
+                    let fieldValue = '';
+                    categoryTrophies.slice(0, 10).forEach(trophy => {
+                        const date = new Date(trophy.earnedAt).toLocaleDateString('en-US', { 
+                            month: 'short', 
+                            year: 'numeric' 
+                        });
+                        const trophyEmoji = trophy.emojiId ? 
+                            `<:${trophy.emojiName}:${trophy.emojiId}>` : 
+                            (trophy.emojiName || '🏆');
+                        fieldValue += `${trophyEmoji} **${trophy.gameTitle}** - ${date}\n`;
+                    });
+
+                    if (categoryTrophies.length > 10) {
+                        fieldValue += `*...and ${categoryTrophies.length - 10} more*\n`;
+                    }
+
+                    embed.addFields({ name: fieldName, value: fieldValue });
+                }
+            });
+        });
+
+        embed.setFooter({ 
+            text: 'Trophies are earned by completing monthly and shadow challenges' 
+        });
+
+        await interaction.editReply({
+            embeds: [embed],
+            ephemeral: true
+        });
+    },
+
+    async handleCollectionButton(interaction, user) {
+        const summary = gachaService.getUserCollectionSummary(user);
+        
+        if (summary.totalItems === 0) {
+            return interaction.editReply({
+                content: '📦 This collection is empty! Visit the gacha machine to start collecting.',
+                ephemeral: true
+            });
+        }
+
+        const embed = new EmbedBuilder()
+            .setTitle(`📦 ${user.raUsername}'s Collection Summary`)
+            .setColor(COLORS.INFO)
+            .setDescription(
+                `**Total Items:** ${summary.totalItems} (${summary.uniqueItems} unique)\n\n` +
+                '**By Rarity:**\n' +
+                `🟡 Legendary: ${summary.rarityCount.legendary || 0}\n` +
+                `🟣 Epic: ${summary.rarityCount.epic || 0}\n` +
+                `🔵 Rare: ${summary.rarityCount.rare || 0}\n` +
+                `🟢 Uncommon: ${summary.rarityCount.uncommon || 0}\n` +
+                `⚪ Common: ${summary.rarityCount.common || 0}`
+            )
+            .setFooter({ text: 'Use /collection for detailed view with filters' })
+            .setTimestamp();
+
+        // Add recent items
+        if (summary.recentItems.length > 0) {
+            let recentText = '';
+            summary.recentItems.slice(0, 8).forEach(item => {
+                const emoji = gachaService.formatEmoji(item.emojiId, item.emojiName);
+                const rarityEmoji = gachaService.getRarityEmoji(item.rarity);
+                const stackInfo = (item.quantity || 1) > 1 ? ` x${item.quantity}` : '';
+                recentText += `${rarityEmoji} ${emoji} **${item.itemName}**${stackInfo}\n`;
+            });
+            
+            embed.addFields({ 
+                name: 'Recent Items', 
+                value: recentText
+            });
+        }
+
+        await interaction.editReply({
+            embeds: [embed],
+            ephemeral: true
+        });
     }
 };
