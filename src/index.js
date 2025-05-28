@@ -19,6 +19,7 @@ import arenaAlertService from './services/arenaAlertService.js';
 import arenaFeedService from './services/arenaFeedService.js';
 import gameAwardService from './services/gameAwardService.js';
 import monthlyGPService from './services/monthlyGPService.js';
+import gachaMachine from './services/gachaMachine.js'; // ADD: Import gacha machine
 import { User } from './models/User.js';
 
 // Import nomination and restriction handlers
@@ -110,7 +111,7 @@ client.on(Events.InteractionCreate, async interaction => {
     }
 });
 
-// Handle button interactions - UPDATED WITH DEBUG LOGGING
+// Handle button interactions - UPDATED WITH GACHA SUPPORT
 client.on(Events.InteractionCreate, async interaction => {
     if (!interaction.isButton()) return;
     
@@ -120,6 +121,34 @@ client.on(Events.InteractionCreate, async interaction => {
     console.log('Channel:', interaction.channel?.name);
     
     try {
+        // Check if this is a gacha-related button - HANDLE DIRECTLY HERE
+        if (interaction.customId.startsWith('gacha_')) {
+            console.log('Routing to gacha machine handler');
+            
+            await interaction.deferReply({ ephemeral: true });
+
+            const user = await User.findOne({ discordId: interaction.user.id });
+            if (!user) {
+                return interaction.editReply({
+                    content: '❌ You are not registered! Please ask an admin to register you first.',
+                    ephemeral: true
+                });
+            }
+
+            switch (interaction.customId) {
+                case 'gacha_single_pull':
+                    await gachaMachine.handlePull(interaction, user, 'single');
+                    break;
+                case 'gacha_multi_pull':
+                    await gachaMachine.handlePull(interaction, user, 'multi');
+                    break;
+                case 'gacha_collection':
+                    await gachaMachine.handleCollection(interaction, user);
+                    break;
+            }
+            return;
+        }
+        
         // Check if this is a nomination-related button
         if (interaction.customId.startsWith('nominate_')) {
             console.log('Routing to nomination handler');
@@ -376,10 +405,15 @@ client.once(Events.ClientReady, async () => {
         arenaAlertService.setClient(client);
         arenaFeedService.setClient(client);
         gameAwardService.setClient(client);
+        gachaMachine.setClient(client); // ADD: Set client for gacha machine
 
         // START MONTHLY GP SERVICE
         monthlyGPService.start();
         console.log('✅ Monthly GP Service initialized - automatic grants on 1st of each month');
+
+        // START GACHA MACHINE - ADD THIS
+        await gachaMachine.start();
+        console.log('✅ Gacha Machine initialized and pinned in gacha channel');
 
         // Schedule stats updates every 30 minutes
         cron.schedule('*/30 * * * *', () => {
@@ -643,6 +677,7 @@ client.once(Events.ClientReady, async () => {
         console.log('  • Arcade service: Daily at 12:15 AM');
         console.log('  • Arena feeds: Every 30 minutes');
         console.log('  • Arena timeouts: Hourly at 45 minutes past');
+        console.log('  • Gacha Machine: Active and pinned');
         console.log('  • Various other feeds: Hourly');
         
     } catch (error) {
@@ -664,12 +699,14 @@ process.on('unhandledRejection', error => {
 process.on('SIGINT', () => {
     console.log('Shutting down...');
     monthlyGPService.stop();
+    gachaMachine.stop(); // ADD: Stop gacha machine
     process.exit(0);
 });
 
 process.on('SIGTERM', () => {
     console.log('Shutting down...');
     monthlyGPService.stop();
+    gachaMachine.stop(); // ADD: Stop gacha machine
     process.exit(0);
 });
 
