@@ -1,4 +1,4 @@
-// src/handlers/arenaHandlers.js
+// src/handlers/arenaHandlers.js - FIXED VERSION
 import { User } from '../models/User.js';
 import { ArenaChallenge } from '../models/ArenaChallenge.js';
 import arenaService from '../services/arenaService.js';
@@ -14,9 +14,65 @@ import {
 } from 'discord.js';
 
 /**
- * Handle arena-related button interactions
+ * Handle arena-related button interactions - FIXED WITH JOIN SUPPORT
  */
 export async function handleArenaButtonInteraction(interaction) {
+    // Handle new challenge interaction buttons (format: arena_challenge_{challengeId}_{action})
+    if (interaction.customId.startsWith('arena_challenge_')) {
+        const parts = interaction.customId.split('_');
+        const challengeId = parts[2];
+        const action = parts[3];
+        
+        let user = await User.findOne({ discordId: interaction.user.id });
+        if (!user) {
+            return interaction.reply({
+                content: '❌ You need to register with the bot first. Please use `/register` to link your RetroAchievements account.',
+                ephemeral: true
+            });
+        }
+
+        try {
+            switch (action) {
+                case 'join':
+                    await handleJoinChallenge(interaction, user, challengeId);
+                    break;
+                case 'bet':
+                    await handleChallengeSpecificBet(interaction, user, challengeId);
+                    break;
+                case 'info':
+                    await handleChallengeInfo(interaction, challengeId);
+                    break;
+                default:
+                    await interaction.reply({
+                        content: 'Unknown challenge action.',
+                        ephemeral: true
+                    });
+            }
+        } catch (error) {
+            console.error('Error in challenge button interaction:', error);
+            await interaction.reply({
+                content: 'An error occurred. Please try again.',
+                ephemeral: true
+            });
+        }
+        return;
+    }
+
+    // Handle refresh active challenges button
+    if (interaction.customId === 'arena_refresh_active') {
+        try {
+            const arenaCommand = await import('../commands/user/arena.js');
+            await arenaCommand.default.handleViewActive(interaction);
+        } catch (error) {
+            console.error('Error refreshing active challenges:', error);
+            await interaction.reply({
+                content: 'An error occurred while refreshing. Please try again.',
+                ephemeral: true
+            });
+        }
+        return;
+    }
+
     // Extract action from customId (format: arena_action_param)
     const parts = interaction.customId.split('_');
     const action = parts[1];
@@ -443,8 +499,171 @@ async function handleJoinChallenge(interaction, user, challengeId) {
 }
 
 async function handlePlaceBetButton(interaction, user, challengeId) {
-    // This is called from challenge detail views
+    // This is called from challenge detail views - redirect to betting options
     await showBettingOptions(interaction);
+}
+
+// NEW: Handle betting on a specific challenge from the View Active list
+async function handleChallengeSpecificBet(interaction, user, challengeId) {
+    const challenge = await ArenaChallenge.findOne({ challengeId });
+    if (!challenge) {
+        return interaction.reply({
+            content: '❌ Challenge not found.',
+            ephemeral: true
+        });
+    }
+
+    if (!challenge.canBet()) {
+        return interaction.reply({
+            content: '❌ Betting is closed for this challenge.',
+            ephemeral: true
+        });
+    }
+
+    // Check if user is a participant
+    if (challenge.isParticipant(interaction.user.id)) {
+        return interaction.reply({
+            content: '❌ You cannot bet on a challenge you\'re participating in.',
+            ephemeral: true
+        });
+    }
+
+    // Show betting modal directly for this challenge
+    const modal = new ModalBuilder()
+        .setCustomId(`arena_bet_modal_${challengeId}`)
+        .setTitle(`Bet on: ${challenge.gameTitle}`);
+
+    const amountInput = new TextInputBuilder()
+        .setCustomId('bet_amount')
+        .setLabel('Bet Amount (GP)')
+        .setStyle(TextInputStyle.Short)
+        .setPlaceholder('e.g., 50')
+        .setRequired(true);
+
+    const participantsList = challenge.participants
+        .map(p => p.raUsername)
+        .join(', ');
+
+    const targetInput = new TextInputBuilder()
+        .setCustomId('bet_target')
+        .setLabel('Bet On (RetroAchievements username)')
+        .setStyle(TextInputStyle.Short)
+        .setPlaceholder(`Choose from: ${participantsList}`)
+        .setRequired(true);
+
+    const infoInput = new TextInputBuilder()
+        .setCustomId('bet_info')
+        .setLabel('Challenge Info (READ ONLY)')
+        .setStyle(TextInputStyle.Paragraph)
+        .setValue(
+            `Game: ${challenge.gameTitle}\n` +
+            `Description: ${challenge.description || 'No description provided'}\n` +
+            `Participants: ${participantsList}\n` +
+            `Total Wager Pool: ${challenge.getTotalWager()} GP\n` +
+            `Betting closes: ${challenge.bettingClosedAt.toLocaleDateString()}`
+        )
+        .setRequired(false);
+
+    const firstRow = new ActionRowBuilder().addComponents(amountInput);
+    const secondRow = new ActionRowBuilder().addComponents(targetInput);
+    const thirdRow = new ActionRowBuilder().addComponents(infoInput);
+
+    modal.addComponents(firstRow, secondRow, thirdRow);
+
+    await interaction.showModal(modal);
+}
+
+// NEW: Handle showing detailed info about a specific challenge
+async function handleChallengeInfo(interaction, challengeId) {
+    await interaction.deferReply({ ephemeral: true });
+
+    try {
+        const challenge = await ArenaChallenge.findOne({ challengeId });
+        if (!challenge) {
+            return interaction.editReply('❌ Challenge not found.');
+        }
+
+        const embed = new EmbedBuilder()
+            .setTitle(`${challenge.type === 'direct' ? '⚔️ Direct' : '🌍 Open'} Challenge Info`)
+            .setColor(challenge.type === 'direct' ? '#FF0000' : '#0099FF')
+            .setTimestamp();
+
+        // Basic challenge info
+        embed.addFields([
+            { name: 'Challenge ID', value: challenge.challengeId, inline: true },
+            { name: 'Game', value: challenge.gameTitle, inline: true },
+            { name: 'Status', value: challenge.status.toUpperCase(), inline: true },
+            { name: 'Leaderboard', value: challenge.leaderboardTitle, inline: false },
+            { name: 'Description', value: challenge.description || 'No description provided', inline: false },
+            { name: 'Created by', value: challenge.creatorRaUsername, inline: true },
+            { name: 'Entry Wager', value: gpUtils.formatGP(challenge.participants[0]?.wager || 0), inline: true },
+            { name: 'Total Prize Pool', value: gpUtils.formatGP(challenge.getTotalWager()), inline: true }
+        ]);
+
+        // Target user for direct challenges
+        if (challenge.type === 'direct' && challenge.targetRaUsername) {
+            embed.addFields({ name: 'Target Opponent', value: challenge.targetRaUsername, inline: true });
+        }
+
+        // Participants
+        if (challenge.participants.length > 0) {
+            const participantsList = challenge.participants
+                .map((p, index) => `${index + 1}. **${p.raUsername}** (Joined: ${p.joinedAt.toLocaleDateString()})`)
+                .join('\n');
+            embed.addFields({ name: `Participants (${challenge.participants.length})`, value: participantsList, inline: false });
+        }
+
+        // Betting info
+        if (challenge.bets.length > 0) {
+            const totalBets = challenge.getTotalBets();
+            embed.addFields({ name: '🎰 Betting Pool', value: `${gpUtils.formatGP(totalBets)} from ${challenge.bets.length} bet(s)`, inline: true });
+        }
+
+        // Timing info
+        if (challenge.status === 'active') {
+            const endTime = challenge.endedAt.toLocaleDateString();
+            const bettingEndTime = challenge.bettingClosedAt.toLocaleDateString();
+            embed.addFields([
+                { name: 'Challenge Ends', value: endTime, inline: true },
+                { name: 'Betting Closes', value: bettingEndTime, inline: true }
+            ]);
+        } else if (challenge.status === 'pending') {
+            const timeoutDate = new Date(challenge.createdAt.getTime() + 24 * 60 * 60 * 1000);
+            embed.addFields({ name: 'Expires', value: timeoutDate.toLocaleDateString(), inline: true });
+        }
+
+        // Add action buttons if applicable
+        const actionButtons = new ActionRowBuilder();
+        const user = await User.findOne({ discordId: interaction.user.id });
+        const isParticipant = challenge.isParticipant(interaction.user.id);
+        
+        if (challenge.type === 'open' && challenge.status === 'active' && !isParticipant) {
+            actionButtons.addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`arena_challenge_${challengeId}_join`)
+                    .setLabel(`Join Challenge (${gpUtils.formatGP(challenge.participants[0].wager)})`)
+                    .setStyle(ButtonStyle.Success)
+                    .setEmoji('⚔️')
+            );
+        }
+        
+        if (challenge.status === 'active' && !isParticipant && challenge.canBet()) {
+            actionButtons.addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`arena_challenge_${challengeId}_bet`)
+                    .setLabel('Place Bet')
+                    .setStyle(ButtonStyle.Primary)
+                    .setEmoji('🎰')
+            );
+        }
+
+        const components = actionButtons.components.length > 0 ? [actionButtons] : [];
+
+        await interaction.editReply({ embeds: [embed], components });
+    } catch (error) {
+        console.error('Error showing challenge info:', error);
+        await interaction.editReply('❌ Error loading challenge information.');
+    }
 }
 
 // Modal submission handlers - UPDATED to handle description
