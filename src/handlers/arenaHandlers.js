@@ -17,49 +17,71 @@ import {
  * Handle arena-related button interactions - FIXED WITH JOIN SUPPORT
  */
 export async function handleArenaButtonInteraction(interaction) {
+    console.log('=== ARENA BUTTON HANDLER CALLED ===');
+    console.log('CustomId:', interaction.customId);
+    console.log('User:', interaction.user.username);
+    
     // Handle new challenge interaction buttons (format: arena_challenge_{challengeId}_{action})
     if (interaction.customId.startsWith('arena_challenge_')) {
-        const parts = interaction.customId.split('_');
-        const challengeId = parts[2];
-        const action = parts[3];
+        console.log('Processing challenge-specific button');
+        
+        // Find the last underscore to get the action
+        const lastUnderscoreIndex = interaction.customId.lastIndexOf('_');
+        const action = interaction.customId.substring(lastUnderscoreIndex + 1);
+        const challengeId = interaction.customId.substring('arena_challenge_'.length, lastUnderscoreIndex);
+        
+        console.log('Parsed Challenge ID:', challengeId);
+        console.log('Parsed Action:', action);
         
         let user = await User.findOne({ discordId: interaction.user.id });
         if (!user) {
+            console.log('User not found in database');
             return interaction.reply({
                 content: '❌ You need to register with the bot first. Please use `/register` to link your RetroAchievements account.',
                 ephemeral: true
             });
         }
 
+        console.log('User found:', user.raUsername);
+
         try {
             switch (action) {
                 case 'join':
+                    console.log('Calling handleJoinChallenge');
                     await handleJoinChallenge(interaction, user, challengeId);
                     break;
                 case 'bet':
+                    console.log('Calling handleChallengeSpecificBet');
                     await handleChallengeSpecificBet(interaction, user, challengeId);
                     break;
                 case 'info':
+                    console.log('Calling handleChallengeInfo');
                     await handleChallengeInfo(interaction, challengeId);
                     break;
                 default:
+                    console.log('UNKNOWN ACTION DETECTED:', action);
+                    console.log('Action length:', action.length);
+                    console.log('Action bytes:', [...action].map(c => c.charCodeAt(0)));
                     await interaction.reply({
-                        content: 'Unknown challenge action.',
+                        content: `❌ Unknown challenge action: "${action}". Please try refreshing the challenge list.`,
                         ephemeral: true
                     });
             }
         } catch (error) {
             console.error('Error in challenge button interaction:', error);
-            await interaction.reply({
-                content: 'An error occurred. Please try again.',
-                ephemeral: true
-            });
+            if (!interaction.replied && !interaction.deferred) {
+                await interaction.reply({
+                    content: 'An error occurred. Please try again.',
+                    ephemeral: true
+                });
+            }
         }
         return;
     }
 
     // Handle refresh active challenges button
     if (interaction.customId === 'arena_refresh_active') {
+        console.log('Processing refresh active challenges');
         try {
             const arenaCommand = await import('../commands/user/arena.js');
             await arenaCommand.default.handleViewActive(interaction);
@@ -469,6 +491,8 @@ async function handleDeclineChallenge(interaction, user, challengeId) {
 }
 
 async function handleJoinChallenge(interaction, user, challengeId) {
+    console.log(`Attempting to join challenge: ${challengeId} for user: ${user.raUsername}`);
+    
     await interaction.deferReply({ ephemeral: true });
 
     try {
@@ -492,6 +516,24 @@ async function handleJoinChallenge(interaction, user, challengeId) {
             .setTimestamp();
 
         await interaction.editReply({ embeds: [embed] });
+        
+        // Refresh the active challenges view
+        setTimeout(async () => {
+            try {
+                const arenaCommand = await import('../commands/user/arena.js');
+                // Create a mock interaction for refresh
+                const mockInteraction = {
+                    ...interaction,
+                    reply: (options) => interaction.followUp({ ...options, ephemeral: true }),
+                    editReply: (options) => interaction.followUp({ ...options, ephemeral: true }),
+                    deferReply: () => Promise.resolve()
+                };
+                // Don't refresh automatically to avoid confusion
+            } catch (error) {
+                console.error('Error in post-join refresh:', error);
+            }
+        }, 1000);
+        
     } catch (error) {
         console.error('Error joining challenge:', error);
         await interaction.editReply(`❌ Error: ${error.message}`);
