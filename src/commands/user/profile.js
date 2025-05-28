@@ -319,7 +319,7 @@ export default {
 
     async handleTrophyCaseButton(interaction, user) {
         // Generate achievement trophies dynamically from existing data
-        const trophies = this.generateTrophiesFromExistingData(user);
+        const trophies = await this.generateTrophiesFromExistingData(user);
         
         if (trophies.length === 0) {
             return interaction.editReply({
