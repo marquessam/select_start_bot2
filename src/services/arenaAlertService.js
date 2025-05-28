@@ -1,10 +1,11 @@
-// src/services/arenaAlertService.js
+// src/services/arenaAlertService.js - FIXED VERSION
 import { ArenaChallenge } from '../models/ArenaChallenge.js';
 import { User } from '../models/User.js';
 import { config } from '../config/config.js';
 import { FeedManagerBase } from '../utils/FeedManagerBase.js';
 import { COLORS, EMOJIS } from '../utils/FeedUtils.js';
 import arenaUtils from '../utils/arenaUtils.js';
+import RetroAPIUtils from '../utils/RetroAPIUtils.js'; // USE RELIABLE API UTILS
 import AlertUtils, { ALERT_TYPES } from '../utils/AlertUtils.js';
 
 class ArenaAlertService extends FeedManagerBase {
@@ -106,9 +107,9 @@ class ArenaAlertService extends FeedManagerBase {
 
     async checkChallengeRankChanges(challenge, alerts, sendAlerts) {
         try {
-            // Get current leaderboard scores for participants
+            // Get current leaderboard scores for participants using FIXED API
             const participantUsernames = challenge.participants.map(p => p.raUsername);
-            const currentScores = await arenaUtils.fetchLeaderboardScores(
+            const currentScores = await this.fetchLeaderboardScoresFixed(
                 challenge.gameId,
                 challenge.leaderboardId,
                 participantUsernames
@@ -139,6 +140,55 @@ class ArenaAlertService extends FeedManagerBase {
             
         } catch (error) {
             console.error(`Error checking rank changes for challenge ${challenge.challengeId}:`, error);
+        }
+    }
+
+    /**
+     * FIXED: Use reliable API utilities like arcade system
+     */
+    async fetchLeaderboardScoresFixed(gameId, leaderboardId, raUsernames) {
+        try {
+            console.log(`Fetching leaderboard scores for game ${gameId}, leaderboard ${leaderboardId}`);
+
+            // Use the same reliable API utilities as arcade system
+            const rawEntries = await RetroAPIUtils.getLeaderboardEntries(leaderboardId, 1000);
+            
+            if (!rawEntries || rawEntries.length === 0) {
+                console.log('No leaderboard data received');
+                return [];
+            }
+
+            console.log(`Processed ${rawEntries.length} leaderboard entries`);
+
+            // Find entries for our target users
+            const userScores = [];
+            
+            for (const username of raUsernames) {
+                const entry = rawEntries.find(entry => {
+                    return entry.User && entry.User.toLowerCase() === username.toLowerCase();
+                });
+
+                if (entry) {
+                    userScores.push({
+                        raUsername: username,
+                        rank: entry.Rank,
+                        score: entry.FormattedScore || entry.Score?.toString() || 'No score',
+                        fetchedAt: new Date()
+                    });
+                } else {
+                    userScores.push({
+                        raUsername: username,
+                        rank: null,
+                        score: 'No score',
+                        fetchedAt: new Date()
+                    });
+                }
+            }
+
+            return userScores;
+        } catch (error) {
+            console.error('Error fetching leaderboard scores:', error);
+            return [];
         }
     }
 
@@ -245,11 +295,11 @@ class ArenaAlertService extends FeedManagerBase {
                 }
             }
             
-            // Get current standings for the challenge
+            // Get current standings for the challenge using FIXED API
             const currentStandings = [];
             try {
                 const participantUsernames = challenge.participants.map(p => p.raUsername);
-                const scores = await arenaUtils.fetchLeaderboardScores(
+                const scores = await this.fetchLeaderboardScoresFixed(
                     challenge.gameId,
                     challenge.leaderboardId,
                     participantUsernames
