@@ -93,6 +93,7 @@ class GachaMachine {
                 '⚪ Common • 🟢 Uncommon • 🔵 Rare • 🟣 Epic • 🟡 Legendary'
             )
             .setColor(COLORS.GOLD)
+            .setImage('attachment://gacha.png') // Add the gacha machine image
             .setFooter({ 
                 text: 'Pull results will expire after 1 minute • Use /profile to check your GP balance' 
             })
@@ -347,9 +348,28 @@ class GachaMachine {
             const embed = this.createMachineEmbed();
             const buttons = this.createMachineButtons();
 
+            // Include the gacha image as an attachment
+            const fs = await import('fs');
+            const path = await import('path');
+            
+            let files = [];
+            try {
+                // Try to read the gacha image file
+                const imagePath = path.resolve('./assets/gacha.png');
+                if (fs.existsSync(imagePath)) {
+                    files = [{
+                        attachment: imagePath,
+                        name: 'gacha.png'
+                    }];
+                }
+            } catch (fileError) {
+                console.warn('Could not load gacha image:', fileError.message);
+            }
+
             await message.edit({
                 embeds: [embed],
-                components: [buttons]
+                components: [buttons],
+                files: files
             });
 
         } catch (error) {
@@ -358,6 +378,59 @@ class GachaMachine {
             if (error.message.includes('Unknown Message')) {
                 await this.createMachine();
             }
+        }
+    }
+
+    // Updated createMachine method to include the image file
+    async createMachine() {
+        try {
+            const channel = await this.getChannel();
+            if (!channel) return;
+
+            // Create the machine embed
+            const embed = this.createMachineEmbed();
+            const buttons = this.createMachineButtons();
+
+            // Include the gacha image as an attachment
+            const fs = await import('fs');
+            const path = await import('path');
+            
+            let messageOptions = {
+                embeds: [embed],
+                components: [buttons]
+            };
+
+            try {
+                // Try to read the gacha image file
+                const imagePath = path.resolve('./assets/gacha.png');
+                if (fs.existsSync(imagePath)) {
+                    messageOptions.files = [{
+                        attachment: imagePath,
+                        name: 'gacha.png'
+                    }];
+                }
+            } catch (fileError) {
+                console.warn('Could not load gacha image, proceeding without it:', fileError.message);
+            }
+
+            // Send the machine message
+            const message = await channel.send(messageOptions);
+
+            // Pin the message
+            try {
+                await message.pin();
+                console.log('Gacha machine pinned successfully');
+            } catch (pinError) {
+                console.error('Error pinning gacha machine:', pinError);
+            }
+
+            this.machineMessageId = message.id;
+
+            // Set up button interaction handling
+            this.setupButtonHandling();
+
+        } catch (error) {
+            console.error('Error creating gacha machine:', error);
         }
     }
 
