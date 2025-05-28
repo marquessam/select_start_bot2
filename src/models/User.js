@@ -38,6 +38,93 @@ const nominationSchema = new mongoose.Schema({
     }
 });
 
+// NEW: Trophy case schema
+const trophyCaseSchema = new mongoose.Schema({
+    gameId: {
+        type: String,
+        required: true
+    },
+    gameTitle: {
+        type: String,
+        required: true
+    },
+    consoleName: {
+        type: String,
+        default: 'Unknown'
+    },
+    awardLevel: {
+        type: String,
+        enum: ['mastery', 'beaten', 'participation'],
+        required: true
+    },
+    challengeType: {
+        type: String,
+        enum: ['monthly', 'shadow'],
+        required: true
+    },
+    emojiId: String,        // Discord emoji ID
+    emojiName: String,      // Emoji name for fallback
+    earnedAt: {
+        type: Date,
+        default: Date.now
+    },
+    monthKey: String        // YYYY-MM format
+});
+
+// NEW: Gacha collection schema
+const gachaCollectionSchema = new mongoose.Schema({
+    itemId: {
+        type: String,
+        required: true
+    },
+    itemName: {
+        type: String,
+        required: true
+    },
+    itemType: {
+        type: String,
+        enum: ['trinket', 'collectible', 'series', 'special', 'trophy'],
+        required: true
+    },
+    seriesId: String,       // For collection series (e.g., "triforce")
+    rarity: {
+        type: String,
+        enum: ['common', 'uncommon', 'rare', 'epic', 'legendary'],
+        required: true
+    },
+    emojiId: String,
+    emojiName: String,
+    obtainedAt: {
+        type: Date,
+        default: Date.now
+    },
+    quantity: {             // For stackable items
+        type: Number,
+        default: 1,
+        min: 1
+    }
+});
+
+// NEW: Collection progress schema
+const collectionProgressSchema = new mongoose.Schema({
+    seriesId: {
+        type: String,
+        required: true
+    },
+    seriesName: {
+        type: String,
+        required: true
+    },
+    itemsOwned: [String],   // Array of itemIds
+    itemsNeeded: [String],  // Array of itemIds still needed
+    isComplete: {
+        type: Boolean,
+        default: false
+    },
+    completedAt: Date,
+    rewardItemId: String    // Special item awarded for completion
+});
+
 const userSchema = new mongoose.Schema({
     raUsername: {
         type: String,
@@ -151,7 +238,7 @@ const userSchema = new mongoose.Schema({
     gpTransactions: [{
         type: {
             type: String,
-            enum: ['monthly_grant', 'wager', 'bet', 'win', 'refund', 'admin_adjust'],
+            enum: ['monthly_grant', 'wager', 'bet', 'win', 'refund', 'admin_adjust', 'gacha_pull'],
             required: true
         },
         amount: {
@@ -206,7 +293,19 @@ const userSchema = new mongoose.Schema({
             type: Number,
             default: 0
         }
-    }
+    },
+
+    // ===== NEW GACHA SYSTEM FIELDS =====
+    
+    // Trophy Case - stores earned trophies from monthly/shadow games
+    trophyCase: [trophyCaseSchema],
+    
+    // Gacha Collection - trinkets and collectibles
+    gachaCollection: [gachaCollectionSchema],
+    
+    // Collection Progress - tracks series completion
+    collectionProgress: [collectionProgressSchema]
+
 }, {
     timestamps: true,
     strict: false // Allow additional fields to be added
@@ -217,7 +316,13 @@ const userSchema = new mongoose.Schema({
 userSchema.index({ 'arenaStats.challengesWon': -1 });
 userSchema.index({ 'arenaStats.totalGpWon': -1 });
 userSchema.index({ gpBalance: -1 });
-userSchema.index({ lastMonthlyGpGrant: 1 }); // Changed from lastMonthlyGpClaim
+userSchema.index({ lastMonthlyGpGrant: 1 });
+
+// NEW: Add indexes for gacha system
+userSchema.index({ 'trophyCase.challengeType': 1 });
+userSchema.index({ 'trophyCase.earnedAt': -1 });
+userSchema.index({ 'gachaCollection.obtainedAt': -1 });
+userSchema.index({ 'gachaCollection.rarity': 1 });
 
 // ===== STATIC METHODS =====
 
@@ -412,6 +517,62 @@ userSchema.methods.getGpWinRate = function() {
 userSchema.methods.getBetWinRate = function() {
     if (!this.arenaStats || this.arenaStats.betsPlaced === 0) return 0;
     return (this.arenaStats.betsWon / this.arenaStats.betsPlaced * 100).toFixed(1);
+};
+
+// ===== NEW GACHA SYSTEM METHODS =====
+
+// Get user's trophies with filtering
+userSchema.methods.getTrophies = function(filters = {}) {
+    if (!this.trophyCase || this.trophyCase.length === 0) {
+        return [];
+    }
+
+    let trophies = [...this.trophyCase];
+
+    // Apply filters
+    if (filters.challengeType) {
+        trophies = trophies.filter(t => t.challengeType === filters.challengeType);
+    }
+
+    if (filters.awardLevel) {
+        trophies = trophies.filter(t => t.awardLevel === filters.awardLevel);
+    }
+
+    if (filters.year) {
+        trophies = trophies.filter(t => {
+            const year = new Date(t.earnedAt).getFullYear();
+            return year === filters.year;
+        });
+    }
+
+    // Sort by earned date (most recent first)
+    trophies.sort((a, b) => new Date(b.earnedAt) - new Date(a.earnedAt));
+
+    return trophies;
+};
+
+// Get trophy count by type
+userSchema.methods.getTrophyCount = function() {
+    if (!this.trophyCase) return { total: 0, monthly: 0, shadow: 0 };
+    
+    const counts = {
+        total: this.trophyCase.length,
+        monthly: 0,
+        shadow: 0
+    };
+    
+    this.trophyCase.forEach(trophy => {
+        if (trophy.challengeType === 'monthly') counts.monthly++;
+        if (trophy.challengeType === 'shadow') counts.shadow++;
+    });
+    
+    return counts;
+};
+
+// Get gacha collection item count
+userSchema.methods.getCollectionItemCount = function() {
+    if (!this.gachaCollection) return 0;
+    return this.gachaCollection.reduce((total, item) => total + (item.quantity || 1), 0);
 };
 
 // Virtual field for backwards compatibility with existing `gp` field references
