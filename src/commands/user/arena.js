@@ -1,4 +1,4 @@
-// src/commands/user/arena.js
+// src/commands/user/arena.js - FIXED WITH JOIN FUNCTIONALITY
 import { 
     SlashCommandBuilder, 
     EmbedBuilder, 
@@ -69,8 +69,8 @@ export default {
                     emoji: '⚔️'
                 },
                 {
-                    label: 'View Active Challenges',
-                    description: 'See all current challenges you can join',
+                    label: 'View & Join Challenges',
+                    description: 'See all current challenges and join them',
                     value: 'view_active',
                     emoji: '🔥'
                 },
@@ -118,7 +118,7 @@ export default {
                     .setEmoji('⚔️'),
                 new ButtonBuilder()
                     .setCustomId('arena_quick_active')
-                    .setLabel('Active Challenges')
+                    .setLabel('View & Join')
                     .setStyle(ButtonStyle.Secondary)
                     .setEmoji('🔥'),
                 new ButtonBuilder()
@@ -305,36 +305,108 @@ export default {
         }
     },
 
+    // FIXED: Now includes join buttons for open challenges
     async handleViewActive(interaction) {
         await interaction.deferReply({ ephemeral: true });
 
         try {
             const activeChallenges = await arenaService.getActiveChallenges(10);
             
+            if (activeChallenges.length === 0) {
+                return interaction.editReply({
+                    content: '🔥 **No Active Challenges**\n\nThere are currently no active challenges. Be the first to create one using the "Create Challenge" option!'
+                });
+            }
+
             const embed = new EmbedBuilder()
                 .setTitle('🔥 Active Challenges')
-                .setDescription('Current challenges you can join or bet on')
+                .setDescription('Current challenges you can join or bet on. Click the buttons below to interact with each challenge.')
                 .setColor('#FF6600')
                 .setTimestamp();
 
-            if (activeChallenges.length === 0) {
-                embed.addFields({ 
-                    name: 'No Active Challenges', 
-                    value: 'No challenges are currently active. Be the first to create one!', 
-                    inline: false 
-                });
-            } else {
-                for (const challenge of activeChallenges) {
-                    const description = arenaUtils.formatChallengeDisplay(challenge);
-                    embed.addFields({
-                        name: `${challenge.challengeId || 'Unknown'} - ${challenge.gameTitle}`,
-                        value: description,
-                        inline: false
-                    });
+            // Show up to 5 challenges with action buttons
+            const challengesToShow = activeChallenges.slice(0, 5);
+            let embedDescription = '';
+            
+            challengesToShow.forEach((challenge, index) => {
+                const typeEmoji = challenge.type === 'direct' ? '⚔️' : '🌍';
+                const statusEmoji = challenge.status === 'pending' ? '⏳' : '🔥';
+                
+                embedDescription += `**${index + 1}. ${typeEmoji} ${challenge.gameTitle}**\n`;
+                embedDescription += `${statusEmoji} ${challenge.status.toUpperCase()} | `;
+                embedDescription += `${challenge.description || 'No description'}\n`;
+                embedDescription += `💰 Wager: ${gpUtils.formatGP(challenge.participants[0]?.wager || 0)} | `;
+                embedDescription += `👥 Players: ${challenge.participants.length}`;
+                
+                if (challenge.bets && challenge.bets.length > 0) {
+                    embedDescription += ` | 🎰 Bets: ${challenge.bets.length}`;
                 }
+                
+                embedDescription += '\n\n';
+            });
+
+            embed.setDescription(embedDescription);
+
+            // Create action buttons for each challenge
+            const actionRows = [];
+            
+            // Group buttons by 5 per row (Discord limit)
+            for (let i = 0; i < challengesToShow.length; i += 5) {
+                const row = new ActionRowBuilder();
+                const challengeGroup = challengesToShow.slice(i, i + 5);
+                
+                challengeGroup.forEach((challenge, groupIndex) => {
+                    const challengeIndex = i + groupIndex + 1;
+                    
+                    // Determine button style and label based on challenge type and user eligibility
+                    let buttonStyle = ButtonStyle.Secondary;
+                    let buttonLabel = `${challengeIndex}. Info`;
+                    let buttonEmoji = 'ℹ️';
+                    
+                    // Check if user can join this challenge
+                    const isParticipant = challenge.isParticipant(interaction.user.id);
+                    const canJoin = challenge.type === 'open' && challenge.status === 'active' && !isParticipant;
+                    const canBet = challenge.status === 'active' && !isParticipant && challenge.canBet();
+                    
+                    if (canJoin) {
+                        buttonStyle = ButtonStyle.Success;
+                        buttonLabel = `${challengeIndex}. Join (${gpUtils.formatGP(challenge.participants[0].wager)})`;
+                        buttonEmoji = '⚔️';
+                    } else if (canBet) {
+                        buttonStyle = ButtonStyle.Primary;
+                        buttonLabel = `${challengeIndex}. Bet`;
+                        buttonEmoji = '🎰';
+                    }
+                    
+                    row.addComponents(
+                        new ButtonBuilder()
+                            .setCustomId(`arena_challenge_${challenge.challengeId}_${canJoin ? 'join' : (canBet ? 'bet' : 'info')}`)
+                            .setLabel(buttonLabel)
+                            .setStyle(buttonStyle)
+                            .setEmoji(buttonEmoji)
+                    );
+                });
+                
+                actionRows.push(row);
             }
 
-            await interaction.editReply({ embeds: [embed] });
+            // Add refresh button
+            const refreshRow = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('arena_refresh_active')
+                        .setLabel('Refresh List')
+                        .setStyle(ButtonStyle.Secondary)
+                        .setEmoji('🔄')
+                );
+            
+            actionRows.push(refreshRow);
+
+            await interaction.editReply({
+                embeds: [embed],
+                components: actionRows
+            });
+
         } catch (error) {
             console.error('Error fetching active challenges:', error);
             await interaction.editReply({ content: 'Error fetching active challenges.' });
