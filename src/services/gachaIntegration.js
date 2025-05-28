@@ -78,7 +78,7 @@ class GachaIntegration {
     }
 
     /**
-     * Get default trophy emoji based on award level
+     * Get default trophy emoji based on award level with better placeholders
      */
     getTrophyEmoji(awardLevel) {
         const emojiMap = {
@@ -87,6 +87,91 @@ class GachaIntegration {
             participation: '🏁'
         };
         return emojiMap[awardLevel] || '🏆';
+    }
+
+    /**
+     * Retroactively award trophies based on existing user data
+     */
+    async populateExistingTrophies(user) {
+        try {
+            if (!user.trophyCase) {
+                user.trophyCase = [];
+            }
+
+            let trophiesAdded = 0;
+
+            // Award trophies for monthly challenges
+            for (const [monthKey, data] of user.monthlyChallenges.entries()) {
+                if (data.progress > 0) {
+                    let awardLevel = 'participation';
+                    if (data.progress === 3) awardLevel = 'mastery';
+                    else if (data.progress === 2) awardLevel = 'beaten';
+
+                    // Check if trophy already exists
+                    const existingTrophy = user.trophyCase.find(trophy => 
+                        trophy.challengeType === 'monthly' && 
+                        trophy.monthKey === monthKey
+                    );
+
+                    if (!existingTrophy) {
+                        const gameTitle = data.gameTitle || 'Monthly Challenge Game';
+                        user.trophyCase.push({
+                            gameId: 'monthly_' + monthKey,
+                            gameTitle: gameTitle,
+                            consoleName: 'Unknown',
+                            awardLevel: awardLevel,
+                            challengeType: 'monthly',
+                            emojiId: null,
+                            emojiName: this.getTrophyEmoji(awardLevel),
+                            earnedAt: new Date(monthKey + '-15'), // Mid-month as approximation
+                            monthKey: monthKey
+                        });
+                        trophiesAdded++;
+                    }
+                }
+            }
+
+            // Award trophies for shadow challenges
+            for (const [monthKey, data] of user.shadowChallenges.entries()) {
+                if (data.progress > 0) {
+                    let awardLevel = 'participation';
+                    if (data.progress === 2) awardLevel = 'beaten'; // Shadow max is beaten
+
+                    // Check if trophy already exists
+                    const existingTrophy = user.trophyCase.find(trophy => 
+                        trophy.challengeType === 'shadow' && 
+                        trophy.monthKey === monthKey
+                    );
+
+                    if (!existingTrophy) {
+                        const gameTitle = data.gameTitle || 'Shadow Challenge Game';
+                        user.trophyCase.push({
+                            gameId: 'shadow_' + monthKey,
+                            gameTitle: gameTitle,
+                            consoleName: 'Unknown',
+                            awardLevel: awardLevel,
+                            challengeType: 'shadow',
+                            emojiId: null,
+                            emojiName: this.getTrophyEmoji(awardLevel),
+                            earnedAt: new Date(monthKey + '-15'), // Mid-month as approximation
+                            monthKey: monthKey
+                        });
+                        trophiesAdded++;
+                    }
+                }
+            }
+
+            if (trophiesAdded > 0) {
+                await user.save();
+                console.log(`✅ Added ${trophiesAdded} retroactive trophies for ${user.raUsername}`);
+            }
+
+            return trophiesAdded;
+
+        } catch (error) {
+            console.error(`Error populating trophies for ${user.raUsername}:`, error);
+            return 0;
+        }
     }
 
     /**
