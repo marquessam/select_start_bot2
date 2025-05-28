@@ -1,4 +1,4 @@
-// src/services/arenaFeedService.js
+// src/services/arenaFeedService.js - REMOVED JOIN BUTTONS
 import { ArenaChallenge } from '../models/ArenaChallenge.js';
 import { User } from '../models/User.js';
 import { config } from '../config/config.js';
@@ -7,6 +7,7 @@ import { COLORS, EMOJIS, createHeaderEmbed, getDiscordTimestamp } from '../utils
 import { EmbedBuilder } from 'discord.js';
 import arenaUtils from '../utils/arenaUtils.js';
 import gpUtils from '../utils/gpUtils.js';
+import RetroAPIUtils from '../utils/RetroAPIUtils.js'; // USE RELIABLE API UTILS
 
 class ArenaFeedService extends FeedManagerBase {
     constructor() {
@@ -44,7 +45,7 @@ class ArenaFeedService extends FeedManagerBase {
                 await new Promise(resolve => setTimeout(resolve, 500));
             }
             
-            // Update GP summary at the bottom (ALWAYS LAST EMBED IN FEED)
+            // Update GP summary at the bottom (ALWAYS LAST EMBED IN FEED) - FIXED
             await this.updateGPLeaderboardEmbed();
             
         } catch (error) {
@@ -62,7 +63,7 @@ class ArenaFeedService extends FeedManagerBase {
             `# ${EMOJIS.ARENA} Arena Challenges\n` + 
             `All active arena challenges and GP leaderboard are shown below.\n` +
             `**Last Updated:** ${timestamp} | **Updates:** Every 30 minutes\n` +
-            `Create challenges, place bets, and compete for GP (Gold Points)!`;
+            `Use </arena:1234567890> to create challenges, join existing ones, and compete for GP!`;
         
         // Use the base class method to update the header
         this.headerMessageId = await this.updateHeader({ content: headerContent });
@@ -144,7 +145,7 @@ class ArenaFeedService extends FeedManagerBase {
     }
 
     /**
-     * Create or update a challenge embed - MATCHING ARCADE FEED STYLE EXACTLY
+     * Create or update a challenge embed - NO JOIN BUTTONS, DISPLAY ONLY
      */
     async createOrUpdateChallengeEmbed(challenge) {
         try {
@@ -206,7 +207,7 @@ class ArenaFeedService extends FeedManagerBase {
                 description += `\n\n**Challenge Ends:** ${endTimestamp}\n**Betting Closes:** ${bettingEndTimestamp}`;
             }
             
-            description += `\n\n*Note: Only users ranked 999 or lower in the global leaderboard are shown.*`;
+            description += `\n\n*Use </arena:1234567890> to join challenges or place bets.*`;
             
             // Create embed using standardized utility - EXACT ARCADE STYLE
             const embed = createHeaderEmbed(
@@ -226,11 +227,11 @@ class ArenaFeedService extends FeedManagerBase {
             if (challenge.participants.length > 0) {
                 let participantsText = '';
                 
-                // If challenge is active, try to get current scores
+                // If challenge is active, try to get current scores using FIXED API
                 if (challenge.status === 'active') {
                     try {
                         const participantUsernames = challenge.participants.map(p => p.raUsername);
-                        const currentScores = await arenaUtils.fetchLeaderboardScores(
+                        const currentScores = await this.fetchLeaderboardScoresFixed(
                             challenge.gameId,
                             challenge.leaderboardId,
                             participantUsernames
@@ -245,21 +246,30 @@ class ArenaFeedService extends FeedManagerBase {
                                 return a.rank - b.rank;
                             });
                             
-                            // FORMAT EXACTLY LIKE ARCADE FEED
+                            // FORMAT EXACTLY LIKE ARCADE FEED + HIGHLIGHT CREATOR
                             currentScores.forEach((score, index) => {
                                 const displayRank = index + 1;
                                 const medalEmoji = displayRank <= 3 ? EMOJIS[`RANK_${displayRank}`] : `${displayRank}.`;
                                 const globalRank = score.rank ? ` (Global Rank: #${score.rank})` : '';
                                 const scoreText = score.score !== 'No score' ? `: ${score.score}` : ': No score yet';
                                 
-                                participantsText += `${medalEmoji} **${score.raUsername}**${scoreText}${globalRank}\n`;
+                                // HIGHLIGHT CREATOR WITH SPECIAL INDICATOR
+                                const creatorIndicator = score.raUsername === challenge.creatorRaUsername ? ' 👑' : '';
+                                
+                                participantsText += `${medalEmoji} **${score.raUsername}**${creatorIndicator}${scoreText}${globalRank}\n`;
                             });
+                            
+                            // Add creator note
+                            if (challenge.participants.some(p => p.raUsername === challenge.creatorRaUsername)) {
+                                participantsText += `\n👑 = Challenge Creator`;
+                            }
                         } else {
                             // Fallback to participant list without scores
                             challenge.participants.forEach((participant, index) => {
                                 const displayRank = index + 1;
                                 const medalEmoji = displayRank <= 3 ? EMOJIS[`RANK_${displayRank}`] : `${displayRank}.`;
-                                participantsText += `${medalEmoji} **${participant.raUsername}**: No score yet\n`;
+                                const creatorIndicator = participant.raUsername === challenge.creatorRaUsername ? ' 👑' : '';
+                                participantsText += `${medalEmoji} **${participant.raUsername}**${creatorIndicator}: No score yet\n`;
                             });
                         }
                     } catch (error) {
@@ -268,14 +278,16 @@ class ArenaFeedService extends FeedManagerBase {
                         challenge.participants.forEach((participant, index) => {
                             const displayRank = index + 1;
                             const medalEmoji = displayRank <= 3 ? EMOJIS[`RANK_${displayRank}`] : `${displayRank}.`;
-                            participantsText += `${medalEmoji} **${participant.raUsername}**: No score yet\n`;
+                            const creatorIndicator = participant.raUsername === challenge.creatorRaUsername ? ' 👑' : '';
+                            participantsText += `${medalEmoji} **${participant.raUsername}**${creatorIndicator}: No score yet\n`;
                         });
                     }
                 } else {
                     // For pending challenges, just list participants with numbers
                     challenge.participants.forEach((participant, index) => {
                         const number = index + 1;
-                        participantsText += `${number}. **${participant.raUsername}**\n`;
+                        const creatorIndicator = participant.raUsername === challenge.creatorRaUsername ? ' 👑' : '';
+                        participantsText += `${number}. **${participant.raUsername}**${creatorIndicator}\n`;
                     });
                 }
                 
@@ -299,7 +311,9 @@ class ArenaFeedService extends FeedManagerBase {
                 });
             }
             
-            // Use our base class updateMessage method
+            // NO ACTION BUTTONS - FEED IS DISPLAY ONLY, USE /arena COMMAND TO INTERACT
+            
+            // Use our base class updateMessage method WITHOUT components
             await this.updateMessage(
                 `challenge_${challenge.challengeId}`, 
                 { embeds: [embed] }
@@ -310,16 +324,88 @@ class ArenaFeedService extends FeedManagerBase {
     }
 
     /**
-     * Update the GP leaderboard embed - MATCHING ARCADE POINTS SUMMARY EXACTLY
+     * FIXED: Use reliable API utilities like arcade system
+     */
+    async fetchLeaderboardScoresFixed(gameId, leaderboardId, raUsernames) {
+        try {
+            console.log(`Fetching leaderboard scores for game ${gameId}, leaderboard ${leaderboardId}`);
+            console.log('Target users:', raUsernames);
+
+            // Use the same reliable API utilities as arcade system
+            const rawEntries = await RetroAPIUtils.getLeaderboardEntries(leaderboardId, 1000);
+            
+            if (!rawEntries || rawEntries.length === 0) {
+                console.log('No leaderboard data received');
+                return this.createNoScoreResults(raUsernames);
+            }
+
+            console.log(`Processed ${rawEntries.length} leaderboard entries`);
+
+            // Find entries for our target users
+            const userScores = [];
+            
+            for (const username of raUsernames) {
+                const entry = rawEntries.find(entry => {
+                    return entry.User && entry.User.toLowerCase() === username.toLowerCase();
+                });
+
+                if (entry) {
+                    userScores.push({
+                        raUsername: username,
+                        rank: entry.Rank,
+                        score: entry.FormattedScore || entry.Score?.toString() || 'No score',
+                        fetchedAt: new Date()
+                    });
+                    console.log(`Found score for ${username}: rank ${entry.Rank}, score ${entry.FormattedScore || entry.Score}`);
+                } else {
+                    userScores.push({
+                        raUsername: username,
+                        rank: null,
+                        score: 'No score',
+                        fetchedAt: new Date()
+                    });
+                    console.log(`No score found for ${username}`);
+                }
+            }
+
+            return userScores;
+        } catch (error) {
+            console.error('Error fetching leaderboard scores:', error);
+            
+            // Return no-score results for all users on error
+            return this.createNoScoreResults(raUsernames);
+        }
+    }
+
+    /**
+     * Create no-score results for all users
+     * @private
+     */
+    createNoScoreResults(raUsernames) {
+        return raUsernames.map(username => ({
+            raUsername: username,
+            rank: null,
+            score: 'No score',
+            fetchedAt: new Date()
+        }));
+    }
+
+    /**
+     * Update the GP leaderboard embed - FIXED VERSION
      */
     async updateGPLeaderboardEmbed() {
         try {
+            console.log('Updating GP leaderboard embed...');
+            
             // Get GP leaderboard
             const leaderboard = await gpUtils.getGPLeaderboard(15);
             
             if (!leaderboard || leaderboard.length === 0) {
+                console.log('No GP leaderboard data available');
                 return; // No GP data to display
             }
+            
+            console.log(`Found ${leaderboard.length} users in GP leaderboard`);
             
             // Current timestamp in Discord format
             const timestamp = getDiscordTimestamp(new Date());
@@ -378,6 +464,8 @@ class ArenaFeedService extends FeedManagerBase {
                 'gp_leaderboard',
                 { embeds: [embed] }
             );
+            
+            console.log('GP leaderboard embed updated successfully');
         } catch (error) {
             console.error('Error creating GP leaderboard embed:', error);
         }
