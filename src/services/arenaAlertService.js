@@ -1,11 +1,11 @@
-// src/services/arenaAlertService.js - FIXED VERSION
+// src/services/arenaAlertService.js - UPDATED with gear for creator, crown for #1
 import { ArenaChallenge } from '../models/ArenaChallenge.js';
 import { User } from '../models/User.js';
 import { config } from '../config/config.js';
 import { FeedManagerBase } from '../utils/FeedManagerBase.js';
 import { COLORS, EMOJIS } from '../utils/FeedUtils.js';
 import arenaUtils from '../utils/arenaUtils.js';
-import RetroAPIUtils from '../utils/RetroAPIUtils.js'; // USE RELIABLE API UTILS
+import RetroAPIUtils from '../utils/RetroAPIUtils.js';
 import AlertUtils, { ALERT_TYPES } from '../utils/AlertUtils.js';
 
 class ArenaAlertService extends FeedManagerBase {
