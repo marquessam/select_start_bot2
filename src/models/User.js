@@ -140,9 +140,11 @@ const userSchema = new mongoose.Schema({
         type: Map,
         of: {
             progress: Number,
-            achievements: Number,  // Number of achievements earned this month
-            totalAchievements: Number, // Total achievements in the game
-            percentage: Number     // Completion percentage
+            achievements: Number,
+            totalAchievements: Number,
+            percentage: Number,
+            gameTitle: String,     // ADD THIS
+            gameIconUrl: String    // ADD THIS
         },
         default: () => new Map()
     },
@@ -150,12 +152,15 @@ const userSchema = new mongoose.Schema({
         type: Map,
         of: {
             progress: Number,
-            achievements: Number,  // Number of achievements earned this month
-            totalAchievements: Number, // Total achievements in the game
-            percentage: Number     // Completion percentage
-        },
-        default: () => new Map()
+            achievements: Number,
+            totalAchievements: Number,
+            percentage: Number,
+            gameTitle: String,     // ADD THIS
+            gameIconUrl: String    // ADD THIS
     },
+    default: () => new Map()
+},
+2. Create Simple Fix Command
     announcedAchievements: {
         type: [{ type: String }],
         default: []
