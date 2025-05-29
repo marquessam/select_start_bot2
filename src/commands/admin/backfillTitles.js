@@ -1,4 +1,4 @@
-// src/commands/admin/backfillTitles.js
+// src/commands/admin/backfillTitles.js - DEBUG VERSION
 import { SlashCommandBuilder, EmbedBuilder } from 'discord.js';
 import { config } from '../../config/config.js';
 import { User } from '../../models/User.js';
@@ -16,6 +16,10 @@ export default {
         .addStringOption(option =>
             option.setName('username')
                 .setDescription('Specific user to backfill (optional)')
+                .setRequired(false))
+        .addBooleanOption(option =>
+            option.setName('debug')
+                .setDescription('Show debug information')
                 .setRequired(false)),
 
     async execute(interaction) {
@@ -31,12 +35,13 @@ export default {
 
         const dryRun = interaction.options.getBoolean('dryrun') || false;
         const targetUsername = interaction.options.getString('username');
+        const debug = interaction.options.getBoolean('debug') || false;
 
         try {
             if (dryRun) {
-                await this.runAnalysis(interaction, targetUsername);
+                await this.runAnalysis(interaction, targetUsername, debug);
             } else {
-                await this.runBackfill(interaction, targetUsername);
+                await this.runBackfill(interaction, targetUsername, debug);
             }
         } catch (error) {
             console.error('Error in backfill command:', error);
@@ -44,7 +49,7 @@ export default {
         }
     },
 
-    async runAnalysis(interaction, targetUsername) {
+    async runAnalysis(interaction, targetUsername, debug) {
         await interaction.editReply('🔍 **Analyzing missing game titles...**');
 
         // Get users to check
@@ -58,17 +63,21 @@ export default {
             }
             users = [user];
         } else {
-            users = await User.find({});
+            users = await User.find({}).limit(3); // Limit for debug
         }
 
         let totalMissing = 0;
         let analysisText = '';
 
-        for (const user of users.slice(0, 10)) { // Limit to 10 users for display
+        for (const user of users) {
             let userMissing = 0;
+            let userDebugInfo = '';
             
             // Check monthly challenges
             for (const [monthKey, data] of user.monthlyChallenges.entries()) {
+                if (debug) {
+                    userDebugInfo += `\n  Monthly ${monthKey}: gameTitle="${data.gameTitle || 'MISSING'}"`;
+                }
                 if (!data.gameTitle) {
                     userMissing++;
                     totalMissing++;
@@ -77,36 +86,40 @@ export default {
             
             // Check shadow challenges  
             for (const [monthKey, data] of user.shadowChallenges.entries()) {
+                if (debug) {
+                    userDebugInfo += `\n  Shadow ${monthKey}: gameTitle="${data.gameTitle || 'MISSING'}"`;
+                }
                 if (!data.gameTitle) {
                     userMissing++;
                     totalMissing++;
                 }
             }
             
-            if (userMissing > 0) {
-                analysisText += `• **${user.raUsername}**: ${userMissing} missing titles\n`;
+            if (userMissing > 0 || debug) {
+                analysisText += `\n• **${user.raUsername}**: ${userMissing} missing titles`;
+                if (debug) {
+                    analysisText += userDebugInfo;
+                }
+                analysisText += '\n';
             }
         }
 
         if (totalMissing === 0) {
             analysisText = '✅ No missing game titles found!';
         } else {
-            if (!targetUsername && users.length > 10) {
-                analysisText += `\n*...and potentially more from remaining ${users.length - 10} users*`;
-            }
-            analysisText += `\n\n📊 **Total missing titles**: ${totalMissing}`;
+            analysisText += `\n📊 **Total missing titles**: ${totalMissing}`;
         }
 
         const embed = new EmbedBuilder()
             .setTitle('🔍 Game Title Analysis')
-            .setDescription(analysisText)
+            .setDescription(analysisText.length > 4000 ? analysisText.substring(0, 4000) + '...' : analysisText)
             .setColor('#FFA500')
             .setFooter({ text: 'Run without dryrun to fix missing titles' });
 
         await interaction.editReply({ embeds: [embed] });
     },
 
-    async runBackfill(interaction, targetUsername) {
+    async runBackfill(interaction, targetUsername, debug) {
         await interaction.editReply('🔄 **Backfilling game titles...**');
 
         // Get users to update
@@ -120,53 +133,91 @@ export default {
             }
             users = [user];
         } else {
-            users = await User.find({});
+            users = await User.find({}).limit(debug ? 2 : 999); // Limit for debug
         }
 
         let processedUsers = 0;
         let updatedTitles = 0;
         let errors = 0;
+        let debugLog = '';
 
         for (const user of users) {
             try {
                 let userUpdated = false;
+                let userDebugInfo = `\n**${user.raUsername}:**`;
 
                 // Process monthly challenges
                 for (const [monthKey, data] of user.monthlyChallenges.entries()) {
+                    if (debug) {
+                        userDebugInfo += `\n  Monthly ${monthKey}: current="${data.gameTitle || 'MISSING'}"`;
+                    }
+                    
                     if (!data.gameTitle) {
-                        const gameTitle = await this.getGameTitleForMonth(monthKey, 'monthly');
+                        const gameTitle = await this.getGameTitleForMonth(monthKey, 'monthly', debug);
                         if (gameTitle) {
-                            data.gameTitle = gameTitle;
-                            user.monthlyChallenges.set(monthKey, data);
+                            // IMPORTANT: Update the actual data object
+                            const updatedData = { ...data, gameTitle: gameTitle };
+                            user.monthlyChallenges.set(monthKey, updatedData);
                             userUpdated = true;
                             updatedTitles++;
+                            
+                            if (debug) {
+                                userDebugInfo += ` → SET TO "${gameTitle}"`;
+                            }
+                            console.log(`✅ Updated ${user.raUsername} monthly ${monthKey}: ${gameTitle}`);
+                        } else {
+                            if (debug) {
+                                userDebugInfo += ` → FAILED TO GET TITLE`;
+                            }
+                        }
+                    } else {
+                        if (debug) {
+                            userDebugInfo += ` → ALREADY HAS TITLE`;
                         }
                     }
                 }
 
                 // Process shadow challenges
                 for (const [monthKey, data] of user.shadowChallenges.entries()) {
+                    if (debug) {
+                        userDebugInfo += `\n  Shadow ${monthKey}: current="${data.gameTitle || 'MISSING'}"`;
+                    }
+                    
                     if (!data.gameTitle) {
-                        const gameTitle = await this.getGameTitleForMonth(monthKey, 'shadow');
+                        const gameTitle = await this.getGameTitleForMonth(monthKey, 'shadow', debug);
                         if (gameTitle) {
-                            data.gameTitle = gameTitle;
-                            user.shadowChallenges.set(monthKey, data);
+                            // IMPORTANT: Update the actual data object
+                            const updatedData = { ...data, gameTitle: gameTitle };
+                            user.shadowChallenges.set(monthKey, updatedData);
                             userUpdated = true;
                             updatedTitles++;
+                            
+                            if (debug) {
+                                userDebugInfo += ` → SET TO "${gameTitle}"`;
+                            }
+                            console.log(`✅ Updated ${user.raUsername} shadow ${monthKey}: ${gameTitle}`);
+                        } else {
+                            if (debug) {
+                                userDebugInfo += ` → FAILED TO GET TITLE`;
+                            }
+                        }
+                    } else {
+                        if (debug) {
+                            userDebugInfo += ` → ALREADY HAS TITLE`;
                         }
                     }
                 }
 
                 if (userUpdated) {
                     await user.save();
+                    console.log(`💾 Saved user ${user.raUsername} with ${userUpdated} updates`);
+                }
+
+                if (debug) {
+                    debugLog += userDebugInfo + '\n';
                 }
 
                 processedUsers++;
-
-                // Progress update every 25 users
-                if (processedUsers % 25 === 0 && !targetUsername) {
-                    await interaction.editReply(`🔄 **Progress**: ${processedUsers}/${users.length} users processed, ${updatedTitles} titles updated...`);
-                }
 
             } catch (error) {
                 console.error(`Error processing user ${user.raUsername}:`, error);
@@ -174,27 +225,35 @@ export default {
             }
         }
 
+        let resultText = `**Results:**\n` +
+            `• Users Processed: ${processedUsers}\n` +
+            `• Titles Updated: ${updatedTitles}\n` +
+            `• Errors: ${errors}\n\n` +
+            `${updatedTitles > 0 ? 'Game titles have been populated!' : 'No titles needed updating.'}`;
+
+        if (debug && debugLog) {
+            resultText += `\n\n**Debug Log:**${debugLog}`;
+        }
+
         const embed = new EmbedBuilder()
             .setTitle('✅ Game Title Backfill Complete')
-            .setDescription(
-                `**Results:**\n` +
-                `• Users Processed: ${processedUsers}\n` +
-                `• Titles Updated: ${updatedTitles}\n` +
-                `• Errors: ${errors}\n\n` +
-                `${updatedTitles > 0 ? 'Game titles have been populated!' : 'No titles needed updating.'}`
-            )
+            .setDescription(resultText.length > 4000 ? resultText.substring(0, 4000) + '...' : resultText)
             .setColor(updatedTitles > 0 ? '#00FF00' : '#FFA500')
             .setTimestamp();
 
         await interaction.editReply({ embeds: [embed] });
     },
 
-    async getGameTitleForMonth(monthKey, challengeType) {
+    async getGameTitleForMonth(monthKey, challengeType, debug = false) {
         try {
             // Parse monthKey (YYYY-MM format)
             const [year, month] = monthKey.split('-').map(Number);
             const challengeDate = new Date(year, month - 1, 1);
             const nextMonthStart = new Date(year, month, 1);
+
+            if (debug) {
+                console.log(`🔍 Looking for ${challengeType} challenge for ${monthKey} (${challengeDate.toISOString()} to ${nextMonthStart.toISOString()})`);
+            }
 
             // Find the challenge record
             const challenge = await Challenge.findOne({
@@ -205,8 +264,17 @@ export default {
             });
 
             if (!challenge) {
-                console.log(`No challenge found for ${monthKey}`);
+                console.log(`❌ No challenge found for ${monthKey}`);
                 return null;
+            }
+
+            if (debug) {
+                console.log(`✅ Found challenge for ${monthKey}:`, {
+                    monthly_gameid: challenge.monthly_challange_gameid,
+                    shadow_gameid: challenge.shadow_challange_gameid,
+                    monthly_title: challenge.monthly_challange_game_title,
+                    shadow_title: challenge.shadow_challange_game_title
+                });
             }
 
             // Get the appropriate game ID
@@ -218,18 +286,18 @@ export default {
             }
 
             if (!gameId) {
-                console.log(`No ${challengeType} game ID found for ${monthKey}`);
+                console.log(`❌ No ${challengeType} game ID found for ${monthKey}`);
                 return null;
             }
 
             // Get game info from RetroAchievements API
             const gameInfo = await retroAPI.getGameInfo(gameId);
             if (gameInfo && gameInfo.title) {
-                console.log(`Found title for ${monthKey} ${challengeType}: ${gameInfo.title}`);
+                console.log(`✅ Found title for ${monthKey} ${challengeType}: ${gameInfo.title}`);
                 return gameInfo.title;
             }
 
-            console.log(`Could not get game info for ID ${gameId}`);
+            console.log(`❌ Could not get game info for ID ${gameId}`);
             return null;
 
         } catch (error) {
