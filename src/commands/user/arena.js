@@ -1,4 +1,4 @@
-// src/commands/user/arena.js - FIXED WITH JOIN FUNCTIONALITY AND DEBUG LOGGING
+// src/commands/user/arena.js - UPDATED with gear for creator, crown for #1
 import { 
     SlashCommandBuilder, 
     EmbedBuilder, 
@@ -305,7 +305,7 @@ export default {
         }
     },
 
-    // FIXED: Now includes join buttons for open challenges WITH DEBUG LOGGING
+    // UPDATED: Now includes current scores and gear for creator, crown for #1
     async handleViewActive(interaction) {
         console.log('=== HANDLE VIEW ACTIVE CALLED ===');
         console.log('User:', interaction.user.username);
@@ -328,18 +328,21 @@ export default {
                 .setColor('#FF6600')
                 .setTimestamp();
 
-            // Show up to 5 challenges with action buttons
+            // Show up to 5 challenges with detailed info including current scores
             const challengesToShow = activeChallenges.slice(0, 5);
             let embedDescription = '';
             
-            challengesToShow.forEach((challenge, index) => {
+            for (let index = 0; index < challengesToShow.length; index++) {
+                const challenge = challengesToShow[index];
                 console.log(`Processing challenge ${index + 1}: ${challenge.challengeId}`);
+                
                 const typeEmoji = challenge.type === 'direct' ? '⚔️' : '🌍';
                 const statusEmoji = challenge.status === 'pending' ? '⏳' : '🔥';
                 
                 embedDescription += `**${index + 1}. ${typeEmoji} ${challenge.gameTitle}**\n`;
                 embedDescription += `${statusEmoji} ${challenge.status.toUpperCase()} | `;
                 embedDescription += `${challenge.description || 'No description'}\n`;
+                embedDescription += `⚙️ Created by: ${challenge.creatorRaUsername}\n`; // UPDATED: Changed to gear
                 embedDescription += `💰 Wager: ${gpUtils.formatGP(challenge.participants[0]?.wager || 0)} | `;
                 embedDescription += `👥 Players: ${challenge.participants.length}`;
                 
@@ -347,12 +350,51 @@ export default {
                     embedDescription += ` | 🎰 Bets: ${challenge.bets.length}`;
                 }
                 
-                embedDescription += '\n\n';
-            });
+                // UPDATED: Add current scores/standings for this challenge
+                if (challenge.participants.length > 0) {
+                    try {
+                        const participantUsernames = challenge.participants.map(p => p.raUsername);
+                        const currentScores = await arenaUtils.fetchLeaderboardScores(
+                            challenge.gameId,
+                            challenge.leaderboardId,
+                            participantUsernames
+                        );
+                        
+                        if (currentScores && currentScores.length > 0) {
+                            // Sort by rank and show current standings
+                            currentScores.sort((a, b) => {
+                                if (a.rank === null && b.rank === null) return 0;
+                                if (a.rank === null) return 1;
+                                if (b.rank === null) return -1;
+                                return a.rank - b.rank;
+                            });
+                            
+                            embedDescription += `\n📊 Current Standings:\n`;
+                            currentScores.forEach((score, scoreIndex) => {
+                                const standing = scoreIndex + 1;
+                                // UPDATED: Crown only for #1, gear for creator
+                                const positionEmoji = standing === 1 ? '👑' : `${standing}.`;
+                                const creatorIndicator = score.raUsername === challenge.creatorRaUsername ? ' ⚙️' : '';
+                                const globalRank = score.rank ? ` (#${score.rank})` : '';
+                                const scoreText = score.score !== 'No score' ? ` - ${score.score}` : ' - No score yet';
+                                
+                                embedDescription += `  ${positionEmoji} ${score.raUsername}${creatorIndicator}${scoreText}${globalRank}\n`;
+                            });
+                        } else {
+                            embedDescription += `\n📊 Current Standings: Scores not available yet\n`;
+                        }
+                    } catch (error) {
+                        console.error(`Error fetching scores for challenge ${challenge.challengeId}:`, error);
+                        embedDescription += `\n📊 Current Standings: Unable to fetch scores\n`;
+                    }
+                }
+                
+                embedDescription += '\n';
+            }
 
             embed.setDescription(embedDescription);
 
-            // Create action buttons for each challenge WITH DEBUG LOGGING
+            // Create action buttons for each challenge
             const actionRows = [];
             
             // Group buttons by 5 per row (Discord limit)
