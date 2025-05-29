@@ -1,4 +1,4 @@
-// src/utils/arenaUtils.js
+// src/utils/arenaUtils.js - UPDATED with gear for creator
 import { config } from '../config/config.js';
 
 class ArenaUtils {
@@ -420,7 +420,7 @@ class ArenaUtils {
     }
 
     /**
-     * Format a challenge for display - UPDATED to include description
+     * Format a challenge for display - UPDATED to include gear for creator
      */
     formatChallengeDisplay(challenge) {
         const statusEmoji = {
@@ -440,6 +440,8 @@ class ArenaUtils {
             description += `📝 ${challenge.description}\n`;
         }
         
+        // UPDATED: Gear for creator
+        description += `⚙️ Created by: ${challenge.creatorRaUsername}\n`;
         description += `💰 Wager: ${challenge.participants[0]?.wager || 0} GP\n`;
         description += `👥 Participants: ${challenge.participants.length}`;
         
@@ -465,7 +467,7 @@ class ArenaUtils {
     }
 
     /**
-     * Create challenge embed for Discord - UPDATED to include description field
+     * Create challenge embed for Discord - UPDATED to include gear for creator
      */
     createChallengeEmbed(challenge, color = '#0099ff') {
         const { EmbedBuilder } = require('discord.js');
@@ -476,7 +478,7 @@ class ArenaUtils {
             .setColor(color)
             .addFields(
                 { name: 'Challenge ID', value: challenge.challengeId, inline: true },
-                { name: 'Created by', value: challenge.creatorRaUsername, inline: true },
+                { name: 'Created by', value: `⚙️ ${challenge.creatorRaUsername}`, inline: true }, // UPDATED: Changed to gear
                 { name: 'Status', value: challenge.status.charAt(0).toUpperCase() + challenge.status.slice(1), inline: true }
             );
 
