@@ -249,14 +249,18 @@ export default {
                     }
                 });
 
-                // Create new challenge
+                // Create new challenge WITH GAME METADATA
                 const challenge = new Challenge({
                     date: challengeDate,
                     monthly_challange_gameid: gameId,
                     monthly_challange_progression_achievements: progressionAchievements,
                     monthly_challange_win_achievements: winAchievements,
                     monthly_challange_game_total: totalAchievements,
-                    shadow_challange_revealed: false
+                    shadow_challange_revealed: false,
+                    // ADD GAME METADATA IMMEDIATELY
+                    monthly_game_title: gameInfo.title,
+                    monthly_game_icon_url: gameInfo.imageIcon,
+                    monthly_game_console: gameInfo.consoleName
                 });
 
                 await challenge.save();
@@ -473,11 +477,16 @@ export default {
                     }
                 }
 
-                // Update the challenge with shadow game information
+                // Update the challenge with shadow game information AND METADATA
                 targetChallenge.shadow_challange_gameid = gameId;
                 targetChallenge.shadow_challange_progression_achievements = progressionAchievements;
                 targetChallenge.shadow_challange_win_achievements = winAchievements;
                 targetChallenge.shadow_challange_game_total = totalAchievements;
+                
+                // ADD SHADOW GAME METADATA
+                targetChallenge.shadow_game_title = gameInfo.title;
+                targetChallenge.shadow_game_icon_url = gameInfo.imageIcon;
+                targetChallenge.shadow_game_console = gameInfo.consoleName;
                 
                 // Automatically reveal shadow games for past months
                 const now = new Date();
