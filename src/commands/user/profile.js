@@ -1,4 +1,4 @@
-// src/commands/user/profile.js
+// src/commands/user/profile.js - SIMPLIFIED VERSION
 import { 
     SlashCommandBuilder, 
     EmbedBuilder,
@@ -317,9 +317,115 @@ export default {
         }
     },
 
+    /**
+     * SIMPLIFIED: Generate trophies using existing gameTitle field
+     */
+    generateTrophiesFromExistingData(user) {
+        const trophies = [];
+
+        // Process monthly challenges
+        for (const [monthKey, data] of user.monthlyChallenges.entries()) {
+            if (data.progress > 0) {
+                let awardLevel = 'participation';
+                if (data.progress === 3) awardLevel = 'mastery';
+                else if (data.progress === 2) awardLevel = 'beaten';
+
+                // Create a date from monthKey (YYYY-MM format)
+                const dateParts = monthKey.split('-');
+                const year = parseInt(dateParts[0]);
+                const month = parseInt(dateParts[1]) - 1; // Month is 0-based
+                const trophyDate = new Date(year, month, 15); // 15th of the month
+
+                // SIMPLIFIED: Just use the gameTitle field with simple fallback
+                const gameTitle = data.gameTitle || `Monthly Challenge - ${this.formatShortDate(monthKey)}`;
+
+                trophies.push({
+                    gameId: `monthly_${monthKey}`,
+                    gameTitle: gameTitle,
+                    consoleName: 'Monthly Challenge',
+                    awardLevel: awardLevel,
+                    challengeType: 'monthly',
+                    emojiId: null,
+                    emojiName: this.getTrophyEmoji(awardLevel),
+                    earnedAt: trophyDate,
+                    monthKey: monthKey
+                });
+            }
+        }
+
+        // Process shadow challenges
+        for (const [monthKey, data] of user.shadowChallenges.entries()) {
+            if (data.progress > 0) {
+                let awardLevel = 'participation';
+                if (data.progress === 2) awardLevel = 'beaten'; // Shadow max is beaten
+
+                // Create a date from monthKey (YYYY-MM format)
+                const dateParts = monthKey.split('-');
+                const year = parseInt(dateParts[0]);
+                const month = parseInt(dateParts[1]) - 1; // Month is 0-based
+                const trophyDate = new Date(year, month, 15); // 15th of the month
+
+                // SIMPLIFIED: Just use the gameTitle field with simple fallback
+                const gameTitle = data.gameTitle || `Shadow Challenge - ${this.formatShortDate(monthKey)}`;
+
+                trophies.push({
+                    gameId: `shadow_${monthKey}`,
+                    gameTitle: gameTitle,
+                    consoleName: 'Shadow Challenge',
+                    awardLevel: awardLevel,
+                    challengeType: 'shadow',
+                    emojiId: null,
+                    emojiName: this.getTrophyEmoji(awardLevel),
+                    earnedAt: trophyDate,
+                    monthKey: monthKey
+                });
+            }
+        }
+
+        // Process community awards (unchanged)
+        const currentYear = new Date().getFullYear();
+        const communityAwards = user.getCommunityAwardsForYear(currentYear);
+        
+        for (const award of communityAwards) {
+            trophies.push({
+                gameId: `community_${award.title.replace(/\s+/g, '_').toLowerCase()}`,
+                gameTitle: award.title,
+                consoleName: 'Community',
+                awardLevel: 'special',
+                challengeType: 'community',
+                emojiId: null,
+                emojiName: '🏆',
+                earnedAt: award.awardedAt,
+                monthKey: null
+            });
+        }
+
+        // Sort by earned date (most recent first)
+        trophies.sort((a, b) => new Date(b.earnedAt) - new Date(a.earnedAt));
+
+        return trophies;
+    },
+
+    /**
+     * SIMPLIFIED: Format short date for fallback titles
+     */
+    formatShortDate(monthKey) {
+        const dateParts = monthKey.split('-');
+        const year = parseInt(dateParts[0]);
+        const month = parseInt(dateParts[1]);
+        
+        const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                           "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+        
+        const shortYear = year.toString().slice(-2);
+        const monthName = monthNames[month - 1];
+        
+        return `${monthName} ${shortYear}`;
+    },
+
     async handleTrophyCaseButton(interaction, user) {
         // Generate achievement trophies dynamically from existing data
-        const trophies = await this.generateTrophiesFromExistingData(user);
+        const trophies = this.generateTrophiesFromExistingData(user);
         
         if (trophies.length === 0) {
             return interaction.editReply({
@@ -378,14 +484,15 @@ export default {
                 
                 let fieldValue = '';
                 levelTrophies.slice(0, 8).forEach(trophy => {
-                    const date = new Date(trophy.earnedAt).toLocaleDateString('en-US', { 
-                        month: 'short', 
-                        year: 'numeric' 
-                    });
+                    // Format date as "Apr 25" 
+                    const shortDate = this.formatShortDate(trophy.monthKey || '2025-01');
+                    
                     const trophyEmoji = trophy.emojiId ? 
                         `<:${trophy.emojiName}:${trophy.emojiId}>` : 
                         (trophy.emojiName || emoji);
-                    fieldValue += `${trophyEmoji} **${trophy.gameTitle}** - ${date}\n`;
+                    
+                    // Show game title and short date
+                    fieldValue += `${trophyEmoji} **${trophy.gameTitle}** - ${shortDate}\n`;
                 });
 
                 if (levelTrophies.length > 8) {
@@ -489,93 +596,6 @@ export default {
             embeds: [embed],
             ephemeral: true
         });
-    },
-
-    // Generate trophies dynamically from existing user data
-    generateTrophiesFromExistingData(user) {
-        const trophies = [];
-
-        // Process monthly challenges
-        for (const [monthKey, data] of user.monthlyChallenges.entries()) {
-            if (data.progress > 0) {
-                let awardLevel = 'participation';
-                if (data.progress === 3) awardLevel = 'mastery';
-                else if (data.progress === 2) awardLevel = 'beaten';
-
-                // Create a date from monthKey (YYYY-MM format)
-                const dateParts = monthKey.split('-');
-                const year = parseInt(dateParts[0]);
-                const month = parseInt(dateParts[1]) - 1; // Month is 0-based
-                const trophyDate = new Date(year, month, 15); // 15th of the month
-
-                // Use the actual game title if available, otherwise fall back to formatted month
-                const gameTitle = data.gameTitle || `Monthly Challenge ${monthKey}`;
-
-                trophies.push({
-                    gameId: `monthly_${monthKey}`,
-                    gameTitle: gameTitle,
-                    consoleName: 'Monthly Challenge',
-                    awardLevel: awardLevel,
-                    challengeType: 'monthly',
-                    emojiId: null, // Will be filled when custom emoji is uploaded
-                    emojiName: this.getTrophyEmoji(awardLevel),
-                    earnedAt: trophyDate,
-                    monthKey: monthKey
-                });
-            }
-        }
-
-        // Process shadow challenges
-        for (const [monthKey, data] of user.shadowChallenges.entries()) {
-            if (data.progress > 0) {
-                let awardLevel = 'participation';
-                if (data.progress === 2) awardLevel = 'beaten'; // Shadow max is beaten
-
-                // Create a date from monthKey (YYYY-MM format)
-                const dateParts = monthKey.split('-');
-                const year = parseInt(dateParts[0]);
-                const month = parseInt(dateParts[1]) - 1; // Month is 0-based
-                const trophyDate = new Date(year, month, 15); // 15th of the month
-
-                // Use the actual game title if available, otherwise fall back to formatted month
-                const gameTitle = data.gameTitle || `Shadow Challenge ${monthKey}`;
-
-                trophies.push({
-                    gameId: `shadow_${monthKey}`,
-                    gameTitle: gameTitle,
-                    consoleName: 'Shadow Challenge',
-                    awardLevel: awardLevel,
-                    challengeType: 'shadow',
-                    emojiId: null, // Will be filled when custom emoji is uploaded
-                    emojiName: this.getTrophyEmoji(awardLevel),
-                    earnedAt: trophyDate,
-                    monthKey: monthKey
-                });
-            }
-        }
-
-        // Process community awards
-        const currentYear = new Date().getFullYear();
-        const communityAwards = user.getCommunityAwardsForYear(currentYear);
-        
-        for (const award of communityAwards) {
-            trophies.push({
-                gameId: `community_${award.title.replace(/\s+/g, '_').toLowerCase()}`,
-                gameTitle: award.title,
-                consoleName: 'Community',
-                awardLevel: 'special',
-                challengeType: 'community',
-                emojiId: null, // Will be filled when custom emoji is uploaded
-                emojiName: '🏆',
-                earnedAt: award.awardedAt,
-                monthKey: null
-            });
-        }
-
-        // Sort by earned date (most recent first)
-        trophies.sort((a, b) => new Date(b.earnedAt) - new Date(a.earnedAt));
-
-        return trophies;
     },
 
     // Helper method to get default trophy emoji based on award level
