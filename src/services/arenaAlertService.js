@@ -312,11 +312,17 @@ class ArenaAlertService extends FeedManagerBase {
                         .sort((a, b) => a.rank - b.rank);
                     
                     sortedScores.forEach((score, index) => {
+                        const standing = index + 1;
+                        // UPDATED: Crown only for #1, gear for creator
+                        const positionEmoji = standing === 1 ? '👑' : `${standing}.`;
+                        const creatorIndicator = score.raUsername === challenge.creatorRaUsername ? ' ⚙️' : '';
+                        
                         currentStandings.push({
                             username: score.raUsername,
-                            rank: index + 1, // Community rank (1-based)
+                            rank: standing, // Community rank (1-based)
                             score: score.score,
-                            globalRank: score.rank // Global RetroAchievements rank
+                            globalRank: score.rank, // Global RetroAchievements rank
+                            displayText: `${positionEmoji} ${score.raUsername}${creatorIndicator}`
                         });
                     });
                 }
