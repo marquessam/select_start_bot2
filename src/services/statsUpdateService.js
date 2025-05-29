@@ -122,13 +122,29 @@ class StatsUpdateService {
 
     async updateUserStats(user, challenge, currentMonthStart) {
         try {
-            // Fetch game info first to save with the challenge
+            // Fetch game info first to save with the challenge - WITH FALLBACK
             let gameInfo;
+            let gameTitle;
+            let gameIconUrl;
+            
             try {
                 gameInfo = await retroAPI.getGameInfo(challenge.monthly_challange_gameid);
+                gameTitle = gameInfo.title;
+                gameIconUrl = gameInfo.imageIcon;
+                console.log(`API: Retrieved game info for ${challenge.monthly_challange_gameid}: ${gameTitle}`);
             } catch (error) {
                 console.error(`Error fetching game info for ${challenge.monthly_challange_gameid}:`, error);
+                
+                // FALLBACK: Use stored metadata from Challenge document
+                gameTitle = challenge.monthly_game_title;
+                gameIconUrl = challenge.monthly_game_icon_url;
                 gameInfo = null;
+                
+                if (gameTitle) {
+                    console.log(`FALLBACK: Using stored metadata for ${challenge.monthly_challange_gameid}: ${gameTitle}`);
+                } else {
+                    console.warn(`No metadata available for game ${challenge.monthly_challange_gameid}`);
+                }
             }
 
             // Get progress for monthly challenge
@@ -145,7 +161,7 @@ class StatsUpdateService {
                 .filter(([id, data]) => wasEarnedDuringChallengeMonth(data.dateEarned, challenge.date))
                 .map(([id]) => id);
                 
-            console.log(`User ${user.raUsername} has earned ${achievementsEarnedThisMonth.length} achievements during challenge month for ${monthlyProgress.title}`);
+            console.log(`User ${user.raUsername} has earned ${achievementsEarnedThisMonth.length} achievements during challenge month for ${monthlyProgress.title || gameTitle || 'Unknown Game'}`);
 
             // Check for progression achievements earned this month
             const progressionAchievements = challenge.monthly_challange_progression_achievements || [];
@@ -189,26 +205,44 @@ class StatsUpdateService {
                 monthlyPoints = 1; // Participation
             }
 
-            // Update monthly challenge progress WITH DETAILED INFO
+            // Update monthly challenge progress WITH DETAILED INFO AND IMPROVED FALLBACKS
             const monthKey = User.formatDateKey(challenge.date);
             user.monthlyChallenges.set(monthKey, { 
                 progress: monthlyPoints,
                 achievements: achievementsEarnedThisMonth.length,
                 totalAchievements: challenge.monthly_challange_game_total,
                 percentage: parseFloat((achievementsEarnedThisMonth.length / challenge.monthly_challange_game_total * 100).toFixed(2)),
-                gameTitle: monthlyProgress.title || (gameInfo ? gameInfo.title : null),
-                gameIconUrl: gameInfo ? gameInfo.imageIcon : null
+                // IMPROVED: Use multiple fallbacks for game title
+                gameTitle: monthlyProgress.title || gameTitle || challenge.monthly_game_title || `Game ${challenge.monthly_challange_gameid}`,
+                // IMPROVED: Use multiple fallbacks for game icon
+                gameIconUrl: gameIconUrl || challenge.monthly_game_icon_url
             });
 
             // If there's a shadow challenge and it's revealed, update that too
             if (challenge.shadow_challange_gameid && challenge.shadow_challange_revealed) {
-                // Get shadow game info
+                // Get shadow game info with fallback
                 let shadowGameInfo;
+                let shadowGameTitle;
+                let shadowGameIconUrl;
+                
                 try {
                     shadowGameInfo = await retroAPI.getGameInfo(challenge.shadow_challange_gameid);
+                    shadowGameTitle = shadowGameInfo.title;
+                    shadowGameIconUrl = shadowGameInfo.imageIcon;
+                    console.log(`API: Retrieved shadow game info for ${challenge.shadow_challange_gameid}: ${shadowGameTitle}`);
                 } catch (error) {
                     console.error(`Error fetching shadow game info for ${challenge.shadow_challange_gameid}:`, error);
+                    
+                    // FALLBACK: Use stored metadata from Challenge document
+                    shadowGameTitle = challenge.shadow_game_title;
+                    shadowGameIconUrl = challenge.shadow_game_icon_url;
                     shadowGameInfo = null;
+                    
+                    if (shadowGameTitle) {
+                        console.log(`FALLBACK: Using stored shadow metadata for ${challenge.shadow_challange_gameid}: ${shadowGameTitle}`);
+                    } else {
+                        console.warn(`No shadow metadata available for game ${challenge.shadow_challange_gameid}`);
+                    }
                 }
 
                 const shadowProgress = await retroAPI.getUserGameProgress(
@@ -224,7 +258,7 @@ class StatsUpdateService {
                     .filter(([id, data]) => wasEarnedDuringChallengeMonth(data.dateEarned, challenge.date))
                     .map(([id]) => id);
                     
-                console.log(`User ${user.raUsername} has earned ${shadowAchievementsEarnedThisMonth.length} shadow achievements during challenge month for ${shadowProgress.title}`);
+                console.log(`User ${user.raUsername} has earned ${shadowAchievementsEarnedThisMonth.length} shadow achievements during challenge month for ${shadowProgress.title || shadowGameTitle || 'Unknown Shadow Game'}`);
 
                 // Check for progression shadow achievements earned this month
                 const progressionShadowAchievements = challenge.shadow_challange_progression_achievements || [];
@@ -270,14 +304,16 @@ class StatsUpdateService {
                     shadowPoints = 1; // Participation
                 }
 
-                // Update shadow challenge progress WITH DETAILED INFO
+                // Update shadow challenge progress WITH DETAILED INFO AND IMPROVED FALLBACKS
                 user.shadowChallenges.set(monthKey, { 
                     progress: shadowPoints,
                     achievements: shadowAchievementsEarnedThisMonth.length,
                     totalAchievements: challenge.shadow_challange_game_total,
                     percentage: parseFloat((shadowAchievementsEarnedThisMonth.length / challenge.shadow_challange_game_total * 100).toFixed(2)),
-                    gameTitle: shadowProgress.title || (shadowGameInfo ? shadowGameInfo.title : null),
-                    gameIconUrl: shadowGameInfo ? shadowGameInfo.imageIcon : null
+                    // IMPROVED: Use multiple fallbacks for shadow game title
+                    gameTitle: shadowProgress.title || shadowGameTitle || challenge.shadow_game_title || `Game ${challenge.shadow_challange_gameid}`,
+                    // IMPROVED: Use multiple fallbacks for shadow game icon
+                    gameIconUrl: shadowGameIconUrl || challenge.shadow_game_icon_url
                 });
             }
 
