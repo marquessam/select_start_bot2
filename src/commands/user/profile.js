@@ -1,4 +1,4 @@
-// src/commands/user/profile.js - SIMPLIFIED VERSION
+// src/commands/user/profile.js - FIXED VERSION
 import { 
     SlashCommandBuilder, 
     EmbedBuilder,
@@ -7,6 +7,7 @@ import {
     ButtonStyle
 } from 'discord.js';
 import { User } from '../../models/User.js';
+import { Challenge } from '../../models/Challenge.js'; // ADD THIS IMPORT
 import retroAPI from '../../services/retroAPI.js';
 import gachaService from '../../services/gachaService.js';
 import { COLORS, EMOJIS } from '../../utils/FeedUtils.js';
@@ -318,12 +319,25 @@ export default {
     },
 
     /**
-     * SIMPLIFIED: Generate trophies using existing gameTitle field
+     * FIXED: Generate trophies with Challenge document fallback for titles
      */
-    generateTrophiesFromExistingData(user) {
+    async generateTrophiesFromExistingData(user) {
         const trophies = [];
 
-        // Process monthly challenges
+        // STEP 1: Get all Challenge documents for title lookups
+        const challenges = await Challenge.find({}).sort({ date: 1 });
+        const challengeTitleMap = {};
+        
+        // Build a lookup map for game titles
+        for (const challenge of challenges) {
+            const monthKey = this.getMonthKey(challenge.date);
+            challengeTitleMap[monthKey] = {
+                monthly: challenge.monthly_game_title,
+                shadow: challenge.shadow_game_title
+            };
+        }
+
+        // STEP 2: Process monthly challenges with fallback
         for (const [monthKey, data] of user.monthlyChallenges.entries()) {
             if (data.progress > 0) {
                 let awardLevel = 'participation';
@@ -336,8 +350,17 @@ export default {
                 const month = parseInt(dateParts[1]) - 1; // Month is 0-based
                 const trophyDate = new Date(year, month, 15); // 15th of the month
 
-                // SIMPLIFIED: Just use the gameTitle field with simple fallback
-                const gameTitle = data.gameTitle || `Monthly Challenge - ${this.formatShortDate(monthKey)}`;
+                // IMPROVED: Use Challenge document title as fallback
+                let gameTitle = data.gameTitle; // User data first
+                
+                if (!gameTitle && challengeTitleMap[monthKey]?.monthly) {
+                    gameTitle = challengeTitleMap[monthKey].monthly; // Challenge document fallback
+                    console.log(`Using Challenge document title for ${monthKey}: ${gameTitle}`);
+                }
+                
+                if (!gameTitle) {
+                    gameTitle = `Monthly Challenge - ${this.formatShortDate(monthKey)}`; // Final fallback
+                }
 
                 trophies.push({
                     gameId: `monthly_${monthKey}`,
@@ -353,7 +376,7 @@ export default {
             }
         }
 
-        // Process shadow challenges
+        // STEP 3: Process shadow challenges with fallback
         for (const [monthKey, data] of user.shadowChallenges.entries()) {
             if (data.progress > 0) {
                 let awardLevel = 'participation';
@@ -365,8 +388,17 @@ export default {
                 const month = parseInt(dateParts[1]) - 1; // Month is 0-based
                 const trophyDate = new Date(year, month, 15); // 15th of the month
 
-                // SIMPLIFIED: Just use the gameTitle field with simple fallback
-                const gameTitle = data.gameTitle || `Shadow Challenge - ${this.formatShortDate(monthKey)}`;
+                // IMPROVED: Use Challenge document title as fallback
+                let gameTitle = data.gameTitle; // User data first
+                
+                if (!gameTitle && challengeTitleMap[monthKey]?.shadow) {
+                    gameTitle = challengeTitleMap[monthKey].shadow; // Challenge document fallback
+                    console.log(`Using Challenge document shadow title for ${monthKey}: ${gameTitle}`);
+                }
+                
+                if (!gameTitle) {
+                    gameTitle = `Shadow Challenge - ${this.formatShortDate(monthKey)}`; // Final fallback
+                }
 
                 trophies.push({
                     gameId: `shadow_${monthKey}`,
@@ -382,7 +414,7 @@ export default {
             }
         }
 
-        // Process community awards (unchanged)
+        // STEP 4: Process community awards (unchanged)
         const currentYear = new Date().getFullYear();
         const communityAwards = user.getCommunityAwardsForYear(currentYear);
         
@@ -407,6 +439,15 @@ export default {
     },
 
     /**
+     * Helper method to get month key from date
+     */
+    getMonthKey(date) {
+        const year = date.getFullYear();
+        const month = (date.getMonth() + 1).toString().padStart(2, '0');
+        return `${year}-${month}`;
+    },
+
+    /**
      * SIMPLIFIED: Format short date for fallback titles
      */
     formatShortDate(monthKey) {
@@ -424,8 +465,8 @@ export default {
     },
 
     async handleTrophyCaseButton(interaction, user) {
-        // Generate achievement trophies dynamically from existing data
-        const trophies = this.generateTrophiesFromExistingData(user);
+        // FIXED: Generate achievement trophies dynamically with Challenge document fallback
+        const trophies = await this.generateTrophiesFromExistingData(user);
         
         if (trophies.length === 0) {
             return interaction.editReply({
