@@ -10,7 +10,9 @@ import {
     TextInputBuilder, 
     TextInputStyle, 
     ActionRowBuilder,
-    StringSelectMenuBuilder
+    StringSelectMenuBuilder,
+    ButtonBuilder,
+    ButtonStyle
 } from 'discord.js';
 
 /**
@@ -615,7 +617,7 @@ async function handleChallengeSpecificBet(interaction, user, challengeId) {
     await interaction.showModal(modal);
 }
 
-// NEW: Handle showing detailed info about a specific challenge
+// NEW: Handle showing detailed info about a specific challenge - UPDATED with gear for creator, crown for #1
 async function handleChallengeInfo(interaction, challengeId) {
     await interaction.deferReply({ ephemeral: true });
 
@@ -637,7 +639,7 @@ async function handleChallengeInfo(interaction, challengeId) {
             { name: 'Status', value: challenge.status.toUpperCase(), inline: true },
             { name: 'Leaderboard', value: challenge.leaderboardTitle, inline: false },
             { name: 'Description', value: challenge.description || 'No description provided', inline: false },
-            { name: 'Created by', value: challenge.creatorRaUsername, inline: true },
+            { name: 'Created by', value: `⚙️ ${challenge.creatorRaUsername}`, inline: true }, // UPDATED: Changed to gear emoji
             { name: 'Entry Wager', value: gpUtils.formatGP(challenge.participants[0]?.wager || 0), inline: true },
             { name: 'Total Prize Pool', value: gpUtils.formatGP(challenge.getTotalWager()), inline: true }
         ]);
@@ -647,18 +649,79 @@ async function handleChallengeInfo(interaction, challengeId) {
             embed.addFields({ name: 'Target Opponent', value: challenge.targetRaUsername, inline: true });
         }
 
-        // Participants
+        // UPDATED: Always show current scores/standings when participants exist
         if (challenge.participants.length > 0) {
-            const participantsList = challenge.participants
-                .map((p, index) => `${index + 1}. **${p.raUsername}** (Joined: ${p.joinedAt.toLocaleDateString()})`)
-                .join('\n');
-            embed.addFields({ name: `Participants (${challenge.participants.length})`, value: participantsList, inline: false });
+            let participantsText = '';
+            
+            try {
+                // Fetch current scores for all participants
+                const participantUsernames = challenge.participants.map(p => p.raUsername);
+                const currentScores = await fetchLeaderboardScoresFixed(
+                    challenge.gameId,
+                    challenge.leaderboardId,
+                    participantUsernames
+                );
+                
+                if (currentScores && currentScores.length > 0) {
+                    // Sort by rank (lower is better, null ranks go to end)
+                    currentScores.sort((a, b) => {
+                        if (a.rank === null && b.rank === null) return 0;
+                        if (a.rank === null) return 1;
+                        if (b.rank === null) return -1;
+                        return a.rank - b.rank;
+                    });
+                    
+                    // Display current standings with scores and global ranks
+                    currentScores.forEach((score, index) => {
+                        const displayRank = index + 1;
+                        // UPDATED: Only crown for #1, numbers for all others
+                        const positionEmoji = displayRank === 1 ? '👑' : `${displayRank}.`;
+                        
+                        // UPDATED: Gear for creator, global rank, and score
+                        const creatorIndicator = score.raUsername === challenge.creatorRaUsername ? ' ⚙️' : '';
+                        const globalRank = score.rank ? ` (Global Rank: #${score.rank})` : '';
+                        const scoreText = score.score !== 'No score' ? `: ${score.score}` : ': No score yet';
+                        
+                        participantsText += `${positionEmoji} **${score.raUsername}**${creatorIndicator}${scoreText}${globalRank}\n`;
+                    });
+                } else {
+                    // Fallback to participant list without scores
+                    challenge.participants.forEach((participant, index) => {
+                        const displayRank = index + 1;
+                        const positionEmoji = displayRank === 1 ? '👑' : `${displayRank}.`;
+                        const creatorIndicator = participant.raUsername === challenge.creatorRaUsername ? ' ⚙️' : '';
+                        participantsText += `${positionEmoji} **${participant.raUsername}**${creatorIndicator}: No score yet\n`;
+                    });
+                }
+            } catch (error) {
+                console.error(`Error fetching scores for challenge info ${challenge.challengeId}:`, error);
+                // Fallback to participant list without scores
+                challenge.participants.forEach((participant, index) => {
+                    const displayRank = index + 1;
+                    const positionEmoji = displayRank === 1 ? '👑' : `${displayRank}.`;
+                    const creatorIndicator = participant.raUsername === challenge.creatorRaUsername ? ' ⚙️' : '';
+                    participantsText += `${positionEmoji} **${participant.raUsername}**${creatorIndicator}: No score yet\n`;
+                });
+            }
+            
+            // UPDATED: Simplified field title and removed extra text
+            const fieldTitle = challenge.status === 'active' ? 'Current Standings' : `Participants (${challenge.participants.length})`;
+            
+            embed.addFields({ 
+                name: fieldTitle, 
+                value: participantsText || 'No participants yet',
+                inline: false 
+            });
         }
 
-        // Betting info
+        // Betting information if there are bets
         if (challenge.bets.length > 0) {
             const totalBets = challenge.getTotalBets();
-            embed.addFields({ name: '🎰 Betting Pool', value: `${gpUtils.formatGP(totalBets)} from ${challenge.bets.length} bet(s)`, inline: true });
+            embed.addFields({
+                name: '🎰 Total Bets',
+                value: `${gpUtils.formatGP(totalBets)} from ${challenge.bets.length} bet${challenge.bets.length !== 1 ? 's' : ''}`,
+                inline: true
+            });
         }
 
         // Timing info
@@ -705,6 +768,30 @@ async function handleChallengeInfo(interaction, challengeId) {
     } catch (error) {
         console.error('Error showing challenge info:', error);
         await interaction.editReply('❌ Error loading challenge information.');
+    }
+}
+
+/**
+ * HELPER: Use reliable API utilities to fetch leaderboard scores
+ */
+async function fetchLeaderboardScoresFixed(gameId, leaderboardId, raUsernames) {
+    try {
+        console.log(`Fetching leaderboard scores for game ${gameId}, leaderboard ${leaderboardId}`);
+
+        // Use arenaUtils which has the reliable API implementation
+        const currentScores = await arenaUtils.fetchLeaderboardScores(gameId, leaderboardId, raUsernames);
+        
+        return currentScores;
+    } catch (error) {
+        console.error('Error fetching leaderboard scores:', error);
+        
+        // Return no-score results for all users on error
+        return raUsernames.map(username => ({
+            raUsername: username,
+            rank: null,
+            score: 'No score',
+            fetchedAt: new Date()
+        }));
     }
 }
 
