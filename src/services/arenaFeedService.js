@@ -1,4 +1,4 @@
-// src/services/arenaFeedService.js - REMOVED JOIN BUTTONS
+// src/services/arenaFeedService.js - UPDATED with gear for creator, crown for #1
 import { ArenaChallenge } from '../models/ArenaChallenge.js';
 import { User } from '../models/User.js';
 import { config } from '../config/config.js';
@@ -7,7 +7,7 @@ import { COLORS, EMOJIS, createHeaderEmbed, getDiscordTimestamp } from '../utils
 import { EmbedBuilder } from 'discord.js';
 import arenaUtils from '../utils/arenaUtils.js';
 import gpUtils from '../utils/gpUtils.js';
-import RetroAPIUtils from '../utils/RetroAPIUtils.js'; // USE RELIABLE API UTILS
+import RetroAPIUtils from '../utils/RetroAPIUtils.js';
 
 class ArenaFeedService extends FeedManagerBase {
     constructor() {
@@ -145,14 +145,14 @@ class ArenaFeedService extends FeedManagerBase {
     }
 
     /**
-     * Create or update a challenge embed - NO JOIN BUTTONS, DISPLAY ONLY
+     * Create or update a challenge embed - UPDATED with gear for creator, crown for #1
      */
     async createOrUpdateChallengeEmbed(challenge) {
         try {
             const channel = await this.getChannel();
             if (!channel) return;
             
-            // Determine color based on status and type - MATCHING ARCADE COLORS
+            // Determine color based on status and type
             let embedColor;
             if (challenge.status === 'pending') {
                 embedColor = COLORS.WARNING; // Yellow for pending
@@ -183,11 +183,11 @@ class ArenaFeedService extends FeedManagerBase {
             const statusEmoji = challenge.status === 'pending' ? '⏳' : '🔥';
             const typeText = challenge.type === 'direct' ? 'Direct Challenge' : 'Open Challenge';
             
-            // Create description with timing info
+            // Create description with timing info - UPDATED: Gear for creator
             let description = `${statusEmoji} **${challenge.status.toUpperCase()}** ${typeText}\n` +
                              `${challenge.leaderboardTitle}\n\n` +
                              `**Description:** ${challenge.description || 'No description provided'}\n` +
-                             `**Created by:** ${challenge.creatorRaUsername}\n`;
+                             `**Created by:** ⚙️ ${challenge.creatorRaUsername}\n`; // UPDATED: Changed to gear emoji
             
             if (challenge.type === 'direct' && challenge.targetRaUsername) {
                 description += `**Opponent:** ${challenge.targetRaUsername}\n`;
@@ -209,7 +209,7 @@ class ArenaFeedService extends FeedManagerBase {
             
             description += `\n\n*Use </arena:1234567890> to join challenges or place bets.*`;
             
-            // Create embed using standardized utility - EXACT ARCADE STYLE
+            // Create embed using standardized utility
             const embed = createHeaderEmbed(
                 `${typeEmoji} ${challenge.gameTitle}`,
                 description,
@@ -223,11 +223,11 @@ class ArenaFeedService extends FeedManagerBase {
                 }
             );
             
-            // Add current standings/participants - MATCHING ARCADE LEADERBOARD FORMAT
+            // Add current standings/participants - UPDATED with gear for creator, crown for #1
             if (challenge.participants.length > 0) {
                 let participantsText = '';
                 
-                // If challenge is active, try to get current scores using FIXED API
+                // If challenge is active, try to get current scores
                 if (challenge.status === 'active') {
                     try {
                         const participantUsernames = challenge.participants.map(p => p.raUsername);
@@ -246,30 +246,25 @@ class ArenaFeedService extends FeedManagerBase {
                                 return a.rank - b.rank;
                             });
                             
-                            // FORMAT EXACTLY LIKE ARCADE FEED + HIGHLIGHT CREATOR
+                            // UPDATED: Crown for #1, numbers for others, gear for creator
                             currentScores.forEach((score, index) => {
                                 const displayRank = index + 1;
-                                const medalEmoji = displayRank <= 3 ? EMOJIS[`RANK_${displayRank}`] : `${displayRank}.`;
+                                const positionEmoji = displayRank === 1 ? '👑' : `${displayRank}.`;
                                 const globalRank = score.rank ? ` (Global Rank: #${score.rank})` : '';
                                 const scoreText = score.score !== 'No score' ? `: ${score.score}` : ': No score yet';
                                 
-                                // HIGHLIGHT CREATOR WITH SPECIAL INDICATOR
-                                const creatorIndicator = score.raUsername === challenge.creatorRaUsername ? ' 👑' : '';
+                                // UPDATED: Gear indicator for creator
+                                const creatorIndicator = score.raUsername === challenge.creatorRaUsername ? ' ⚙️' : '';
                                 
-                                participantsText += `${medalEmoji} **${score.raUsername}**${creatorIndicator}${scoreText}${globalRank}\n`;
+                                participantsText += `${positionEmoji} **${score.raUsername}**${creatorIndicator}${scoreText}${globalRank}\n`;
                             });
-                            
-                            // Add creator note
-                            if (challenge.participants.some(p => p.raUsername === challenge.creatorRaUsername)) {
-                                participantsText += `\n👑 = Challenge Creator`;
-                            }
                         } else {
                             // Fallback to participant list without scores
                             challenge.participants.forEach((participant, index) => {
                                 const displayRank = index + 1;
-                                const medalEmoji = displayRank <= 3 ? EMOJIS[`RANK_${displayRank}`] : `${displayRank}.`;
-                                const creatorIndicator = participant.raUsername === challenge.creatorRaUsername ? ' 👑' : '';
-                                participantsText += `${medalEmoji} **${participant.raUsername}**${creatorIndicator}: No score yet\n`;
+                                const positionEmoji = displayRank === 1 ? '👑' : `${displayRank}.`;
+                                const creatorIndicator = participant.raUsername === challenge.creatorRaUsername ? ' ⚙️' : '';
+                                participantsText += `${positionEmoji} **${participant.raUsername}**${creatorIndicator}: No score yet\n`;
                             });
                         }
                     } catch (error) {
@@ -277,23 +272,21 @@ class ArenaFeedService extends FeedManagerBase {
                         // Fallback to participant list without scores
                         challenge.participants.forEach((participant, index) => {
                             const displayRank = index + 1;
-                            const medalEmoji = displayRank <= 3 ? EMOJIS[`RANK_${displayRank}`] : `${displayRank}.`;
-                            const creatorIndicator = participant.raUsername === challenge.creatorRaUsername ? ' 👑' : '';
-                            participantsText += `${medalEmoji} **${participant.raUsername}**${creatorIndicator}: No score yet\n`;
+                            const positionEmoji = displayRank === 1 ? '👑' : `${displayRank}.`;
+                            const creatorIndicator = participant.raUsername === challenge.creatorRaUsername ? ' ⚙️' : '';
+                            participantsText += `${positionEmoji} **${participant.raUsername}**${creatorIndicator}: No score yet\n`;
                         });
                     }
                 } else {
-                    // For pending challenges, just list participants with numbers
+                    // For pending challenges, just list participants
                     challenge.participants.forEach((participant, index) => {
                         const number = index + 1;
-                        const creatorIndicator = participant.raUsername === challenge.creatorRaUsername ? ' 👑' : '';
+                        const creatorIndicator = participant.raUsername === challenge.creatorRaUsername ? ' ⚙️' : '';
                         participantsText += `${number}. **${participant.raUsername}**${creatorIndicator}\n`;
                     });
                 }
                 
-                // Add participants count like arcade feed
-                participantsText += `\n${challenge.participants.length} registered member${challenge.participants.length !== 1 ? 's' : ''} participating in this challenge`;
-                
+                // UPDATED: Removed the extra "Challenge Creator" and "registered members" text
                 embed.addFields({ 
                     name: challenge.status === 'active' ? 'Current Standings' : `Participants (${challenge.participants.length})`, 
                     value: participantsText || 'No participants yet',
@@ -301,7 +294,7 @@ class ArenaFeedService extends FeedManagerBase {
                 });
             }
             
-            // Add betting information if there are bets - MATCHING ARCADE STYLE
+            // Add betting information if there are bets
             if (challenge.bets.length > 0) {
                 const totalBets = challenge.getTotalBets();
                 embed.addFields({
@@ -311,9 +304,7 @@ class ArenaFeedService extends FeedManagerBase {
                 });
             }
             
-            // NO ACTION BUTTONS - FEED IS DISPLAY ONLY, USE /arena COMMAND TO INTERACT
-            
-            // Use our base class updateMessage method WITHOUT components
+            // Update the message (no action buttons - feed is display only)
             await this.updateMessage(
                 `challenge_${challenge.challengeId}`, 
                 { embeds: [embed] }
