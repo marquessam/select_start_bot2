@@ -29,24 +29,41 @@ class ArenaFeedService extends FeedManagerBase {
                 return;
             }
             
-            // Update header first
+            // 1. Update header first
             await this.updateArenaHeader();
             
-            // Update overview embed
+            // 2. Update overview embed (always second)
             await this.updateArenaOverview();
             
-            // Update active challenges (pending and active)
-            const activeChallenges = await ArenaChallenge.find({
-                status: { $in: ['pending', 'active'] }
-            }).sort({ createdAt: -1 }); // Sort by creation date, newest first
+            // 3. Update DIRECT challenges first (sorted by creation date, newest first)
+            console.log('Updating direct challenges...');
+            const directChallenges = await ArenaChallenge.find({
+                status: { $in: ['pending', 'active'] },
+                type: 'direct'
+            }).sort({ createdAt: -1 });
             
-            for (const challenge of activeChallenges) {
+            for (const challenge of directChallenges) {
                 await this.createOrUpdateChallengeEmbed(challenge);
                 await new Promise(resolve => setTimeout(resolve, 500));
             }
             
-            // Update GP summary at the bottom (ALWAYS LAST EMBED IN FEED) - FIXED
+            // 4. Update OPEN challenges second (sorted by creation date, newest first)
+            console.log('Updating open challenges...');
+            const openChallenges = await ArenaChallenge.find({
+                status: { $in: ['pending', 'active'] },
+                type: 'open'
+            }).sort({ createdAt: -1 });
+            
+            for (const challenge of openChallenges) {
+                await this.createOrUpdateChallengeEmbed(challenge);
+                await new Promise(resolve => setTimeout(resolve, 500));
+            }
+            
+            // 5. Update GP summary at the bottom (ALWAYS LAST EMBED IN FEED)
+            console.log('Updating GP leaderboard...');
             await this.updateGPLeaderboardEmbed();
+            
+            console.log(`Arena feed updated: ${directChallenges.length} direct + ${openChallenges.length} open challenges`);
             
         } catch (error) {
             console.error('Error updating arena feeds:', error);
