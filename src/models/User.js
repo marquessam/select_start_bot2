@@ -160,7 +160,6 @@ const userSchema = new mongoose.Schema({
     },
     default: () => new Map()
 },
-2. Create Simple Fix Command
     announcedAchievements: {
         type: [{ type: String }],
         default: []
