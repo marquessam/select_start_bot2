@@ -1,4 +1,4 @@
-// src/handlers/arenaHandlers.js - FIXED VERSION
+// src/handlers/arenaHandlers.js - FIXED VERSION with proper challenge ID extraction
 import { User } from '../models/User.js';
 import { ArenaChallenge } from '../models/ArenaChallenge.js';
 import arenaService from '../services/arenaService.js';
@@ -869,9 +869,12 @@ async function handlePlaceBetModal(interaction) {
     await interaction.deferReply({ ephemeral: true });
 
     try {
-        const challengeId = interaction.customId.split('_')[3]; // arena_bet_modal_<challengeId>
+        // FIXED: Extract challenge ID from arena_bet_modal_{challengeId} format
+        const challengeId = interaction.customId.substring('arena_bet_modal_'.length);
         const betAmountText = interaction.fields.getTextInputValue('bet_amount');
         const betTarget = interaction.fields.getTextInputValue('bet_target');
+
+        console.log('Extracted challenge ID for bet:', challengeId);
 
         const betAmount = gpUtils.validateGPAmount(betAmountText, 1, 10000);
         
