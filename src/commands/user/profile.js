@@ -1,673 +1,655 @@
-// src/commands/user/profile.js - COMPLETE FIXED VERSION
-import { 
-    SlashCommandBuilder, 
-    EmbedBuilder,
-    ActionRowBuilder,
-    ButtonBuilder,
-    ButtonStyle
-} from 'discord.js';
+// src/commands/user/profile.js - Updated with Trophy Emoji Support
+import { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 import { User } from '../../models/User.js';
-import { Challenge } from '../../models/Challenge.js'; // ADDED FOR TROPHY CASE FIX
-import retroAPI from '../../services/retroAPI.js';
-import gachaService from '../../services/gachaService.js';
-import { COLORS, EMOJIS } from '../../utils/FeedUtils.js';
+import { Challenge } from '../../models/Challenge.js';
+import { getTrophyEmoji, formatTrophyEmoji } from '../../config/trophyEmojis.js';
 
-// Award points constants - matching yearlyLeaderboard.js exactly
-const POINTS = {
-    MASTERY: 7,          // Mastery (3+3+1)
-    BEATEN: 4,           // Beaten (3+1)
-    PARTICIPATION: 1     // Participation
+const COLORS = {
+    PRIMARY: '#0099ff',
+    SUCCESS: '#00ff00',
+    WARNING: '#ffff00',
+    ERROR: '#ff0000',
+    GOLD: '#ffd700',
+    SILVER: '#c0c0c0',
+    BRONZE: '#cd7f32'
 };
 
-// Shadow games are limited to beaten status maximum (4 points)
-const SHADOW_MAX_POINTS = POINTS.BEATEN;
+export const data = new SlashCommandBuilder()
+    .setName('profile')
+    .setDescription('View a user\'s RetroAchievements profile and stats')
+    .addUserOption(option =>
+        option.setName('user')
+            .setDescription('Discord user to view profile for')
+            .setRequired(false)
+    );
 
-export default {
-    data: new SlashCommandBuilder()
-        .setName('profile')
-        .setDescription('Display user profile summary')
-        .addStringOption(option =>
-            option.setName('username')
-            .setDescription('RetroAchievements username (optional)')
-            .setRequired(false)),
-
-    async execute(interaction) {
-        await interaction.deferReply({ ephemeral: true });
-
-        try {
-            let raUsername = interaction.options.getString('username');
-            let user;
-
-            if (!raUsername) {
-                // Look up user by Discord ID
-                user = await User.findOne({ discordId: interaction.user.id });
-                if (!user) {
-                    return interaction.editReply('You are not registered. Please ask an admin to register you first.');
-                }
-                raUsername = user.raUsername;
-            } else {
-                // Look up user by RA username
-                user = await User.findOne({ 
-                    raUsername: { $regex: new RegExp('^' + raUsername + '$', 'i') }
-                });
-                if (!user) {
-                    return interaction.editReply('User not found. Please check the username or ask an admin to register this user.');
-                }
-            }
-
-            // Get user's RA info
-            const raUserInfo = await retroAPI.getUserInfo(raUsername);
-            
-            // Calculate points using the same method as yearlyLeaderboard
-            const pointsData = this.calculateTotalPoints(user);
-            
-            // Get current year community awards
-            const currentYear = new Date().getFullYear();
-            const communityAwards = user.getCommunityAwardsForYear(currentYear);
-            
-            // Create the profile embed
-            const profileEmbed = this.createProfileEmbed(user, raUserInfo, pointsData, communityAwards);
-            
-            // Create buttons for trophy case and collection
-            const buttonRow = this.createProfileButtons(user);
-            
-            return interaction.editReply({ 
-                embeds: [profileEmbed], 
-                components: buttonRow ? [buttonRow] : []
-            });
-
-        } catch (error) {
-            console.error('Error displaying profile:', error);
-            return interaction.editReply('An error occurred while fetching the profile. Please try again.');
-        }
-    },
+export async function execute(interaction) {
+    const targetUser = interaction.options.getUser('user') || interaction.user;
     
-    calculateTotalPoints(user) {
-        // Calculate totals for each category exactly like yearlyLeaderboard.js
-        let challengePoints = 0;
-        let masteryCount = 0;
-        let beatenCount = 0;
-        let participationCount = 0;
-        let shadowBeatenCount = 0;
-        let shadowParticipationCount = 0;
+    await interaction.deferReply({ ephemeral: true });
+
+    try {
+        // Find user in database
+        const user = await User.findByDiscordId(targetUser.id);
         
-        // Process monthly challenges
-        for (const [dateStr, data] of user.monthlyChallenges.entries()) {
-            if (data.progress === 3) {
-                // Mastery (7 points)
-                masteryCount++;
-                challengePoints += POINTS.MASTERY;
-            } else if (data.progress === 2) {
-                // Beaten (4 points)
-                beatenCount++;
-                challengePoints += POINTS.BEATEN;
-            } else if (data.progress === 1) {
-                // Participation (1 point)
-                participationCount++;
-                challengePoints += POINTS.PARTICIPATION;
-            }
-        }
-
-        // Process shadow challenges
-        for (const [dateStr, data] of user.shadowChallenges.entries()) {
-            if (data.progress === 2) {
-                // Beaten for shadow (4 points max)
-                shadowBeatenCount++;
-                challengePoints += SHADOW_MAX_POINTS;
-            } else if (data.progress === 1) {
-                // Participation (1 point)
-                shadowParticipationCount++;
-                challengePoints += POINTS.PARTICIPATION;
-            }
-        }
-
-        // Get community awards points for current year
-        const currentYear = new Date().getFullYear();
-        const communityPoints = user.getCommunityPointsForYear(currentYear);
-
-        return {
-            totalPoints: challengePoints + communityPoints,
-            challengePoints,
-            communityPoints,
-            stats: {
-                mastery: masteryCount,
-                beaten: beatenCount,
-                participation: participationCount,
-                shadowBeaten: shadowBeatenCount,
-                shadowParticipation: shadowParticipationCount
-            }
-        };
-    },
-    
-    createProfileEmbed(user, raUserInfo, pointsData, communityAwards) {
-        const embed = new EmbedBuilder()
-            .setTitle(`Profile: ${user.raUsername}`)
-            .setURL(`https://retroachievements.org/user/${user.raUsername}`)
-            .setColor('#0099ff');
-            
-        // Add RA profile image if available
-        if (raUserInfo && raUserInfo.profileImageUrl) {
-            embed.setThumbnail(raUserInfo.profileImageUrl);
-        }
-        
-        // RetroAchievements Site Info
-        let rankInfo = 'Not ranked';
-        if (raUserInfo && raUserInfo.rank) {
-            rankInfo = `#${raUserInfo.rank}`;
-            
-            // Add percentage if available
-            if (raUserInfo.totalRanked) {
-                const percentage = (raUserInfo.rank / raUserInfo.totalRanked * 100).toFixed(2);
-                rankInfo += ` (Top ${percentage}%)`;
-            }
-        }
-        
-        embed.addFields({
-            name: 'RetroAchievements',
-            value: `[${user.raUsername}](https://retroachievements.org/user/${user.raUsername})\n` +
-                   `**Rank:** ${rankInfo}`
-        });
-        
-        // Community Stats with detailed point breakdown
-        embed.addFields({
-            name: 'Community Stats',
-            value: `**Total Points:** ${pointsData.totalPoints}\n` + 
-                   `• Challenge Points: ${pointsData.challengePoints}\n` +
-                   `• Community Points: ${pointsData.communityPoints}\n` +
-                   `**GP Balance:** ${(user.gpBalance || 0).toLocaleString()} GP`
-        });
-        
-        // Point Breakdown
-        const stats = pointsData.stats;
-        embed.addFields({
-            name: 'Point Details',
-            value: `✨ Mastery: ${stats.mastery} (${stats.mastery * POINTS.MASTERY} pts)\n` +
-                   `⭐ Beaten: ${stats.beaten} (${stats.beaten * POINTS.BEATEN} pts)\n` +
-                   `🏁 Participation: ${stats.participation} (${stats.participation * POINTS.PARTICIPATION} pts)\n` +
-                   `👥 Shadow Beaten: ${stats.shadowBeaten} (${stats.shadowBeaten * SHADOW_MAX_POINTS} pts)\n` +
-                   `👥 Shadow Participation: ${stats.shadowParticipation} (${stats.shadowParticipation * POINTS.PARTICIPATION} pts)`
-        });
-        
-        // Arena Stats (if available)
-        if (user.arenaStats) {
-            const arenaStats = user.arenaStats;
-            const challengesIssued = arenaStats.challengesCreated || 0;
-            const challengesAccepted = arenaStats.challengesParticipated - challengesIssued || 0;
-            const challengesWon = arenaStats.challengesWon || 0;
-            const betsPlaced = arenaStats.betsPlaced || 0;
-            const betsWon = arenaStats.betsWon || 0;
-            
-            embed.addFields({
-                name: 'Arena Stats',
-                value: `**Challenges:** ${challengesIssued + challengesAccepted} (${challengesWon} wins)\n` +
-                       `**Bets:** ${betsPlaced} (${betsWon} wins)`
-            });
-        }
-        
-        // Community Awards
-        if (communityAwards && communityAwards.length > 0) {
-            // Format awards neatly with emojis
-            let awardsText = '';
-            
-            // Show up to 5 most recent awards to keep it manageable
-            const recentAwards = communityAwards.slice(0, 5);
-            
-            recentAwards.forEach(award => {
-                // Format date in a concise way
-                const awardDate = new Date(award.awardedAt).toLocaleDateString('en-US', {
-                    month: 'short',
-                    day: 'numeric'
-                });
-                
-                awardsText += `🏆 **${award.title}** (${award.points} pts) - ${awardDate}\n`;
-            });
-            
-            // If there are more awards, show a count
-            if (communityAwards.length > 5) {
-                awardsText += `\n...and ${communityAwards.length - 5} more awards`;
-            }
-            
-            embed.addFields({
-                name: `Community Awards (${communityAwards.length})`,
-                value: awardsText || 'No awards yet'
-            });
-        } else {
-            embed.addFields({
-                name: 'Community Awards',
-                value: 'No awards yet'
-            });
-        }
-        
-        embed.setFooter({ text: 'Use /yearlyboard to see the full leaderboard • Click buttons below to explore more!' })
-             .setTimestamp();
-        
-        return embed;
-    },
-
-    createProfileButtons(user) {
-        // Trophy Case Button - for achievement trophies
-        const trophyButton = new ButtonBuilder()
-            .setCustomId(`profile_trophy_case_${user.raUsername}`)
-            .setLabel('🏆 Trophy Case')
-            .setStyle(ButtonStyle.Primary);
-
-        // Collection Button - for gacha items
-        const collectionButton = new ButtonBuilder()
-            .setCustomId(`profile_collection_${user.raUsername}`)
-            .setLabel('📦 Collection')
-            .setStyle(ButtonStyle.Secondary);
-
-        return new ActionRowBuilder().addComponents(trophyButton, collectionButton);
-    },
-
-    // Handle button interactions
-    async handleButtonInteraction(interaction) {
-        if (!interaction.customId.startsWith('profile_')) return;
-
-        await interaction.deferReply({ ephemeral: true });
-
-        try {
-            let username;
-            let action;
-
-            // Parse different button formats
-            if (interaction.customId.includes('trophy_case_')) {
-                // Format: profile_trophy_case_USERNAME
-                username = interaction.customId.replace('profile_trophy_case_', '');
-                action = 'trophy_case';
-            } else if (interaction.customId.includes('collection_')) {
-                // Format: profile_collection_USERNAME
-                username = interaction.customId.replace('profile_collection_', '');
-                action = 'collection';
-            } else {
-                console.error('Unknown profile button format:', interaction.customId);
-                return;
-            }
-
-            // Find the user
-            const user = await User.findOne({ 
-                raUsername: { $regex: new RegExp('^' + username + '$', 'i') }
-            });
-
-            if (!user) {
-                return interaction.editReply({
-                    content: '❌ User not found.',
-                    ephemeral: true
-                });
-            }
-
-            // Handle different actions
-            switch (action) {
-                case 'trophy_case':
-                    await this.handleTrophyCaseButton(interaction, user);
-                    break;
-                case 'collection':
-                    await this.handleCollectionButton(interaction, user);
-                    break;
-                default:
-                    console.error('Unknown profile button action:', action);
-                    return;
-            }
-
-        } catch (error) {
-            console.error('Error handling profile button:', error);
-            await interaction.editReply({
-                content: '❌ An error occurred while processing your request.',
+        if (!user) {
+            return interaction.editReply({
+                content: `❌ ${targetUser.username} is not registered. Use \`/register\` to get started!`,
                 ephemeral: true
             });
         }
-    },
 
-    /**
-     * FIXED: Trophy case with Challenge document fallback and month key conversion
-     */
-    async handleTrophyCaseButton(interaction, user) {
-        // STEP 1: Get Challenge documents for title lookups
-        const challenges = await Challenge.find({}).sort({ date: 1 });
-        const challengeTitleMap = {};
-        
-        // Build a lookup map for game titles
-        for (const challenge of challenges) {
-            const monthKey = this.getMonthKey(challenge.date);
-            challengeTitleMap[monthKey] = {
-                monthly: challenge.monthly_game_title,
-                shadow: challenge.shadow_game_title
-            };
-        }
-
-        // STEP 2: Generate trophies with Challenge document fallback
-        const trophies = [];
-
-        // Process monthly challenges
-        for (const [userDateKey, data] of user.monthlyChallenges.entries()) {
-            if (data.progress > 0) {
-                let awardLevel = 'participation';
-                if (data.progress === 3) awardLevel = 'mastery';
-                else if (data.progress === 2) awardLevel = 'beaten';
-
-                // FIXED: Convert user date key (YYYY-MM-DD) to month key (YYYY-MM)
-                const monthKey = this.convertDateKeyToMonthKey(userDateKey);
-                
-                const dateParts = monthKey.split('-');
-                const year = parseInt(dateParts[0]);
-                const month = parseInt(dateParts[1]) - 1;
-                const trophyDate = new Date(year, month, 15);
-
-                // Use Challenge document title as fallback
-                let gameTitle = data.gameTitle; // User data first
-                
-                if (!gameTitle && challengeTitleMap[monthKey]?.monthly) {
-                    gameTitle = challengeTitleMap[monthKey].monthly; // Challenge document fallback
-                    console.log(`Using Challenge document title for ${monthKey}: ${gameTitle}`);
-                }
-                
-                if (!gameTitle) {
-                    gameTitle = `Monthly Challenge - ${this.formatShortDate(monthKey)}`; // Final fallback
-                }
-
-                trophies.push({
-                    gameId: `monthly_${monthKey}`,
-                    gameTitle: gameTitle,
-                    consoleName: 'Monthly Challenge',
-                    awardLevel: awardLevel,
-                    challengeType: 'monthly',
-                    emojiId: null,
-                    emojiName: this.getTrophyEmoji(awardLevel),
-                    earnedAt: trophyDate,
-                    monthKey: monthKey
-                });
-            }
-        }
-
-        // Process shadow challenges
-        for (const [userDateKey, data] of user.shadowChallenges.entries()) {
-            if (data.progress > 0) {
-                let awardLevel = 'participation';
-                if (data.progress === 2) awardLevel = 'beaten';
-
-                // FIXED: Convert user date key (YYYY-MM-DD) to month key (YYYY-MM)
-                const monthKey = this.convertDateKeyToMonthKey(userDateKey);
-
-                const dateParts = monthKey.split('-');
-                const year = parseInt(dateParts[0]);
-                const month = parseInt(dateParts[1]) - 1;
-                const trophyDate = new Date(year, month, 15);
-
-                // Use Challenge document title as fallback
-                let gameTitle = data.gameTitle; // User data first
-                
-                if (!gameTitle && challengeTitleMap[monthKey]?.shadow) {
-                    gameTitle = challengeTitleMap[monthKey].shadow; // Challenge document fallback
-                    console.log(`Using Challenge document shadow title for ${monthKey}: ${gameTitle}`);
-                }
-                
-                if (!gameTitle) {
-                    gameTitle = `Shadow Challenge - ${this.formatShortDate(monthKey)}`; // Final fallback
-                }
-
-                trophies.push({
-                    gameId: `shadow_${monthKey}`,
-                    gameTitle: gameTitle,
-                    consoleName: 'Shadow Challenge',
-                    awardLevel: awardLevel,
-                    challengeType: 'shadow',
-                    emojiId: null,
-                    emojiName: this.getTrophyEmoji(awardLevel),
-                    earnedAt: trophyDate,
-                    monthKey: monthKey
-                });
-            }
-        }
-
-        // Process community awards (unchanged)
+        // Calculate current year stats
         const currentYear = new Date().getFullYear();
+        const yearStats = await calculateYearStats(user, currentYear);
+
+        // Create main profile embed
+        const profileEmbed = new EmbedBuilder()
+            .setTitle(`🎮 ${user.raUsername}'s Profile`)
+            .setColor(COLORS.PRIMARY)
+            .setThumbnail(targetUser.displayAvatarURL({ dynamic: true }))
+            .setTimestamp();
+
+        // Add basic stats
+        profileEmbed.addFields(
+            {
+                name: '🏆 Trophy Summary',
+                value: formatTrophySummary(user),
+                inline: true
+            },
+            {
+                name: '📊 Challenge Stats',
+                value: formatChallengeStats(yearStats),
+                inline: true
+            },
+            {
+                name: '🎯 Current Progress',
+                value: formatCurrentProgress(user),
+                inline: true
+            }
+        );
+
+        // Add mastery information if available
+        const masteredCount = user.getMasteredGameCount();
+        if (masteredCount > 0) {
+            profileEmbed.addFields({
+                name: '🌟 Mastered Games',
+                value: `**${masteredCount}** games mastered`,
+                inline: true
+            });
+        }
+
+        // Add community awards summary
         const communityAwards = user.getCommunityAwardsForYear(currentYear);
-        
-        for (const award of communityAwards) {
-            trophies.push({
-                gameId: `community_${award.title.replace(/\s+/g, '_').toLowerCase()}`,
-                gameTitle: award.title,
-                consoleName: 'Community',
-                awardLevel: 'special',
-                challengeType: 'community',
-                emojiId: null,
-                emojiName: '🏆',
-                earnedAt: award.awardedAt,
-                monthKey: null
+        if (communityAwards.length > 0) {
+            const totalPoints = communityAwards.reduce((sum, award) => sum + award.points, 0);
+            profileEmbed.addFields({
+                name: '🏅 Community Recognition',
+                value: `**${communityAwards.length}** awards | **${totalPoints}** points`,
+                inline: true
             });
         }
 
-        // Sort by earned date (most recent first)
-        trophies.sort((a, b) => new Date(b.earnedAt) - new Date(a.earnedAt));
+        // Create action buttons
+        const actionRow = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`trophy_case_${user._id}`)
+                    .setLabel('🏆 Trophy Case')
+                    .setStyle(ButtonStyle.Primary),
+                new ButtonBuilder()
+                    .setCustomId(`detailed_stats_${user._id}`)
+                    .setLabel('📈 Detailed Stats')
+                    .setStyle(ButtonStyle.Secondary),
+                new ButtonBuilder()
+                    .setCustomId(`mastered_games_${user._id}`)
+                    .setLabel('🌟 Mastered Games')
+                    .setStyle(ButtonStyle.Secondary)
+            );
 
-        if (trophies.length === 0) {
-            return interaction.editReply({
-                content: '🏆 This trophy case is empty! \n\n' +
-                         '**How to earn trophies:**\n' +
-                         '• Complete monthly challenges (mastery, beaten, or participation)\n' +
-                         '• Complete shadow challenges when they\'re revealed\n' +
-                         '• Earn community awards\n\n' +
-                         '💡 **Achievement trophies are automatically generated from your progress!**',
-                ephemeral: true
+        // Add GP balance if user has Arena stats
+        if (user.gpBalance !== undefined && user.gpBalance > 0) {
+            profileEmbed.addFields({
+                name: '🎲 Arena Stats',
+                value: `**${user.gpBalance}** GP | Win Rate: **${user.getGpWinRate()}%**`,
+                inline: true
             });
         }
 
-        // Group and display trophies
-        const groupedTrophies = {
-            monthly: { mastery: [], beaten: [], participation: [] },
-            shadow: { mastery: [], beaten: [], participation: [] },
-            community: { special: [] }
-        };
-
-        trophies.forEach(trophy => {
-            if (groupedTrophies[trophy.challengeType] && groupedTrophies[trophy.challengeType][trophy.awardLevel]) {
-                groupedTrophies[trophy.challengeType][trophy.awardLevel].push(trophy);
-            }
-        });
-
-        const embed = new EmbedBuilder()
-            .setTitle(`🏆 ${user.raUsername}'s Trophy Case`)
-            .setColor(COLORS.GOLD)
-            .setDescription(`**Achievement Trophies:** ${trophies.length}`)
-            .setTimestamp();
-
-        // Add fields for each category
-        ['monthly', 'shadow', 'community'].forEach(challengeType => {
-            const categoryTrophies = groupedTrophies[challengeType];
-            if (!categoryTrophies) return;
-
-            Object.keys(categoryTrophies).forEach(awardLevel => {
-                const levelTrophies = categoryTrophies[awardLevel];
-                if (levelTrophies.length === 0) return;
-
-                let emoji = '🏆';
-                let typeName = challengeType;
-                let levelName = awardLevel;
-
-                if (awardLevel === 'mastery') emoji = '✨';
-                else if (awardLevel === 'beaten') emoji = '⭐';
-                else if (awardLevel === 'participation') emoji = '🏁';
-                else if (awardLevel === 'special') emoji = '🎖️';
-
-                typeName = challengeType.charAt(0).toUpperCase() + challengeType.slice(1);
-                levelName = awardLevel.charAt(0).toUpperCase() + awardLevel.slice(1);
-
-                const fieldName = `${emoji} ${typeName} ${levelName} (${levelTrophies.length})`;
-                
-                let fieldValue = '';
-                levelTrophies.slice(0, 8).forEach(trophy => {
-                    const shortDate = this.formatShortDate(trophy.monthKey || '2025-01');
-                    
-                    const trophyEmoji = trophy.emojiId ? 
-                        `<:${trophy.emojiName}:${trophy.emojiId}>` : 
-                        (trophy.emojiName || emoji);
-                    
-                    fieldValue += `${trophyEmoji} **${trophy.gameTitle}** - ${shortDate}\n`;
-                });
-
-                if (levelTrophies.length > 8) {
-                    fieldValue += `*...and ${levelTrophies.length - 8} more*\n`;
-                }
-
-                embed.addFields({ name: fieldName, value: fieldValue, inline: true });
-            });
-        });
-
-        embed.setFooter({ 
-            text: 'Achievement trophies are earned by completing challenges and awards' 
+        profileEmbed.setFooter({ 
+            text: `Data from RetroAchievements • Last updated: ${new Date().toLocaleDateString()}` 
         });
 
         await interaction.editReply({
-            embeds: [embed],
+            embeds: [profileEmbed],
+            components: [actionRow],
             ephemeral: true
         });
-    },
 
-    async handleCollectionButton(interaction, user) {
-        const collection = user.gachaCollection || [];
-        
-        if (collection.length === 0) {
-            return interaction.editReply({
-                content: '📦 Your collection is empty! \n\n' +
-                         '**How to start collecting:**\n' +
-                         '• Visit the gacha channel and use the machine\n' +
-                         '• Single Pull: 10 GP for 1 item\n' +
-                         '• Multi Pull: 100 GP for 11 items (better value!)\n' +
-                         '• Earn GP through monthly challenges and community participation',
-                ephemeral: true
-            });
-        }
-
-        // Group items by rarity
-        const rarityGroups = {
-            legendary: [],
-            epic: [],
-            rare: [],
-            uncommon: [],
-            common: []
-        };
-
-        collection.forEach(item => {
-            if (rarityGroups[item.rarity]) {
-                rarityGroups[item.rarity].push(item);
-            }
-        });
-
-        // Calculate totals
-        const totalItems = collection.reduce((sum, item) => sum + (item.quantity || 1), 0);
-        const uniqueItems = collection.length;
-
-        const embed = new EmbedBuilder()
-            .setTitle(`📦 ${user.raUsername}'s Collection`)
-            .setColor(COLORS.INFO)
-            .setDescription(`**Total Items:** ${totalItems} (${uniqueItems} unique)`)
-            .setTimestamp();
-
-        // Add rarity breakdown
-        let rarityText = '';
-        Object.entries(rarityGroups).forEach(([rarity, items]) => {
-            if (items.length > 0) {
-                const rarityEmoji = this.getRarityEmoji(rarity);
-                const count = items.reduce((sum, item) => sum + (item.quantity || 1), 0);
-                rarityText += `${rarityEmoji} ${rarity}: ${count}\n`;
-            }
-        });
-
-        if (rarityText) {
-            embed.addFields({ name: 'By Rarity', value: rarityText, inline: true });
-        }
-
-        // Show recent items (top 10)
-        const recentItems = [...collection]
-            .sort((a, b) => new Date(b.obtainedAt) - new Date(a.obtainedAt))
-            .slice(0, 10);
-
-        if (recentItems.length > 0) {
-            let recentText = '';
-            recentItems.forEach(item => {
-                const emoji = this.formatGachaEmoji(item.emojiId, item.emojiName);
-                const rarityEmoji = this.getRarityEmoji(item.rarity);
-                const quantity = (item.quantity || 1) > 1 ? ` x${item.quantity}` : '';
-                const date = new Date(item.obtainedAt).toLocaleDateString('en-US', { 
-                    month: 'short', 
-                    day: 'numeric' 
-                });
-                recentText += `${rarityEmoji} ${emoji} **${item.itemName}**${quantity} - ${date}\n`;
-            });
-
-            embed.addFields({ name: 'Recent Items', value: recentText, inline: false });
-        }
-
-        embed.setFooter({ 
-            text: 'Use /collection for detailed view with filters and pagination' 
-        });
-
+    } catch (error) {
+        console.error('Error in profile command:', error);
         await interaction.editReply({
-            embeds: [embed],
+            content: '❌ An error occurred while fetching the profile. Please try again.',
             ephemeral: true
         });
-    },
-
-    // Helper method to get month key from date
-    getMonthKey(date) {
-        const year = date.getFullYear();
-        const month = (date.getMonth() + 1).toString().padStart(2, '0');
-        return `${year}-${month}`;
-    },
-
-    // NEW HELPER METHOD: Convert date key to month key
-    convertDateKeyToMonthKey(dateKey) {
-        // Convert "2025-04-01" to "2025-04"
-        // or if already in month format "2025-04", return as-is
-        const parts = dateKey.split('-');
-        if (parts.length >= 2) {
-            return `${parts[0]}-${parts[1]}`;
-        }
-        return dateKey; // fallback
-    },
-
-    // Helper method to format short date for fallback titles
-    formatShortDate(monthKey) {
-        const dateParts = monthKey.split('-');
-        const year = parseInt(dateParts[0]);
-        const month = parseInt(dateParts[1]);
-        
-        const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                           "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-        
-        const shortYear = year.toString().slice(-2);
-        const monthName = monthNames[month - 1];
-        
-        return `${monthName} ${shortYear}`;
-    },
-
-    // Helper method to get default trophy emoji based on award level
-    getTrophyEmoji(awardLevel) {
-        const emojiMap = {
-            mastery: '✨',
-            beaten: '⭐', 
-            participation: '🏁'
-        };
-        return emojiMap[awardLevel] || '🏆';
-    },
-
-    // Helper method to format gacha emoji
-    formatGachaEmoji(emojiId, emojiName) {
-        if (emojiId) {
-            return `<:${emojiName}:${emojiId}>`;
-        }
-        return emojiName || '🎁';
-    },
-
-    // Helper method to get rarity emoji
-    getRarityEmoji(rarity) {
-        const rarityEmojis = {
-            legendary: '🟡',
-            epic: '🟣',
-            rare: '🔵',
-            uncommon: '🟢',
-            common: '⚪'
-        };
-        return rarityEmojis[rarity] || '⚪';
     }
-};
+}
+
+// Button interaction handler
+export async function handleButtonInteraction(interaction) {
+    if (!interaction.customId.includes('_')) return;
+
+    const [action, userId] = interaction.customId.split('_').slice(0, 2);
+    
+    await interaction.deferUpdate();
+
+    try {
+        const user = await User.findById(userId);
+        
+        if (!user) {
+            return interaction.editReply({
+                content: '❌ User not found.',
+                ephemeral: true
+            });
+        }
+
+        switch (action) {
+            case 'trophy':
+                if (interaction.customId.startsWith('trophy_case_')) {
+                    await handleTrophyCaseButton(interaction, user);
+                }
+                break;
+            case 'detailed':
+                if (interaction.customId.startsWith('detailed_stats_')) {
+                    await handleDetailedStatsButton(interaction, user);
+                }
+                break;
+            case 'mastered':
+                if (interaction.customId.startsWith('mastered_games_')) {
+                    await handleMasteredGamesButton(interaction, user);
+                }
+                break;
+        }
+    } catch (error) {
+        console.error('Error handling button interaction:', error);
+        await interaction.followUp({
+            content: '❌ An error occurred while processing your request.',
+            ephemeral: true
+        });
+    }
+}
+
+/**
+ * UPDATED: Trophy case with custom emoji support
+ */
+async function handleTrophyCaseButton(interaction, user) {
+    // STEP 1: Get Challenge documents for title lookups
+    const challenges = await Challenge.find({}).sort({ date: 1 });
+    const challengeTitleMap = {};
+    
+    // Build a lookup map for game titles
+    for (const challenge of challenges) {
+        const monthKey = getMonthKey(challenge.date);
+        challengeTitleMap[monthKey] = {
+            monthly: challenge.monthly_game_title,
+            shadow: challenge.shadow_game_title
+        };
+    }
+
+    // STEP 2: Generate trophies with Challenge document fallback AND custom emojis
+    const trophies = [];
+
+    // Process monthly challenges
+    for (const [userDateKey, data] of user.monthlyChallenges.entries()) {
+        if (data.progress > 0) {
+            let awardLevel = 'participation';
+            if (data.progress === 3) awardLevel = 'mastery';
+            else if (data.progress === 2) awardLevel = 'beaten';
+
+            // Convert user date key (YYYY-MM-DD) to month key (YYYY-MM)
+            const monthKey = convertDateKeyToMonthKey(userDateKey);
+            
+            const dateParts = monthKey.split('-');
+            const year = parseInt(dateParts[0]);
+            const month = parseInt(dateParts[1]) - 1;
+            const trophyDate = new Date(year, month, 15);
+
+            // Use Challenge document title as fallback
+            let gameTitle = data.gameTitle; // User data first
+            
+            if (!gameTitle && challengeTitleMap[monthKey]?.monthly) {
+                gameTitle = challengeTitleMap[monthKey].monthly; // Challenge document fallback
+                console.log(`Using Challenge document title for ${monthKey}: ${gameTitle}`);
+            }
+            
+            if (!gameTitle) {
+                gameTitle = `Monthly Challenge - ${formatShortDate(monthKey)}`; // Final fallback
+            }
+
+            // UPDATED: Get custom emoji for this trophy
+            const emojiData = getTrophyEmoji('monthly', monthKey, awardLevel);
+
+            trophies.push({
+                gameId: `monthly_${monthKey}`,
+                gameTitle: gameTitle,
+                consoleName: 'Monthly Challenge',
+                awardLevel: awardLevel,
+                challengeType: 'monthly',
+                emojiId: emojiData.emojiId,
+                emojiName: emojiData.emojiName,
+                earnedAt: trophyDate,
+                monthKey: monthKey
+            });
+        }
+    }
+
+    // Process shadow challenges
+    for (const [userDateKey, data] of user.shadowChallenges.entries()) {
+        if (data.progress > 0) {
+            let awardLevel = 'participation';
+            if (data.progress === 2) awardLevel = 'beaten';
+
+            // Convert user date key (YYYY-MM-DD) to month key (YYYY-MM)
+            const monthKey = convertDateKeyToMonthKey(userDateKey);
+
+            const dateParts = monthKey.split('-');
+            const year = parseInt(dateParts[0]);
+            const month = parseInt(dateParts[1]) - 1;
+            const trophyDate = new Date(year, month, 15);
+
+            // Use Challenge document title as fallback
+            let gameTitle = data.gameTitle; // User data first
+            
+            if (!gameTitle && challengeTitleMap[monthKey]?.shadow) {
+                gameTitle = challengeTitleMap[monthKey].shadow; // Challenge document fallback
+                console.log(`Using Challenge document shadow title for ${monthKey}: ${gameTitle}`);
+            }
+            
+            if (!gameTitle) {
+                gameTitle = `Shadow Challenge - ${formatShortDate(monthKey)}`; // Final fallback
+            }
+
+            // UPDATED: Get custom emoji for this trophy
+            const emojiData = getTrophyEmoji('shadow', monthKey, awardLevel);
+
+            trophies.push({
+                gameId: `shadow_${monthKey}`,
+                gameTitle: gameTitle,
+                consoleName: 'Shadow Challenge',
+                awardLevel: awardLevel,
+                challengeType: 'shadow',
+                emojiId: emojiData.emojiId,
+                emojiName: emojiData.emojiName,
+                earnedAt: trophyDate,
+                monthKey: monthKey
+            });
+        }
+    }
+
+    // Process community awards (unchanged)
+    const currentYear = new Date().getFullYear();
+    const communityAwards = user.getCommunityAwardsForYear(currentYear);
+    
+    for (const award of communityAwards) {
+        // Use special emoji for community awards
+        const emojiData = getTrophyEmoji('community', null, 'special');
+        
+        trophies.push({
+            gameId: `community_${award.title.replace(/\s+/g, '_').toLowerCase()}`,
+            gameTitle: award.title,
+            consoleName: 'Community',
+            awardLevel: 'special',
+            challengeType: 'community',
+            emojiId: emojiData.emojiId,
+            emojiName: emojiData.emojiName,
+            earnedAt: award.awardedAt,
+            monthKey: null
+        });
+    }
+
+    // Sort by earned date (most recent first)
+    trophies.sort((a, b) => new Date(b.earnedAt) - new Date(a.earnedAt));
+
+    if (trophies.length === 0) {
+        return interaction.editReply({
+            content: '🏆 This trophy case is empty! \n\n' +
+                     '**How to earn trophies:**\n' +
+                     '• Complete monthly challenges (mastery, beaten, or participation)\n' +
+                     '• Complete shadow challenges when they\'re revealed\n' +
+                     '• Earn community awards\n\n' +
+                     '💡 **Achievement trophies are automatically generated from your progress!**',
+            ephemeral: true
+        });
+    }
+
+    // Group and display trophies
+    const groupedTrophies = {
+        monthly: { mastery: [], beaten: [], participation: [] },
+        shadow: { mastery: [], beaten: [], participation: [] },
+        community: { special: [] }
+    };
+
+    trophies.forEach(trophy => {
+        if (groupedTrophies[trophy.challengeType] && groupedTrophies[trophy.challengeType][trophy.awardLevel]) {
+            groupedTrophies[trophy.challengeType][trophy.awardLevel].push(trophy);
+        }
+    });
+
+    const embed = new EmbedBuilder()
+        .setTitle(`🏆 ${user.raUsername}'s Trophy Case`)
+        .setColor(COLORS.GOLD)
+        .setDescription(`**Achievement Trophies:** ${trophies.length}`)
+        .setTimestamp();
+
+    // Add fields for each category
+    ['monthly', 'shadow', 'community'].forEach(challengeType => {
+        const categoryTrophies = groupedTrophies[challengeType];
+        if (!categoryTrophies) return;
+
+        Object.keys(categoryTrophies).forEach(awardLevel => {
+            const levelTrophies = categoryTrophies[awardLevel];
+            if (levelTrophies.length === 0) return;
+
+            let emoji = '🏆';
+            let typeName = challengeType;
+            let levelName = awardLevel;
+
+            if (awardLevel === 'mastery') emoji = '✨';
+            else if (awardLevel === 'beaten') emoji = '⭐';
+            else if (awardLevel === 'participation') emoji = '🏁';
+            else if (awardLevel === 'special') emoji = '🎖️';
+
+            typeName = challengeType.charAt(0).toUpperCase() + challengeType.slice(1);
+            levelName = awardLevel.charAt(0).toUpperCase() + awardLevel.slice(1);
+
+            const fieldName = `${emoji} ${typeName} ${levelName} (${levelTrophies.length})`;
+            
+            let fieldValue = '';
+            levelTrophies.slice(0, 8).forEach(trophy => {
+                const shortDate = formatShortDate(trophy.monthKey || '2025-01');
+                
+                // UPDATED: Use the custom emoji with proper formatting
+                const trophyEmoji = formatTrophyEmoji(trophy.emojiId, trophy.emojiName);
+                
+                fieldValue += `${trophyEmoji} **${trophy.gameTitle}** - ${shortDate}\n`;
+            });
+
+            if (levelTrophies.length > 8) {
+                fieldValue += `*...and ${levelTrophies.length - 8} more*\n`;
+            }
+
+            embed.addFields({ name: fieldName, value: fieldValue, inline: true });
+        });
+    });
+
+    embed.setFooter({ 
+        text: 'Achievement trophies are earned by completing challenges and awards' 
+    });
+
+    await interaction.editReply({
+        embeds: [embed],
+        ephemeral: true
+    });
+}
+
+async function handleDetailedStatsButton(interaction, user) {
+    const currentYear = new Date().getFullYear();
+    const yearStats = await calculateYearStats(user, currentYear);
+
+    const embed = new EmbedBuilder()
+        .setTitle(`📈 ${user.raUsername}'s Detailed Stats`)
+        .setColor(COLORS.PRIMARY)
+        .setTimestamp();
+
+    // Challenge participation
+    embed.addFields({
+        name: '🎯 Challenge Participation',
+        value: `**Monthly Challenges:** ${yearStats.monthlyParticipation} participated\n` +
+               `**Shadow Challenges:** ${yearStats.shadowParticipation} participated\n` +
+               `**Total Points:** ${yearStats.totalPoints}`,
+        inline: false
+    });
+
+    // Achievement breakdown
+    embed.addFields({
+        name: '🏆 Achievement Breakdown',
+        value: `**Mastery Awards:** ${yearStats.masteryCount}\n` +
+               `**Beaten Awards:** ${yearStats.beatenCount}\n` +
+               `**Participation:** ${yearStats.participationCount}`,
+        inline: true
+    });
+
+    // Community recognition
+    const communityAwards = user.getCommunityAwardsForYear(currentYear);
+    if (communityAwards.length > 0) {
+        const totalCommunityPoints = communityAwards.reduce((sum, award) => sum + award.points, 0);
+        embed.addFields({
+            name: '🏅 Community Recognition',
+            value: `**Awards Received:** ${communityAwards.length}\n` +
+                   `**Community Points:** ${totalCommunityPoints}`,
+            inline: true
+        });
+    }
+
+    // Mastery information
+    const masteredGames = user.getMasteredGames();
+    if (masteredGames.length > 0) {
+        const recentMasteries = masteredGames
+            .sort((a, b) => new Date(b.masteredAt) - new Date(a.masteredAt))
+            .slice(0, 5);
+
+        let masteryText = `**Total Mastered:** ${masteredGames.length}\n\n**Recent Masteries:**\n`;
+        recentMasteries.forEach(game => {
+            const date = new Date(game.masteredAt).toLocaleDateString();
+            masteryText += `• ${game.gameTitle} (${date})\n`;
+        });
+
+        embed.addFields({
+            name: '🌟 Mastery Progress',
+            value: masteryText,
+            inline: false
+        });
+    }
+
+    // Arena stats if available
+    if (user.arenaStats && user.arenaStats.challengesParticipated > 0) {
+        embed.addFields({
+            name: '🎲 Arena Performance',
+            value: `**GP Balance:** ${user.gpBalance}\n` +
+                   `**Challenges Won:** ${user.arenaStats.challengesWon}/${user.arenaStats.challengesParticipated}\n` +
+                   `**Win Rate:** ${user.getGpWinRate()}%\n` +
+                   `**Bet Win Rate:** ${user.getBetWinRate()}%`,
+            inline: true
+        });
+    }
+
+    await interaction.editReply({
+        embeds: [embed],
+        ephemeral: true
+    });
+}
+
+async function handleMasteredGamesButton(interaction, user) {
+    const masteredGames = user.getMasteredGames();
+
+    if (masteredGames.length === 0) {
+        return interaction.editReply({
+            content: '🌟 No mastered games yet!\n\n' +
+                     'Games are automatically added to your mastery list when you achieve 100% completion.',
+            ephemeral: true
+        });
+    }
+
+    // Sort by mastery date (most recent first)
+    const sortedGames = masteredGames.sort((a, b) => new Date(b.masteredAt) - new Date(a.masteredAt));
+
+    const embed = new EmbedBuilder()
+        .setTitle(`🌟 ${user.raUsername}'s Mastered Games`)
+        .setColor(COLORS.GOLD)
+        .setDescription(`**Total Mastered:** ${masteredGames.length} games`)
+        .setTimestamp();
+
+    // Group games by console for better organization
+    const gamesByConsole = {};
+    sortedGames.forEach(game => {
+        if (!gamesByConsole[game.consoleName]) {
+            gamesByConsole[game.consoleName] = [];
+        }
+        gamesByConsole[game.consoleName].push(game);
+    });
+
+    // Add fields for each console (limit to prevent embed overflow)
+    let fieldCount = 0;
+    const maxFields = 20; // Discord embed limit
+
+    for (const [consoleName, games] of Object.entries(gamesByConsole)) {
+        if (fieldCount >= maxFields) break;
+
+        let gameList = '';
+        const displayGames = games.slice(0, 10); // Limit games per console
+
+        displayGames.forEach(game => {
+            const date = new Date(game.masteredAt).toLocaleDateString();
+            gameList += `• **${game.gameTitle}** (${date})\n`;
+        });
+
+        if (games.length > 10) {
+            gameList += `*...and ${games.length - 10} more*\n`;
+        }
+
+        embed.addFields({
+            name: `🎮 ${consoleName} (${games.length})`,
+            value: gameList,
+            inline: true
+        });
+
+        fieldCount++;
+    }
+
+    embed.setFooter({ 
+        text: 'Games are automatically tracked when you achieve mastery (100% completion)' 
+    });
+
+    await interaction.editReply({
+        embeds: [embed],
+        ephemeral: true
+    });
+}
+
+// Helper functions
+function formatTrophySummary(user) {
+    const trophyCount = user.getTrophyCount();
+    return `**Total:** ${trophyCount.total}\n` +
+           `Monthly: ${trophyCount.monthly}\n` +
+           `Shadow: ${trophyCount.shadow}\n` +
+           `Community: ${trophyCount.community}`;
+}
+
+function formatChallengeStats(yearStats) {
+    return `**Total Points:** ${yearStats.totalPoints}\n` +
+           `**Challenges:** ${yearStats.monthlyParticipation + yearStats.shadowParticipation}\n` +
+           `**Awards:** ${yearStats.masteryCount + yearStats.beatenCount}`;
+}
+
+function formatCurrentProgress(user) {
+    const currentDate = new Date();
+    const currentDateKey = User.formatDateKey(currentDate);
+    
+    const monthlyProgress = user.monthlyChallenges.get(currentDateKey);
+    const shadowProgress = user.shadowChallenges.get(currentDateKey);
+
+    let progressText = '';
+    
+    if (monthlyProgress && monthlyProgress.progress > 0) {
+        const percentage = monthlyProgress.percentage || 0;
+        progressText += `**Monthly:** ${percentage.toFixed(1)}%\n`;
+    } else {
+        progressText += `**Monthly:** Not started\n`;
+    }
+
+    if (shadowProgress && shadowProgress.progress > 0) {
+        const percentage = shadowProgress.percentage || 0;
+        progressText += `**Shadow:** ${percentage.toFixed(1)}%\n`;
+    } else {
+        progressText += `**Shadow:** Not started\n`;
+    }
+
+    return progressText || 'No current progress';
+}
+
+async function calculateYearStats(user, year) {
+    const stats = {
+        totalPoints: 0,
+        monthlyParticipation: 0,
+        shadowParticipation: 0,
+        masteryCount: 0,
+        beatenCount: 0,
+        participationCount: 0
+    };
+
+    // Calculate monthly challenge stats
+    for (const [dateKey, data] of user.monthlyChallenges.entries()) {
+        const challengeYear = parseInt(dateKey.split('-')[0]);
+        if (challengeYear === year && data.progress > 0) {
+            stats.monthlyParticipation++;
+            
+            if (data.progress === 3) {
+                stats.masteryCount++;
+                stats.totalPoints += 3;
+            } else if (data.progress === 2) {
+                stats.beatenCount++;
+                stats.totalPoints += 2;
+            } else if (data.progress === 1) {
+                stats.participationCount++;
+                stats.totalPoints += 1;
+            }
+        }
+    }
+
+    // Calculate shadow challenge stats
+    for (const [dateKey, data] of user.shadowChallenges.entries()) {
+        const challengeYear = parseInt(dateKey.split('-')[0]);
+        if (challengeYear === year && data.progress > 0) {
+            stats.shadowParticipation++;
+            
+            if (data.progress === 2) {
+                stats.beatenCount++;
+                stats.totalPoints += 2;
+            } else if (data.progress === 1) {
+                stats.participationCount++;
+                stats.totalPoints += 1;
+            }
+        }
+    }
+
+    // Add community award points
+    const communityPoints = user.getCommunityPointsForYear(year);
+    stats.totalPoints += communityPoints;
+
+    return stats;
+}
+
+function getMonthKey(date) {
+    const d = new Date(date);
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    return `${year}-${month}`;
+}
+
+function convertDateKeyToMonthKey(dateKey) {
+    // Convert YYYY-MM-DD to YYYY-MM
+    return dateKey.substring(0, 7);
+}
+
+function formatShortDate(monthKey) {
+    if (!monthKey) return 'Unknown';
+    
+    const [year, month] = monthKey.split('-');
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                       'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    
+    const monthIndex = parseInt(month) - 1;
+    const shortYear = year.slice(2);
+    
+    return `${monthNames[monthIndex]} ${shortYear}`;
+}
