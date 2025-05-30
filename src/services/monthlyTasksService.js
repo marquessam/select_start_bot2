@@ -215,6 +215,121 @@ class MonthlyTasksService {
         }
     }
 
+    async createTiebreakerPoll(originalPoll, tiedGames) {
+        if (!this.client) {
+            console.error('Discord client not set for monthly tasks service');
+            return null;
+        }
+
+        try {
+            console.log(`Creating tiebreaker poll for ${tiedGames.length} tied games...`);
+            
+            // Calculate end date (24 hours from now)
+            const endDate = new Date();
+            endDate.setDate(endDate.getDate() + 1);
+
+            // Create embed for the tiebreaker poll
+            const embed = new EmbedBuilder()
+                .setTitle('🔥 TIEBREAKER VOTE - Monthly Challenge!')
+                .setDescription(
+                    `The main voting ended in a tie! The following games are tied for first place:\n\n` +
+                    tiedGames.map((game, index) => 
+                        `**${index + 1}. [${game.title}](https://retroachievements.org/game/${game.gameId})** (${game.consoleName}) - ${game.votes} votes`
+                    ).join('\n\n') +
+                    `\n\n🗳️ **TIEBREAKER VOTING:**\n` +
+                    `🔸 Type \`/vote\` to open the voting interface\n` +
+                    `🔸 Select up to **2 games** from the tied options\n` +
+                    `🔸 This vote will decide the winner!\n\n` +
+                    `⏰ Tiebreaker voting ends <t:${Math.floor(endDate.getTime() / 1000)}:R> (24 hours)\n\n` +
+                    `🎯 **This is the final round!** If there's still a tie after this vote, a winner will be randomly selected.`
+                )
+                .setColor('#FF4500') // Orange for urgency
+                .addFields(
+                    {
+                        name: '⚡ Quick Tiebreaker Guide',
+                        value: 
+                            `1️⃣ Type \`/vote\` in any channel\n` +
+                            `2️⃣ Select from the tied games only\n` +
+                            `3️⃣ Choose 1 or 2 games\n` +
+                            `4️⃣ Click "Submit Vote"\n` +
+                            `5️⃣ Winner announced in 24 hours!`,
+                        inline: false
+                    }
+                )
+                .setFooter({ 
+                    text: `Tiebreaker ends ${endDate.toLocaleDateString()} • Final voting round!`
+                });
+
+            // Use the same channels as the original poll
+            const votingChannel = await this.client.channels.fetch(originalPoll.channelId);
+            const resultsChannel = originalPoll.resultsChannelId ? 
+                await this.client.channels.fetch(originalPoll.resultsChannelId) : 
+                votingChannel;
+
+            // Send the tiebreaker poll
+            const tiebreakerMessage = await votingChannel.send({ embeds: [embed] });
+
+            // Create the tiebreaker poll in the database
+            const tiebreakerPoll = new Poll({
+                messageId: tiebreakerMessage.id,
+                channelId: votingChannel.id,
+                resultsChannelId: resultsChannel.id,
+                selectedGames: tiedGames.map(game => ({
+                    gameId: game.gameId,
+                    title: game.title,
+                    consoleName: game.consoleName,
+                    imageIcon: game.imageIcon
+                })),
+                startDate: new Date(),
+                endDate: endDate,
+                isTiebreaker: true,
+                originalPollId: originalPoll._id
+            });
+
+            await tiebreakerPoll.save();
+
+            // Update the original poll to reference the tiebreaker
+            originalPoll.tiebreakerPollId = tiebreakerPoll._id;
+            originalPoll.resolutionMethod = 'tiebreaker';
+            await originalPoll.save();
+
+            // Schedule the tiebreaker to end automatically
+            try {
+                const schedule = await import('node-schedule').catch(() => {
+                    console.warn('node-schedule package not available for tiebreaker scheduling');
+                    return null;
+                });
+                
+                if (schedule) {
+                    const jobName = `end-tiebreaker-${tiebreakerPoll._id}`;
+                    const job = schedule.default.scheduleJob(jobName, endDate, async function() {
+                        try {
+                            console.log(`Scheduled tiebreaker job triggered for poll ${tiebreakerPoll._id}`);
+                            await monthlyTasksService.countAndAnnounceVotes();
+                        } catch (error) {
+                            console.error('Error in scheduled tiebreaker job:', error);
+                        }
+                    });
+                    
+                    tiebreakerPoll.scheduledJobName = jobName;
+                    await tiebreakerPoll.save();
+                }
+            } catch (scheduleError) {
+                console.error('Error scheduling tiebreaker job:', scheduleError);
+            }
+
+            // Announce the tiebreaker
+            await this.announceTiebreaker(resultsChannel, tiedGames, endDate);
+
+            console.log(`Tiebreaker poll created successfully with ${tiedGames.length} games`);
+            return tiebreakerPoll;
+
+        } catch (error) {
+            console.error('Error creating tiebreaker poll:', error);
+            return null;
+        }
+    }
+
     async countAndAnnounceVotes() {
         if (!this.client) {
             console.error('Discord client not set for monthly tasks service');
@@ -235,131 +350,206 @@ class MonthlyTasksService {
             // Process each poll
             for (const poll of unprocessedPolls) {
                 try {
-                    // Use the Poll model's getVoteCounts method instead of counting reactions
-                    const results = poll.getVoteCounts();
+                    // Use the Poll model's processResults method
+                    const result = poll.processResults();
                     
-                    console.log('Vote counting results:', results);
-                    
-                    if (results.length === 0) {
-                        console.log('No votes found for this poll');
+                    if (!result) {
+                        console.log('No results found for this poll');
                         continue;
                     }
-                    
-                    // Check for ties at the top position
-                    const winner = results[0];
-                    const tiedWinners = results.filter(result => result.votes === winner.votes);
-                    
-                    let winnerMessage;
-                    let selectedWinner;
-                    
-                    if (tiedWinners.length > 1 && winner.votes > 0) {
-                        console.log(`There was a ${tiedWinners.length}-way tie! Randomly selecting winner...`);
-                        // Randomly select one of the tied games
-                        const randomIndex = Math.floor(Math.random() * tiedWinners.length);
-                        selectedWinner = tiedWinners[randomIndex];
+
+                    console.log('Vote processing result:', result);
+
+                    // Handle tie situation
+                    if (result.isTie) {
+                        console.log(`Tie detected with ${result.tiedGames.length} games!`);
                         
-                        winnerMessage = 
-                            `There was a ${tiedWinners.length}-way tie between:\n` +
-                            tiedWinners.map(game => `**${game.title}** (${game.votes} votes)`).join('\n') +
-                            `\n\nAfter a random tiebreaker, **${selectedWinner.title}** has been selected as our winner!`;
-                    } else if (winner.votes > 0) {
-                        selectedWinner = winner;
-                        winnerMessage = `**${selectedWinner.title}** won with ${selectedWinner.votes} votes!`;
-                    } else {
-                        // No votes case
-                        selectedWinner = winner;
-                        winnerMessage = `**${selectedWinner.title}** has been selected as our winner!`;
-                        console.log('No votes were cast, selecting first game as winner');
-                    }
-                    
-                    // Create announcement embed
-                    const announcementEmbed = new EmbedBuilder()
-                        .setTitle('🎮 Monthly Challenge Voting Results')
-                        .setColor('#FF69B4')
-                        .setDescription(`The voting has ended for the next monthly challenge!\n\n` +
-                            `${winnerMessage}\n\n` +
-                            `This game will be our next monthly challenge. The admin team will set up the challenge soon.`)
-                        .setTimestamp();
-                    
-                    // Add top results
-                    let resultsText = '';
-                    for (let i = 0; i < Math.min(5, results.length); i++) {
-                        const result = results[i];
-                        const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i+1}.`;
-                        resultsText += `${medal} **[${result.title}](https://retroachievements.org/game/${result.gameId})** - ${result.votes} vote${result.votes !== 1 ? 's' : ''}\n`;
-                    }
-                    
-                    if (results.length > 5) {
-                        resultsText += '\n*Other games received fewer votes.*';
-                    }
-                    
-                    announcementEmbed.addFields({ name: 'Results', value: resultsText });
-                    
-                    // Add game icon if available
-                    if (selectedWinner.imageIcon) {
-                        announcementEmbed.setThumbnail(`https://retroachievements.org${selectedWinner.imageIcon}`);
-                    }
-                    
-                    // Get the results channel (use resultsChannelId if available, otherwise fall back to announcement channel)
-                    let resultsChannel;
-                    if (poll.resultsChannelId) {
-                        try {
-                            resultsChannel = await this.client.channels.fetch(poll.resultsChannelId);
-                        } catch (error) {
-                            console.error('Error fetching results channel, falling back to announcement channel:', error);
-                            resultsChannel = await this.getAnnouncementChannel();
+                        // If this is already a tiebreaker poll, fall back to random selection
+                        if (poll.isTiebreaker) {
+                            console.log('Tiebreaker poll also ended in tie, selecting winner randomly');
+                            
+                            const randomIndex = Math.floor(Math.random() * result.tiedGames.length);
+                            const selectedWinner = result.tiedGames[randomIndex];
+                            
+                            const winnerMessage = 
+                                `The tiebreaker vote also ended in a tie between:\n` +
+                                result.tiedGames.map(game => `**${game.title}** (${game.votes} votes)`).join('\n') +
+                                `\n\nAfter a random selection, **${selectedWinner.title}** has been chosen as the winner!`;
+
+                            await this.announceWinner(poll, selectedWinner, result.allResults, winnerMessage, 'random_after_tiebreaker');
+                            
+                        } else {
+                            // Create tiebreaker poll
+                            const tiebreakerPoll = await this.createTiebreakerPoll(poll, result.tiedGames);
+                            
+                            if (tiebreakerPoll) {
+                                // Mark original poll as processed with tiebreaker status
+                                poll.isProcessed = true;
+                                poll.resolutionMethod = 'tiebreaker';
+                                await poll.save();
+                                
+                                // Don't announce a winner yet - wait for tiebreaker
+                                console.log('Tiebreaker poll created, waiting for resolution');
+                                continue;
+                            } else {
+                                // Fallback to random if tiebreaker creation failed
+                                const randomIndex = Math.floor(Math.random() * result.tiedGames.length);
+                                const selectedWinner = result.tiedGames[randomIndex];
+                                
+                                const winnerMessage = 
+                                    `There was a ${result.tiedGames.length}-way tie, but tiebreaker creation failed.\n` +
+                                    result.tiedGames.map(game => `**${game.title}** (${game.votes} votes)`).join('\n') +
+                                    `\n\nAfter a random selection, **${selectedWinner.title}** has been chosen as the winner!`;
+
+                                await this.announceWinner(poll, selectedWinner, result.allResults, winnerMessage, 'random_after_tiebreaker');
+                            }
                         }
                     } else {
-                        resultsChannel = await this.getAnnouncementChannel();
-                    }
-                    
-                    if (resultsChannel) {
-                        await resultsChannel.send({ embeds: [announcementEmbed] });
-                    } else {
-                        console.error('No results channel found');
-                    }
-                    
-                    // Update the original poll message to show it's ended
-                    try {
-                        const channel = await this.client.channels.fetch(poll.channelId);
-                        const pollMessage = await channel.messages.fetch(poll.messageId);
+                        // No tie, announce the winner
+                        const selectedWinner = result.winner;
+                        const winnerMessage = `**${selectedWinner.title}** won with ${selectedWinner.votes} votes!`;
                         
-                        const updatedEmbed = new EmbedBuilder()
-                            .setTitle('🎮 Monthly Challenge Voting (ENDED)')
-                            .setDescription(
-                                `Voting for this month's challenge has ended!\n\n` +
-                                `${winnerMessage}\n\n` +
-                                `Check out the announcements channel for full voting results.`
-                            )
-                            .setColor('#808080') // Gray to indicate it's over
-                            .setFooter({ text: 'Voting has ended' });
-                        
-                        await pollMessage.edit({ embeds: [updatedEmbed] });
-                    } catch (messageError) {
-                        console.error('Error updating original poll message:', messageError);
-                        // Continue even if we can't update the original message
+                        await this.announceWinner(poll, selectedWinner, result.allResults, winnerMessage, 'normal');
                     }
-                    
-                    // Mark poll as processed and store winner
-                    poll.isProcessed = true;
-                    poll.winner = {
-                        gameId: selectedWinner.gameId,
-                        title: selectedWinner.title,
-                        consoleName: selectedWinner.consoleName,
-                        imageIcon: selectedWinner.imageIcon,
-                        votes: selectedWinner.votes
-                    };
-                    await poll.save();
-                    
-                    console.log(`Voting results announced: ${selectedWinner.title} won with ${selectedWinner.votes} votes`);
-                    
-                    return selectedWinner; // Return the winner for any calling functions
+
                 } catch (pollError) {
                     console.error(`Error processing poll ${poll._id}:`, pollError);
                 }
             }
         } catch (error) {
             console.error('Error counting and announcing votes:', error);
+        }
+    }
+
+    async announceWinner(poll, winner, allResults, winnerMessage, resolutionMethod) {
+        try {
+            // Create announcement embed
+            const announcementEmbed = new EmbedBuilder()
+                .setTitle('🎮 Monthly Challenge Voting Results')
+                .setColor('#FF69B4')
+                .setDescription(
+                    `The voting has ended for the next monthly challenge!\n\n` +
+                    `${winnerMessage}\n\n` +
+                    `This game will be our next monthly challenge. The admin team will set up the challenge soon.`
+                )
+                .setTimestamp();
+            
+            // Add results
+            let resultsText = '';
+            const resultsToShow = Math.min(5, allResults.length);
+            for (let i = 0; i < resultsToShow; i++) {
+                const result = allResults[i];
+                const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i+1}.`;
+                resultsText += `${medal} **[${result.title}](https://retroachievements.org/game/${result.gameId})** - ${result.votes} vote${result.votes !== 1 ? 's' : ''}\n`;
+            }
+            
+            if (allResults.length > 5) {
+                resultsText += '\n*Other games received fewer votes.*';
+            }
+            
+            announcementEmbed.addFields({ name: 'Results', value: resultsText });
+            
+            // Add special note for tiebreaker resolution
+            if (resolutionMethod === 'tiebreaker') {
+                announcementEmbed.addFields({
+                    name: '🔥 Tiebreaker Resolution',
+                    value: 'This winner was determined through a 24-hour tiebreaker vote!',
+                    inline: false
+                });
+            } else if (resolutionMethod === 'random_after_tiebreaker') {
+                announcementEmbed.addFields({
+                    name: '🎲 Random Selection',
+                    value: 'Winner was randomly selected after a tied tiebreaker vote.',
+                    inline: false
+                });
+            }
+            
+            // Add game icon if available
+            if (winner.imageIcon) {
+                announcementEmbed.setThumbnail(`https://retroachievements.org${winner.imageIcon}`);
+            }
+            
+            // Get the results channel
+            let resultsChannel;
+            if (poll.resultsChannelId) {
+                try {
+                    resultsChannel = await this.client.channels.fetch(poll.resultsChannelId);
+                } catch (error) {
+                    console.error('Error fetching results channel, falling back to announcement channel:', error);
+                    resultsChannel = await this.getAnnouncementChannel();
+                }
+            } else {
+                resultsChannel = await this.getAnnouncementChannel();
+            }
+            
+            if (resultsChannel) {
+                await resultsChannel.send({ embeds: [announcementEmbed] });
+            } else {
+                console.error('No results channel found');
+            }
+            
+            // Update the original poll message
+            try {
+                const channel = await this.client.channels.fetch(poll.channelId);
+                const pollMessage = await channel.messages.fetch(poll.messageId);
+                
+                const statusTitle = poll.isTiebreaker ? 
+                    '🔥 Monthly Challenge Tiebreaker (ENDED)' : 
+                    '🎮 Monthly Challenge Voting (ENDED)';
+                
+                const updatedEmbed = new EmbedBuilder()
+                    .setTitle(statusTitle)
+                    .setDescription(
+                        `Voting has ended!\n\n` +
+                        `${winnerMessage}\n\n` +
+                        `Check the announcements channel for full results.`
+                    )
+                    .setColor('#808080')
+                    .setFooter({ text: 'Voting has ended' });
+                
+                await pollMessage.edit({ embeds: [updatedEmbed] });
+            } catch (messageError) {
+                console.error('Error updating original poll message:', messageError);
+            }
+            
+            // Mark poll as processed and store winner
+            poll.isProcessed = true;
+            poll.winner = {
+                gameId: winner.gameId,
+                title: winner.title,
+                consoleName: winner.consoleName,
+                imageIcon: winner.imageIcon,
+                votes: winner.votes
+            };
+            poll.resolutionMethod = resolutionMethod;
+            await poll.save();
+            
+            console.log(`Results announced: ${winner.title} won with ${winner.votes} votes (method: ${resolutionMethod})`);
+            return winner;
+
+        } catch (error) {
+            console.error('Error announcing winner:', error);
+        }
+    }
+
+    async announceTiebreaker(channel, tiedGames, endDate) {
+        try {
+            const embed = new EmbedBuilder()
+                .setTitle('🔥 TIEBREAKER VOTE STARTED!')
+                .setDescription(
+                    `The main voting ended in a tie! A special 24-hour tiebreaker vote has been created.\n\n` +
+                    `**Tied Games:**\n` +
+                    tiedGames.map(game => `• **${game.title}** (${game.votes} votes)`).join('\n') +
+                    `\n\n🗳️ Use \`/vote\` to participate in the tiebreaker!\n` +
+                    `⏰ Tiebreaker ends <t:${Math.floor(endDate.getTime() / 1000)}:R>`
+                )
+                .setColor('#FF4500')
+                .setTimestamp();
+
+            await channel.send({ embeds: [embed] });
+
+        } catch (error) {
+            console.error('Error announcing tiebreaker:', error);
         }
     }
 
