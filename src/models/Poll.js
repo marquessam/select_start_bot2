@@ -47,6 +47,25 @@ const pollSchema = new mongoose.Schema({
     // Store the name of the scheduled job that will end this poll
     scheduledJobName: {
         type: String
+    },
+    // Tiebreaker tracking
+    isTiebreaker: {
+        type: Boolean,
+        default: false
+    },
+    originalPollId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Poll'
+    },
+    tiebreakerPollId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Poll'
+    },
+    // Track the final resolution method
+    resolutionMethod: {
+        type: String,
+        enum: ['normal', 'tiebreaker', 'random_after_tiebreaker'],
+        default: 'normal'
     }
 });
 
@@ -112,7 +131,7 @@ pollSchema.methods.getVoteCounts = function() {
     return Object.values(counts).sort((a, b) => b.votes - a.votes);
 };
 
-// Method to find the active poll
+// Method to find the active poll (excluding tiebreaker polls in this query)
 pollSchema.statics.findActivePoll = async function() {
     const now = new Date();
     return this.findOne({
@@ -121,18 +140,44 @@ pollSchema.statics.findActivePoll = async function() {
     }).sort({ createdAt: -1 }); // Get the most recent poll
 };
 
-// Method to process poll results and determine the winner
+// Method to find any active poll including tiebreakers
+pollSchema.statics.findAnyActivePoll = async function() {
+    const now = new Date();
+    return this.findOne({
+        endDate: { $gt: now },
+        isProcessed: false
+    }).sort({ createdAt: -1 });
+};
+
+// Method to process poll results and determine if tiebreaker is needed
 pollSchema.methods.processResults = function() {
     if (this.isProcessed) return this.winner || null;
     
     const results = this.getVoteCounts();
     if (results.length === 0) return null;
     
-    // Set the winner
+    // Check for ties at the top position
+    const topVotes = results[0].votes;
+    const tiedWinners = results.filter(result => result.votes === topVotes);
+    
+    // If there's a tie with more than one game and votes > 0
+    if (tiedWinners.length > 1 && topVotes > 0) {
+        return {
+            isTie: true,
+            tiedGames: tiedWinners,
+            allResults: results
+        };
+    }
+    
+    // No tie, set the winner
     this.winner = results[0];
     this.isProcessed = true;
     
-    return this.winner;
+    return {
+        isTie: false,
+        winner: this.winner,
+        allResults: results
+    };
 };
 
 export const Poll = mongoose.model('Poll', pollSchema);
