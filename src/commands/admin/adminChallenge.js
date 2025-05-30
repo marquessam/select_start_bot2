@@ -116,17 +116,48 @@ export default {
         } catch (error) {
             console.error('Error executing admin challenge command:', error);
             
-            // Handle the error appropriately based on interaction state
+            // FIXED ERROR HANDLING
             const errorMessage = 'An error occurred while processing your request.';
             
-            if (interaction.replied || interaction.deferred) {
-                await interaction.editReply(errorMessage);
-            } else {
+            try {
+                // Only try to edit reply if interaction was actually deferred
+                if (interaction.deferred) {
+                    await interaction.editReply(errorMessage);
+                } else if (!interaction.replied) {
+                    // Only reply if we haven't replied yet
+                    await interaction.reply({
+                        content: errorMessage,
+                        ephemeral: true
+                    });
+                }
+                // If interaction.replied is true but not deferred, 
+                // it means a modal was shown and we can't respond to the original interaction
+            } catch (responseError) {
+                console.error('Failed to send error response:', responseError);
+                // Silently fail - user won't get error message but won't crash
+            }
+        }
+    },
+
+    /**
+     * Helper method for safe error responses
+     */
+    async sendSafeErrorResponse(interaction, message, isModalSubmission = false) {
+        try {
+            if (isModalSubmission) {
+                // For modal submissions, always use editReply
+                await interaction.editReply({ content: message });
+            } else if (interaction.deferred) {
+                await interaction.editReply({ content: message });
+            } else if (!interaction.replied) {
                 await interaction.reply({
-                    content: errorMessage,
+                    content: message,
                     ephemeral: true
                 });
             }
+            // If we can't respond, fail silently
+        } catch (error) {
+            console.error('Failed to send error response:', error);
         }
     },
 
@@ -208,11 +239,19 @@ export default {
 
             // Validate inputs
             if (isNaN(month) || month < 1 || month > 12) {
-                return modalSubmission.editReply('Invalid month. Please provide a number between 1 and 12.');
+                return modalSubmission.editReply({
+                    content: 'Invalid month. Please provide a number between 1 and 12.',
+                    embeds: [],
+                    components: []
+                });
             }
 
             if (isNaN(year) || year < 2000 || year > 2100) {
-                return modalSubmission.editReply('Invalid year. Please provide a valid year.');
+                return modalSubmission.editReply({
+                    content: 'Invalid year. Please provide a valid year.',
+                    embeds: [],
+                    components: []
+                });
             }
 
             // Parse progression and win achievements (now optional)
@@ -227,13 +266,21 @@ export default {
                 // Get game info to validate game exists
                 const gameInfo = await retroAPI.getGameInfoExtended(gameId);
                 if (!gameInfo) {
-                    return modalSubmission.editReply('Game not found. Please check the game ID.');
+                    return modalSubmission.editReply({
+                        content: 'Game not found. Please check the game ID.',
+                        embeds: [],
+                        components: []
+                    });
                 }
                 
                 // Get game achievements to get the total count
                 const achievements = gameInfo.achievements;
                 if (!achievements) {
-                    return modalSubmission.editReply('Could not retrieve achievements for this game. Please try again.');
+                    return modalSubmission.editReply({
+                        content: 'Could not retrieve achievements for this game. Please try again.',
+                        embeds: [],
+                        components: []
+                    });
                 }
                 
                 const totalAchievements = Object.keys(achievements).length;
@@ -343,12 +390,25 @@ export default {
 
             } catch (apiError) {
                 console.error('Error creating challenge:', apiError);
-                return modalSubmission.editReply('An error occurred while creating the challenge. Please try again.');
+                return modalSubmission.editReply({
+                    content: 'An error occurred while creating the challenge. Please try again.',
+                    embeds: [],
+                    components: []
+                });
             }
 
         } catch (modalError) {
             console.error('Error handling modal submission:', modalError);
-            // Modal timed out or was cancelled, no need to respond
+            
+            // Check if it's a timeout error
+            if (modalError.code === 'InteractionCollectorError' || modalError.message?.includes('time')) {
+                // Modal timed out - we cannot respond to the original interaction
+                console.log(`Modal submission timed out for user ${interaction.user.id}`);
+                return; // Can't respond to timed out modal
+            }
+            
+            // For other modal errors, don't try to respond since showModal() consumed the interaction
+            console.error('Unexpected modal error:', modalError);
         }
     },
 
@@ -448,19 +508,31 @@ export default {
                 });
 
                 if (!targetChallenge) {
-                    return modalSubmission.editReply(`No challenge exists for ${month}/${year}. Create a monthly challenge first using /adminchallenge create.`);
+                    return modalSubmission.editReply({
+                        content: `No challenge exists for ${month}/${year}. Create a monthly challenge first using /adminchallenge create.`,
+                        embeds: [],
+                        components: []
+                    });
                 }
 
                 // Get game info to validate game exists
                 const gameInfo = await retroAPI.getGameInfoExtended(gameId);
                 if (!gameInfo) {
-                    return modalSubmission.editReply('Game not found. Please check the game ID.');
+                    return modalSubmission.editReply({
+                        content: 'Game not found. Please check the game ID.',
+                        embeds: [],
+                        components: []
+                    });
                 }
                 
                 // Get game achievements to get the total count
                 const achievements = gameInfo.achievements;
                 if (!achievements) {
-                    return modalSubmission.editReply('Could not retrieve achievements for this game. Please try again.');
+                    return modalSubmission.editReply({
+                        content: 'Could not retrieve achievements for this game. Please try again.',
+                        embeds: [],
+                        components: []
+                    });
                 }
                 
                 const totalAchievements = Object.keys(achievements).length;
@@ -584,12 +656,25 @@ export default {
 
             } catch (apiError) {
                 console.error('Error adding shadow challenge:', apiError);
-                return modalSubmission.editReply('An error occurred while adding the shadow challenge. Please try again.');
+                return modalSubmission.editReply({
+                    content: 'An error occurred while adding the shadow challenge. Please try again.',
+                    embeds: [],
+                    components: []
+                });
             }
 
         } catch (modalError) {
             console.error('Error handling modal submission:', modalError);
-            // Modal timed out or was cancelled, no need to respond
+            
+            // Check if it's a timeout error
+            if (modalError.code === 'InteractionCollectorError' || modalError.message?.includes('time')) {
+                // Modal timed out - we cannot respond to the original interaction
+                console.log(`Modal submission timed out for user ${interaction.user.id}`);
+                return; // Can't respond to timed out modal
+            }
+            
+            // For other modal errors, don't try to respond since showModal() consumed the interaction
+            console.error('Unexpected modal error:', modalError);
         }
     },
 
@@ -629,11 +714,11 @@ export default {
             });
 
             if (!targetChallenge) {
-                return interaction.editReply(`No challenge exists for ${month}/${year}.`);
+                return this.sendSafeErrorResponse(interaction, `No challenge exists for ${month}/${year}.`);
             }
 
             if (!targetChallenge.shadow_challange_gameid) {
-                return interaction.editReply(`No shadow challenge has been set for ${month}/${year}.`);
+                return this.sendSafeErrorResponse(interaction, `No shadow challenge has been set for ${month}/${year}.`);
             }
 
             // Toggle the visibility
@@ -710,7 +795,7 @@ export default {
             });
         } catch (error) {
             console.error('Error toggling shadow challenge visibility:', error);
-            await interaction.editReply('An error occurred while toggling the shadow challenge visibility. Please try again.');
+            await this.sendSafeErrorResponse(interaction, 'An error occurred while toggling the shadow challenge visibility. Please try again.');
         }
     },
 
@@ -750,7 +835,7 @@ export default {
             });
 
             if (!challenge) {
-                return interaction.editReply(`No challenge exists for ${month}/${year}.`);
+                return this.sendSafeErrorResponse(interaction, `No challenge exists for ${month}/${year}.`);
             }
 
             // Get month name for display
@@ -894,7 +979,7 @@ export default {
             }
         } catch (error) {
             console.error('Error viewing challenge details:', error);
-            await interaction.editReply('An error occurred while retrieving challenge details. Please try again.');
+            await this.sendSafeErrorResponse(interaction, 'An error occurred while retrieving challenge details. Please try again.');
         }
     }
 };
