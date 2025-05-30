@@ -36,6 +36,11 @@ export default {
             subcommand
                 .setName('end')
                 .setDescription('End the current voting poll and announce results')
+        )
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('recount')
+                .setDescription('Manually recount votes for the most recent poll and announce correct results')
         ),
 
     async execute(interaction) {
@@ -58,6 +63,9 @@ export default {
                 break;
             case 'end':
                 await this.handleEndVoting(interaction);
+                break;
+            case 'recount':
+                await this.handleRecountVotes(interaction);
                 break;
             default:
                 await interaction.reply({
@@ -504,6 +512,116 @@ export default {
         } catch (error) {
             console.error('Error canceling voting:', error);
             return interaction.editReply('An error occurred while canceling the voting process. Please try again.');
+        }
+    },
+
+    /**
+     * Handle manually recounting votes
+     */
+    async handleRecountVotes(interaction) {
+        await interaction.deferReply();
+
+        try {
+            // Find the most recent poll
+            const recentPoll = await Poll.findOne().sort({ createdAt: -1 });
+            
+            if (!recentPoll) {
+                return interaction.editReply('No polls found to recount.');
+            }
+
+            // Get the actual vote counts from stored data
+            const results = recentPoll.getVoteCounts();
+            
+            if (results.length === 0) {
+                return interaction.editReply('No votes found in the poll data.');
+            }
+
+            console.log('Manual recount results:', results);
+
+            // Find the winner
+            const winner = results[0];
+            const tiedWinners = results.filter(result => result.votes === winner.votes);
+            
+            let winnerMessage;
+            let selectedWinner;
+            
+            if (tiedWinners.length > 1 && winner.votes > 0) {
+                // For manual recount, pick the first tied winner rather than random
+                selectedWinner = tiedWinners[0];
+                winnerMessage = 
+                    `There was a ${tiedWinners.length}-way tie between:\n` +
+                    tiedWinners.map(game => `**${game.title}** (${game.votes} votes)`).join('\n') +
+                    `\n\n**${selectedWinner.title}** has been selected as the winner!`;
+            } else {
+                selectedWinner = winner;
+                winnerMessage = `**${selectedWinner.title}** won with ${selectedWinner.votes} votes!`;
+            }
+
+            // Create corrected announcement embed
+            const embed = new EmbedBuilder()
+                .setTitle('🔄 Corrected Monthly Challenge Voting Results')
+                .setColor('#FF69B4')
+                .setDescription(
+                    `**CORRECTED RESULTS** - The previous results had a technical error.\n\n` +
+                    `${winnerMessage}\n\n` +
+                    `This game will be our next monthly challenge.`
+                )
+                .setTimestamp();
+            
+            // Add detailed results
+            let resultsText = '';
+            for (let i = 0; i < Math.min(10, results.length); i++) {
+                const result = results[i];
+                const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i+1}.`;
+                resultsText += `${medal} **[${result.title}](https://retroachievements.org/game/${result.gameId})** - ${result.votes} vote${result.votes !== 1 ? 's' : ''}\n`;
+            }
+            
+            embed.addFields({ name: 'Full Results', value: resultsText });
+            
+            // Add game icon if available
+            if (selectedWinner.imageIcon) {
+                embed.setThumbnail(`https://retroachievements.org${selectedWinner.imageIcon}`);
+            }
+
+            // Update the poll with correct winner
+            recentPoll.winner = {
+                gameId: selectedWinner.gameId,
+                title: selectedWinner.title,
+                consoleName: selectedWinner.consoleName,
+                imageIcon: selectedWinner.imageIcon,
+                votes: selectedWinner.votes
+            };
+            await recentPoll.save();
+
+            // Send corrected results to the results channel
+            let resultsChannel;
+            if (recentPoll.resultsChannelId) {
+                try {
+                    resultsChannel = await interaction.client.channels.fetch(recentPoll.resultsChannelId);
+                } catch (error) {
+                    console.error('Error fetching results channel:', error);
+                }
+            }
+
+            if (resultsChannel) {
+                await resultsChannel.send({ embeds: [embed] });
+                await interaction.editReply(
+                    `Votes have been recounted and corrected results posted to ${resultsChannel}.\n\n` +
+                    `**Winner:** ${selectedWinner.title} with ${selectedWinner.votes} votes\n` +
+                    `**Total votes counted:** ${results.reduce((sum, r) => sum + r.votes, 0)}`
+                );
+            } else {
+                await interaction.editReply({
+                    content: `Votes have been recounted. Here are the corrected results:\n\n` +
+                             `**Winner:** ${selectedWinner.title} with ${selectedWinner.votes} votes\n` +
+                             `**Total votes counted:** ${results.reduce((sum, r) => sum + r.votes, 0)}`,
+                    embeds: [embed]
+                });
+            }
+
+        } catch (error) {
+            console.error('Error recounting votes:', error);
+            return interaction.editReply('An error occurred while recounting votes. Please check the logs.');
         }
     }
 };
