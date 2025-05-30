@@ -88,15 +88,16 @@ export default {
                 .setTitle(`${pollEmoji} Cast Your ${pollTypeText}!`)
                 .setDescription(
                     (activePoll.isTiebreaker ? 
-                        `🔥 **TIEBREAKER ROUND** - These games tied in the main vote!\n\n` :
+                        `🔥 **TIEBREAKER ROUND** - These games tied in the main vote!\n\n` +
+                        `Select **1 game** to break the tie!\n\n` :
                         `Select up to **2 games** you'd like to see as next month's challenge.\n\n`
                     ) +
                     `**Available Games:**\n` +
                     activePoll.selectedGames.map((game, index) => 
                         `**${index + 1}.** ${game.title} *(${game.consoleName})*`
                     ).join('\n') +
-                    `\n\n✅ Use the dropdown menus below to make your selections!\n` +
-                    `🔄 You can change your selections before submitting.\n` +
+                    `\n\n✅ Use the dropdown menu${activePoll.isTiebreaker ? '' : 's'} below to make your selection${activePoll.isTiebreaker ? '' : 's'}!\n` +
+                    (activePoll.isTiebreaker ? '' : '🔄 You can change your selections before submitting.\n') +
                     `⏰ Voting ends <t:${Math.floor(activePoll.endDate.getTime() / 1000)}:R>` +
                     (activePoll.isTiebreaker ? 
                         '\n\n🎯 **This is the final round!** If there\'s still a tie, a winner will be randomly selected.' :
@@ -106,7 +107,7 @@ export default {
                 .setColor(pollColor)
                 .setFooter({ 
                     text: activePoll.isTiebreaker ? 
-                        'Tiebreaker Vote - Select your choices below!' :
+                        'Tiebreaker Vote - Select ONE game below!' :
                         'Select your choices below, then click Submit Vote!' 
                 });
 
@@ -118,59 +119,101 @@ export default {
                 emoji: activePoll.isTiebreaker ? '🔥' : '🎮'
             }));
 
-            // First choice select menu
-            const firstChoiceMenu = new StringSelectMenuBuilder()
-                .setCustomId('vote_first_choice')
-                .setPlaceholder(activePoll.isTiebreaker ? '🔥 Select your FIRST choice' : '🥇 Select your FIRST choice')
-                .addOptions(gameOptions)
-                .setMinValues(1)
-                .setMaxValues(1);
+            // For tiebreakers, only show one choice menu
+            if (activePoll.isTiebreaker) {
+                // Single choice select menu for tiebreakers
+                const choiceMenu = new StringSelectMenuBuilder()
+                    .setCustomId('vote_tiebreaker_choice')
+                    .setPlaceholder('🔥 Select your choice to break the tie')
+                    .addOptions(gameOptions)
+                    .setMinValues(1)
+                    .setMaxValues(1);
 
-            // Second choice select menu
-            const secondChoiceMenu = new StringSelectMenuBuilder()
-                .setCustomId('vote_second_choice')
-                .setPlaceholder(activePoll.isTiebreaker ? '🔥 Select your SECOND choice (optional)' : '🥈 Select your SECOND choice (optional)')
-                .addOptions([
-                    {
-                        label: 'No second choice',
-                        description: 'Vote for only one game',
-                        value: 'none',
-                        emoji: '❌'
-                    },
-                    ...gameOptions
-                ])
-                .setMinValues(1)
-                .setMaxValues(1);
+                // Submit and cancel buttons
+                const submitButton = new ButtonBuilder()
+                    .setCustomId('vote_submit')
+                    .setLabel('Submit Tiebreaker Vote')
+                    .setStyle(ButtonStyle.Danger)
+                    .setEmoji('✅');
 
-            // Submit and cancel buttons with different styling for tiebreakers
-            const submitButton = new ButtonBuilder()
-                .setCustomId('vote_submit')
-                .setLabel(activePoll.isTiebreaker ? 'Submit Tiebreaker Vote' : 'Submit Vote')
-                .setStyle(activePoll.isTiebreaker ? ButtonStyle.Danger : ButtonStyle.Success)
-                .setEmoji('✅');
+                const cancelButton = new ButtonBuilder()
+                    .setCustomId('vote_cancel')
+                    .setLabel('Cancel')
+                    .setStyle(ButtonStyle.Secondary)
+                    .setEmoji('❌');
 
-            const cancelButton = new ButtonBuilder()
-                .setCustomId('vote_cancel')
-                .setLabel('Cancel')
-                .setStyle(ButtonStyle.Secondary)
-                .setEmoji('❌');
+                // Action rows for tiebreaker
+                const choiceRow = new ActionRowBuilder().addComponents(choiceMenu);
+                const buttonRow = new ActionRowBuilder().addComponents(submitButton, cancelButton);
 
-            // Action rows
-            const firstRow = new ActionRowBuilder().addComponents(firstChoiceMenu);
-            const secondRow = new ActionRowBuilder().addComponents(secondChoiceMenu);
-            const buttonRow = new ActionRowBuilder().addComponents(submitButton, cancelButton);
+                // Update the embed to show current selections
+                votingEmbed.setFields({
+                    name: 'Vote Status',
+                    value: 'Please make your selection above',
+                    inline: false
+                });
 
-            // Update the embed to show current selections
-            votingEmbed.setFields({
-                name: 'Vote Status',
-                value: 'Please make your selections above',
-                inline: false
-            });
+                await interaction.editReply({
+                    embeds: [votingEmbed],
+                    components: [choiceRow, buttonRow]
+                });
 
-            await interaction.editReply({
-                embeds: [votingEmbed],
-                components: [firstRow, secondRow, buttonRow]
-            });
+            } else {
+                // Regular voting with two choice menus
+                // First choice select menu
+                const firstChoiceMenu = new StringSelectMenuBuilder()
+                    .setCustomId('vote_first_choice')
+                    .setPlaceholder('🥇 Select your FIRST choice')
+                    .addOptions(gameOptions)
+                    .setMinValues(1)
+                    .setMaxValues(1);
+
+                // Second choice select menu
+                const secondChoiceMenu = new StringSelectMenuBuilder()
+                    .setCustomId('vote_second_choice')
+                    .setPlaceholder('🥈 Select your SECOND choice (optional)')
+                    .addOptions([
+                        {
+                            label: 'No second choice',
+                            description: 'Vote for only one game',
+                            value: 'none',
+                            emoji: '❌'
+                        },
+                        ...gameOptions
+                    ])
+                    .setMinValues(1)
+                    .setMaxValues(1);
+
+                // Submit and cancel buttons
+                const submitButton = new ButtonBuilder()
+                    .setCustomId('vote_submit')
+                    .setLabel('Submit Vote')
+                    .setStyle(ButtonStyle.Success)
+                    .setEmoji('✅');
+
+                const cancelButton = new ButtonBuilder()
+                    .setCustomId('vote_cancel')
+                    .setLabel('Cancel')
+                    .setStyle(ButtonStyle.Secondary)
+                    .setEmoji('❌');
+
+                // Action rows for regular voting
+                const firstRow = new ActionRowBuilder().addComponents(firstChoiceMenu);
+                const secondRow = new ActionRowBuilder().addComponents(secondChoiceMenu);
+                const buttonRow = new ActionRowBuilder().addComponents(submitButton, cancelButton);
+
+                // Update the embed to show current selections
+                votingEmbed.setFields({
+                    name: 'Vote Status',
+                    value: 'Please make your selections above',
+                    inline: false
+                });
+
+                await interaction.editReply({
+                    embeds: [votingEmbed],
+                    components: [firstRow, secondRow, buttonRow]
+                });
+            }
 
         } catch (error) {
             console.error('Error processing vote:', error);
@@ -186,7 +229,72 @@ export default {
             const embed = interaction.message.embeds[0];
             if (!embed) return;
 
-            // Parse current vote state from the message
+            // Get the active poll
+            const activePoll = await Poll.findAnyActivePoll();
+            if (!activePoll) {
+                return interaction.editReply({
+                    content: 'This voting poll is no longer active.',
+                    embeds: [],
+                    components: []
+                });
+            }
+
+            const selectedValue = interaction.values[0];
+
+            // Handle tiebreaker voting (single choice)
+            if (interaction.customId === 'vote_tiebreaker_choice') {
+                const gameIndex = parseInt(selectedValue);
+                const selectedChoice = activePoll.selectedGames[gameIndex]?.title || null;
+                
+                console.log(`User ${interaction.user.id} selected tiebreaker choice: ${selectedChoice} (index: ${gameIndex})`);
+
+                // Create updated dropdown component
+                const gameOptions = activePoll.selectedGames.map((game, index) => ({
+                    label: `${index + 1}. ${game.title}`,
+                    description: `${game.consoleName}`,
+                    value: `${index}`,
+                    emoji: '🔥'
+                }));
+
+                const choiceMenu = new StringSelectMenuBuilder()
+                    .setCustomId('vote_tiebreaker_choice')
+                    .setPlaceholder(selectedChoice ? `Selected: ${selectedChoice}` : '🔥 Select your choice to break the tie')
+                    .addOptions(gameOptions)
+                    .setMinValues(1)
+                    .setMaxValues(1);
+
+                const submitButton = new ButtonBuilder()
+                    .setCustomId('vote_submit')
+                    .setLabel('Submit Tiebreaker Vote')
+                    .setStyle(ButtonStyle.Danger)
+                    .setEmoji('✅');
+
+                const cancelButton = new ButtonBuilder()
+                    .setCustomId('vote_cancel')
+                    .setLabel('Cancel')
+                    .setStyle(ButtonStyle.Secondary)
+                    .setEmoji('❌');
+
+                const choiceRow = new ActionRowBuilder().addComponents(choiceMenu);
+                const buttonRow = new ActionRowBuilder().addComponents(submitButton, cancelButton);
+
+                // Update the embed to show current selection
+                const updatedEmbed = EmbedBuilder.from(embed);
+                updatedEmbed.setFields({
+                    name: 'Vote Status',
+                    value: `**Your choice:** ${selectedChoice || 'None'}`,
+                    inline: false
+                });
+
+                await interaction.editReply({
+                    embeds: [updatedEmbed],
+                    components: [choiceRow, buttonRow]
+                });
+
+                return;
+            }
+
+            // Handle regular voting (two choices) - existing logic
             let firstChoice = null;
             let secondChoice = null;
             let firstChoiceIndex = null;
@@ -202,25 +310,12 @@ export default {
                 }
             }
 
-            // Get the active poll
-            const activePoll = await Poll.findAnyActivePoll();
-            if (!activePoll) {
-                return interaction.editReply({
-                    content: 'This voting poll is no longer active.',
-                    embeds: [],
-                    components: []
-                });
-            }
-
-            const selectedValue = interaction.values[0];
-            
             // Update selection based on which dropdown was used
             if (interaction.customId === 'vote_first_choice') {
                 firstChoiceIndex = selectedValue;
                 const gameIndex = parseInt(selectedValue);
                 firstChoice = activePoll.selectedGames[gameIndex]?.title || null;
                 
-                // Log the selection for debugging
                 console.log(`User ${interaction.user.id} selected first choice: ${firstChoice} (index: ${gameIndex})`);
             } else if (interaction.customId === 'vote_second_choice') {
                 if (selectedValue === 'none') {
@@ -249,13 +344,13 @@ export default {
                 label: `${index + 1}. ${game.title}`,
                 description: `${game.consoleName}`,
                 value: `${index}`,
-                emoji: activePoll.isTiebreaker ? '🔥' : '🎮'
+                emoji: '🎮'
             }));
 
             // First choice menu with updated placeholder showing selection
             const firstChoiceMenu = new StringSelectMenuBuilder()
                 .setCustomId('vote_first_choice')
-                .setPlaceholder(firstChoice ? `Selected: ${firstChoice}` : (activePoll.isTiebreaker ? '🔥 Select your FIRST choice' : '🥇 Select your FIRST choice'))
+                .setPlaceholder(firstChoice ? `Selected: ${firstChoice}` : '🥇 Select your FIRST choice')
                 .addOptions(gameOptions)
                 .setMinValues(1)
                 .setMaxValues(1);
@@ -274,7 +369,7 @@ export default {
             // Second choice menu with updated placeholder showing selection
             const secondChoiceMenu = new StringSelectMenuBuilder()
                 .setCustomId('vote_second_choice')
-                .setPlaceholder(secondChoice ? `Selected: ${secondChoice}` : secondChoiceIndex === 'none' ? 'No second choice selected' : (activePoll.isTiebreaker ? '🔥 Select your SECOND choice (optional)' : '🥈 Select your SECOND choice (optional)'))
+                .setPlaceholder(secondChoice ? `Selected: ${secondChoice}` : secondChoiceIndex === 'none' ? 'No second choice selected' : '🥈 Select your SECOND choice (optional)')
                 .addOptions(secondChoiceOptions)
                 .setMinValues(1)
                 .setMaxValues(1);
@@ -282,8 +377,8 @@ export default {
             // Submit and cancel buttons
             const submitButton = new ButtonBuilder()
                 .setCustomId('vote_submit')
-                .setLabel(activePoll.isTiebreaker ? 'Submit Tiebreaker Vote' : 'Submit Vote')
-                .setStyle(activePoll.isTiebreaker ? ButtonStyle.Danger : ButtonStyle.Success)
+                .setLabel('Submit Vote')
+                .setStyle(ButtonStyle.Success)
                 .setEmoji('✅');
 
             const cancelButton = new ButtonBuilder()
@@ -350,32 +445,6 @@ export default {
                 });
 
             } else if (interaction.customId === 'vote_submit') {
-                // Parse current vote state from the message
-                let firstChoice = null;
-                let secondChoice = null;
-
-                const statusField = embed.fields?.find(f => f.name === 'Vote Status');
-                if (statusField && statusField.value !== 'Please make your selections above') {
-                    const matches = statusField.value.match(/\*\*First choice:\*\* (.+)\n\*\*Second choice:\*\* (.+)/);
-                    if (matches) {
-                        firstChoice = matches[1] !== 'None' ? matches[1] : null;
-                        secondChoice = matches[2] !== 'None' ? matches[2] : null;
-                    }
-                }
-
-                if (!firstChoice) {
-                    const errorEmbed = EmbedBuilder.from(embed);
-                    errorEmbed.addFields({
-                        name: '❌ Error',
-                        value: 'Please select at least your first choice before submitting.',
-                        inline: false
-                    });
-
-                    return interaction.editReply({
-                        embeds: [errorEmbed]
-                    });
-                }
-
                 // Get the active poll
                 const activePoll = await Poll.findAnyActivePoll();
                 if (!activePoll) {
@@ -386,17 +455,51 @@ export default {
                     });
                 }
 
+                let selectedChoices = [];
+
+                // Parse current vote state from the message
+                const statusField = embed.fields?.find(f => f.name === 'Vote Status');
+                
+                if (activePoll.isTiebreaker) {
+                    // For tiebreakers, extract single choice
+                    if (statusField && statusField.value !== 'Please make your selection above') {
+                        const match = statusField.value.match(/\*\*Your choice:\*\* (.+)/);
+                        if (match && match[1] !== 'None') {
+                            selectedChoices.push(match[1]);
+                        }
+                    }
+                } else {
+                    // For regular voting, extract both choices
+                    if (statusField && statusField.value !== 'Please make your selections above') {
+                        const matches = statusField.value.match(/\*\*First choice:\*\* (.+)\n\*\*Second choice:\*\* (.+)/);
+                        if (matches) {
+                            if (matches[1] !== 'None') selectedChoices.push(matches[1]);
+                            if (matches[2] !== 'None') selectedChoices.push(matches[2]);
+                        }
+                    }
+                }
+
+                if (selectedChoices.length === 0) {
+                    const errorEmbed = EmbedBuilder.from(embed);
+                    errorEmbed.addFields({
+                        name: '❌ Error',
+                        value: activePoll.isTiebreaker ? 
+                            'Please select your choice before submitting.' :
+                            'Please select at least your first choice before submitting.',
+                        inline: false
+                    });
+
+                    return interaction.editReply({
+                        embeds: [errorEmbed]
+                    });
+                }
+
                 // Convert game titles back to game IDs for storage
                 const votes = [];
                 
-                // Find first choice game ID
-                const firstGame = activePoll.selectedGames.find(g => g.title === firstChoice);
-                if (firstGame) votes.push(firstGame.gameId);
-
-                // Find second choice game ID
-                if (secondChoice) {
-                    const secondGame = activePoll.selectedGames.find(g => g.title === secondChoice);
-                    if (secondGame) votes.push(secondGame.gameId);
+                for (const choiceTitle of selectedChoices) {
+                    const game = activePoll.selectedGames.find(g => g.title === choiceTitle);
+                    if (game) votes.push(game.gameId);
                 }
 
                 if (votes.length === 0) {
@@ -447,9 +550,11 @@ export default {
                                     { name: 'RA Username', value: raUsername, inline: true },
                                     { name: 'Vote Time', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true },
                                     { name: 'Poll Type', value: activePoll.isTiebreaker ? 'Tiebreaker' : 'Regular', inline: true },
-                                    { name: 'Vote Details', value: votes.length === 1 ? 
-                                        `🥇 **${firstChoice}**` :
-                                        `🥇 **${firstChoice}**\n🥈 **${secondChoice}**`, 
+                                    { name: 'Vote Details', value: activePoll.isTiebreaker ? 
+                                        `🔥 **${selectedChoices[0]}**` :
+                                        (selectedChoices.length === 1 ? 
+                                            `🥇 **${selectedChoices[0]}**` :
+                                            `🥇 **${selectedChoices[0]}**\n🥈 **${selectedChoices[1]}**`), 
                                         inline: false
                                     }
                                 )
@@ -482,10 +587,12 @@ export default {
                     .setDescription(`Thank you for voting${activePoll.isTiebreaker ? ' in the tiebreaker' : ''}! Your vote has been recorded.`)
                     .setColor(activePoll.isTiebreaker ? '#FF4500' : '#00FF00')
                     .addFields({
-                        name: 'Your Votes',
-                        value: votes.length === 1 ? 
-                            `🥇 **${firstChoice}**` :
-                            `🥇 **${firstChoice}**\n🥈 **${secondChoice}**`,
+                        name: activePoll.isTiebreaker ? 'Your Choice' : 'Your Votes',
+                        value: activePoll.isTiebreaker ? 
+                            `🔥 **${selectedChoices[0]}**` :
+                            (selectedChoices.length === 1 ? 
+                                `🥇 **${selectedChoices[0]}**` :
+                                `🥇 **${selectedChoices[0]}**\n🥈 **${selectedChoices[1]}**`),
                         inline: false
                     })
                     .setFooter({ text: 'Your vote is final and cannot be changed.' });
