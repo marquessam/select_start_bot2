@@ -653,3 +653,10 @@ function formatShortDate(monthKey) {
     
     return `${monthNames[monthIndex]} ${shortYear}`;
 }
+
+// Export the command for Discord.js
+export default {
+    data,
+    execute,
+    handleButtonInteraction
+};
