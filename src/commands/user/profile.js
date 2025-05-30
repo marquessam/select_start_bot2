@@ -462,16 +462,16 @@ export default {
             });
         }
 
-        // Group and display trophies by challenge type (not award level)
+        // Group and display trophies by type and award level
         const groupedTrophies = {
-            monthly: [],
-            shadow: [],
-            community: []
+            monthly: { mastery: [], beaten: [], participation: [] },
+            shadow: { beaten: [], participation: [] }, // Shadow can't have mastery
+            community: { special: [] }
         };
 
         trophies.forEach(trophy => {
-            if (groupedTrophies[trophy.challengeType]) {
-                groupedTrophies[trophy.challengeType].push(trophy);
+            if (groupedTrophies[trophy.challengeType] && groupedTrophies[trophy.challengeType][trophy.awardLevel]) {
+                groupedTrophies[trophy.challengeType][trophy.awardLevel].push(trophy);
             }
         });
 
@@ -481,42 +481,49 @@ export default {
             .setDescription(`**Achievement Trophies:** ${trophies.length}`)
             .setTimestamp();
 
-        // Add fields for each challenge type in columns
-        const challengeTypes = ['monthly', 'shadow', 'community'];
-        
-        challengeTypes.forEach(challengeType => {
-            const challengeTrophies = groupedTrophies[challengeType];
-            if (!challengeTrophies || challengeTrophies.length === 0) return;
+        // Add fields for each category and award level
+        ['monthly', 'shadow', 'community'].forEach(challengeType => {
+            const categoryTrophies = groupedTrophies[challengeType];
+            if (!categoryTrophies) return;
 
-            // Sort by award level (mastery first, then beaten, then participation)
-            const sortOrder = { 'mastery': 1, 'beaten': 2, 'participation': 3, 'special': 4 };
-            challengeTrophies.sort((a, b) => {
-                const orderA = sortOrder[a.awardLevel] || 5;
-                const orderB = sortOrder[b.awardLevel] || 5;
-                if (orderA !== orderB) return orderA - orderB;
-                // Within same award level, sort by date (most recent first)
-                return new Date(b.earnedAt) - new Date(a.earnedAt);
+            Object.keys(categoryTrophies).forEach(awardLevel => {
+                const levelTrophies = categoryTrophies[awardLevel];
+                if (levelTrophies.length === 0) return;
+
+                // Sort by date (most recent first)
+                levelTrophies.sort((a, b) => new Date(b.earnedAt) - new Date(a.earnedAt));
+
+                // Get appropriate emoji and names
+                let emoji = '🏆';
+                let typeName = challengeType.charAt(0).toUpperCase() + challengeType.slice(1);
+                let levelName = awardLevel.charAt(0).toUpperCase() + awardLevel.slice(1);
+
+                if (awardLevel === 'mastery') emoji = '✨';
+                else if (awardLevel === 'beaten') emoji = '⭐';
+                else if (awardLevel === 'participation') emoji = '🏁';
+                else if (awardLevel === 'special') emoji = '🎖️';
+
+                // Special handling for community awards
+                if (challengeType === 'community') {
+                    typeName = 'Community';
+                    levelName = 'Awards';
+                }
+
+                const fieldName = `${emoji} ${typeName} ${levelName} (${levelTrophies.length})`;
+                
+                let fieldValue = '';
+                levelTrophies.slice(0, 10).forEach(trophy => {
+                    // Use the custom emoji with proper formatting, no date
+                    const trophyEmoji = formatTrophyEmoji(trophy.emojiId, trophy.emojiName);
+                    fieldValue += `${trophyEmoji} **${trophy.gameTitle}**\n`;
+                });
+
+                if (levelTrophies.length > 10) {
+                    fieldValue += `*...and ${levelTrophies.length - 10} more*\n`;
+                }
+
+                embed.addFields({ name: fieldName, value: fieldValue, inline: true });
             });
-
-            // Create field name
-            let typeName = challengeType.charAt(0).toUpperCase() + challengeType.slice(1);
-            if (challengeType === 'community') typeName = 'Community Awards';
-            else typeName += ' Challenges';
-
-            const fieldName = `${this.getChallengeTypeEmoji(challengeType)} ${typeName} (${challengeTrophies.length})`;
-            
-            let fieldValue = '';
-            challengeTrophies.slice(0, 12).forEach(trophy => {
-                // UPDATED: Use the custom emoji with proper formatting, no date
-                const trophyEmoji = formatTrophyEmoji(trophy.emojiId, trophy.emojiName);
-                fieldValue += `${trophyEmoji} **${trophy.gameTitle}**\n`;
-            });
-
-            if (challengeTrophies.length > 12) {
-                fieldValue += `*...and ${challengeTrophies.length - 12} more*\n`;
-            }
-
-            embed.addFields({ name: fieldName, value: fieldValue, inline: true });
         });
 
         embed.setFooter({ 
