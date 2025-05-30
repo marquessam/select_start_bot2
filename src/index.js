@@ -1,4 +1,4 @@
-// src/index.js
+// src/index.js - Updated with combination system support
 import { Client, Collection, Events, GatewayIntentBits } from 'discord.js';
 import { config, validateConfig } from './config/config.js';
 import { connectDB } from './models/index.js';
@@ -19,7 +19,8 @@ import arenaAlertService from './services/arenaAlertService.js';
 import arenaFeedService from './services/arenaFeedService.js';
 import gameAwardService from './services/gameAwardService.js';
 import monthlyGPService from './services/monthlyGPService.js';
-import gachaMachine from './services/gachaMachine.js'; // ADD: Import gacha machine
+import gachaMachine from './services/gachaMachine.js';
+import combinationService from './services/combinationService.js'; // NEW: Import combination service
 import { User } from './models/User.js';
 
 // Import nomination and restriction handlers
@@ -111,7 +112,7 @@ client.on(Events.InteractionCreate, async interaction => {
     }
 });
 
-// Handle button interactions - UPDATED WITH GACHA SUPPORT
+// Handle button interactions - UPDATED WITH COMBINATION SUPPORT
 client.on(Events.InteractionCreate, async interaction => {
     if (!interaction.isButton()) return;
     
@@ -145,6 +146,95 @@ client.on(Events.InteractionCreate, async interaction => {
                 case 'gacha_collection':
                     await gachaMachine.handleCollection(interaction, user);
                     break;
+            }
+            return;
+        }
+
+        // NEW: Check if this is a collection-related button (combines)
+        if (interaction.customId.startsWith('collection_')) {
+            console.log('Routing to collection handler');
+            const collectionCommand = client.commands.get('collection');
+            if (collectionCommand && typeof collectionCommand.handleButtonInteraction === 'function') {
+                await collectionCommand.handleButtonInteraction(interaction);
+            } else {
+                console.log('Collection command button handler not found');
+            }
+            return;
+        }
+
+        // NEW: Check if this is a combination-related button
+        if (interaction.customId.startsWith('combine_')) {
+            console.log('Routing to combination handler');
+            
+            await interaction.deferReply({ ephemeral: true });
+
+            const user = await User.findOne({ discordId: interaction.user.id });
+            if (!user) {
+                return interaction.editReply({
+                    content: '❌ You are not registered! Please ask an admin to register you first.',
+                    ephemeral: true
+                });
+            }
+
+            // Handle different combination button types
+            if (interaction.customId.includes('combine_confirm_')) {
+                // Handle combination confirmation
+                const collectionCommand = client.commands.get('collection');
+                if (collectionCommand && typeof collectionCommand.handleCombineConfirm === 'function') {
+                    await collectionCommand.handleCombineConfirm(interaction);
+                } else {
+                    await interaction.editReply({
+                        content: '❌ Combination handler not available.',
+                        ephemeral: true
+                    });
+                }
+            } else if (interaction.customId.includes('combine_info_')) {
+                // Handle combination info button
+                const infoMessage = `🔧 **How Combinations Work**\n\n` +
+                                  `⚡ **Automatic Combinations:**\n` +
+                                  `• Happen instantly when you have the right ingredients\n` +
+                                  `• Examples: 5 green rupees → 1 blue rupee\n\n` +
+                                  `🧪 **Manual Combinations:**\n` +
+                                  `• Discovered through experimentation\n` +
+                                  `• Use the "Combine Items" button to try different recipes\n` +
+                                  `• Share discoveries with other users!\n\n` +
+                                  `💡 **Tips:**\n` +
+                                  `• Try combining items of the same series\n` +
+                                  `• Higher quantities often create better results\n` +
+                                  `• Some combinations require items from different themes\n` +
+                                  `• Check the community chat for hints and discoveries!`;
+                
+                await interaction.editReply({
+                    content: infoMessage,
+                    ephemeral: true
+                });
+            } else if (interaction.customId.includes('combine_stats_')) {
+                // Handle combination stats button
+                const stats = combinationService.getCombinationStats(user);
+                const statsMessage = `📊 **Your Combination Statistics**\n\n` +
+                                   `🔧 **Items Combined:** ${stats.totalCombined}\n` +
+                                   `📦 **Unique Combined Items:** ${stats.uniqueCombined}\n` +
+                                   `🎯 **Discovery Rate:** ${stats.uniqueCombined > 0 ? 'Active Explorer!' : 'Ready to Experiment!'}\n\n` +
+                                   `💡 **Next Steps:**\n` +
+                                   `• Try combining stackable items in groups of 5 or 10\n` +
+                                   `• Experiment with rare items and common materials\n` +
+                                   `• Ask other users about their discoveries!`;
+                
+                await interaction.editReply({
+                    content: statsMessage,
+                    ephemeral: true
+                });
+            } else {
+                // Generic combination button handler
+                const collectionCommand = client.commands.get('collection');
+                if (collectionCommand && typeof collectionCommand.handleButtonInteraction === 'function') {
+                    await collectionCommand.handleButtonInteraction(interaction);
+                } else {
+                    await interaction.editReply({
+                        content: '❌ Combination feature not available.',
+                        ephemeral: true
+                    });
+                }
             }
             return;
         }
@@ -197,11 +287,26 @@ client.on(Events.InteractionCreate, async interaction => {
     }
 });
 
-// Handle select menu interactions
+// Handle select menu interactions - UPDATED WITH COMBINATION SUPPORT
 client.on(Events.InteractionCreate, async interaction => {
     if (!interaction.isStringSelectMenu()) return;
     
     try {
+        // NEW: Check if this is a combination-related select menu
+        if (interaction.customId.startsWith('combine_select_')) {
+            console.log('Routing to combination select handler');
+            const collectionCommand = client.commands.get('collection');
+            if (collectionCommand && typeof collectionCommand.handleSelectMenuInteraction === 'function') {
+                await collectionCommand.handleSelectMenuInteraction(interaction);
+            } else {
+                await interaction.reply({
+                    content: '❌ Combination feature not available.',
+                    ephemeral: true
+                });
+            }
+            return;
+        }
+        
         // Check if this is a nomination-related select menu
         if (interaction.customId.startsWith('nominate_')) {
             await handleNominationSelectMenu(interaction);
@@ -405,13 +510,13 @@ client.once(Events.ClientReady, async () => {
         arenaAlertService.setClient(client);
         arenaFeedService.setClient(client);
         gameAwardService.setClient(client);
-        gachaMachine.setClient(client); // ADD: Set client for gacha machine
+        gachaMachine.setClient(client);
 
         // START MONTHLY GP SERVICE
         monthlyGPService.start();
         console.log('✅ Monthly GP Service initialized - automatic grants on 1st of each month');
 
-        // START GACHA MACHINE - ADD THIS
+        // START GACHA MACHINE
         await gachaMachine.start();
         console.log('✅ Gacha Machine initialized and pinned in gacha channel');
 
@@ -678,6 +783,7 @@ client.once(Events.ClientReady, async () => {
         console.log('  • Arena feeds: Every 30 minutes');
         console.log('  • Arena timeouts: Hourly at 45 minutes past');
         console.log('  • Gacha Machine: Active and pinned');
+        console.log('  • Combination System: Ready for experimentation');
         console.log('  • Various other feeds: Hourly');
         
     } catch (error) {
@@ -699,14 +805,14 @@ process.on('unhandledRejection', error => {
 process.on('SIGINT', () => {
     console.log('Shutting down...');
     monthlyGPService.stop();
-    gachaMachine.stop(); // ADD: Stop gacha machine
+    gachaMachine.stop();
     process.exit(0);
 });
 
 process.on('SIGTERM', () => {
     console.log('Shutting down...');
     monthlyGPService.stop();
-    gachaMachine.stop(); // ADD: Stop gacha machine
+    gachaMachine.stop();
     process.exit(0);
 });
 
