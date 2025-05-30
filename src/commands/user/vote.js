@@ -20,10 +20,10 @@ export default {
                 return interaction.editReply('You are not registered. Please ask an admin to register you first.');
             }
 
-            // Get the active poll
+            // Get any active poll (including tiebreakers)
             let activePoll;
             try {
-                activePoll = await Poll.findActivePoll();
+                activePoll = await Poll.findAnyActivePoll();
             } catch (error) {
                 console.error('Error finding active poll:', error);
                 return interaction.editReply('An error occurred when looking for an active poll. Please try again later.');
@@ -46,11 +46,12 @@ export default {
                 try {
                     // Show results since they already voted
                     const results = activePoll.getVoteCounts();
+                    const pollTypeText = activePoll.isTiebreaker ? 'Tiebreaker' : 'Monthly Challenge';
                     
                     const voteResultsEmbed = new EmbedBuilder()
-                        .setTitle('🗳️ You Have Already Voted!')
+                        .setTitle(`🗳️ You Have Already Voted! (${pollTypeText})`)
                         .setDescription('Thanks for voting! Here are the current results.\n\n⚠️ **Please keep these results private until voting ends!**')
-                        .setColor('#FF69B4')
+                        .setColor(activePoll.isTiebreaker ? '#FF4500' : '#FF69B4')
                         .setFooter({ text: `Voting ends on ${activePoll.endDate.toDateString()}` });
                     
                     // Add results fields, handling potential missing values safely
@@ -77,34 +78,50 @@ export default {
                 }
             }
 
+            // Determine poll type and styling
+            const pollTypeText = activePoll.isTiebreaker ? 'TIEBREAKER VOTE' : 'Monthly Challenge Vote';
+            const pollColor = activePoll.isTiebreaker ? '#FF4500' : '#00FF00';
+            const pollEmoji = activePoll.isTiebreaker ? '🔥' : '🗳️';
+
             // Create the voting interface
             const votingEmbed = new EmbedBuilder()
-                .setTitle('🗳️ Cast Your Vote!')
+                .setTitle(`${pollEmoji} Cast Your ${pollTypeText}!`)
                 .setDescription(
-                    `Select up to **2 games** you'd like to see as next month's challenge.\n\n` +
+                    (activePoll.isTiebreaker ? 
+                        `🔥 **TIEBREAKER ROUND** - These games tied in the main vote!\n\n` :
+                        `Select up to **2 games** you'd like to see as next month's challenge.\n\n`
+                    ) +
                     `**Available Games:**\n` +
                     activePoll.selectedGames.map((game, index) => 
                         `**${index + 1}.** ${game.title} *(${game.consoleName})*`
                     ).join('\n') +
                     `\n\n✅ Use the dropdown menus below to make your selections!\n` +
                     `🔄 You can change your selections before submitting.\n` +
-                    `⏰ Voting ends <t:${Math.floor(activePoll.endDate.getTime() / 1000)}:R>`
+                    `⏰ Voting ends <t:${Math.floor(activePoll.endDate.getTime() / 1000)}:R>` +
+                    (activePoll.isTiebreaker ? 
+                        '\n\n🎯 **This is the final round!** If there\'s still a tie, a winner will be randomly selected.' :
+                        '\n\n🔥 **New:** If there\'s a tie, an automatic 24-hour tiebreaker vote will start!'
+                    )
                 )
-                .setColor('#00FF00')
-                .setFooter({ text: 'Select your choices below, then click Submit Vote!' });
+                .setColor(pollColor)
+                .setFooter({ 
+                    text: activePoll.isTiebreaker ? 
+                        'Tiebreaker Vote - Select your choices below!' :
+                        'Select your choices below, then click Submit Vote!' 
+                });
 
             // Create select menu options from the games
             const gameOptions = activePoll.selectedGames.map((game, index) => ({
                 label: `${index + 1}. ${game.title}`,
                 description: `${game.consoleName}`,
                 value: `${index}`,
-                emoji: '🎮'
+                emoji: activePoll.isTiebreaker ? '🔥' : '🎮'
             }));
 
             // First choice select menu
             const firstChoiceMenu = new StringSelectMenuBuilder()
                 .setCustomId('vote_first_choice')
-                .setPlaceholder('🥇 Select your FIRST choice')
+                .setPlaceholder(activePoll.isTiebreaker ? '🔥 Select your FIRST choice' : '🥇 Select your FIRST choice')
                 .addOptions(gameOptions)
                 .setMinValues(1)
                 .setMaxValues(1);
@@ -112,7 +129,7 @@ export default {
             // Second choice select menu
             const secondChoiceMenu = new StringSelectMenuBuilder()
                 .setCustomId('vote_second_choice')
-                .setPlaceholder('🥈 Select your SECOND choice (optional)')
+                .setPlaceholder(activePoll.isTiebreaker ? '🔥 Select your SECOND choice (optional)' : '🥈 Select your SECOND choice (optional)')
                 .addOptions([
                     {
                         label: 'No second choice',
@@ -125,11 +142,11 @@ export default {
                 .setMinValues(1)
                 .setMaxValues(1);
 
-            // Submit and cancel buttons
+            // Submit and cancel buttons with different styling for tiebreakers
             const submitButton = new ButtonBuilder()
                 .setCustomId('vote_submit')
-                .setLabel('Submit Vote')
-                .setStyle(ButtonStyle.Success)
+                .setLabel(activePoll.isTiebreaker ? 'Submit Tiebreaker Vote' : 'Submit Vote')
+                .setStyle(activePoll.isTiebreaker ? ButtonStyle.Danger : ButtonStyle.Success)
                 .setEmoji('✅');
 
             const cancelButton = new ButtonBuilder()
@@ -186,7 +203,7 @@ export default {
             }
 
             // Get the active poll
-            const activePoll = await Poll.findActivePoll();
+            const activePoll = await Poll.findAnyActivePoll();
             if (!activePoll) {
                 return interaction.editReply({
                     content: 'This voting poll is no longer active.',
@@ -232,13 +249,13 @@ export default {
                 label: `${index + 1}. ${game.title}`,
                 description: `${game.consoleName}`,
                 value: `${index}`,
-                emoji: '🎮'
+                emoji: activePoll.isTiebreaker ? '🔥' : '🎮'
             }));
 
             // First choice menu with updated placeholder showing selection
             const firstChoiceMenu = new StringSelectMenuBuilder()
                 .setCustomId('vote_first_choice')
-                .setPlaceholder(firstChoice ? `Selected: ${firstChoice}` : '🥇 Select your FIRST choice')
+                .setPlaceholder(firstChoice ? `Selected: ${firstChoice}` : (activePoll.isTiebreaker ? '🔥 Select your FIRST choice' : '🥇 Select your FIRST choice'))
                 .addOptions(gameOptions)
                 .setMinValues(1)
                 .setMaxValues(1);
@@ -257,7 +274,7 @@ export default {
             // Second choice menu with updated placeholder showing selection
             const secondChoiceMenu = new StringSelectMenuBuilder()
                 .setCustomId('vote_second_choice')
-                .setPlaceholder(secondChoice ? `Selected: ${secondChoice}` : secondChoiceIndex === 'none' ? 'No second choice selected' : '🥈 Select your SECOND choice (optional)')
+                .setPlaceholder(secondChoice ? `Selected: ${secondChoice}` : secondChoiceIndex === 'none' ? 'No second choice selected' : (activePoll.isTiebreaker ? '🔥 Select your SECOND choice (optional)' : '🥈 Select your SECOND choice (optional)'))
                 .addOptions(secondChoiceOptions)
                 .setMinValues(1)
                 .setMaxValues(1);
@@ -265,8 +282,8 @@ export default {
             // Submit and cancel buttons
             const submitButton = new ButtonBuilder()
                 .setCustomId('vote_submit')
-                .setLabel('Submit Vote')
-                .setStyle(ButtonStyle.Success)
+                .setLabel(activePoll.isTiebreaker ? 'Submit Tiebreaker Vote' : 'Submit Vote')
+                .setStyle(activePoll.isTiebreaker ? ButtonStyle.Danger : ButtonStyle.Success)
                 .setEmoji('✅');
 
             const cancelButton = new ButtonBuilder()
@@ -360,7 +377,7 @@ export default {
                 }
 
                 // Get the active poll
-                const activePoll = await Poll.findActivePoll();
+                const activePoll = await Poll.findAnyActivePoll();
                 if (!activePoll) {
                     return interaction.editReply({
                         content: 'This voting poll is no longer active.',
@@ -414,20 +431,22 @@ export default {
                     await activePoll.save();
                     
                     // Log successful vote
-                    console.log(`User ${interaction.user.id} (${raUsername}) successfully voted: ${votes.join(', ')}`);
+                    const pollTypeText = activePoll.isTiebreaker ? 'tiebreaker' : 'regular';
+                    console.log(`User ${interaction.user.id} (${raUsername}) successfully voted in ${pollTypeText} poll: ${votes.join(', ')}`);
                     
                     // Send log to admin channel
                     try {
                         const adminChannel = await interaction.client.channels.fetch(ADMIN_CHANNEL_ID);
                         if (adminChannel) {
                             const voteLogEmbed = new EmbedBuilder()
-                                .setTitle('🗳️ Vote Recorded')
-                                .setDescription(`A user has submitted their vote for the monthly challenge.`)
-                                .setColor('#00AAFF')
+                                .setTitle(activePoll.isTiebreaker ? '🔥 Tiebreaker Vote Recorded' : '🗳️ Vote Recorded')
+                                .setDescription(`A user has submitted their ${activePoll.isTiebreaker ? 'tiebreaker ' : ''}vote for the monthly challenge.`)
+                                .setColor(activePoll.isTiebreaker ? '#FF4500' : '#00AAFF')
                                 .addFields(
                                     { name: 'Discord User', value: `<@${interaction.user.id}> (${interaction.user.tag})`, inline: true },
                                     { name: 'RA Username', value: raUsername, inline: true },
                                     { name: 'Vote Time', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true },
+                                    { name: 'Poll Type', value: activePoll.isTiebreaker ? 'Tiebreaker' : 'Regular', inline: true },
                                     { name: 'Vote Details', value: votes.length === 1 ? 
                                         `🥇 **${firstChoice}**` :
                                         `🥇 **${firstChoice}**\n🥈 **${secondChoice}**`, 
@@ -457,10 +476,11 @@ export default {
                 }
 
                 // Create success embed
+                const pollTypeText = activePoll.isTiebreaker ? 'Tiebreaker' : '';
                 const successEmbed = new EmbedBuilder()
-                    .setTitle('✅ Vote Recorded!')
-                    .setDescription('Thank you for voting! Your vote has been recorded.')
-                    .setColor('#00FF00')
+                    .setTitle(`✅ ${pollTypeText} Vote Recorded!`)
+                    .setDescription(`Thank you for voting${activePoll.isTiebreaker ? ' in the tiebreaker' : ''}! Your vote has been recorded.`)
+                    .setColor(activePoll.isTiebreaker ? '#FF4500' : '#00FF00')
                     .addFields({
                         name: 'Your Votes',
                         value: votes.length === 1 ? 
@@ -480,9 +500,9 @@ export default {
                     const results = activePoll.getVoteCounts();
                     
                     const resultsEmbed = new EmbedBuilder()
-                        .setTitle('📊 Current Results')
+                        .setTitle(activePoll.isTiebreaker ? '📊 Current Tiebreaker Results' : '📊 Current Results')
                         .setDescription('Here are the current voting results.\n\n⚠️ **Please keep these private until voting ends!**')
-                        .setColor('#FF69B4')
+                        .setColor(activePoll.isTiebreaker ? '#FF4500' : '#FF69B4')
                         .setFooter({ text: `Voting ends on ${activePoll.endDate.toDateString()}` });
                     
                     if (results && results.length > 0) {
