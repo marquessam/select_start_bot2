@@ -235,32 +235,15 @@ class MonthlyTasksService {
             // Process each poll
             for (const poll of unprocessedPolls) {
                 try {
-                    // Get the channel and message
-                    const channel = await this.client.channels.fetch(poll.channelId);
-                    const pollMessage = await channel.messages.fetch(poll.messageId);
+                    // Use the Poll model's getVoteCounts method instead of counting reactions
+                    const results = poll.getVoteCounts();
                     
-                    // Get reaction counts
-                    const numberEmojis = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'];
-                    const results = [];
+                    console.log('Vote counting results:', results);
                     
-                    for (let i = 0; i < poll.selectedGames.length; i++) {
-                        const game = poll.selectedGames[i];
-                        const emoji = numberEmojis[i];
-                        const reaction = pollMessage.reactions.cache.find(r => r.emoji.name === emoji);
-                        const count = reaction ? reaction.count - 1 : 0; // Subtract 1 to exclude the bot's reaction
-                        
-                        results.push({
-                            gameId: game.gameId,
-                            title: game.title,
-                            consoleName: game.consoleName,
-                            imageIcon: game.imageIcon,
-                            votes: count,
-                            index: i
-                        });
+                    if (results.length === 0) {
+                        console.log('No votes found for this poll');
+                        continue;
                     }
-                    
-                    // Sort by vote count (highest first)
-                    results.sort((a, b) => b.votes - a.votes);
                     
                     // Check for ties at the top position
                     const winner = results[0];
@@ -269,7 +252,7 @@ class MonthlyTasksService {
                     let winnerMessage;
                     let selectedWinner;
                     
-                    if (tiedWinners.length > 1) {
+                    if (tiedWinners.length > 1 && winner.votes > 0) {
                         console.log(`There was a ${tiedWinners.length}-way tie! Randomly selecting winner...`);
                         // Randomly select one of the tied games
                         const randomIndex = Math.floor(Math.random() * tiedWinners.length);
@@ -279,9 +262,14 @@ class MonthlyTasksService {
                             `There was a ${tiedWinners.length}-way tie between:\n` +
                             tiedWinners.map(game => `**${game.title}** (${game.votes} votes)`).join('\n') +
                             `\n\nAfter a random tiebreaker, **${selectedWinner.title}** has been selected as our winner!`;
-                    } else {
+                    } else if (winner.votes > 0) {
                         selectedWinner = winner;
                         winnerMessage = `**${selectedWinner.title}** won with ${selectedWinner.votes} votes!`;
+                    } else {
+                        // No votes case
+                        selectedWinner = winner;
+                        winnerMessage = `**${selectedWinner.title}** has been selected as our winner!`;
+                        console.log('No votes were cast, selecting first game as winner');
                     }
                     
                     // Create announcement embed
@@ -298,7 +286,7 @@ class MonthlyTasksService {
                     for (let i = 0; i < Math.min(5, results.length); i++) {
                         const result = results[i];
                         const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i+1}.`;
-                        resultsText += `${medal} **[${result.title}](https://retroachievements.org/game/${result.gameId})** - ${result.votes} votes\n`;
+                        resultsText += `${medal} **[${result.title}](https://retroachievements.org/game/${result.gameId})** - ${result.votes} vote${result.votes !== 1 ? 's' : ''}\n`;
                     }
                     
                     if (results.length > 5) {
@@ -312,30 +300,55 @@ class MonthlyTasksService {
                         announcementEmbed.setThumbnail(`https://retroachievements.org${selectedWinner.imageIcon}`);
                     }
                     
-                    // Get the announcements channel
-                    const announcementChannel = await this.getAnnouncementChannel();
-                    if (announcementChannel) {
-                        await announcementChannel.send({ embeds: [announcementEmbed] });
+                    // Get the results channel (use resultsChannelId if available, otherwise fall back to announcement channel)
+                    let resultsChannel;
+                    if (poll.resultsChannelId) {
+                        try {
+                            resultsChannel = await this.client.channels.fetch(poll.resultsChannelId);
+                        } catch (error) {
+                            console.error('Error fetching results channel, falling back to announcement channel:', error);
+                            resultsChannel = await this.getAnnouncementChannel();
+                        }
                     } else {
-                        console.error('Announcement channel not found');
+                        resultsChannel = await this.getAnnouncementChannel();
+                    }
+                    
+                    if (resultsChannel) {
+                        await resultsChannel.send({ embeds: [announcementEmbed] });
+                    } else {
+                        console.error('No results channel found');
                     }
                     
                     // Update the original poll message to show it's ended
-                    const updatedEmbed = new EmbedBuilder()
-                        .setTitle('🎮 Monthly Challenge Voting (ENDED)')
-                        .setDescription(
-                            `Voting for this month's challenge has ended!\n\n` +
-                            `${winnerMessage}\n\n` +
-                            `Check out the announcements channel for full voting results.`
-                        )
-                        .setColor('#808080') // Gray to indicate it's over
-                        .setFooter({ text: 'Voting has ended' });
+                    try {
+                        const channel = await this.client.channels.fetch(poll.channelId);
+                        const pollMessage = await channel.messages.fetch(poll.messageId);
+                        
+                        const updatedEmbed = new EmbedBuilder()
+                            .setTitle('🎮 Monthly Challenge Voting (ENDED)')
+                            .setDescription(
+                                `Voting for this month's challenge has ended!\n\n` +
+                                `${winnerMessage}\n\n` +
+                                `Check out the announcements channel for full voting results.`
+                            )
+                            .setColor('#808080') // Gray to indicate it's over
+                            .setFooter({ text: 'Voting has ended' });
+                        
+                        await pollMessage.edit({ embeds: [updatedEmbed] });
+                    } catch (messageError) {
+                        console.error('Error updating original poll message:', messageError);
+                        // Continue even if we can't update the original message
+                    }
                     
-                    await pollMessage.edit({ embeds: [updatedEmbed] });
-                    
-                    // Mark poll as processed
+                    // Mark poll as processed and store winner
                     poll.isProcessed = true;
-                    poll.winnerId = selectedWinner.gameId;
+                    poll.winner = {
+                        gameId: selectedWinner.gameId,
+                        title: selectedWinner.title,
+                        consoleName: selectedWinner.consoleName,
+                        imageIcon: selectedWinner.imageIcon,
+                        votes: selectedWinner.votes
+                    };
                     await poll.save();
                     
                     console.log(`Voting results announced: ${selectedWinner.title} won with ${selectedWinner.votes} votes`);
