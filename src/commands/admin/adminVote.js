@@ -41,6 +41,11 @@ export default {
             subcommand
                 .setName('recount')
                 .setDescription('Manually recount votes for the most recent poll and announce correct results')
+        )
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('status')
+                .setDescription('Check the status of current voting polls')
         ),
 
     async execute(interaction) {
@@ -67,6 +72,9 @@ export default {
             case 'recount':
                 await this.handleRecountVotes(interaction);
                 break;
+            case 'status':
+                await this.handleStatusCheck(interaction);
+                break;
             default:
                 await interaction.reply({
                     content: 'Invalid subcommand. Please try again.',
@@ -82,10 +90,11 @@ export default {
         await interaction.deferReply();
 
         try {
-            // Check if there's already an active poll
-            const existingPoll = await Poll.findActivePoll();
+            // Check if there's already an active poll (including tiebreakers)
+            const existingPoll = await Poll.findAnyActivePoll();
             if (existingPoll) {
-                return interaction.editReply('There is already an active voting poll. You must wait for it to end or cancel it first.');
+                const pollType = existingPoll.isTiebreaker ? 'tiebreaker' : 'regular';
+                return interaction.editReply(`There is already an active ${pollType} voting poll. You must wait for it to end or cancel it first.`);
             }
 
             // Calculate start and end dates
@@ -307,7 +316,8 @@ export default {
                     `🔸 The interface shows game names - no need to remember numbers!\n\n` +
                     `⏰ Voting ends <t:${Math.floor(endDate.getTime() / 1000)}:R>` +
                     (forceStart ? ` (7-day voting period)\n\n` : `\n\n`) +
-                    `✨ **New Easy Voting System:** Use \`/vote\` for a user-friendly interface with dropdown menus showing actual game names!` +
+                    `✨ **Easy Voting System:** Use \`/vote\` for a user-friendly interface with dropdown menus!\n` +
+                    `🔥 **New:** If there's a tie, a 24-hour tiebreaker vote will automatically start!` +
                     (forceStart ? `\n\n⚠️ **Special Note:** This is a 7-day force-started voting period, not following the normal monthly schedule.` : ``)
                 )
                 .setColor('#FF69B4')
@@ -324,7 +334,7 @@ export default {
                     }
                 )
                 .setFooter({ 
-                    text: `Voting ends ${endDate.toLocaleDateString()}${forceStart ? ' (7-day period)' : ''} • Type /vote to use the interactive voting system!` 
+                    text: `Voting ends ${endDate.toLocaleDateString()}${forceStart ? ' (7-day period)' : ''} • Automatic tiebreakers enabled!` 
                 });
 
             // Get the specified channel
@@ -389,6 +399,7 @@ export default {
                 ) +
                 ` Results will be announced in ${resultsChannel} when voting ends.` +
                 (poll.scheduledJobName ? ' The poll will end automatically on the scheduled date.' : ' Note: Automatic ending is not available, manual end required.') +
+                `\n\n🔥 **New Feature:** Automatic tiebreaker polls will be created if needed!` +
                 (forceStart ? '\n\n⚠️ **Note:** This is a force-started 7-day voting period, not following the normal monthly schedule.' : '');
 
             return interaction.editReply(successMessage);
@@ -406,11 +417,13 @@ export default {
         await interaction.deferReply();
 
         try {
-            // Find the active poll
-            const activePoll = await Poll.findActivePoll();
+            // Find any active poll (including tiebreakers)
+            const activePoll = await Poll.findAnyActivePoll();
             if (!activePoll) {
                 return interaction.editReply('There is no active voting poll to end.');
             }
+
+            const pollType = activePoll.isTiebreaker ? 'tiebreaker' : 'regular';
 
             // Cancel the scheduled job if it exists
             if (activePoll.scheduledJobName) {
@@ -436,9 +449,9 @@ export default {
             const winner = await monthlyTasksService.countAndAnnounceVotes();
             
             if (winner) {
-                return interaction.editReply(`Voting poll has been ended successfully. "${winner.title}" won with ${winner.votes} votes!`);
+                return interaction.editReply(`${pollType} voting poll has been ended successfully. "${winner.title}" won with ${winner.votes} votes!`);
             } else {
-                return interaction.editReply('Voting poll has been ended, but there was an issue determining the winner. Check the results channel for details.');
+                return interaction.editReply(`${pollType} voting poll has been ended, but there was an issue determining the winner. Check the results channel for details.`);
             }
 
         } catch (error) {
@@ -454,11 +467,13 @@ export default {
         await interaction.deferReply();
 
         try {
-            // Find the active poll
-            const activePoll = await Poll.findActivePoll();
+            // Find any active poll (including tiebreakers)
+            const activePoll = await Poll.findAnyActivePoll();
             if (!activePoll) {
                 return interaction.editReply('There is no active voting poll to cancel.');
             }
+
+            const pollType = activePoll.isTiebreaker ? 'tiebreaker' : 'regular';
 
             // Cancel the scheduled job if it exists
             if (activePoll.scheduledJobName) {
@@ -491,10 +506,14 @@ export default {
                     const pollMessage = await channel.messages.fetch(activePoll.messageId);
                     
                     if (pollMessage) {
+                        const titleText = activePoll.isTiebreaker ? 
+                            '🔥 Monthly Challenge Tiebreaker (CANCELED)' : 
+                            '🎮 Monthly Challenge Voting (CANCELED)';
+                        
                         const updatedEmbed = new EmbedBuilder()
-                            .setTitle('🎮 Monthly Challenge Voting (CANCELED)')
+                            .setTitle(titleText)
                             .setDescription(
-                                `This voting poll has been canceled by an administrator.`
+                                `This ${pollType} voting poll has been canceled by an administrator.`
                             )
                             .setColor('#FF0000') // Red to indicate it's canceled
                             .setFooter({ text: 'Voting has been canceled' });
@@ -507,7 +526,7 @@ export default {
                 // Continue even if updating the message fails
             }
 
-            return interaction.editReply('Voting poll has been canceled successfully.');
+            return interaction.editReply(`${pollType} voting poll has been canceled successfully.`);
 
         } catch (error) {
             console.error('Error canceling voting:', error);
@@ -538,7 +557,7 @@ export default {
 
             console.log('Manual recount results:', results);
 
-            // Find the winner
+            // Check for ties
             const winner = results[0];
             const tiedWinners = results.filter(result => result.votes === winner.votes);
             
@@ -551,15 +570,17 @@ export default {
                 winnerMessage = 
                     `There was a ${tiedWinners.length}-way tie between:\n` +
                     tiedWinners.map(game => `**${game.title}** (${game.votes} votes)`).join('\n') +
-                    `\n\n**${selectedWinner.title}** has been selected as the winner!`;
+                    `\n\n**${selectedWinner.title}** has been selected as the winner!\n\n` +
+                    `⚠️ **Note:** In normal operation, this would trigger a 24-hour tiebreaker vote.`;
             } else {
                 selectedWinner = winner;
                 winnerMessage = `**${selectedWinner.title}** won with ${selectedWinner.votes} votes!`;
             }
 
             // Create corrected announcement embed
+            const pollTypeText = recentPoll.isTiebreaker ? 'Tiebreaker' : 'Monthly Challenge';
             const embed = new EmbedBuilder()
-                .setTitle('🔄 Corrected Monthly Challenge Voting Results')
+                .setTitle(`🔄 Corrected ${pollTypeText} Voting Results`)
                 .setColor('#FF69B4')
                 .setDescription(
                     `**CORRECTED RESULTS** - The previous results had a technical error.\n\n` +
@@ -608,13 +629,15 @@ export default {
                 await interaction.editReply(
                     `Votes have been recounted and corrected results posted to ${resultsChannel}.\n\n` +
                     `**Winner:** ${selectedWinner.title} with ${selectedWinner.votes} votes\n` +
-                    `**Total votes counted:** ${results.reduce((sum, r) => sum + r.votes, 0)}`
+                    `**Total votes counted:** ${results.reduce((sum, r) => sum + r.votes, 0)}\n` +
+                    `**Poll Type:** ${recentPoll.isTiebreaker ? 'Tiebreaker' : 'Regular'}`
                 );
             } else {
                 await interaction.editReply({
                     content: `Votes have been recounted. Here are the corrected results:\n\n` +
                              `**Winner:** ${selectedWinner.title} with ${selectedWinner.votes} votes\n` +
-                             `**Total votes counted:** ${results.reduce((sum, r) => sum + r.votes, 0)}`,
+                             `**Total votes counted:** ${results.reduce((sum, r) => sum + r.votes, 0)}\n` +
+                             `**Poll Type:** ${recentPoll.isTiebreaker ? 'Tiebreaker' : 'Regular'}`,
                     embeds: [embed]
                 });
             }
@@ -622,6 +645,62 @@ export default {
         } catch (error) {
             console.error('Error recounting votes:', error);
             return interaction.editReply('An error occurred while recounting votes. Please check the logs.');
+        }
+    },
+
+    /**
+     * Handle status check
+     */
+    async handleStatusCheck(interaction) {
+        await interaction.deferReply({ ephemeral: true });
+
+        try {
+            // Find any active polls
+            const activePolls = await Poll.find({ isProcessed: false }).sort({ createdAt: -1 });
+            
+            if (activePolls.length === 0) {
+                return interaction.editReply('No active voting polls found.');
+            }
+
+            const embed = new EmbedBuilder()
+                .setTitle('📊 Active Voting Polls Status')
+                .setColor('#0099FF')
+                .setTimestamp();
+
+            for (const poll of activePolls) {
+                const pollType = poll.isTiebreaker ? '🔥 Tiebreaker Poll' : '🎮 Regular Poll';
+                const voteCounts = poll.getVoteCounts();
+                const totalVotes = poll.votes ? poll.votes.length : 0;
+                
+                let statusText = `**Created:** <t:${Math.floor(poll.createdAt.getTime() / 1000)}:R>\n` +
+                               `**Ends:** <t:${Math.floor(poll.endDate.getTime() / 1000)}:R>\n` +
+                               `**Total Voters:** ${totalVotes}\n` +
+                               `**Games:** ${poll.selectedGames.length}`;
+
+                if (poll.isTiebreaker && poll.originalPollId) {
+                    statusText += `\n**Original Poll ID:** ${poll.originalPollId}`;
+                }
+
+                // Show top 3 results
+                if (voteCounts.length > 0) {
+                    const topResults = voteCounts.slice(0, 3).map((result, index) => 
+                        `${index + 1}. ${result.title}: ${result.votes} votes`
+                    ).join('\n');
+                    statusText += `\n\n**Current Top 3:**\n${topResults}`;
+                }
+
+                embed.addFields({
+                    name: pollType,
+                    value: statusText,
+                    inline: false
+                });
+            }
+
+            await interaction.editReply({ embeds: [embed] });
+
+        } catch (error) {
+            console.error('Error checking poll status:', error);
+            await interaction.editReply('An error occurred while checking poll status.');
         }
     }
 };
