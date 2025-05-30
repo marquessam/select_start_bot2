@@ -1,8 +1,7 @@
-// src/commands/admin/manageTrophyEmojis.js - Database-driven emoji management
+// src/commands/admin/manageTrophyEmojis.js - Database-driven emoji management (safer version)
 import { SlashCommandBuilder, EmbedBuilder } from 'discord.js';
 import { config } from '../../config/config.js';
 import { TrophyEmoji } from '../../models/TrophyEmoji.js';
-import { clearEmojiCache } from '../../config/trophyEmojis.js';
 
 export default {
     data: new SlashCommandBuilder()
@@ -75,18 +74,6 @@ export default {
                             { name: 'October', value: 'oct' },
                             { name: 'November', value: 'nov' },
                             { name: 'December', value: 'dec' }
-                        )))
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('cache')
-                .setDescription('Manage emoji cache')
-                .addStringOption(option =>
-                    option.setName('action')
-                        .setDescription('Cache action')
-                        .setRequired(true)
-                        .addChoices(
-                            { name: 'Clear Cache', value: 'clear' },
-                            { name: 'Show Cache Info', value: 'info' }
                         ))),
 
     async execute(interaction) {
@@ -112,9 +99,6 @@ export default {
                     break;
                 case 'clear':
                     await this.handleClearEmoji(interaction);
-                    break;
-                case 'cache':
-                    await this.handleCacheManagement(interaction);
                     break;
             }
         } catch (error) {
@@ -151,9 +135,6 @@ export default {
             // Save to database using the model's static method
             const savedEmoji = await TrophyEmoji.setEmoji(type, monthKey, emojiId, emojiName);
             
-            // Clear cache to force refresh
-            clearEmojiCache();
-            
             const embed = new EmbedBuilder()
                 .setTitle('✅ Trophy Emoji Updated')
                 .setDescription(
@@ -164,103 +145,84 @@ export default {
                     `**ID:** ${emojiId}`
                 )
                 .setColor('#00FF00')
-                .setFooter({ text: 'Emoji cache has been cleared and will refresh automatically' })
+                .setFooter({ text: 'Emoji saved to database successfully' })
                 .setTimestamp();
 
             await interaction.editReply({ embeds: [embed] });
             
         } catch (error) {
-            if (error.code === 11000) {
-                // Duplicate key error - this means we're updating existing
-                console.log(`Updated existing emoji for ${type} ${monthKey}`);
-                
-                const embed = new EmbedBuilder()
-                    .setTitle('✅ Trophy Emoji Updated')
-                    .setDescription(
-                        `**Type:** ${type.charAt(0).toUpperCase() + type.slice(1)} Challenge\n` +
-                        `**Month:** ${month.toUpperCase()} (${monthKey})\n` +
-                        `**Emoji:** ${emojiInput}\n` +
-                        `**Name:** ${emojiName}\n` +
-                        `**ID:** ${emojiId}\n\n` +
-                        `*Previous emoji was replaced*`
-                    )
-                    .setColor('#00FF00')
-                    .setTimestamp();
-
-                await interaction.editReply({ embeds: [embed] });
-            } else {
-                throw error;
-            }
+            console.error('Error saving emoji:', error);
+            await interaction.editReply('❌ An error occurred while saving the emoji to the database.');
         }
     },
 
     async handleListEmojis(interaction) {
-        // Get all emojis from database
-        const allEmojis = await TrophyEmoji.getAllEmojis();
-        
-        const embed = new EmbedBuilder()
-            .setTitle('🏆 Trophy Emoji Configuration')
-            .setColor('#0099ff')
-            .setTimestamp();
+        try {
+            // Get all emojis from database
+            const allEmojis = await TrophyEmoji.getAllEmojis();
+            
+            const embed = new EmbedBuilder()
+                .setTitle('🏆 Trophy Emoji Configuration')
+                .setColor('#0099ff')
+                .setTimestamp();
 
-        // Group emojis by type
-        const monthlyEmojis = allEmojis.filter(e => e.challengeType === 'monthly');
-        const shadowEmojis = allEmojis.filter(e => e.challengeType === 'shadow');
-        
-        // Monthly emojis
-        let monthlyText = '';
-        if (monthlyEmojis.length > 0) {
-            monthlyEmojis.forEach(emoji => {
-                monthlyText += `${emoji.monthKey}: <:${emoji.emojiName}:${emoji.emojiId}>\n`;
+            // Group emojis by type
+            const monthlyEmojis = allEmojis.filter(e => e.challengeType === 'monthly');
+            const shadowEmojis = allEmojis.filter(e => e.challengeType === 'shadow');
+            
+            // Monthly emojis
+            let monthlyText = '';
+            if (monthlyEmojis.length > 0) {
+                monthlyEmojis.forEach(emoji => {
+                    monthlyText += `${emoji.monthKey}: <:${emoji.emojiName}:${emoji.emojiId}>\n`;
+                });
+            } else {
+                monthlyText = 'No monthly emojis configured\n';
+            }
+            
+            // Shadow emojis
+            let shadowText = '';
+            if (shadowEmojis.length > 0) {
+                shadowEmojis.forEach(emoji => {
+                    shadowText += `${emoji.monthKey}: <:${emoji.emojiName}:${emoji.emojiId}>\n`;
+                });
+            } else {
+                shadowText = 'No shadow emojis configured\n';
+            }
+
+            // Show all months for reference
+            const allMonths = [
+                '2025-01', '2025-02', '2025-03', '2025-04', 
+                '2025-05', '2025-06', '2025-07', '2025-08', 
+                '2025-09', '2025-10', '2025-11', '2025-12'
+            ];
+            
+            const configuredMonthly = new Set(monthlyEmojis.map(e => e.monthKey));
+            const configuredShadow = new Set(shadowEmojis.map(e => e.monthKey));
+            
+            let statusText = '';
+            allMonths.forEach(month => {
+                const monthlyStatus = configuredMonthly.has(month) ? '✅' : '❌';
+                const shadowStatus = configuredShadow.has(month) ? '✅' : '❌';
+                statusText += `${month}: Monthly ${monthlyStatus} Shadow ${shadowStatus}\n`;
             });
-        } else {
-            monthlyText = 'No monthly emojis configured\n';
-        }
-        
-        // Shadow emojis
-        let shadowText = '';
-        if (shadowEmojis.length > 0) {
-            shadowEmojis.forEach(emoji => {
-                shadowText += `${emoji.monthKey}: <:${emoji.emojiName}:${emoji.emojiId}>\n`;
+
+            embed.addFields(
+                { name: 'Monthly Challenge Emojis', value: monthlyText, inline: true },
+                { name: 'Shadow Challenge Emojis', value: shadowText, inline: true },
+                { name: 'Configuration Status', value: statusText, inline: false }
+            );
+
+            embed.setFooter({ 
+                text: `Total configured: ${allEmojis.length} | ✅ = Configured, ❌ = Using default` 
             });
-        } else {
-            shadowText = 'No shadow emojis configured\n';
+
+            await interaction.editReply({ embeds: [embed] });
+            
+        } catch (error) {
+            console.error('Error listing emojis:', error);
+            await interaction.editReply('❌ An error occurred while listing emojis.');
         }
-
-        // Show all months for reference
-        const allMonths = [
-            '2025-01', '2025-02', '2025-03', '2025-04', 
-            '2025-05', '2025-06', '2025-07', '2025-08', 
-            '2025-09', '2025-10', '2025-11', '2025-12'
-        ];
-        
-        const configuredMonthly = new Set(monthlyEmojis.map(e => e.monthKey));
-        const configuredShadow = new Set(shadowEmojis.map(e => e.monthKey));
-        
-        let monthlyComplete = '';
-        allMonths.forEach(month => {
-            const status = configuredMonthly.has(month) ? '✅' : '❌';
-            monthlyComplete += `${month}: ${status}\n`;
-        });
-        
-        let shadowComplete = '';
-        allMonths.forEach(month => {
-            const status = configuredShadow.has(month) ? '✅' : '❌';
-            shadowComplete += `${month}: ${status}\n`;
-        });
-
-        embed.addFields(
-            { name: 'Monthly Challenge Emojis', value: monthlyText, inline: true },
-            { name: 'Shadow Challenge Emojis', value: shadowText, inline: true },
-            { name: 'Monthly Status', value: monthlyComplete, inline: true },
-            { name: 'Shadow Status', value: shadowComplete, inline: true }
-        );
-
-        embed.setFooter({ 
-            text: `Total configured: ${allEmojis.length} | ✅ = Configured, ❌ = Using default` 
-        });
-
-        await interaction.editReply({ embeds: [embed] });
     },
 
     async handleClearEmoji(interaction) {
@@ -287,9 +249,6 @@ export default {
                 });
             }
             
-            // Clear cache to force refresh
-            clearEmojiCache();
-            
             const embed = new EmbedBuilder()
                 .setTitle('🗑️ Trophy Emoji Cleared')
                 .setDescription(
@@ -299,7 +258,7 @@ export default {
                     `Emoji has been removed and will use default fallback.`
                 )
                 .setColor('#FFA500')
-                .setFooter({ text: 'Emoji cache has been cleared and will refresh automatically' })
+                .setFooter({ text: 'Emoji removed from database successfully' })
                 .setTimestamp();
 
             await interaction.editReply({ embeds: [embed] });
@@ -307,51 +266,6 @@ export default {
         } catch (error) {
             console.error('Error clearing emoji:', error);
             await interaction.editReply('❌ An error occurred while clearing the emoji.');
-        }
-    },
-
-    async handleCacheManagement(interaction) {
-        const action = interaction.options.getString('action');
-        
-        if (action === 'clear') {
-            clearEmojiCache();
-            
-            const embed = new EmbedBuilder()
-                .setTitle('🧹 Cache Cleared')
-                .setDescription('Trophy emoji cache has been cleared and will refresh on next use.')
-                .setColor('#FFA500')
-                .setTimestamp();
-                
-            await interaction.editReply({ embeds: [embed] });
-            
-        } else if (action === 'info') {
-            const { getEmojiCacheInfo } = await import('../../config/trophyEmojis.js');
-            const cacheInfo = getEmojiCacheInfo();
-            
-            const embed = new EmbedBuilder()
-                .setTitle('📊 Cache Information')
-                .setDescription(
-                    `**Cached Emojis:** ${cacheInfo.size}\n` +
-                    `**Last Updated:** ${cacheInfo.lastUpdated}\n` +
-                    `**Cache Age:** ${Math.round((Date.now() - new Date(cacheInfo.lastUpdated).getTime()) / 1000 / 60)} minutes`
-                )
-                .setColor('#0099ff')
-                .setTimestamp();
-                
-            if (cacheInfo.entries.length > 0) {
-                let entriesText = '';
-                cacheInfo.entries.slice(0, 10).forEach(([key, value]) => {
-                    entriesText += `${key}: <:${value.emojiName}:${value.emojiId}>\n`;
-                });
-                
-                if (cacheInfo.entries.length > 10) {
-                    entriesText += `...and ${cacheInfo.entries.length - 10} more`;
-                }
-                
-                embed.addFields({ name: 'Cached Entries (Sample)', value: entriesText });
-            }
-                
-            await interaction.editReply({ embeds: [embed] });
         }
     }
 };
