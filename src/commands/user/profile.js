@@ -367,7 +367,7 @@ export default {
                 }
 
                 // UPDATED: Get custom emoji for this trophy
-                const emojiData = getTrophyEmoji('monthly', monthKey, awardLevel);
+                const emojiData = await getTrophyEmoji('monthly', monthKey, awardLevel);
 
                 trophies.push({
                     gameId: `monthly_${monthKey}`,
@@ -410,7 +410,7 @@ export default {
                 }
 
                 // UPDATED: Get custom emoji for this trophy
-                const emojiData = getTrophyEmoji('shadow', monthKey, awardLevel);
+                const emojiData = await getTrophyEmoji('shadow', monthKey, awardLevel);
 
                 trophies.push({
                     gameId: `shadow_${monthKey}`,
@@ -432,7 +432,7 @@ export default {
         
         for (const award of communityAwards) {
             // UPDATED: Use custom emoji for community awards
-            const emojiData = getTrophyEmoji('community', null, 'special');
+            const emojiData = await getTrophyEmoji('community', null, 'special');
             
             trophies.push({
                 gameId: `community_${award.title.replace(/\s+/g, '_').toLowerCase()}`,
