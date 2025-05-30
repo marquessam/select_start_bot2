@@ -228,7 +228,7 @@ export default {
                 time: 300000 // 5 minutes to fill out the form
             });
 
-            await modalSubmission.deferUpdate();
+            await modalSubmission.deferReply({ ephemeral: true });
 
             // Extract values from the modal
             const gameId = modalSubmission.fields.getTextInputValue('game_id');
@@ -239,19 +239,29 @@ export default {
 
             // Validate inputs
             if (isNaN(month) || month < 1 || month > 12) {
-                return modalSubmission.editReply({
-                    content: 'Invalid month. Please provide a number between 1 and 12.',
-                    embeds: [],
-                    components: []
-                });
+                try {
+                    return modalSubmission.editReply({
+                        content: 'Invalid month. Please provide a number between 1 and 12.',
+                        embeds: [],
+                        components: []
+                    });
+                } catch (editError) {
+                    console.error('Error sending invalid month response:', editError);
+                    return;
+                }
             }
 
             if (isNaN(year) || year < 2000 || year > 2100) {
-                return modalSubmission.editReply({
-                    content: 'Invalid year. Please provide a valid year.',
-                    embeds: [],
-                    components: []
-                });
+                try {
+                    return modalSubmission.editReply({
+                        content: 'Invalid year. Please provide a valid year.',
+                        embeds: [],
+                        components: []
+                    });
+                } catch (editError) {
+                    console.error('Error sending invalid year response:', editError);
+                    return;
+                }
             }
 
             // Parse progression and win achievements (now optional)
@@ -266,21 +276,31 @@ export default {
                 // Get game info to validate game exists
                 const gameInfo = await retroAPI.getGameInfoExtended(gameId);
                 if (!gameInfo) {
-                    return modalSubmission.editReply({
-                        content: 'Game not found. Please check the game ID.',
-                        embeds: [],
-                        components: []
-                    });
+                    try {
+                        return modalSubmission.editReply({
+                            content: 'Game not found. Please check the game ID.',
+                            embeds: [],
+                            components: []
+                        });
+                    } catch (editError) {
+                        console.error('Error sending game not found response:', editError);
+                        return;
+                    }
                 }
                 
                 // Get game achievements to get the total count
                 const achievements = gameInfo.achievements;
                 if (!achievements) {
-                    return modalSubmission.editReply({
-                        content: 'Could not retrieve achievements for this game. Please try again.',
-                        embeds: [],
-                        components: []
-                    });
+                    try {
+                        return modalSubmission.editReply({
+                            content: 'Could not retrieve achievements for this game. Please try again.',
+                            embeds: [],
+                            components: []
+                        });
+                    } catch (editError) {
+                        console.error('Error sending achievements retrieval error response:', editError);
+                        return;
+                    }
                 }
                 
                 const totalAchievements = Object.keys(achievements).length;
@@ -360,41 +380,64 @@ export default {
                             .setStyle(ButtonStyle.Secondary)
                     );
 
-                await modalSubmission.editReply({
-                    embeds: [embed],
-                    components: [actionRow]
-                });
+                try {
+                    await modalSubmission.editReply({
+                        embeds: [embed],
+                        components: [actionRow]
+                    });
+                } catch (editError) {
+                    console.error('Error editing modal reply:', editError);
+                    // Fallback: try to send a follow-up message
+                    try {
+                        await modalSubmission.followUp({
+                            embeds: [embed],
+                            components: [actionRow],
+                            ephemeral: true
+                        });
+                    } catch (followUpError) {
+                        console.error('Error sending follow-up:', followUpError);
+                    }
+                }
 
                 // Set up collector for the action buttons
-                const message = await modalSubmission.fetchReply();
-                const collector = message.createMessageComponentCollector({
-                    componentType: ComponentType.Button,
-                    time: 300000 // 5 minutes timeout
-                });
+                try {
+                    const message = await modalSubmission.fetchReply();
+                    const collector = message.createMessageComponentCollector({
+                        componentType: ComponentType.Button,
+                        time: 300000 // 5 minutes timeout
+                    });
 
-                collector.on('collect', async i => {
-                    if (i.user.id === interaction.user.id) {
-                        await i.deferUpdate();
+                    collector.on('collect', async i => {
+                        if (i.user.id === interaction.user.id) {
+                            await i.deferUpdate();
 
-                        if (i.customId === 'add_shadow') {
-                            // Pre-populate month/year for shadow challenge
-                            const options = { month, year };
-                            await this.handleShadowChallenge(i, options);
-                        } else if (i.customId === 'view_challenge') {
-                            // Pre-populate month/year for viewing
-                            const options = { month, year };
-                            await this.handleViewChallenge(i, options);
+                            if (i.customId === 'add_shadow') {
+                                // Pre-populate month/year for shadow challenge
+                                const options = { month, year };
+                                await this.handleShadowChallenge(i, options);
+                            } else if (i.customId === 'view_challenge') {
+                                // Pre-populate month/year for viewing
+                                const options = { month, year };
+                                await this.handleViewChallenge(i, options);
+                            }
                         }
-                    }
-                });
+                    });
+                } catch (fetchError) {
+                    console.error('Error setting up button collector:', fetchError);
+                }
 
             } catch (apiError) {
                 console.error('Error creating challenge:', apiError);
-                return modalSubmission.editReply({
-                    content: 'An error occurred while creating the challenge. Please try again.',
-                    embeds: [],
-                    components: []
-                });
+                try {
+                    return modalSubmission.editReply({
+                        content: 'An error occurred while creating the challenge. Please try again.',
+                        embeds: [],
+                        components: []
+                    });
+                } catch (editError) {
+                    console.error('Error sending API error response:', editError);
+                    return;
+                }
             }
 
         } catch (modalError) {
@@ -479,7 +522,7 @@ export default {
                 time: 300000 // 5 minutes to fill out the form
             });
 
-            await modalSubmission.deferUpdate();
+            await modalSubmission.deferReply({ ephemeral: true });
 
             // Extract values from the modal
             const gameId = modalSubmission.fields.getTextInputValue('game_id');
@@ -508,31 +551,46 @@ export default {
                 });
 
                 if (!targetChallenge) {
-                    return modalSubmission.editReply({
-                        content: `No challenge exists for ${month}/${year}. Create a monthly challenge first using /adminchallenge create.`,
-                        embeds: [],
-                        components: []
-                    });
+                    try {
+                        return modalSubmission.editReply({
+                            content: `No challenge exists for ${month}/${year}. Create a monthly challenge first using /adminchallenge create.`,
+                            embeds: [],
+                            components: []
+                        });
+                    } catch (editError) {
+                        console.error('Error sending no challenge response:', editError);
+                        return;
+                    }
                 }
 
                 // Get game info to validate game exists
                 const gameInfo = await retroAPI.getGameInfoExtended(gameId);
                 if (!gameInfo) {
-                    return modalSubmission.editReply({
-                        content: 'Game not found. Please check the game ID.',
-                        embeds: [],
-                        components: []
-                    });
+                    try {
+                        return modalSubmission.editReply({
+                            content: 'Game not found. Please check the game ID.',
+                            embeds: [],
+                            components: []
+                        });
+                    } catch (editError) {
+                        console.error('Error sending game not found response (shadow):', editError);
+                        return;
+                    }
                 }
                 
                 // Get game achievements to get the total count
                 const achievements = gameInfo.achievements;
                 if (!achievements) {
-                    return modalSubmission.editReply({
-                        content: 'Could not retrieve achievements for this game. Please try again.',
-                        embeds: [],
-                        components: []
-                    });
+                    try {
+                        return modalSubmission.editReply({
+                            content: 'Could not retrieve achievements for this game. Please try again.',
+                            embeds: [],
+                            components: []
+                        });
+                    } catch (editError) {
+                        console.error('Error sending achievements retrieval error response (shadow):', editError);
+                        return;
+                    }
                 }
                 
                 const totalAchievements = Object.keys(achievements).length;
@@ -626,41 +684,64 @@ export default {
                             .setStyle(ButtonStyle.Secondary)
                     );
 
-                await modalSubmission.editReply({
-                    embeds: [embed],
-                    components: [actionRow]
-                });
+                try {
+                    await modalSubmission.editReply({
+                        embeds: [embed],
+                        components: [actionRow]
+                    });
+                } catch (editError) {
+                    console.error('Error editing modal reply:', editError);
+                    // Fallback: try to send a follow-up message
+                    try {
+                        await modalSubmission.followUp({
+                            embeds: [embed],
+                            components: [actionRow],
+                            ephemeral: true
+                        });
+                    } catch (followUpError) {
+                        console.error('Error sending follow-up:', followUpError);
+                    }
+                }
 
                 // Set up collector for the action buttons
-                const message = await modalSubmission.fetchReply();
-                const collector = message.createMessageComponentCollector({
-                    componentType: ComponentType.Button,
-                    time: 300000 // 5 minutes timeout
-                });
+                try {
+                    const message = await modalSubmission.fetchReply();
+                    const collector = message.createMessageComponentCollector({
+                        componentType: ComponentType.Button,
+                        time: 300000 // 5 minutes timeout
+                    });
 
-                collector.on('collect', async i => {
-                    if (i.user.id === interaction.user.id) {
-                        await i.deferUpdate();
+                    collector.on('collect', async i => {
+                        if (i.user.id === interaction.user.id) {
+                            await i.deferUpdate();
 
-                        if (i.customId === 'toggle_shadow') {
-                            // Toggle the shadow visibility
-                            const options = { month, year };
-                            await this.handleToggleShadow(i, options);
-                        } else if (i.customId === 'view_challenge') {
-                            // View challenge details
-                            const options = { month, year };
-                            await this.handleViewChallenge(i, options);
+                            if (i.customId === 'toggle_shadow') {
+                                // Toggle the shadow visibility
+                                const options = { month, year };
+                                await this.handleToggleShadow(i, options);
+                            } else if (i.customId === 'view_challenge') {
+                                // View challenge details
+                                const options = { month, year };
+                                await this.handleViewChallenge(i, options);
+                            }
                         }
-                    }
-                });
+                    });
+                } catch (fetchError) {
+                    console.error('Error setting up button collector (shadow):', fetchError);
+                }
 
             } catch (apiError) {
                 console.error('Error adding shadow challenge:', apiError);
-                return modalSubmission.editReply({
-                    content: 'An error occurred while adding the shadow challenge. Please try again.',
-                    embeds: [],
-                    components: []
-                });
+                try {
+                    return modalSubmission.editReply({
+                        content: 'An error occurred while adding the shadow challenge. Please try again.',
+                        embeds: [],
+                        components: []
+                    });
+                } catch (editError) {
+                    console.error('Error sending API error response (shadow):', editError);
+                    return;
+                }
             }
 
         } catch (modalError) {
