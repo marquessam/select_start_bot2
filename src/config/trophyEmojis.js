@@ -2,7 +2,7 @@
 import { TrophyEmoji } from '../models/TrophyEmoji.js';
 
 // Default fallback emojis by award level
-export const DEFAULT_EMOJIS = {
+const DEFAULT_EMOJIS = {
     mastery: '✨',
     beaten: '⭐', 
     participation: '🏁',
@@ -15,7 +15,7 @@ let cacheLastUpdated = 0;
 const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
 
 // Helper function to get trophy emoji from database
-export async function getTrophyEmoji(challengeType, monthKey, awardLevel) {
+async function getTrophyEmoji(challengeType, monthKey, awardLevel) {
     try {
         // Check if we need to refresh cache
         const now = Date.now();
@@ -52,7 +52,7 @@ export async function getTrophyEmoji(challengeType, monthKey, awardLevel) {
 }
 
 // Utility function to format emoji for display
-export function formatTrophyEmoji(emojiId, emojiName) {
+function formatTrophyEmoji(emojiId, emojiName) {
     if (emojiId) {
         return `<:${emojiName}:${emojiId}>`;
     }
@@ -84,13 +84,13 @@ async function refreshEmojiCache() {
 }
 
 // Function to manually clear cache (useful after updates)
-export function clearEmojiCache() {
+function clearEmojiCache() {
     emojiCache.clear();
     cacheLastUpdated = 0;
 }
 
 // Function to get cached emoji count (for debugging)
-export function getEmojiCacheInfo() {
+function getEmojiCacheInfo() {
     return {
         size: emojiCache.size,
         lastUpdated: new Date(cacheLastUpdated).toISOString(),
@@ -103,6 +103,7 @@ refreshEmojiCache().catch(console.error);
 
 // Export all functions
 export {
+    DEFAULT_EMOJIS,
     getTrophyEmoji,
     formatTrophyEmoji,
     clearEmojiCache,
