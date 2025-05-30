@@ -1,74 +1,54 @@
-// src/config/trophyEmojis.js - Central emoji configuration
-export const TROPHY_EMOJIS = {
-    // Monthly Challenge Emojis (MC-month format)
-    monthly: {
-        '2025-01': { name: 'MC_jan', id: null }, // Will be updated with actual emoji ID
-        '2025-02': { name: 'MC_feb', id: null },
-        '2025-03': { name: 'MC_mar', id: null },
-        '2025-04': { name: 'MC_apr', id: null },
-        '2025-05': { name: 'MC_may', id: null },
-        '2025-06': { name: 'MC_jun', id: null },
-        '2025-07': { name: 'MC_jul', id: null },
-        '2025-08': { name: 'MC_aug', id: null },
-        '2025-09': { name: 'MC_sep', id: null },
-        '2025-10': { name: 'MC_oct', id: null },
-        '2025-11': { name: 'MC_nov', id: null },
-        '2025-12': { name: 'MC_dec', id: null }
-    },
-    
-    // Shadow Challenge Emojis (SG-month format)
-    shadow: {
-        '2025-01': { name: 'SG_jan', id: null },
-        '2025-02': { name: 'SG_feb', id: null },
-        '2025-03': { name: 'SG_mar', id: null },
-        '2025-04': { name: 'SG_apr', id: null },
-        '2025-05': { name: 'SG_may', id: null },
-        '2025-06': { name: 'SG_jun', id: null },
-        '2025-07': { name: 'SG_jul', id: null },
-        '2025-08': { name: 'SG_aug', id: null },
-        '2025-09': { name: 'SG_sep', id: null },
-        '2025-10': { name: 'SG_oct', id: null },
-        '2025-11': { name: 'SG_nov', id: null },
-        '2025-12': { name: 'SG_dec', id: null }
-    },
-    
-    // Default fallback emojis by award level
-    defaults: {
-        mastery: '✨',
-        beaten: '⭐', 
-        participation: '🏁',
-        special: '🎖️'
-    }
+// src/config/trophyEmojis.js - Database-driven trophy emoji configuration
+import { TrophyEmoji } from '../models/TrophyEmoji.js';
+
+// Default fallback emojis by award level
+export const DEFAULT_EMOJIS = {
+    mastery: '✨',
+    beaten: '⭐', 
+    participation: '🏁',
+    special: '🎖️'
 };
 
-// Helper function to get trophy emoji
-export function getTrophyEmoji(challengeType, monthKey, awardLevel) {
-    // Try to get custom emoji first
-    if (challengeType === 'monthly' && TROPHY_EMOJIS.monthly[monthKey]) {
-        const emoji = TROPHY_EMOJIS.monthly[monthKey];
-        if (emoji.id) {
-            return {
-                emojiId: emoji.id,
-                emojiName: emoji.name
-            };
+// Cache for emoji data to avoid repeated database calls
+let emojiCache = new Map();
+let cacheLastUpdated = 0;
+const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
+
+// Helper function to get trophy emoji from database
+export async function getTrophyEmoji(challengeType, monthKey, awardLevel) {
+    try {
+        // Check if we need to refresh cache
+        const now = Date.now();
+        if (now - cacheLastUpdated > CACHE_DURATION) {
+            await refreshEmojiCache();
         }
-    }
-    
-    if (challengeType === 'shadow' && TROPHY_EMOJIS.shadow[monthKey]) {
-        const emoji = TROPHY_EMOJIS.shadow[monthKey];
-        if (emoji.id) {
-            return {
-                emojiId: emoji.id,
-                emojiName: emoji.name
-            };
+
+        // Try to get custom emoji from cache first
+        if (challengeType === 'monthly' || challengeType === 'shadow') {
+            const cacheKey = `${challengeType}_${monthKey}`;
+            const emoji = emojiCache.get(cacheKey);
+            
+            if (emoji && emoji.emojiId) {
+                return {
+                    emojiId: emoji.emojiId,
+                    emojiName: emoji.emojiName
+                };
+            }
         }
+        
+        // Fall back to default emoji
+        return {
+            emojiId: null,
+            emojiName: DEFAULT_EMOJIS[awardLevel] || '🏆'
+        };
+    } catch (error) {
+        console.error('Error getting trophy emoji:', error);
+        // Always provide fallback on error
+        return {
+            emojiId: null,
+            emojiName: DEFAULT_EMOJIS[awardLevel] || '🏆'
+        };
     }
-    
-    // Fall back to default emoji
-    return {
-        emojiId: null,
-        emojiName: TROPHY_EMOJIS.defaults[awardLevel] || '🏆'
-    };
 }
 
 // Utility function to format emoji for display
@@ -78,3 +58,54 @@ export function formatTrophyEmoji(emojiId, emojiName) {
     }
     return emojiName || '🏆';
 }
+
+// Function to refresh emoji cache from database
+async function refreshEmojiCache() {
+    try {
+        const allEmojis = await TrophyEmoji.getAllEmojis();
+        
+        // Clear existing cache
+        emojiCache.clear();
+        
+        // Populate cache
+        allEmojis.forEach(emoji => {
+            const cacheKey = `${emoji.challengeType}_${emoji.monthKey}`;
+            emojiCache.set(cacheKey, {
+                emojiId: emoji.emojiId,
+                emojiName: emoji.emojiName
+            });
+        });
+        
+        cacheLastUpdated = Date.now();
+        console.log(`Trophy emoji cache refreshed with ${allEmojis.length} emojis`);
+    } catch (error) {
+        console.error('Error refreshing emoji cache:', error);
+    }
+}
+
+// Function to manually clear cache (useful after updates)
+export function clearEmojiCache() {
+    emojiCache.clear();
+    cacheLastUpdated = 0;
+}
+
+// Function to get cached emoji count (for debugging)
+export function getEmojiCacheInfo() {
+    return {
+        size: emojiCache.size,
+        lastUpdated: new Date(cacheLastUpdated).toISOString(),
+        entries: Array.from(emojiCache.entries())
+    };
+}
+
+// Initialize cache on module load
+refreshEmojiCache().catch(console.error);
+
+// Export all functions
+export {
+    getTrophyEmoji,
+    formatTrophyEmoji,
+    clearEmojiCache,
+    getEmojiCacheInfo,
+    refreshEmojiCache
+};
