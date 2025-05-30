@@ -1,12 +1,18 @@
-// src/commands/user/collection.js
+// src/commands/user/collection.js - Enhanced with combination interface
 import { 
     SlashCommandBuilder, 
     EmbedBuilder,
     ActionRowBuilder,
     ButtonBuilder,
-    ButtonStyle
+    ButtonStyle,
+    StringSelectMenuBuilder,
+    ModalBuilder,
+    TextInputBuilder,
+    TextInputStyle
 } from 'discord.js';
 import { User } from '../../models/User.js';
+import { GachaItem, CombinationRule } from '../../models/GachaItem.js';
+import combinationService from '../../services/combinationService.js';
 import gachaService from '../../services/gachaService.js';
 import { COLORS } from '../../utils/FeedUtils.js';
 
@@ -16,23 +22,25 @@ export default {
         .setDescription('View your gacha collection')
         .addStringOption(option =>
             option.setName('filter')
-                .setDescription('Filter by rarity, type, or series')
+                .setDescription('Filter your collection')
                 .setRequired(false)
                 .addChoices(
+                    { name: 'All items', value: 'all' },
                     { name: 'Common', value: 'common' },
                     { name: 'Uncommon', value: 'uncommon' },
                     { name: 'Rare', value: 'rare' },
                     { name: 'Epic', value: 'epic' },
                     { name: 'Legendary', value: 'legendary' },
+                    { name: 'Mythic', value: 'mythic' },
                     { name: 'Trinkets', value: 'trinket' },
                     { name: 'Collectibles', value: 'collectible' },
                     { name: 'Series Items', value: 'series' },
-                    { name: 'Trophies', value: 'trophy' },
-                    { name: 'Special Items', value: 'special' }
+                    { name: 'Combined Items', value: 'combined' },
+                    { name: 'Stackable (>1)', value: 'stackable' }
                 ))
         .addStringOption(option =>
             option.setName('series')
-                .setDescription('Filter by specific series (e.g., triforce, mario)')
+                .setDescription('Filter by specific series')
                 .setRequired(false))
         .addStringOption(option =>
             option.setName('sort')
@@ -62,26 +70,30 @@ export default {
                 });
             }
 
-            const filter = interaction.options.getString('filter');
+            const filter = interaction.options.getString('filter') || 'all';
             const series = interaction.options.getString('series');
             const sort = interaction.options.getString('sort') || 'recent';
 
             const { items, summary } = this.processCollection(user.gachaCollection, filter, series, sort);
             const embed = this.createCollectionEmbed(user, items, summary, filter, series, sort);
             
-            // Add pagination if there are many items
-            if (items.length > 15) {
-                const buttons = this.createPaginationButtons(0, items.length);
-                await interaction.editReply({ 
-                    embeds: [embed],
-                    components: [buttons]
-                });
-                
-                // Set up pagination handling
-                this.setupPagination(interaction, user, items, summary, filter, series, sort);
-            } else {
-                await interaction.editReply({ embeds: [embed] });
-            }
+            // Add combination button
+            const buttons = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId(`collection_combine_${user.raUsername}`)
+                        .setLabel('🔧 Combine Items')
+                        .setStyle(ButtonStyle.Primary),
+                    new ButtonBuilder()
+                        .setCustomId(`collection_refresh_${user.raUsername}`)
+                        .setLabel('🔄 Refresh')
+                        .setStyle(ButtonStyle.Secondary)
+                );
+
+            await interaction.editReply({ 
+                embeds: [embed],
+                components: [buttons]
+            });
 
         } catch (error) {
             console.error('Error displaying collection:', error);
@@ -91,14 +103,376 @@ export default {
         }
     },
 
+    // Handle button interactions for this command
+    async handleButtonInteraction(interaction) {
+        if (!interaction.customId.startsWith('collection_')) return;
+
+        await interaction.deferReply({ ephemeral: true });
+
+        try {
+            const [, action, username] = interaction.customId.split('_');
+            
+            const user = await User.findOne({ 
+                raUsername: { $regex: new RegExp(`^${username}$`, 'i') }
+            });
+
+            if (!user) {
+                return interaction.editReply({
+                    content: '❌ User not found.',
+                    ephemeral: true
+                });
+            }
+
+            // Check if the person clicking is the owner
+            if (user.discordId !== interaction.user.id) {
+                return interaction.editReply({
+                    content: '❌ You can only manage your own collection.',
+                    ephemeral: true
+                });
+            }
+
+            switch (action) {
+                case 'combine':
+                    await this.handleCombineButton(interaction, user);
+                    break;
+                case 'refresh':
+                    await this.handleRefreshButton(interaction, user);
+                    break;
+                default:
+                    await interaction.editReply('Unknown action.');
+            }
+
+        } catch (error) {
+            console.error('Error handling collection button:', error);
+            await interaction.editReply({
+                content: '❌ An error occurred.',
+                ephemeral: true
+            });
+        }
+    },
+
+    async handleCombineButton(interaction, user) {
+        const possibleCombinations = await combinationService.getPossibleCombinations(user);
+        
+        if (possibleCombinations.length === 0) {
+            return interaction.editReply({
+                content: '🔧 No combinations available!\n\n' +
+                         '💡 **Tips:**\n' +
+                         '• Collect more items from the gacha machine\n' +
+                         '• Try different combinations - some are discovered through experimentation!\n' +
+                         '• Ask other users what combinations they\'ve discovered'
+            });
+        }
+
+        // Separate available from unavailable
+        const available = possibleCombinations.filter(c => c.canMake && !c.isAutomatic);
+        const unavailable = possibleCombinations.filter(c => !c.canMake && !c.isAutomatic);
+        const automatic = possibleCombinations.filter(c => c.isAutomatic);
+
+        const embed = new EmbedBuilder()
+            .setTitle(`🔧 ${user.raUsername}'s Combination Workshop`)
+            .setColor(COLORS.INFO)
+            .setDescription('Select a combination to create new items!')
+            .setTimestamp();
+
+        // Show available combinations
+        if (available.length > 0) {
+            let availableText = '';
+            for (const combo of available.slice(0, 5)) {
+                const resultEmoji = `<:${combo.resultItem.emojiName}:${combo.resultItem.emojiId}>`;
+                availableText += `${resultEmoji} **${combo.resultItem.itemName}** x${combo.result.quantity}\n`;
+                
+                // Show ingredients briefly
+                let ingredientsText = '';
+                for (const ing of combo.ingredients) {
+                    const item = await GachaItem.findOne({ itemId: ing.itemId });
+                    const emoji = item ? `<:${item.emojiName}:${item.emojiId}>` : '❓';
+                    ingredientsText += `${emoji}${ing.quantity} `;
+                }
+                availableText += `   *Needs: ${ingredientsText}*\n\n`;
+            }
+            
+            if (available.length > 5) {
+                availableText += `*...and ${available.length - 5} more*\n`;
+            }
+            
+            embed.addFields({ 
+                name: `✅ Ready to Make (${available.length})`, 
+                value: availableText,
+                inline: false 
+            });
+        }
+
+        // Show automatic combinations info
+        if (automatic.length > 0) {
+            let autoText = '';
+            for (const combo of automatic.slice(0, 3)) {
+                const resultEmoji = `<:${combo.resultItem.emojiName}:${combo.resultItem.emojiId}>`;
+                const status = combo.canMake ? '⚡ Auto-combining' : '⏳ Waiting';
+                autoText += `${status} ${resultEmoji} **${combo.resultItem.itemName}**\n`;
+            }
+            if (automatic.length > 3) {
+                autoText += `*...and ${automatic.length - 3} more*\n`;
+            }
+            embed.addFields({ 
+                name: `⚡ Automatic Combinations (${automatic.length})`, 
+                value: autoText + '\n*These combine automatically when you have the ingredients*',
+                inline: false 
+            });
+        }
+
+        // Show some missing combinations as hints
+        if (unavailable.length > 0) {
+            let hintText = '';
+            for (const combo of unavailable.slice(0, 3)) {
+                const resultEmoji = `<:${combo.resultItem.emojiName}:${combo.resultItem.emojiId}>`;
+                hintText += `${resultEmoji} **${combo.resultItem.itemName}** *(need more items)*\n`;
+            }
+            if (unavailable.length > 3) {
+                hintText += `*...and ${unavailable.length - 3} more*\n`;
+            }
+            embed.addFields({ 
+                name: `🔒 Discovered but Missing Items (${unavailable.length})`, 
+                value: hintText,
+                inline: false 
+            });
+        }
+
+        const components = [];
+
+        // Add selection menu for available combinations
+        if (available.length > 0) {
+            const combineMenu = new StringSelectMenuBuilder()
+                .setCustomId(`combine_select_${user.raUsername}`)
+                .setPlaceholder('Choose a combination to make...')
+                .addOptions(
+                    available.slice(0, 25).map(combo => {
+                        const ingredientCount = combo.ingredients.reduce((sum, ing) => sum + ing.quantity, 0);
+                        return {
+                            label: combo.resultItem.itemName,
+                            value: combo.ruleId,
+                            description: `${ingredientCount} ingredients → ${combo.result.quantity}x result`,
+                            emoji: combo.resultItem.emojiName
+                        };
+                    })
+                );
+            
+            components.push(new ActionRowBuilder().addComponents(combineMenu));
+        }
+
+        // Add info button
+        const infoButton = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`combine_info_${user.raUsername}`)
+                    .setLabel('ℹ️ How Combinations Work')
+                    .setStyle(ButtonStyle.Secondary),
+                new ButtonBuilder()
+                    .setCustomId(`combine_stats_${user.raUsername}`)
+                    .setLabel('📊 My Combination Stats')
+                    .setStyle(ButtonStyle.Secondary)
+            );
+        
+        components.push(infoButton);
+
+        await interaction.editReply({ embeds: [embed], components });
+    },
+
+    async handleRefreshButton(interaction, user) {
+        // Check for any auto-combinations that might have triggered
+        const autoCombinations = await combinationService.checkAutoCombinations(user);
+        
+        let message = '🔄 Collection refreshed!';
+        
+        if (autoCombinations.length > 0) {
+            message += '\n\n⚡ **Auto-combinations occurred:**\n';
+            for (const combo of autoCombinations) {
+                const resultEmoji = `<:${combo.resultItem.emojiName}:${combo.resultItem.emojiId}>`;
+                message += `${resultEmoji} ${combo.resultQuantity}x ${combo.resultItem.itemName}\n`;
+            }
+        }
+
+        await interaction.editReply({ content: message });
+    },
+
+    // Handle select menu interactions
+    async handleSelectMenuInteraction(interaction) {
+        if (!interaction.customId.startsWith('combine_select_')) return;
+
+        await interaction.deferReply({ ephemeral: true });
+
+        try {
+            const username = interaction.customId.replace('combine_select_', '');
+            const ruleId = interaction.values[0];
+            
+            const user = await User.findOne({ 
+                raUsername: { $regex: new RegExp(`^${username}$`, 'i') }
+            });
+
+            if (!user || user.discordId !== interaction.user.id) {
+                return interaction.editReply({
+                    content: '❌ You can only manage your own collection.',
+                    ephemeral: true
+                });
+            }
+
+            // Show combination preview and confirmation
+            await this.showCombinationPreview(interaction, user, ruleId);
+
+        } catch (error) {
+            console.error('Error handling combine select:', error);
+            await interaction.editReply({
+                content: '❌ An error occurred.',
+                ephemeral: true
+            });
+        }
+    },
+
+    async showCombinationPreview(interaction, user, ruleId) {
+        const preview = await combinationService.previewCombination(user, ruleId);
+        
+        if (!preview.success) {
+            return interaction.editReply({
+                content: `❌ ${preview.error}`
+            });
+        }
+
+        const embed = new EmbedBuilder()
+            .setTitle('🔍 Combination Preview')
+            .setColor(preview.canMake ? COLORS.SUCCESS : COLORS.WARNING)
+            .setDescription(`**${preview.rule.ruleId}**`)
+            .setTimestamp();
+
+        // Show what will be consumed
+        let ingredientsText = '';
+        for (const ingredient of preview.rule.ingredients) {
+            const item = await GachaItem.findOne({ itemId: ingredient.itemId });
+            const userItem = user.gachaCollection?.find(i => i.itemId === ingredient.itemId);
+            const have = userItem ? (userItem.quantity || 1) : 0;
+            const emoji = item ? `<:${item.emojiName}:${item.emojiId}>` : '❓';
+            
+            ingredientsText += `${emoji} **${ingredient.quantity}x** ${item?.itemName || ingredient.itemId} `;
+            ingredientsText += `*(have: ${have})*\n`;
+        }
+        embed.addFields({ name: '📦 Will Consume', value: ingredientsText });
+
+        // Show what will be created
+        const resultEmoji = `<:${preview.resultItem.emojiName}:${preview.resultItem.emojiId}>`;
+        embed.addFields({ 
+            name: '🎁 Will Create', 
+            value: `${resultEmoji} **${preview.rule.result.quantity}x ${preview.resultItem.itemName}**\n*${preview.resultItem.description}*`
+        });
+
+        if (preview.resultItem.flavorText) {
+            embed.addFields({ 
+                name: 'About This Item', 
+                value: `*${preview.resultItem.flavorText}*` 
+            });
+        }
+
+        const components = [];
+        
+        if (preview.canMake) {
+            const confirmButton = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId(`combine_confirm_${user.raUsername}_${ruleId}`)
+                        .setLabel('✅ Combine Items')
+                        .setStyle(ButtonStyle.Success),
+                    new ButtonBuilder()
+                        .setCustomId(`combine_cancel_${user.raUsername}`)
+                        .setLabel('❌ Cancel')
+                        .setStyle(ButtonStyle.Secondary)
+                );
+            components.push(confirmButton);
+        } else {
+            embed.setDescription(`❌ **Cannot combine:** ${preview.missing.map(m => `Need ${m.shortage} more ${m.itemId}`).join(', ')}`);
+        }
+
+        await interaction.editReply({ embeds: [embed], components });
+    },
+
+    // Handle combination confirmation
+    async handleCombineConfirm(interaction) {
+        if (!interaction.customId.startsWith('combine_confirm_')) return;
+
+        await interaction.deferReply({ ephemeral: true });
+
+        try {
+            const [, , username, ruleId] = interaction.customId.split('_');
+            
+            const user = await User.findOne({ 
+                raUsername: { $regex: new RegExp(`^${username}$`, 'i') }
+            });
+
+            if (!user || user.discordId !== interaction.user.id) {
+                return interaction.editReply({
+                    content: '❌ You can only manage your own collection.',
+                    ephemeral: true
+                });
+            }
+
+            const result = await combinationService.attemptCombination(user, ruleId);
+            
+            if (!result.success) {
+                return interaction.editReply({
+                    content: `❌ Combination failed: ${result.error}`
+                });
+            }
+
+            // Success! Show what happened
+            const resultEmoji = `<:${result.resultItem.emojiName}:${result.resultItem.emojiId}>`;
+            
+            let message = `🎉 **Combination Successful!**\n\n`;
+            message += `${resultEmoji} **Created: ${result.resultQuantity}x ${result.resultItem.itemName}**\n\n`;
+            
+            message += `📦 **Consumed:**\n`;
+            for (const ingredient of result.ingredients) {
+                const item = await GachaItem.findOne({ itemId: ingredient.itemId });
+                const emoji = item ? `<:${item.emojiName}:${item.emojiId}>` : '❓';
+                message += `${emoji} ${ingredient.quantity}x ${item?.itemName || ingredient.itemId}\n`;
+            }
+
+            await interaction.editReply({ content: message });
+
+            // Check for auto-combinations triggered by this result
+            const autoCombinations = await combinationService.checkAutoCombinations(user);
+            
+            if (autoCombinations.length > 0) {
+                let autoMessage = '\n⚡ **Bonus auto-combinations triggered:**\n';
+                for (const combo of autoCombinations) {
+                    const autoEmoji = `<:${combo.resultItem.emojiName}:${combo.resultItem.emojiId}>`;
+                    autoMessage += `${autoEmoji} ${combo.resultQuantity}x ${combo.resultItem.itemName}\n`;
+                }
+                
+                await interaction.followUp({
+                    content: autoMessage,
+                    ephemeral: true
+                });
+            }
+
+        } catch (error) {
+            console.error('Error confirming combination:', error);
+            await interaction.editReply({
+                content: '❌ An error occurred during combination.',
+                ephemeral: true
+            });
+        }
+    },
+
+    // Existing methods from the original collection command
     processCollection(collection, filter, series, sort) {
         let filteredItems = [...collection];
 
         // Apply filters
-        if (filter) {
-            filteredItems = filteredItems.filter(item => {
-                return item.rarity === filter || item.itemType === filter;
-            });
+        if (filter && filter !== 'all') {
+            if (filter === 'stackable') {
+                filteredItems = filteredItems.filter(item => (item.quantity || 1) > 1);
+            } else {
+                filteredItems = filteredItems.filter(item => {
+                    return item.rarity === filter || item.itemType === filter;
+                });
+            }
         }
 
         if (series) {
@@ -111,7 +485,7 @@ export default {
                 filteredItems.sort((a, b) => a.itemName.localeCompare(b.itemName));
                 break;
             case 'rarity':
-                const rarityOrder = ['legendary', 'epic', 'rare', 'uncommon', 'common'];
+                const rarityOrder = ['mythic', 'legendary', 'epic', 'rare', 'uncommon', 'common'];
                 filteredItems.sort((a, b) => {
                     const aIndex = rarityOrder.indexOf(a.rarity);
                     const bIndex = rarityOrder.indexOf(b.rarity);
@@ -133,7 +507,7 @@ export default {
             filtered: filteredItems.length,
             totalQuantity: collection.reduce((sum, item) => sum + (item.quantity || 1), 0),
             rarityBreakdown: this.getRarityBreakdown(filteredItems),
-            seriesBreakdown: this.getSeriesBreakdown(filteredItems)
+            combinationStats: combinationService.getCombinationStats({ gachaCollection: collection })
         };
 
         return { items: filteredItems, summary };
@@ -141,6 +515,7 @@ export default {
 
     getRarityBreakdown(items) {
         const breakdown = {
+            mythic: 0,
             legendary: 0,
             epic: 0,
             rare: 0,
@@ -151,21 +526,6 @@ export default {
         items.forEach(item => {
             if (breakdown[item.rarity] !== undefined) {
                 breakdown[item.rarity] += (item.quantity || 1);
-            }
-        });
-
-        return breakdown;
-    },
-
-    getSeriesBreakdown(items) {
-        const breakdown = {};
-        
-        items.forEach(item => {
-            if (item.seriesId) {
-                if (!breakdown[item.seriesId]) {
-                    breakdown[item.seriesId] = 0;
-                }
-                breakdown[item.seriesId] += (item.quantity || 1);
             }
         });
 
@@ -183,14 +543,15 @@ export default {
             .setColor(COLORS.INFO)
             .setTimestamp();
 
-        // Create description with filters and summary
+        // Enhanced description with combination stats
         let description = `**Total Items:** ${summary.totalQuantity} (${summary.total} unique)\n`;
         
-        if (filter || series) {
+        if (filter && filter !== 'all' || series) {
             description += `**Filtered:** ${summary.filtered} items\n`;
         }
 
-        description += `**Sort:** ${sort}\n\n`;
+        description += `**Sort:** ${sort}\n`;
+        description += `**Combinations Made:** ${summary.combinationStats.totalCombined}\n\n`;
 
         // Add rarity breakdown
         description += '**By Rarity:**\n';
@@ -200,14 +561,6 @@ export default {
                 description += `${emoji} ${rarity}: ${count}\n`;
             }
         });
-
-        // Add series breakdown if there are series items
-        if (Object.keys(summary.seriesBreakdown).length > 0) {
-            description += '\n**By Series:**\n';
-            Object.entries(summary.seriesBreakdown).forEach(([seriesId, count]) => {
-                description += `📚 ${seriesId}: ${count}\n`;
-            });
-        }
 
         embed.setDescription(description);
 
@@ -220,10 +573,9 @@ export default {
                 const rarityEmoji = gachaService.getRarityEmoji(item.rarity);
                 const quantity = (item.quantity || 1) > 1 ? ` x${item.quantity}` : '';
                 const seriesTag = item.seriesId ? ` [${item.seriesId}]` : '';
-                const obtainedDate = new Date(item.obtainedAt).toLocaleDateString();
+                const sourceTag = item.source === 'combined' ? ' 🔧' : '';
                 
-                itemsText += `${rarityEmoji} ${emoji} **${item.itemName}**${quantity}${seriesTag}\n`;
-                itemsText += `*Obtained: ${obtainedDate}*\n\n`;
+                itemsText += `${rarityEmoji} ${emoji} **${item.itemName}**${quantity}${seriesTag}${sourceTag}\n`;
             });
 
             const totalPages = Math.ceil(items.length / itemsPerPage);
@@ -242,97 +594,10 @@ export default {
             });
         }
 
-        // Add footer with help text
         embed.setFooter({ 
-            text: 'Use filters to narrow down your collection • Visit the gacha machine to collect more!' 
+            text: '🔧 = Made through combination • Use the Combine button to create new items!' 
         });
 
         return embed;
-    },
-
-    createPaginationButtons(currentPage, totalItems) {
-        const itemsPerPage = 15;
-        const totalPages = Math.ceil(totalItems / itemsPerPage);
-
-        return new ActionRowBuilder()
-            .addComponents(
-                new ButtonBuilder()
-                    .setCustomId('collection_first')
-                    .setLabel('<<')
-                    .setStyle(ButtonStyle.Primary)
-                    .setDisabled(currentPage === 0),
-                
-                new ButtonBuilder()
-                    .setCustomId('collection_prev')
-                    .setLabel('<')
-                    .setStyle(ButtonStyle.Primary)
-                    .setDisabled(currentPage === 0),
-                
-                new ButtonBuilder()
-                    .setCustomId('collection_info')
-                    .setLabel(`${currentPage + 1}/${totalPages}`)
-                    .setStyle(ButtonStyle.Secondary)
-                    .setDisabled(true),
-                
-                new ButtonBuilder()
-                    .setCustomId('collection_next')
-                    .setLabel('>')
-                    .setStyle(ButtonStyle.Primary)
-                    .setDisabled(currentPage >= totalPages - 1),
-                
-                new ButtonBuilder()
-                    .setCustomId('collection_last')
-                    .setLabel('>>')
-                    .setStyle(ButtonStyle.Primary)
-                    .setDisabled(currentPage >= totalPages - 1)
-            );
-    },
-
-    setupPagination(originalInteraction, user, items, summary, filter, series, sort) {
-        const collector = originalInteraction.channel.createMessageComponentCollector({
-            filter: i => i.user.id === originalInteraction.user.id && i.customId.startsWith('collection_'),
-            time: 300000 // 5 minutes
-        });
-
-        let currentPage = 0;
-        const itemsPerPage = 15;
-        const totalPages = Math.ceil(items.length / itemsPerPage);
-
-        collector.on('collect', async (buttonInteraction) => {
-            await buttonInteraction.deferUpdate();
-
-            switch (buttonInteraction.customId) {
-                case 'collection_first':
-                    currentPage = 0;
-                    break;
-                case 'collection_prev':
-                    currentPage = Math.max(0, currentPage - 1);
-                    break;
-                case 'collection_next':
-                    currentPage = Math.min(totalPages - 1, currentPage + 1);
-                    break;
-                case 'collection_last':
-                    currentPage = totalPages - 1;
-                    break;
-            }
-
-            const embed = this.createCollectionEmbed(user, items, summary, filter, series, sort, currentPage);
-            const buttons = this.createPaginationButtons(currentPage, items.length);
-
-            await buttonInteraction.editReply({
-                embeds: [embed],
-                components: [buttons]
-            });
-        });
-
-        collector.on('end', async () => {
-            try {
-                await originalInteraction.editReply({
-                    components: [] // Remove buttons when collector expires
-                });
-            } catch (error) {
-                // Interaction might be deleted
-            }
-        });
     }
 };
