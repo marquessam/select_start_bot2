@@ -1,6 +1,7 @@
-// src/services/gachaService.js
+// src/services/gachaService.js - Updated with auto-combination support
 import { User } from '../models/User.js';
 import { GachaItem } from '../models/GachaItem.js';
+import combinationService from './combinationService.js';
 
 // Pull costs
 const PULL_COSTS = {
@@ -47,22 +48,27 @@ class GachaService {
         // Check for series completions
         const completions = await this.checkSeriesCompletions(user, results);
 
+        // NEW: Check for automatic combinations after adding items
+        const autoCombinations = await combinationService.checkAutoCombinations(user);
+
         await user.save();
 
         return {
             results,
             completions,
+            autoCombinations, // NEW: Include auto-combinations in results
             newBalance: user.gpBalance,
             cost
         };
     }
 
     /**
-     * Select a random item based on drop rates
+     * Select a random item based on drop rates (only items with dropRate > 0)
      */
     async selectRandomItem() {
         try {
-            const availableItems = await GachaItem.getAvailableItems();
+            // Only get items that can actually be pulled from gacha
+            const availableItems = await GachaItem.getGachaPool();
             
             if (availableItems.length === 0) {
                 console.error('No available gacha items found');
@@ -123,7 +129,8 @@ class GachaService {
                 isNew: false,
                 wasAtMax,
                 itemType: gachaItem.itemType,
-                seriesId: gachaItem.seriesId
+                seriesId: gachaItem.seriesId,
+                source: 'gacha' // Track source
             };
         } else if (!existingItem) {
             // Add new item
@@ -136,7 +143,8 @@ class GachaService {
                 emojiId: gachaItem.emojiId,
                 emojiName: gachaItem.emojiName,
                 obtainedAt: new Date(),
-                quantity: 1
+                quantity: 1,
+                source: 'gacha' // Track source
             });
 
             return {
@@ -151,7 +159,8 @@ class GachaService {
                 maxStack: gachaItem.maxStack,
                 isNew: true,
                 itemType: gachaItem.itemType,
-                seriesId: gachaItem.seriesId
+                seriesId: gachaItem.seriesId,
+                source: 'gacha'
             };
         } else {
             // Item exists but can't stack more
@@ -168,7 +177,8 @@ class GachaService {
                 isNew: false,
                 wasAtMax: true,
                 itemType: gachaItem.itemType,
-                seriesId: gachaItem.seriesId
+                seriesId: gachaItem.seriesId,
+                source: 'gacha'
             };
         }
     }
@@ -232,7 +242,8 @@ class GachaService {
                 emojiId: completionReward.emojiId,
                 emojiName: completionReward.emojiName,
                 obtainedAt: new Date(),
-                quantity: 1
+                quantity: 1,
+                source: 'series_completion' // Track source
             });
 
             return {
@@ -248,7 +259,7 @@ class GachaService {
     }
 
     /**
-     * Get user's collection summary
+     * Get user's collection summary with combination stats
      */
     getUserCollectionSummary(user) {
         if (!user.gachaCollection || user.gachaCollection.length === 0) {
@@ -256,7 +267,8 @@ class GachaService {
                 totalItems: 0,
                 uniqueItems: 0,
                 rarityCount: {},
-                recentItems: []
+                recentItems: [],
+                sourceBreakdown: {}
             };
         }
 
@@ -265,15 +277,29 @@ class GachaService {
             uncommon: 0,
             rare: 0,
             epic: 0,
-            legendary: 0
+            legendary: 0,
+            mythic: 0
+        };
+
+        const sourceBreakdown = {
+            gacha: 0,
+            combined: 0,
+            series_completion: 0
         };
 
         let totalItems = 0;
         
         user.gachaCollection.forEach(item => {
-            totalItems += item.quantity || 1;
+            const quantity = item.quantity || 1;
+            totalItems += quantity;
+            
             if (rarityCount[item.rarity] !== undefined) {
-                rarityCount[item.rarity]++;
+                rarityCount[item.rarity] += quantity;
+            }
+            
+            const source = item.source || 'gacha';
+            if (sourceBreakdown[source] !== undefined) {
+                sourceBreakdown[source] += quantity;
             }
         });
 
@@ -285,7 +311,8 @@ class GachaService {
             totalItems,
             uniqueItems: user.gachaCollection.length,
             rarityCount,
-            recentItems
+            recentItems,
+            sourceBreakdown
         };
     }
 
@@ -308,7 +335,8 @@ class GachaService {
             uncommon: '#2ECC71',   // Green  
             rare: '#3498DB',       // Blue
             epic: '#9B59B6',       // Purple
-            legendary: '#F1C40F'   // Gold
+            legendary: '#F1C40F',  // Gold
+            mythic: '#E91E63'      // Pink
         };
         return colors[rarity] || colors.common;
     }
@@ -322,7 +350,8 @@ class GachaService {
             uncommon: '🟢', 
             rare: '🔵',
             epic: '🟣',
-            legendary: '🟡'
+            legendary: '🟡',
+            mythic: '🌈'
         };
         return emojis[rarity] || emojis.common;
     }
