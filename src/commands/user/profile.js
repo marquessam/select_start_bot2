@@ -1,4 +1,4 @@
-// src/commands/user/profile.js - UPDATED with better collection display
+// src/commands/user/profile.js - UPDATED with clean design and better collection display
 import { 
     SlashCommandBuilder, 
     EmbedBuilder,
@@ -476,8 +476,9 @@ export default {
             }
         });
 
+        // UPDATED: Clean trophy case title - removed 🏆 emoji
         const embed = new EmbedBuilder()
-            .setTitle(`🏆 ${user.raUsername}'s Trophy Case`)
+            .setTitle(`${user.raUsername}'s Trophy Case`)
             .setColor(COLORS.GOLD)
             .setDescription(`**Achievement Trophies:** ${trophies.length}`)
             .setTimestamp();
@@ -537,7 +538,7 @@ export default {
         });
     },
 
-    // UPDATED: Better collection display with series grouping
+    // UPDATED: Clean collection display with series grouping
     async handleCollectionButton(interaction, user) {
         const collection = user.gachaCollection || [];
         
@@ -556,8 +557,9 @@ export default {
         // Get collection summary with series breakdown
         const summary = gachaService.getUserCollectionSummary(user);
 
+        // UPDATED: Clean collection title - removed 📦 emoji
         const embed = new EmbedBuilder()
-            .setTitle(`📦 ${user.raUsername}'s Collection`)
+            .setTitle(`${user.raUsername}'s Collection`)
             .setColor(COLORS.INFO)
             .setDescription(`**Total Items:** ${summary.totalItems} (${summary.uniqueItems} unique)`)
             .setTimestamp();
@@ -579,10 +581,12 @@ export default {
                 const totalQuantity = items.reduce((sum, item) => sum + (item.quantity || 1), 0);
                 
                 if (seriesName === 'Individual Items') {
-                    seriesText += `🔸 **Individual Items:** ${itemCount} types (${totalQuantity} total)\n`;
+                    // UPDATED: Removed 🔸 emoji
+                    seriesText += `**Individual Items:** ${itemCount} types (${totalQuantity} total)\n`;
                 } else {
+                    // UPDATED: Removed 🏷️ emoji
                     const displayName = seriesName.charAt(0).toUpperCase() + seriesName.slice(1);
-                    seriesText += `🏷️ **${displayName} Series:** ${itemCount} types (${totalQuantity} total)\n`;
+                    seriesText += `**${displayName} Series:** ${itemCount} types (${totalQuantity} total)\n`;
                 }
             }
 
@@ -608,16 +612,16 @@ export default {
             embed.addFields({ name: 'By Rarity', value: rarityText.trim(), inline: true });
         }
 
-        // Source breakdown
+        // Source breakdown - UPDATED: Removed source emojis
         embed.addFields({ 
             name: 'By Source', 
-            value: `🎰 Gacha: ${summary.sourceBreakdown.gacha || 0}\n` +
-                   `🔧 Combined: ${summary.sourceBreakdown.combined || 0}\n` +
-                   `🏆 Series Rewards: ${summary.sourceBreakdown.series_completion || 0}`,
+            value: `Gacha: ${summary.sourceBreakdown.gacha || 0}\n` +
+                   `Combined: ${summary.sourceBreakdown.combined || 0}\n` +
+                   `Series Rewards: ${summary.sourceBreakdown.series_completion || 0}`,
             inline: true 
         });
 
-        // Show recent items (compact)
+        // Show recent items (compact) - UPDATED: Clean display
         if (summary.recentItems.length > 0) {
             let recentText = '';
             for (const item of summary.recentItems.slice(0, 8)) {
