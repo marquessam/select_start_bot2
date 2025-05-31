@@ -1,4 +1,4 @@
-// src/commands/user/collection.js - FIXED with proper emoji formatting
+// src/commands/user/collection.js - UPDATED to use trophy case emoji approach
 import { 
     SlashCommandBuilder, 
     EmbedBuilder,
@@ -14,6 +14,7 @@ import { User } from '../../models/User.js';
 import { GachaItem, CombinationRule } from '../../models/GachaItem.js';
 import combinationService from '../../services/combinationService.js';
 import gachaService from '../../services/gachaService.js';
+import { formatGachaEmoji } from '../../config/gachaEmojis.js'; // NEW: Use centralized emoji formatting
 import { COLORS } from '../../utils/FeedUtils.js';
 
 export default {
@@ -75,7 +76,7 @@ export default {
             const sort = interaction.options.getString('sort') || 'recent';
 
             const { items, summary } = this.processCollection(user.gachaCollection, filter, series, sort);
-            const embed = this.createCollectionEmbed(user, items, summary, filter, series, sort);
+            const embed = await this.createCollectionEmbed(user, items, summary, filter, series, sort);
             
             // Add combination button
             const buttons = new ActionRowBuilder()
@@ -179,16 +180,16 @@ export default {
         if (available.length > 0) {
             let availableText = '';
             for (const combo of available.slice(0, 5)) {
-                // FIXED: Use proper emoji formatting
-                const resultEmoji = this.formatItemEmoji(combo.resultItem);
+                // FIXED: Use centralized emoji formatting like trophy case
+                const resultEmoji = formatGachaEmoji(combo.resultItem.emojiId, combo.resultItem.emojiName);
                 availableText += `${resultEmoji} **${combo.resultItem.itemName}** x${combo.result.quantity}\n`;
                 
                 // Show ingredients briefly
                 let ingredientsText = '';
                 for (const ing of combo.ingredients) {
                     const item = await GachaItem.findOne({ itemId: ing.itemId });
-                    // FIXED: Use proper emoji formatting for ingredients
-                    const emoji = item ? this.formatItemEmoji(item) : '❓';
+                    // FIXED: Use centralized emoji formatting like trophy case
+                    const emoji = item ? formatGachaEmoji(item.emojiId, item.emojiName) : '❓';
                     ingredientsText += `${emoji}${ing.quantity} `;
                 }
                 availableText += `   *Needs: ${ingredientsText}*\n\n`;
@@ -209,8 +210,8 @@ export default {
         if (automatic.length > 0) {
             let autoText = '';
             for (const combo of automatic.slice(0, 3)) {
-                // FIXED: Use proper emoji formatting
-                const resultEmoji = this.formatItemEmoji(combo.resultItem);
+                // FIXED: Use centralized emoji formatting like trophy case
+                const resultEmoji = formatGachaEmoji(combo.resultItem.emojiId, combo.resultItem.emojiName);
                 const status = combo.canMake ? '⚡ Auto-combining' : '⏳ Waiting';
                 autoText += `${status} ${resultEmoji} **${combo.resultItem.itemName}**\n`;
             }
@@ -228,8 +229,8 @@ export default {
         if (unavailable.length > 0) {
             let hintText = '';
             for (const combo of unavailable.slice(0, 3)) {
-                // FIXED: Use proper emoji formatting
-                const resultEmoji = this.formatItemEmoji(combo.resultItem);
+                // FIXED: Use centralized emoji formatting like trophy case
+                const resultEmoji = formatGachaEmoji(combo.resultItem.emojiId, combo.resultItem.emojiName);
                 hintText += `${resultEmoji} **${combo.resultItem.itemName}** *(need more items)*\n`;
             }
             if (unavailable.length > 3) {
@@ -291,8 +292,8 @@ export default {
         if (autoCombinations.length > 0) {
             message += '\n\n⚡ **Auto-combinations occurred:**\n';
             for (const combo of autoCombinations) {
-                // FIXED: Use proper emoji formatting
-                const resultEmoji = this.formatItemEmoji(combo.resultItem);
+                // FIXED: Use centralized emoji formatting like trophy case
+                const resultEmoji = formatGachaEmoji(combo.resultItem.emojiId, combo.resultItem.emojiName);
                 message += `${resultEmoji} ${combo.resultQuantity}x ${combo.resultItem.itemName}\n`;
             }
         }
@@ -354,8 +355,8 @@ export default {
             const item = await GachaItem.findOne({ itemId: ingredient.itemId });
             const userItem = user.gachaCollection?.find(i => i.itemId === ingredient.itemId);
             const have = userItem ? (userItem.quantity || 1) : 0;
-            // FIXED: Use proper emoji formatting
-            const emoji = item ? this.formatItemEmoji(item) : '❓';
+            // FIXED: Use centralized emoji formatting like trophy case
+            const emoji = item ? formatGachaEmoji(item.emojiId, item.emojiName) : '❓';
             
             ingredientsText += `${emoji} **${ingredient.quantity}x** ${item?.itemName || ingredient.itemId} `;
             ingredientsText += `*(have: ${have})*\n`;
@@ -363,8 +364,8 @@ export default {
         embed.addFields({ name: '📦 Will Consume', value: ingredientsText });
 
         // Show what will be created
-        // FIXED: Use proper emoji formatting
-        const resultEmoji = this.formatItemEmoji(preview.resultItem);
+        // FIXED: Use centralized emoji formatting like trophy case
+        const resultEmoji = formatGachaEmoji(preview.resultItem.emojiId, preview.resultItem.emojiName);
         embed.addFields({ 
             name: '🎁 Will Create', 
             value: `${resultEmoji} **${preview.rule.result.quantity}x ${preview.resultItem.itemName}**\n*${preview.resultItem.description}*`
@@ -428,8 +429,8 @@ export default {
             }
 
             // Success! Show what happened
-            // FIXED: Use proper emoji formatting
-            const resultEmoji = this.formatItemEmoji(result.resultItem);
+            // FIXED: Use centralized emoji formatting like trophy case
+            const resultEmoji = formatGachaEmoji(result.resultItem.emojiId, result.resultItem.emojiName);
             
             let message = `🎉 **Combination Successful!**\n\n`;
             message += `${resultEmoji} **Created: ${result.resultQuantity}x ${result.resultItem.itemName}**\n\n`;
@@ -437,8 +438,8 @@ export default {
             message += `📦 **Consumed:**\n`;
             for (const ingredient of result.ingredients) {
                 const item = await GachaItem.findOne({ itemId: ingredient.itemId });
-                // FIXED: Use proper emoji formatting
-                const emoji = item ? this.formatItemEmoji(item) : '❓';
+                // FIXED: Use centralized emoji formatting like trophy case
+                const emoji = item ? formatGachaEmoji(item.emojiId, item.emojiName) : '❓';
                 message += `${emoji} ${ingredient.quantity}x ${item?.itemName || ingredient.itemId}\n`;
             }
 
@@ -450,8 +451,8 @@ export default {
             if (autoCombinations.length > 0) {
                 let autoMessage = '\n⚡ **Bonus auto-combinations triggered:**\n';
                 for (const combo of autoCombinations) {
-                    // FIXED: Use proper emoji formatting
-                    const autoEmoji = this.formatItemEmoji(combo.resultItem);
+                    // FIXED: Use centralized emoji formatting like trophy case
+                    const autoEmoji = formatGachaEmoji(combo.resultItem.emojiId, combo.resultItem.emojiName);
                     autoMessage += `${autoEmoji} ${combo.resultQuantity}x ${combo.resultItem.itemName}\n`;
                 }
                 
@@ -468,16 +469,6 @@ export default {
                 ephemeral: true
             });
         }
-    },
-
-    // FIXED: Proper emoji formatting helper
-    formatItemEmoji(item) {
-        if (item.emojiId && item.emojiName) {
-            return `<:${item.emojiName}:${item.emojiId}>`;
-        } else if (item.emojiName) {
-            return item.emojiName;
-        }
-        return '❓';
     },
 
     // Existing methods from the original collection command
@@ -552,7 +543,7 @@ export default {
         return breakdown;
     },
 
-    createCollectionEmbed(user, items, summary, filter, series, sort, page = 0) {
+    async createCollectionEmbed(user, items, summary, filter, series, sort, page = 0) {
         const itemsPerPage = 15;
         const startIndex = page * itemsPerPage;
         const endIndex = Math.min(startIndex + itemsPerPage, items.length);
@@ -588,16 +579,16 @@ export default {
         if (pageItems.length > 0) {
             let itemsText = '';
             
-            pageItems.forEach(item => {
-                // FIXED: Use User model's emoji formatting method
-                const emoji = user.formatGachaItemEmoji(item);
+            for (const item of pageItems) {
+                // FIXED: Use centralized emoji formatting like trophy case
+                const emoji = formatGachaEmoji(item.emojiId, item.emojiName);
                 const rarityEmoji = gachaService.getRarityEmoji(item.rarity);
                 const quantity = (item.quantity || 1) > 1 ? ` x${item.quantity}` : '';
                 const seriesTag = item.seriesId ? ` [${item.seriesId}]` : '';
                 const sourceTag = item.source === 'combined' ? ' 🔧' : '';
                 
                 itemsText += `${rarityEmoji} ${emoji} **${item.itemName}**${quantity}${seriesTag}${sourceTag}\n`;
-            });
+            }
 
             const totalPages = Math.ceil(items.length / itemsPerPage);
             const fieldName = totalPages > 1 ? 
