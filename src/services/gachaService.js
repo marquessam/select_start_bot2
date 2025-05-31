@@ -1,4 +1,4 @@
-// src/services/gachaService.js - Updated with auto-combination support
+// src/services/gachaService.js - FIXED version with proper collection saving
 import { User } from '../models/User.js';
 import { GachaItem } from '../models/GachaItem.js';
 import combinationService from './combinationService.js';
@@ -35,28 +35,50 @@ class GachaService {
         // Deduct GP
         user.addGpTransaction('gacha_pull', -cost, `Gacha ${pullType} pull (${pullCount} items)`);
 
+        // Initialize collection if it doesn't exist
+        if (!user.gachaCollection) {
+            user.gachaCollection = [];
+            console.log('Initialized empty gacha collection for user:', user.raUsername);
+        }
+
         // Perform the pulls
         const results = [];
         for (let i = 0; i < pullCount; i++) {
             const item = await this.selectRandomItem();
             if (item) {
+                console.log(`Selected item for pull ${i + 1}:`, {
+                    itemId: item.itemId,
+                    itemName: item.itemName,
+                    emojiId: item.emojiId,
+                    emojiName: item.emojiName
+                });
                 const result = await this.addItemToUser(user, item);
                 results.push(result);
             }
         }
 
+        console.log(`Added ${results.length} items to collection. Collection size: ${user.gachaCollection.length}`);
+
         // Check for series completions
         const completions = await this.checkSeriesCompletions(user, results);
 
-        // NEW: Check for automatic combinations after adding items
+        // Save user BEFORE checking auto-combinations (important!)
+        await user.save();
+        console.log('User saved successfully after pull');
+
+        // Check for automatic combinations after adding items
         const autoCombinations = await combinationService.checkAutoCombinations(user);
 
-        await user.save();
+        // Save again if auto-combinations occurred
+        if (autoCombinations.length > 0) {
+            await user.save();
+            console.log(`Auto-combinations occurred: ${autoCombinations.length}, user saved again`);
+        }
 
         return {
             results,
             completions,
-            autoCombinations, // NEW: Include auto-combinations in results
+            autoCombinations,
             newBalance: user.gpBalance,
             cost
         };
@@ -68,12 +90,17 @@ class GachaService {
     async selectRandomItem() {
         try {
             // Only get items that can actually be pulled from gacha
-            const availableItems = await GachaItem.getGachaPool();
+            const availableItems = await GachaItem.find({
+                isActive: true,
+                dropRate: { $gt: 0 }
+            });
             
             if (availableItems.length === 0) {
                 console.error('No available gacha items found');
                 return null;
             }
+
+            console.log(`Found ${availableItems.length} available gacha items`);
 
             // Calculate total weight
             const totalWeight = availableItems.reduce((total, item) => total + item.dropRate, 0);
@@ -86,11 +113,13 @@ class GachaService {
             for (const item of availableItems) {
                 currentWeight += item.dropRate;
                 if (random <= currentWeight) {
+                    console.log(`Selected item: ${item.itemName} (${item.dropRate}% chance)`);
                     return item;
                 }
             }
             
             // Fallback to last item
+            console.log('Using fallback item selection');
             return availableItems[availableItems.length - 1];
         } catch (error) {
             console.error('Error selecting random item:', error);
@@ -99,11 +128,20 @@ class GachaService {
     }
 
     /**
-     * Add an item to user's collection
+     * Add an item to user's collection - FIXED VERSION
      */
     async addItemToUser(user, gachaItem) {
+        console.log('Adding item to user:', {
+            username: user.raUsername,
+            itemId: gachaItem.itemId,
+            itemName: gachaItem.itemName,
+            emojiId: gachaItem.emojiId,
+            emojiName: gachaItem.emojiName
+        });
+
         if (!user.gachaCollection) {
             user.gachaCollection = [];
+            console.log('Initialized empty collection array');
         }
 
         // Check if user already has this item
@@ -115,6 +153,7 @@ class GachaService {
             const wasAtMax = existingItem.quantity >= gachaItem.maxStack;
             
             existingItem.quantity = newQuantity;
+            console.log(`Stacked item ${gachaItem.itemName}: ${existingItem.quantity - 1} -> ${newQuantity}`);
             
             return {
                 itemId: gachaItem.itemId,
@@ -130,21 +169,30 @@ class GachaService {
                 wasAtMax,
                 itemType: gachaItem.itemType,
                 seriesId: gachaItem.seriesId,
-                source: 'gacha' // Track source
+                source: 'gacha'
             };
         } else if (!existingItem) {
-            // Add new item
-            user.gachaCollection.push({
+            // Add new item - ENSURE ALL FIELDS ARE PROPERLY SET
+            const newItem = {
                 itemId: gachaItem.itemId,
                 itemName: gachaItem.itemName,
                 itemType: gachaItem.itemType,
                 seriesId: gachaItem.seriesId,
                 rarity: gachaItem.rarity,
-                emojiId: gachaItem.emojiId,
-                emojiName: gachaItem.emojiName,
+                emojiId: gachaItem.emojiId, // IMPORTANT: Make sure this is saved
+                emojiName: gachaItem.emojiName, // IMPORTANT: Make sure this is saved
                 obtainedAt: new Date(),
                 quantity: 1,
-                source: 'gacha' // Track source
+                source: 'gacha'
+            };
+
+            user.gachaCollection.push(newItem);
+            console.log('Added new item to collection:', {
+                itemId: newItem.itemId,
+                itemName: newItem.itemName,
+                emojiId: newItem.emojiId,
+                emojiName: newItem.emojiName,
+                collectionSize: user.gachaCollection.length
             });
 
             return {
@@ -164,6 +212,7 @@ class GachaService {
             };
         } else {
             // Item exists but can't stack more
+            console.log(`Item ${gachaItem.itemName} already at max stack`);
             return {
                 itemId: gachaItem.itemId,
                 itemName: gachaItem.itemName,
@@ -243,7 +292,7 @@ class GachaService {
                 emojiName: completionReward.emojiName,
                 obtainedAt: new Date(),
                 quantity: 1,
-                source: 'series_completion' // Track source
+                source: 'series_completion'
             });
 
             return {
@@ -262,7 +311,12 @@ class GachaService {
      * Get user's collection summary with combination stats
      */
     getUserCollectionSummary(user) {
+        console.log('Getting collection summary for user:', user.raUsername);
+        console.log('Collection exists:', !!user.gachaCollection);
+        console.log('Collection length:', user.gachaCollection?.length || 0);
+
         if (!user.gachaCollection || user.gachaCollection.length === 0) {
+            console.log('User has empty collection');
             return {
                 totalItems: 0,
                 uniqueItems: 0,
@@ -307,6 +361,13 @@ class GachaService {
             .sort((a, b) => new Date(b.obtainedAt) - new Date(a.obtainedAt))
             .slice(0, 5);
 
+        console.log('Collection summary:', {
+            totalItems,
+            uniqueItems: user.gachaCollection.length,
+            rarityCount,
+            sourceBreakdown
+        });
+
         return {
             totalItems,
             uniqueItems: user.gachaCollection.length,
@@ -320,10 +381,12 @@ class GachaService {
      * Format emoji for display
      */
     formatEmoji(emojiId, emojiName) {
-        if (emojiId) {
+        if (emojiId && emojiName) {
             return `<:${emojiName}:${emojiId}>`;
+        } else if (emojiName) {
+            return emojiName;
         }
-        return emojiName; // Fallback to name if no custom emoji
+        return '❓';
     }
 
     /**
