@@ -621,16 +621,26 @@ export default {
             inline: true 
         });
 
-        // Show recent items (compact) - UPDATED: Clean display
+        // Show recent items (compact) - UPDATED: Clean emoji grid display
         if (summary.recentItems.length > 0) {
             let recentText = '';
-            for (const item of summary.recentItems.slice(0, 8)) {
+            let currentRow = '';
+            const EMOJIS_PER_ROW = 8;
+            
+            for (let i = 0; i < Math.min(summary.recentItems.length, 16); i++) {
+                const item = summary.recentItems[i];
                 const emoji = formatGachaEmoji(item.emojiId, item.emojiName);
-                const quantity = (item.quantity || 1) > 1 ? ` x${item.quantity}` : '';
-                recentText += `${emoji} **${item.itemName}**${quantity}\n`;
+                const quantity = (item.quantity || 1) > 1 ? `⁽${item.quantity}⁾` : '';
+                
+                currentRow += `${emoji}${quantity} `;
+                
+                if ((i + 1) % EMOJIS_PER_ROW === 0 || i === Math.min(summary.recentItems.length, 16) - 1) {
+                    recentText += currentRow.trim() + '\n';
+                    currentRow = '';
+                }
             }
             
-            embed.addFields({ name: 'Recent Items', value: recentText, inline: false });
+            embed.addFields({ name: 'Recent Items', value: recentText.trim(), inline: false });
         }
 
         embed.setFooter({ 
