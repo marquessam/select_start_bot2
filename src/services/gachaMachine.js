@@ -165,12 +165,10 @@ class GachaMachine {
                 // Single pull - one embed
                 const embed = await this.createSinglePullEmbed(result.results[0], user, result);
                 
-                const reply = await interaction.editReply({
+                await interaction.editReply({
                     embeds: [embed],
                     ephemeral: true
                 });
-
-                this.scheduleMessageDeletion(reply);
             }
 
         } catch (error) {
@@ -210,13 +208,10 @@ class GachaMachine {
             const itemEmbed = await this.createSinglePullEmbed(item, user, result, i + 1);
             
             // Send as follow-up
-            const followUp = await interaction.followUp({
+            await interaction.followUp({
                 embeds: [itemEmbed],
                 ephemeral: true
             });
-
-            // Schedule deletion
-            this.scheduleMessageDeletion(followUp);
             
             // Small delay between embeds to prevent spam
             if (i < results.length - 1) {
@@ -229,12 +224,10 @@ class GachaMachine {
             await new Promise(resolve => setTimeout(resolve, 1000));
             
             const bonusEmbed = await this.createBonusEmbed(completions, autoCombinations);
-            const bonusMessage = await interaction.followUp({
+            await interaction.followUp({
                 embeds: [bonusEmbed],
                 ephemeral: true
             });
-            
-            this.scheduleMessageDeletion(bonusMessage);
         }
     }
 
@@ -279,7 +272,7 @@ class GachaMachine {
         // Add item description
         if (item.description) {
             embed.addFields({
-                name: '📝 Description',
+                name: 'Description',
                 value: `*${item.description}*`,
                 inline: false
             });
@@ -288,7 +281,7 @@ class GachaMachine {
         // Add flavor text
         if (item.flavorText) {
             embed.addFields({
-                name: '💭 Flavor Text',
+                name: 'Flavor Text',
                 value: `*"${item.flavorText}"*`,
                 inline: false
             });
@@ -313,7 +306,7 @@ class GachaMachine {
 
         // Add balance info in footer
         embed.setFooter({ 
-            text: `GP Balance: ${result.newBalance.toLocaleString()} • This message will be deleted in 1 minute` 
+            text: `GP Balance: ${result.newBalance.toLocaleString()}` 
         });
 
         return embed;
