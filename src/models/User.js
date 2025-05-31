@@ -236,8 +236,9 @@ const challengeProgressSchema = new mongoose.Schema({
 const userSchema = new mongoose.Schema({
     discordId: {
         type: String,
-        required: true,
-        unique: true
+        required: true
+        // Note: Remove unique here to avoid index conflicts
+        // Uniqueness will be handled by existing database index
     },
     // MADE OPTIONAL for backward compatibility
     username: {
@@ -248,8 +249,9 @@ const userSchema = new mongoose.Schema({
     },
     raUsername: {
         type: String,
-        required: true,
-        unique: true
+        required: true
+        // Note: Remove unique here to avoid index conflicts  
+        // Uniqueness will be handled by existing database index
     },
     
     // GP System
@@ -585,10 +587,11 @@ userSchema.statics.findByDiscordId = function(discordId) {
 };
 
 // ============================================================================
-// INDEXES - Only add non-unique indexes (unique indexes are auto-created)
+// INDEXES - Avoid conflicts with existing database indexes
 // ============================================================================
 
-// Note: discordId and raUsername indexes are created automatically by unique: true
+// Note: discordId and raUsername unique indexes already exist in database
+// Only add performance indexes that don't conflict
 userSchema.index({ gpBalance: -1 });
 userSchema.index({ lastUpdated: -1 });
 userSchema.index({ 'arenaStats.challengesWon': -1 });
