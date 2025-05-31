@@ -1,4 +1,4 @@
-// src/commands/user/profile.js - COMPLETE FIXED VERSION WITH TROPHY EMOJIS
+// src/commands/user/profile.js - UPDATED with better collection display
 import { 
     SlashCommandBuilder, 
     EmbedBuilder,
@@ -7,8 +7,9 @@ import {
     ButtonStyle
 } from 'discord.js';
 import { User } from '../../models/User.js';
-import { Challenge } from '../../models/Challenge.js'; // ADDED FOR TROPHY CASE FIX
-import { getTrophyEmoji, formatTrophyEmoji } from '../../config/trophyEmojis.js'; // NEW IMPORT
+import { Challenge } from '../../models/Challenge.js';
+import { getTrophyEmoji, formatTrophyEmoji } from '../../config/trophyEmojis.js';
+import { formatGachaEmoji } from '../../config/gachaEmojis.js';
 import retroAPI from '../../services/retroAPI.js';
 import gachaService from '../../services/gachaService.js';
 import { COLORS, EMOJIS } from '../../utils/FeedUtils.js';
@@ -320,7 +321,7 @@ export default {
     },
 
     /**
-     * UPDATED: Trophy case with custom emoji support and Challenge document fallback
+     * Trophy case with custom emoji support and Challenge document fallback
      */
     async handleTrophyCaseButton(interaction, user) {
         // STEP 1: Get Challenge documents for title lookups
@@ -366,7 +367,7 @@ export default {
                     gameTitle = `Monthly Challenge - ${this.formatShortDate(monthKey)}`; // Final fallback
                 }
 
-                // UPDATED: Get custom emoji for this trophy
+                // Get custom emoji for this trophy
                 const emojiData = await getTrophyEmoji('monthly', monthKey, awardLevel);
 
                 trophies.push({
@@ -409,7 +410,7 @@ export default {
                     gameTitle = `Shadow Challenge - ${this.formatShortDate(monthKey)}`; // Final fallback
                 }
 
-                // UPDATED: Get custom emoji for this trophy
+                // Get custom emoji for this trophy
                 const emojiData = await getTrophyEmoji('shadow', monthKey, awardLevel);
 
                 trophies.push({
@@ -431,7 +432,7 @@ export default {
         const communityAwards = user.getCommunityAwardsForYear(currentYear);
         
         for (const award of communityAwards) {
-            // UPDATED: Use custom emoji for community awards
+            // Use custom emoji for community awards
             const emojiData = await getTrophyEmoji('community', null, 'special');
             
             trophies.push({
@@ -536,6 +537,7 @@ export default {
         });
     },
 
+    // UPDATED: Better collection display with series grouping
     async handleCollectionButton(interaction, user) {
         const collection = user.gachaCollection || [];
         
@@ -544,75 +546,91 @@ export default {
                 content: '📦 Your collection is empty! \n\n' +
                          '**How to start collecting:**\n' +
                          '• Visit the gacha channel and use the machine\n' +
-                         '• Single Pull: 10 GP for 1 item\n' +
-                         '• Multi Pull: 100 GP for 11 items (better value!)\n' +
+                         '• Single Pull: 50 GP for 1 item\n' +
+                         '• Multi Pull: 150 GP for 4 items (25% discount!)\n' +
                          '• Earn GP through monthly challenges and community participation',
                 ephemeral: true
             });
         }
 
-        // Group items by rarity
-        const rarityGroups = {
-            legendary: [],
-            epic: [],
-            rare: [],
-            uncommon: [],
-            common: []
-        };
-
-        collection.forEach(item => {
-            if (rarityGroups[item.rarity]) {
-                rarityGroups[item.rarity].push(item);
-            }
-        });
-
-        // Calculate totals
-        const totalItems = collection.reduce((sum, item) => sum + (item.quantity || 1), 0);
-        const uniqueItems = collection.length;
+        // Get collection summary with series breakdown
+        const summary = gachaService.getUserCollectionSummary(user);
 
         const embed = new EmbedBuilder()
             .setTitle(`📦 ${user.raUsername}'s Collection`)
             .setColor(COLORS.INFO)
-            .setDescription(`**Total Items:** ${totalItems} (${uniqueItems} unique)`)
+            .setDescription(`**Total Items:** ${summary.totalItems} (${summary.uniqueItems} unique)`)
             .setTimestamp();
 
-        // Add rarity breakdown
-        let rarityText = '';
-        Object.entries(rarityGroups).forEach(([rarity, items]) => {
-            if (items.length > 0) {
-                const rarityEmoji = this.getRarityEmoji(rarity);
-                const count = items.reduce((sum, item) => sum + (item.quantity || 1), 0);
-                rarityText += `${rarityEmoji} ${rarity}: ${count}\n`;
-            }
-        });
-
-        if (rarityText) {
-            embed.addFields({ name: 'By Rarity', value: rarityText, inline: true });
-        }
-
-        // Show recent items (top 10)
-        const recentItems = [...collection]
-            .sort((a, b) => new Date(b.obtainedAt) - new Date(a.obtainedAt))
-            .slice(0, 10);
-
-        if (recentItems.length > 0) {
-            let recentText = '';
-            recentItems.forEach(item => {
-                const emoji = this.formatGachaEmoji(item.emojiId, item.emojiName);
-                const rarityEmoji = this.getRarityEmoji(item.rarity);
-                const quantity = (item.quantity || 1) > 1 ? ` x${item.quantity}` : '';
-                const date = new Date(item.obtainedAt).toLocaleDateString('en-US', { 
-                    month: 'short', 
-                    day: 'numeric' 
-                });
-                recentText += `${rarityEmoji} ${emoji} **${item.itemName}**${quantity} - ${date}\n`;
+        // Series breakdown - the main focus
+        if (Object.keys(summary.seriesBreakdown).length > 0) {
+            let seriesText = '';
+            const seriesEntries = Object.entries(summary.seriesBreakdown);
+            
+            // Sort series, putting "Individual Items" last
+            seriesEntries.sort(([a], [b]) => {
+                if (a === 'Individual Items') return 1;
+                if (b === 'Individual Items') return -1;
+                return a.localeCompare(b);
             });
 
+            for (const [seriesName, items] of seriesEntries.slice(0, 6)) { // Limit to prevent overflow
+                const itemCount = items.length;
+                const totalQuantity = items.reduce((sum, item) => sum + (item.quantity || 1), 0);
+                
+                if (seriesName === 'Individual Items') {
+                    seriesText += `🔸 **Individual Items:** ${itemCount} types (${totalQuantity} total)\n`;
+                } else {
+                    const displayName = seriesName.charAt(0).toUpperCase() + seriesName.slice(1);
+                    seriesText += `🏷️ **${displayName} Series:** ${itemCount} types (${totalQuantity} total)\n`;
+                }
+            }
+
+            if (seriesEntries.length > 6) {
+                seriesText += `*...and ${seriesEntries.length - 6} more series*\n`;
+            }
+
+            embed.addFields({ name: 'Collection by Series', value: seriesText, inline: false });
+        }
+
+        // Rarity breakdown (compact)
+        let rarityText = '';
+        const rarityOrder = ['mythic', 'legendary', 'epic', 'rare', 'uncommon', 'common'];
+        for (const rarity of rarityOrder) {
+            const count = summary.rarityCount[rarity] || 0;
+            if (count > 0) {
+                const rarityEmoji = gachaService.getRarityEmoji(rarity);
+                rarityText += `${rarityEmoji} ${count} `;
+            }
+        }
+
+        if (rarityText) {
+            embed.addFields({ name: 'By Rarity', value: rarityText.trim(), inline: true });
+        }
+
+        // Source breakdown
+        embed.addFields({ 
+            name: 'By Source', 
+            value: `🎰 Gacha: ${summary.sourceBreakdown.gacha || 0}\n` +
+                   `🔧 Combined: ${summary.sourceBreakdown.combined || 0}\n` +
+                   `🏆 Series Rewards: ${summary.sourceBreakdown.series_completion || 0}`,
+            inline: true 
+        });
+
+        // Show recent items (compact)
+        if (summary.recentItems.length > 0) {
+            let recentText = '';
+            for (const item of summary.recentItems.slice(0, 8)) {
+                const emoji = formatGachaEmoji(item.emojiId, item.emojiName);
+                const quantity = (item.quantity || 1) > 1 ? ` x${item.quantity}` : '';
+                recentText += `${emoji} **${item.itemName}**${quantity}\n`;
+            }
+            
             embed.addFields({ name: 'Recent Items', value: recentText, inline: false });
         }
 
         embed.setFooter({ 
-            text: 'Use /collection for detailed view with filters and pagination' 
+            text: 'Use /collection for detailed view with filters and combination interface!' 
         });
 
         await interaction.editReply({
@@ -621,25 +639,21 @@ export default {
         });
     },
 
-    // Helper method to get month key from date
+    // Helper methods
     getMonthKey(date) {
         const year = date.getFullYear();
         const month = (date.getMonth() + 1).toString().padStart(2, '0');
         return `${year}-${month}`;
     },
 
-    // Helper method: Convert date key to month key
     convertDateKeyToMonthKey(dateKey) {
-        // Convert "2025-04-01" to "2025-04"
-        // or if already in month format "2025-04", return as-is
         const parts = dateKey.split('-');
         if (parts.length >= 2) {
             return `${parts[0]}-${parts[1]}`;
         }
-        return dateKey; // fallback
+        return dateKey;
     },
 
-    // Helper method to format short date for fallback titles
     formatShortDate(monthKey) {
         const dateParts = monthKey.split('-');
         const year = parseInt(dateParts[0]);
@@ -652,35 +666,5 @@ export default {
         const monthName = monthNames[month - 1];
         
         return `${monthName} ${shortYear}`;
-    },
-
-    // Helper method to format gacha emoji
-    formatGachaEmoji(emojiId, emojiName) {
-        if (emojiId) {
-            return `<:${emojiName}:${emojiId}>`;
-        }
-        return emojiName || '🎁';
-    },
-
-    // Helper method to get rarity emoji
-    getRarityEmoji(rarity) {
-        const rarityEmojis = {
-            legendary: '🟡',
-            epic: '🟣',
-            rare: '🔵',
-            uncommon: '🟢',
-            common: '⚪'
-        };
-        return rarityEmojis[rarity] || '⚪';
-    },
-
-    // Helper method to get challenge type emoji
-    getChallengeTypeEmoji(challengeType) {
-        const typeEmojis = {
-            monthly: '🎯',
-            shadow: '👥', 
-            community: '🏅'
-        };
-        return typeEmojis[challengeType] || '🏆';
     }
 };
