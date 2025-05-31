@@ -1,7 +1,7 @@
-// src/models/User.js - Complete updated User model with proper gacha collection schema
+// src/models/User.js - Fixed version compatible with existing data
 import mongoose from 'mongoose';
 
-// GP Transaction Schema
+// GP Transaction Schema - UPDATED with all existing transaction types
 const gpTransactionSchema = new mongoose.Schema({
     type: {
         type: String,
@@ -15,7 +15,15 @@ const gpTransactionSchema = new mongoose.Schema({
             'gacha_pull',
             'admin_adjust',
             'community_award',
-            'bonus'
+            'bonus',
+            // EXISTING TYPES FROM YOUR DATABASE
+            'wager',
+            'refund',
+            'bet',
+            'win',
+            'participation_reward',
+            'mastery_reward',
+            'beaten_reward'
         ]
     },
     amount: {
@@ -36,7 +44,7 @@ const gpTransactionSchema = new mongoose.Schema({
     }
 }, { _id: false });
 
-// Community Award Schema
+// Community Award Schema - FLEXIBLE year handling
 const communityAwardSchema = new mongoose.Schema({
     title: {
         type: String,
@@ -61,7 +69,9 @@ const communityAwardSchema = new mongoose.Schema({
     },
     year: {
         type: Number,
-        required: true
+        default: function() {
+            return new Date().getFullYear();
+        }
     }
 }, { _id: false });
 
@@ -222,16 +232,19 @@ const challengeProgressSchema = new mongoose.Schema({
     }
 }, { _id: false });
 
-// Main User Schema
+// Main User Schema - COMPATIBLE with existing data
 const userSchema = new mongoose.Schema({
     discordId: {
         type: String,
         required: true,
         unique: true
     },
+    // MADE OPTIONAL for backward compatibility
     username: {
         type: String,
-        required: true
+        default: function() {
+            return this.raUsername || 'Unknown';
+        }
     },
     raUsername: {
         type: String,
@@ -304,7 +317,9 @@ const userSchema = new mongoose.Schema({
         default: Date.now
     }
 }, {
-    timestamps: true
+    timestamps: true,
+    // IMPORTANT: Be more flexible with validation
+    strict: false
 });
 
 // ============================================================================
@@ -524,6 +539,30 @@ userSchema.methods.addTrophy = function(gameId, gameTitle, awardLevel, challenge
 };
 
 // ============================================================================
+// PRE-SAVE MIDDLEWARE - FIX EXISTING DATA
+// ============================================================================
+
+userSchema.pre('save', function(next) {
+    // Fix missing username
+    if (!this.username) {
+        this.username = this.raUsername || 'Unknown';
+    }
+    
+    // Fix community awards missing year
+    if (this.communityAwards) {
+        this.communityAwards.forEach(award => {
+            if (!award.year) {
+                award.year = new Date(award.awardedAt || new Date()).getFullYear();
+            }
+        });
+    }
+    
+    // Update lastUpdated timestamp
+    this.lastUpdated = new Date();
+    next();
+});
+
+// ============================================================================
 // STATIC METHODS
 // ============================================================================
 
@@ -544,16 +583,6 @@ userSchema.statics.findByRaUsername = function(raUsername) {
 userSchema.statics.findByDiscordId = function(discordId) {
     return this.findOne({ discordId: discordId });
 };
-
-// ============================================================================
-// MIDDLEWARE
-// ============================================================================
-
-// Update lastUpdated timestamp on save
-userSchema.pre('save', function(next) {
-    this.lastUpdated = new Date();
-    next();
-});
 
 // ============================================================================
 // INDEXES
