@@ -585,11 +585,10 @@ userSchema.statics.findByDiscordId = function(discordId) {
 };
 
 // ============================================================================
-// INDEXES
+// INDEXES - Only add non-unique indexes (unique indexes are auto-created)
 // ============================================================================
 
-userSchema.index({ discordId: 1 });
-userSchema.index({ raUsername: 1 });
+// Note: discordId and raUsername indexes are created automatically by unique: true
 userSchema.index({ gpBalance: -1 });
 userSchema.index({ lastUpdated: -1 });
 userSchema.index({ 'arenaStats.challengesWon': -1 });
