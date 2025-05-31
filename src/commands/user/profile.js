@@ -1,4 +1,4 @@
-// src/commands/user/profile.js - UPDATED with clean design and better collection display
+// src/commands/user/profile.js - COMPLETE FIXED VERSION with duplicate prevention
 import { 
     SlashCommandBuilder, 
     EmbedBuilder,
@@ -321,7 +321,7 @@ export default {
     },
 
     /**
-     * Trophy case with custom emoji support and Challenge document fallback
+     * FIXED: Trophy case with custom emoji support, Challenge document fallback, and deduplication
      */
     async handleTrophyCaseButton(interaction, user) {
         // STEP 1: Get Challenge documents for title lookups
@@ -337,18 +337,28 @@ export default {
             };
         }
 
-        // STEP 2: Generate trophies with Challenge document fallback AND custom emojis
+        // STEP 2: Generate trophies with DEDUPLICATION and custom emojis
         const trophies = [];
+        const seenTrophies = new Set(); // FIXED: Track seen trophies to prevent duplicates
 
-        // Process monthly challenges
-        for (const [userDateKey, data] of user.monthlyChallenges.entries()) {
+        // FIXED: Process monthly challenges with deduplication
+        const uniqueMonthlyEntries = this.deduplicateMapEntries(user.monthlyChallenges);
+        for (const [userDateKey, data] of uniqueMonthlyEntries) {
             if (data.progress > 0) {
                 let awardLevel = 'participation';
                 if (data.progress === 3) awardLevel = 'mastery';
                 else if (data.progress === 2) awardLevel = 'beaten';
 
-                // Convert user date key (YYYY-MM-DD) to month key (YYYY-MM)
-                const monthKey = this.convertDateKeyToMonthKey(userDateKey);
+                // FIXED: Use consistent month key normalization
+                const monthKey = this.normalizeMonthKey(userDateKey);
+                
+                // FIXED: Create unique trophy identifier to prevent duplicates
+                const trophyId = `monthly_${monthKey}_${awardLevel}`;
+                if (seenTrophies.has(trophyId)) {
+                    console.log(`Skipping duplicate monthly trophy: ${trophyId}`);
+                    continue;
+                }
+                seenTrophies.add(trophyId);
                 
                 const dateParts = monthKey.split('-');
                 const year = parseInt(dateParts[0]);
@@ -384,14 +394,23 @@ export default {
             }
         }
 
-        // Process shadow challenges
-        for (const [userDateKey, data] of user.shadowChallenges.entries()) {
+        // FIXED: Process shadow challenges with deduplication
+        const uniqueShadowEntries = this.deduplicateMapEntries(user.shadowChallenges);
+        for (const [userDateKey, data] of uniqueShadowEntries) {
             if (data.progress > 0) {
                 let awardLevel = 'participation';
                 if (data.progress === 2) awardLevel = 'beaten';
 
-                // Convert user date key (YYYY-MM-DD) to month key (YYYY-MM)
-                const monthKey = this.convertDateKeyToMonthKey(userDateKey);
+                // FIXED: Use consistent month key normalization
+                const monthKey = this.normalizeMonthKey(userDateKey);
+
+                // FIXED: Create unique trophy identifier to prevent duplicates
+                const trophyId = `shadow_${monthKey}_${awardLevel}`;
+                if (seenTrophies.has(trophyId)) {
+                    console.log(`Skipping duplicate shadow trophy: ${trophyId}`);
+                    continue;
+                }
+                seenTrophies.add(trophyId);
 
                 const dateParts = monthKey.split('-');
                 const year = parseInt(dateParts[0]);
@@ -427,11 +446,19 @@ export default {
             }
         }
 
-        // Process community awards
+        // Process community awards with deduplication
         const currentYear = new Date().getFullYear();
         const communityAwards = user.getCommunityAwardsForYear(currentYear);
         
         for (const award of communityAwards) {
+            // FIXED: Create unique trophy identifier for community awards too
+            const trophyId = `community_${award.title.replace(/\s+/g, '_').toLowerCase()}_${award.awardedAt.getTime()}`;
+            if (seenTrophies.has(trophyId)) {
+                console.log(`Skipping duplicate community award: ${trophyId}`);
+                continue;
+            }
+            seenTrophies.add(trophyId);
+
             // Use custom emoji for community awards
             const emojiData = await getTrophyEmoji('community', null, 'special');
             
@@ -536,6 +563,74 @@ export default {
             embeds: [embed],
             ephemeral: true
         });
+    },
+
+    /**
+     * FIXED: Deduplicate Map entries by normalizing keys and keeping best progress
+     */
+    deduplicateMapEntries(challengeMap) {
+        if (!challengeMap || challengeMap.size === 0) {
+            return [];
+        }
+
+        const entries = Array.from(challengeMap.entries());
+        const normalizedEntries = new Map();
+
+        for (const [originalKey, data] of entries) {
+            const normalizedKey = this.normalizeMonthKey(originalKey);
+            
+            if (normalizedEntries.has(normalizedKey)) {
+                const existing = normalizedEntries.get(normalizedKey);
+                
+                // Keep the entry with higher progress, or more achievements if same progress
+                if (data.progress > existing.data.progress || 
+                    (data.progress === existing.data.progress && (data.achievements || 0) > (existing.data.achievements || 0))) {
+                    console.log(`Replacing duplicate ${originalKey} -> ${normalizedKey} with better progress`);
+                    normalizedEntries.set(normalizedKey, { key: normalizedKey, data });
+                } else {
+                    console.log(`Keeping existing ${normalizedKey} with better progress`);
+                }
+            } else {
+                normalizedEntries.set(normalizedKey, { key: normalizedKey, data });
+            }
+        }
+
+        // Return deduplicated entries
+        return Array.from(normalizedEntries.values()).map(({ key, data }) => [key, data]);
+    },
+
+    /**
+     * FIXED: Consistent month key normalization - same logic as stats service
+     */
+    normalizeMonthKey(dateKey) {
+        if (!dateKey) return dateKey;
+        
+        const keyStr = String(dateKey).trim();
+        
+        // If already in YYYY-MM format, return as is
+        if (/^\d{4}-\d{2}$/.test(keyStr)) {
+            return keyStr;
+        }
+        
+        // If in YYYY-MM-DD format, convert to YYYY-MM
+        if (/^\d{4}-\d{2}-\d{2}$/.test(keyStr)) {
+            return keyStr.substring(0, 7); // Takes "2024-12-01" -> "2024-12"
+        }
+        
+        // If it's a Date object or date string, parse and format
+        try {
+            const date = new Date(keyStr);
+            if (!isNaN(date.getTime())) {
+                const year = date.getFullYear();
+                const month = (date.getMonth() + 1).toString().padStart(2, '0');
+                return `${year}-${month}`;
+            }
+        } catch (error) {
+            console.warn(`Unable to parse date key: ${keyStr}`);
+        }
+        
+        // Return original if we can't normalize
+        return keyStr;
     },
 
     // UPDATED: Clean collection display with series grouping
@@ -661,11 +756,8 @@ export default {
     },
 
     convertDateKeyToMonthKey(dateKey) {
-        const parts = dateKey.split('-');
-        if (parts.length >= 2) {
-            return `${parts[0]}-${parts[1]}`;
-        }
-        return dateKey;
+        // FIXED: Use the same normalization logic
+        return this.normalizeMonthKey(dateKey);
     },
 
     formatShortDate(monthKey) {
