@@ -1,4 +1,4 @@
-// src/services/gachaMachine.js - UPDATED with new pricing and separate multi-pull embeds
+// src/services/gachaMachine.js - UPDATED with clean design and duplicate prevention
 import { 
     EmbedBuilder, 
     ActionRowBuilder, 
@@ -53,6 +53,17 @@ class GachaMachine {
             const channel = await this.getChannel();
             if (!channel) return;
 
+            // NEW: Check if gacha machine already exists
+            const existingMachine = await this.findExistingGachaMachine(channel);
+            if (existingMachine) {
+                console.log('Gacha machine already exists, using existing message');
+                this.machineMessageId = existingMachine.id;
+                
+                // Update the existing machine to ensure it's current
+                await this.updateExistingMachine(existingMachine);
+                return;
+            }
+
             // Create the machine embed and buttons
             const { embed, attachment } = this.createMachineEmbed();
             const buttons = this.createMachineButtons();
@@ -84,6 +95,52 @@ class GachaMachine {
 
         } catch (error) {
             console.error('Error creating gacha machine:', error);
+        }
+    }
+
+    // NEW: Find existing gacha machine in channel
+    async findExistingGachaMachine(channel) {
+        try {
+            // Fetch recent messages (last 50)
+            const messages = await channel.messages.fetch({ limit: 50 });
+            
+            // Look for messages with gacha machine embed
+            for (const [, message] of messages) {
+                if (message.embeds.length > 0) {
+                    const embed = message.embeds[0];
+                    if (embed.title === '🎰 Gacha Machine' && message.author.bot) {
+                        console.log(`Found existing gacha machine: ${message.id}`);
+                        return message;
+                    }
+                }
+            }
+            
+            return null;
+        } catch (error) {
+            console.error('Error searching for existing gacha machine:', error);
+            return null;
+        }
+    }
+
+    // NEW: Update existing machine instead of creating new one
+    async updateExistingMachine(message) {
+        try {
+            const { embed, attachment } = this.createMachineEmbed();
+            const buttons = this.createMachineButtons();
+
+            const messageOptions = {
+                embeds: [embed],
+                components: [buttons]
+            };
+
+            if (attachment) {
+                messageOptions.files = [attachment];
+            }
+
+            await message.edit(messageOptions);
+            console.log('Updated existing gacha machine');
+        } catch (error) {
+            console.error('Error updating existing gacha machine:', error);
         }
     }
 
@@ -231,15 +288,17 @@ class GachaMachine {
         }
     }
 
+    // UPDATED: Clean design without competing emojis
     async createSinglePullEmbed(item, user, result, pullNumber = null) {
         const rarityColor = gachaService.getRarityColor(item.rarity);
         const rarityEmoji = gachaService.getRarityEmoji(item.rarity);
         const rarityName = gachaService.getRarityDisplayName(item.rarity);
         const itemEmoji = formatGachaEmoji(item.emojiId, item.emojiName);
         
+        // UPDATED: Removed 🎯 emoji from title
         const title = pullNumber ? 
-            `🎯 Pull ${pullNumber} - ${item.itemName}` : 
-            `🎯 Single Pull - ${item.itemName}`;
+            `Pull ${pullNumber} - ${item.itemName}` : 
+            `Single Pull - ${item.itemName}`;
             
         const embed = new EmbedBuilder()
             .setTitle(title)
@@ -257,14 +316,14 @@ class GachaMachine {
             description += ` ✨ **NEW!**`;
         }
         
-        // Stack info
+        // UPDATED: Removed 📦 emoji from quantity info
         if (item.maxStack > 1) {
-            description += `\n📦 **Quantity:** ${item.quantity}/${item.maxStack}`;
+            description += `\n**Quantity:** ${item.quantity}/${item.maxStack}`;
         }
         
-        // Series info
+        // UPDATED: Removed 🏷️ emoji from series info
         if (item.seriesId) {
-            description += `\n🏷️ **Series:** ${item.seriesId.charAt(0).toUpperCase() + item.seriesId.slice(1)}`;
+            description += `\n**Series:** ${item.seriesId.charAt(0).toUpperCase() + item.seriesId.slice(1)}`;
         }
 
         embed.setDescription(description);
