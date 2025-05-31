@@ -1,4 +1,4 @@
-// src/commands/admin/debug-emoji.js - Debug emoji issues
+// src/commands/admin/debug-emoji.js - FIXED with correct Discord.js v14 emoji access
 import { 
     SlashCommandBuilder, 
     EmbedBuilder 
@@ -38,7 +38,11 @@ export default {
                 .addStringOption(option =>
                     option.setName('emoji-input')
                         .setDescription('Paste emoji like <:name:id>')
-                        .setRequired(true))),
+                        .setRequired(true)))
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('bot-emojis')
+                .setDescription('List all emojis the bot can access')),
 
     async execute(interaction) {
         // Check if user is admin
@@ -63,6 +67,9 @@ export default {
                     break;
                 case 'test-emoji':
                     await this.testEmoji(interaction);
+                    break;
+                case 'bot-emojis':
+                    await this.listBotEmojis(interaction);
                     break;
             }
         } catch (error) {
@@ -105,17 +112,175 @@ export default {
             emojiTest += `**No Emoji Data**\n`;
         }
 
-        // Test if bot can access the emoji
+        // FIXED: Test if bot can access the emoji using correct Discord.js v14 method
         if (item.emojiId) {
             try {
-                const emoji = await interaction.client.emojis.fetch(item.emojiId);
-                emojiTest += `**Bot Access:** ✅ Can access emoji "${emoji.name}" from ${emoji.guild.name}\n`;
-            } catch (emojiError) {
-                emojiTest += `**Bot Access:** ❌ Cannot access emoji: ${emojiError.message}\n`;
+                // Try cache first (fastest)
+                let emoji = interaction.client.emojis.cache.get(item.emojiId);
+                
+                if (emoji) {
+                    emojiTest += `**Bot Access (Cache):** ✅ Found "${emoji.name}" from ${emoji.guild.name}\n`;
+                } else {
+                    // Try fetching from API
+                    try {
+                        emoji = await interaction.client.emojis.fetch(item.emojiId);
+                        emojiTest += `**Bot Access (API):** ✅ Fetched "${emoji.name}" from ${emoji.guild.name}\n`;
+                    } catch (fetchError) {
+                        emojiTest += `**Bot Access:** ❌ Cannot fetch emoji: ${fetchError.message}\n`;
+                        emojiTest += `**Possible Causes:**\n`;
+                        emojiTest += `• Bot is not in the server containing this emoji\n`;
+                        emojiTest += `• Emoji was deleted or ID is wrong\n`;
+                        emojiTest += `• Bot lacks permissions in that server\n`;
+                    }
+                }
+            } catch (error) {
+                emojiTest += `**Bot Access:** ❌ Error accessing emoji: ${error.message}\n`;
             }
         }
 
         embed.addFields({ name: 'Emoji Test', value: emojiTest });
+
+        await interaction.editReply({ embeds: [embed] });
+    },
+
+    async testEmoji(interaction) {
+        const emojiInput = interaction.options.getString('emoji-input');
+        
+        // Parse emoji
+        const emojiMatch = emojiInput.match(/<:([^:]+):(\d+)>/);
+        if (!emojiMatch) {
+            throw new Error('Invalid emoji format. Please paste like: <:name:id>');
+        }
+
+        const [fullMatch, emojiName, emojiId] = emojiMatch;
+
+        const embed = new EmbedBuilder()
+            .setTitle('🧪 Emoji Access Test')
+            .setColor(COLORS.INFO)
+            .addFields(
+                { name: 'Input', value: emojiInput, inline: true },
+                { name: 'Parsed Name', value: emojiName, inline: true },
+                { name: 'Parsed ID', value: emojiId, inline: true }
+            );
+
+        // FIXED: Test if bot can access the emoji using correct Discord.js v14 method
+        try {
+            // Try cache first
+            let emoji = interaction.client.emojis.cache.get(emojiId);
+            
+            if (emoji) {
+                embed.addFields(
+                    { name: 'Bot Access (Cache)', value: '✅ Found in cache', inline: true },
+                    { name: 'Emoji Guild', value: emoji.guild.name, inline: true },
+                    { name: 'Test Display', value: `Here it is: ${fullMatch}`, inline: false }
+                );
+                embed.setColor(COLORS.SUCCESS);
+            } else {
+                // Try fetching from API
+                try {
+                    emoji = await interaction.client.emojis.fetch(emojiId);
+                    embed.addFields(
+                        { name: 'Bot Access (API)', value: '✅ Successfully fetched', inline: true },
+                        { name: 'Emoji Guild', value: emoji.guild.name, inline: true },
+                        { name: 'Test Display', value: `Here it is: ${fullMatch}`, inline: false },
+                        { name: 'Note', value: 'Emoji was not in cache but successfully fetched from Discord API', inline: false }
+                    );
+                    embed.setColor(COLORS.SUCCESS);
+                } catch (fetchError) {
+                    embed.addFields(
+                        { name: 'Bot Access', value: '❌ Failed both cache and API', inline: true },
+                        { name: 'Cache Result', value: 'Not found', inline: true },
+                        { name: 'API Error', value: fetchError.message, inline: false },
+                        { name: 'Possible Causes', value: 
+                            '• Bot is not a member of the server containing this emoji\n' +
+                            '• Emoji ID is incorrect or emoji was deleted\n' +
+                            '• Bot lacks "Use External Emojis" permission\n' +
+                            '• Server has restricted emoji usage', inline: false }
+                    );
+                    embed.setColor(COLORS.ERROR);
+                }
+            }
+        } catch (error) {
+            embed.addFields(
+                { name: 'Bot Access', value: '❌ Critical Error', inline: true },
+                { name: 'Error', value: error.message, inline: false }
+            );
+            embed.setColor(COLORS.ERROR);
+        }
+
+        await interaction.editReply({ embeds: [embed] });
+    },
+
+    async listBotEmojis(interaction) {
+        const embed = new EmbedBuilder()
+            .setTitle('🤖 Bot Emoji Access')
+            .setColor(COLORS.INFO);
+
+        // Get all emojis the bot can access
+        const allEmojis = interaction.client.emojis.cache;
+        
+        if (allEmojis.size === 0) {
+            embed.setDescription('❌ Bot cannot access any custom emojis');
+            return interaction.editReply({ embeds: [embed] });
+        }
+
+        embed.setDescription(`Bot can access **${allEmojis.size}** custom emojis from **${new Set(allEmojis.map(e => e.guild.name)).size}** servers`);
+
+        // Group by server
+        const serverEmojis = {};
+        allEmojis.forEach(emoji => {
+            const guildName = emoji.guild.name;
+            if (!serverEmojis[guildName]) {
+                serverEmojis[guildName] = [];
+            }
+            serverEmojis[guildName].push(emoji);
+        });
+
+        // Show first few servers
+        const serverNames = Object.keys(serverEmojis).slice(0, 5);
+        
+        for (const serverName of serverNames) {
+            const emojis = serverEmojis[serverName].slice(0, 10); // Show first 10 emojis per server
+            let emojiText = '';
+            
+            emojis.forEach(emoji => {
+                emojiText += `${emoji} \`${emoji.name}\` (${emoji.id})\n`;
+            });
+            
+            if (serverEmojis[serverName].length > 10) {
+                emojiText += `*...and ${serverEmojis[serverName].length - 10} more*\n`;
+            }
+            
+            embed.addFields({ 
+                name: `${serverName} (${serverEmojis[serverName].length} emojis)`, 
+                value: emojiText || 'No emojis',
+                inline: false 
+            });
+        }
+
+        if (Object.keys(serverEmojis).length > 5) {
+            embed.addFields({
+                name: 'Additional Servers',
+                value: `*...and ${Object.keys(serverEmojis).length - 5} more servers*`,
+                inline: false
+            });
+        }
+
+        // Check specifically for the Mario emoji
+        const marioEmoji = allEmojis.get('1378157600973262889');
+        if (marioEmoji) {
+            embed.addFields({
+                name: '🔍 Mario Emoji Status',
+                value: `✅ Found: ${marioEmoji} from ${marioEmoji.guild.name}`,
+                inline: false
+            });
+        } else {
+            embed.addFields({
+                name: '🔍 Mario Emoji Status',
+                value: `❌ Not found in bot's accessible emojis`,
+                inline: false
+            });
+        }
 
         await interaction.editReply({ embeds: [embed] });
     },
@@ -163,6 +328,22 @@ export default {
                 value: `**Display:** ${formattedEmoji}\n**Raw:** \`${formattedEmoji}\`` 
             });
 
+            // Test bot access to this specific emoji
+            if (collectionItem.emojiId) {
+                const botEmoji = interaction.client.emojis.cache.get(collectionItem.emojiId);
+                if (botEmoji) {
+                    embed.addFields({
+                        name: 'Bot Access Test',
+                        value: `✅ Bot can access: ${botEmoji} from ${botEmoji.guild.name}`
+                    });
+                } else {
+                    embed.addFields({
+                        name: 'Bot Access Test',
+                        value: `❌ Bot cannot access emoji ID: ${collectionItem.emojiId}`
+                    });
+                }
+            }
+
             // Compare with source item
             const sourceItem = await GachaItem.findOne({ itemId });
             if (sourceItem) {
@@ -182,10 +363,13 @@ export default {
 
             for (const item of items) {
                 const formatted = user.formatGachaItemEmoji(item);
+                const botHasEmoji = item.emojiId ? interaction.client.emojis.cache.has(item.emojiId) : false;
+                
                 debugText += `**${item.itemName}**\n`;
                 debugText += `  Display: ${formatted}\n`;
                 debugText += `  ID: ${item.emojiId || 'null'}\n`;
-                debugText += `  Name: ${item.emojiName || 'null'}\n\n`;
+                debugText += `  Name: ${item.emojiName || 'null'}\n`;
+                debugText += `  Bot Access: ${botHasEmoji ? '✅' : '❌'}\n\n`;
             }
 
             if (user.gachaCollection.length > 10) {
@@ -193,51 +377,6 @@ export default {
             }
 
             embed.addFields({ name: 'Collection Items', value: debugText || 'No items found' });
-        }
-
-        await interaction.editReply({ embeds: [embed] });
-    },
-
-    async testEmoji(interaction) {
-        const emojiInput = interaction.options.getString('emoji-input');
-        
-        // Parse emoji
-        const emojiMatch = emojiInput.match(/<:([^:]+):(\d+)>/);
-        if (!emojiMatch) {
-            throw new Error('Invalid emoji format. Please paste like: <:name:id>');
-        }
-
-        const [fullMatch, emojiName, emojiId] = emojiMatch;
-
-        const embed = new EmbedBuilder()
-            .setTitle('🧪 Emoji Access Test')
-            .setColor(COLORS.INFO)
-            .addFields(
-                { name: 'Input', value: emojiInput, inline: true },
-                { name: 'Parsed Name', value: emojiName, inline: true },
-                { name: 'Parsed ID', value: emojiId, inline: true }
-            );
-
-        // Test if bot can access the emoji
-        try {
-            const emoji = await interaction.client.emojis.fetch(emojiId);
-            embed.addFields(
-                { name: 'Bot Access', value: '✅ Success', inline: true },
-                { name: 'Emoji Guild', value: emoji.guild.name, inline: true },
-                { name: 'Test Display', value: `Here it is: ${fullMatch}`, inline: false }
-            );
-            embed.setColor(COLORS.SUCCESS);
-        } catch (emojiError) {
-            embed.addFields(
-                { name: 'Bot Access', value: '❌ Failed', inline: true },
-                { name: 'Error', value: emojiError.message, inline: false },
-                { name: 'Possible Causes', value: 
-                    '• Emoji is from a server the bot is not in\n' +
-                    '• Emoji ID is incorrect\n' +
-                    '• Emoji was deleted\n' +
-                    '• Bot lacks permissions in that server', inline: false }
-            );
-            embed.setColor(COLORS.ERROR);
         }
 
         await interaction.editReply({ embeds: [embed] });
