@@ -630,7 +630,7 @@ export default {
         }
 
         embed.setFooter({ 
-            text: 'Use /collection for detailed view with filters and combination interface!' 
+            text: 'Use /collection for detailed view with filters, item inspection, and combination interface!' 
         });
 
         await interaction.editReply({
