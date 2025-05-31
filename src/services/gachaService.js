@@ -1,4 +1,4 @@
-// src/services/gachaService.js - FIXED version with proper collection saving
+// src/services/gachaService.js - UPDATED with proper emoji handling
 import { User } from '../models/User.js';
 import { GachaItem } from '../models/GachaItem.js';
 import combinationService from './combinationService.js';
@@ -52,7 +52,7 @@ class GachaService {
                     emojiId: item.emojiId,
                     emojiName: item.emojiName
                 });
-                const result = await this.addItemToUser(user, item);
+                const result = this.addItemToUser(user, item);
                 results.push(result);
             }
         }
@@ -128,10 +128,10 @@ class GachaService {
     }
 
     /**
-     * Add an item to user's collection - FIXED VERSION
+     * Add an item to user's collection using the new User model method
      */
-    async addItemToUser(user, gachaItem) {
-        console.log('Adding item to user:', {
+    addItemToUser(user, gachaItem) {
+        console.log('Adding item to user with emoji data:', {
             username: user.raUsername,
             itemId: gachaItem.itemId,
             itemName: gachaItem.itemName,
@@ -139,97 +139,27 @@ class GachaService {
             emojiName: gachaItem.emojiName
         });
 
-        if (!user.gachaCollection) {
-            user.gachaCollection = [];
-            console.log('Initialized empty collection array');
-        }
+        // Use the new User model method
+        const addResult = user.addGachaItem(gachaItem, 1, 'gacha');
 
-        // Check if user already has this item
-        const existingItem = user.gachaCollection.find(item => item.itemId === gachaItem.itemId);
-
-        if (existingItem && gachaItem.maxStack > 1) {
-            // Stack the item
-            const newQuantity = Math.min(existingItem.quantity + 1, gachaItem.maxStack);
-            const wasAtMax = existingItem.quantity >= gachaItem.maxStack;
-            
-            existingItem.quantity = newQuantity;
-            console.log(`Stacked item ${gachaItem.itemName}: ${existingItem.quantity - 1} -> ${newQuantity}`);
-            
-            return {
-                itemId: gachaItem.itemId,
-                itemName: gachaItem.itemName,
-                rarity: gachaItem.rarity,
-                emojiName: gachaItem.emojiName,
-                emojiId: gachaItem.emojiId,
-                description: gachaItem.description,
-                flavorText: gachaItem.flavorText,
-                quantity: newQuantity,
-                maxStack: gachaItem.maxStack,
-                isNew: false,
-                wasAtMax,
-                itemType: gachaItem.itemType,
-                seriesId: gachaItem.seriesId,
-                source: 'gacha'
-            };
-        } else if (!existingItem) {
-            // Add new item - ENSURE ALL FIELDS ARE PROPERLY SET
-            const newItem = {
-                itemId: gachaItem.itemId,
-                itemName: gachaItem.itemName,
-                itemType: gachaItem.itemType,
-                seriesId: gachaItem.seriesId,
-                rarity: gachaItem.rarity,
-                emojiId: gachaItem.emojiId, // IMPORTANT: Make sure this is saved
-                emojiName: gachaItem.emojiName, // IMPORTANT: Make sure this is saved
-                obtainedAt: new Date(),
-                quantity: 1,
-                source: 'gacha'
-            };
-
-            user.gachaCollection.push(newItem);
-            console.log('Added new item to collection:', {
-                itemId: newItem.itemId,
-                itemName: newItem.itemName,
-                emojiId: newItem.emojiId,
-                emojiName: newItem.emojiName,
-                collectionSize: user.gachaCollection.length
-            });
-
-            return {
-                itemId: gachaItem.itemId,
-                itemName: gachaItem.itemName,
-                rarity: gachaItem.rarity,
-                emojiName: gachaItem.emojiName,
-                emojiId: gachaItem.emojiId,
-                description: gachaItem.description,
-                flavorText: gachaItem.flavorText,
-                quantity: 1,
-                maxStack: gachaItem.maxStack,
-                isNew: true,
-                itemType: gachaItem.itemType,
-                seriesId: gachaItem.seriesId,
-                source: 'gacha'
-            };
-        } else {
-            // Item exists but can't stack more
-            console.log(`Item ${gachaItem.itemName} already at max stack`);
-            return {
-                itemId: gachaItem.itemId,
-                itemName: gachaItem.itemName,
-                rarity: gachaItem.rarity,
-                emojiName: gachaItem.emojiName,
-                emojiId: gachaItem.emojiId,
-                description: gachaItem.description,
-                flavorText: gachaItem.flavorText,
-                quantity: existingItem.quantity,
-                maxStack: gachaItem.maxStack,
-                isNew: false,
-                wasAtMax: true,
-                itemType: gachaItem.itemType,
-                seriesId: gachaItem.seriesId,
-                source: 'gacha'
-            };
-        }
+        // Format result for the UI
+        return {
+            itemId: gachaItem.itemId,
+            itemName: gachaItem.itemName,
+            rarity: gachaItem.rarity,
+            emojiName: gachaItem.emojiName,
+            emojiId: gachaItem.emojiId, // Ensure emoji data is preserved
+            description: gachaItem.description,
+            flavorText: gachaItem.flavorText,
+            quantity: addResult.item.quantity,
+            maxStack: gachaItem.maxStack,
+            isNew: addResult.isNew,
+            wasStacked: addResult.wasStacked,
+            atMaxStack: addResult.atMaxStack,
+            itemType: gachaItem.itemType,
+            seriesId: gachaItem.seriesId,
+            source: 'gacha'
+        };
     }
 
     /**
@@ -281,19 +211,19 @@ class GachaService {
             const hasReward = user.gachaCollection.some(item => item.itemId === completionReward.itemId);
             if (hasReward) return null; // Already completed
 
-            // Award the completion reward
-            user.gachaCollection.push({
+            // Award the completion reward using the new method
+            const rewardGachaItem = {
                 itemId: completionReward.itemId,
                 itemName: completionReward.itemName,
                 itemType: 'special',
-                seriesId: null, // Completion rewards don't belong to series
+                seriesId: null,
                 rarity: 'legendary',
                 emojiId: completionReward.emojiId,
                 emojiName: completionReward.emojiName,
-                obtainedAt: new Date(),
-                quantity: 1,
-                source: 'series_completion'
-            });
+                maxStack: 1
+            };
+
+            user.addGachaItem(rewardGachaItem, 1, 'series_completion');
 
             return {
                 seriesId,
@@ -378,7 +308,7 @@ class GachaService {
     }
 
     /**
-     * Format emoji for display
+     * Format emoji for display - using the same pattern as trophy system
      */
     formatEmoji(emojiId, emojiName) {
         if (emojiId && emojiName) {
@@ -387,6 +317,13 @@ class GachaService {
             return emojiName;
         }
         return '❓';
+    }
+
+    /**
+     * Format emoji from user's collection item
+     */
+    formatCollectionItemEmoji(item) {
+        return this.formatEmoji(item.emojiId, item.emojiName);
     }
 
     /**
