@@ -251,6 +251,901 @@ export default {
                 }
 
                 // Show detailed view of selected series
+                await this.showSeriesDetail(interaction, user, selectedValue, 0);
+                
+            } else if (interaction.customId.startsWith('collection_filter_apply_')) {
+                username = interaction.customId.replace('collection_filter_apply_', '');
+                selectedValue = interaction.values[0];
+                
+                const user = await User.findOne({ 
+                    raUsername: { $regex: new RegExp(`^${username}$`, 'i') }
+                });
+
+                if (!user || user.discordId !== interaction.user.id) {
+                    return interaction.editReply({
+                        content: '❌ You can only view your own collection.',
+                        ephemeral: true
+                    });
+                }
+
+                // Apply filter and show results
+                await this.showFilteredItems(interaction, user, selectedValue, 0);
+                
+            } else if (interaction.customId.startsWith('collection_inspect_item_')) {
+                username = interaction.customId.replace('collection_inspect_item_', '');
+                const itemId = interaction.values[0];
+                
+                const user = await User.findOne({ 
+                    raUsername: { $regex: new RegExp(`^${username}$`, 'i') }
+                });
+
+                if (!user || user.discordId !== interaction.user.id) {
+                    return interaction.editReply({
+                        content: '❌ You can only view your own collection.',
+                        ephemeral: true
+                    });
+                }
+
+                // Show detailed item inspection
+                await this.showItemDetail(interaction, user, itemId);
+            }
+
+        } catch (error) {
+            console.error('Error handling collection select menu:', error);
+            await interaction.editReply({
+                content: '❌ An error occurred.',
+                ephemeral: true
+            });
+        }
+    },
+
+    // FIXED: Properly handle emoji validation for Discord select menu
+    async handleInspectButton(interaction, user) {
+        if (!user.gachaCollection || user.gachaCollection.length === 0) {
+            return interaction.editReply({
+                content: '📦 Your collection is empty! Nothing to inspect.'
+            });
+        }
+
+        // Create dropdown with all items in collection
+        const itemOptions = [];
+        
+        // Sort items by rarity (highest first), then by name
+        const rarityOrder = ['mythic', 'legendary', 'epic', 'rare', 'uncommon', 'common'];
+        const sortedItems = [...user.gachaCollection].sort((a, b) => {
+            const aRarityIndex = rarityOrder.indexOf(a.rarity);
+            const bRarityIndex = rarityOrder.indexOf(b.rarity);
+            if (aRarityIndex !== bRarityIndex) {
+                return aRarityIndex - bRarityIndex;
+            }
+            return a.itemName.localeCompare(b.itemName);
+        });
+
+        // Add up to 25 items to dropdown (Discord limit)
+        for (const item of sortedItems.slice(0, 25)) {
+            const rarityEmoji = gachaService.getRarityEmoji(item.rarity);
+            const quantity = (item.quantity || 1) > 1 ? ` x${item.quantity}` : '';
+            const seriesTag = item.seriesId ? ` [${item.seriesId}]` : '';
+            
+            // FIXED: Properly handle emoji for Discord select menu
+            let emojiOption = undefined;
+            
+            if (item.emojiId && item.emojiName) {
+                // Custom emoji - use object format
+                emojiOption = {
+                    id: item.emojiId,
+                    name: item.emojiName
+                };
+            } else if (item.emojiName && this.isUnicodeEmoji(item.emojiName)) {
+                // Unicode emoji - use directly
+                emojiOption = item.emojiName;
+            }
+            // If neither condition is met, emojiOption stays undefined (no emoji)
+            
+            const option = {
+                label: item.itemName,
+                value: item.itemId,
+                description: `${gachaService.getRarityDisplayName(item.rarity)}${quantity}${seriesTag}`.slice(0, 100)
+            };
+            
+            // Only add emoji if we have a valid one
+            if (emojiOption) {
+                option.emoji = emojiOption;
+            }
+            
+            itemOptions.push(option);
+        }
+
+        const inspectMenu = new StringSelectMenuBuilder()
+            .setCustomId(`collection_inspect_item_${user.raUsername}`)
+            .setPlaceholder('Choose an item to inspect...')
+            .addOptions(itemOptions);
+
+        const components = [new ActionRowBuilder().addComponents(inspectMenu)];
+        
+        // Add back button
+        const backButton = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`collection_back_${user.raUsername}`)
+                    .setLabel('← Back to Overview')
+                    .setStyle(ButtonStyle.Secondary)
+            );
+        
+        components.push(backButton);
+
+        await interaction.editReply({
+            content: `🔍 **Choose an item to inspect:**\n` +
+                     `${sortedItems.length > 25 ? `Showing top 25 of ${sortedItems.length} items (sorted by rarity)` : `${sortedItems.length} items available`}`,
+            components: components
+        });
+    },
+
+    // Show detailed view of a specific item
+    async showItemDetail(interaction, user, itemId) {
+        // Find the item in user's collection
+        const collectionItem = user.gachaCollection.find(item => item.itemId === itemId);
+        if (!collectionItem) {
+            return interaction.editReply({
+                content: '❌ Item not found in your collection.'
+            });
+        }
+
+        // Get the original item data from database for complete information
+        const originalItem = await GachaItem.findOne({ itemId });
+        
+        // Create detailed embed similar to pull result
+        const rarityColor = gachaService.getRarityColor(collectionItem.rarity);
+        const rarityEmoji = gachaService.getRarityEmoji(collectionItem.rarity);
+        const rarityName = gachaService.getRarityDisplayName(collectionItem.rarity);
+        const itemEmoji = formatGachaEmoji(collectionItem.emojiId, collectionItem.emojiName);
+        
+        // UPDATED: Removed 🔍 emoji from title
+        const embed = new EmbedBuilder()
+            .setTitle(`Item Details - ${collectionItem.itemName}`)
+            .setColor(rarityColor)
+            .setTimestamp();
+
+        // Main item display - BIG and prominent like pull results
+        let description = `# ${itemEmoji} **${collectionItem.itemName}**\n\n`;
+        
+        // Rarity with emoji
+        description += `${rarityEmoji} **${rarityName}**`;
+        
+        // Quantity info - UPDATED: Removed 📦 emoji
+        if (collectionItem.quantity && collectionItem.quantity > 1) {
+            const maxStack = originalItem?.maxStack || 1;
+            description += `\n**Quantity:** ${collectionItem.quantity}${maxStack > 1 ? `/${maxStack}` : ''}`;
+        }
+        
+        // Series info - UPDATED: Removed 🏷️ emoji
+        if (collectionItem.seriesId) {
+            description += `\n**Series:** ${collectionItem.seriesId.charAt(0).toUpperCase() + collectionItem.seriesId.slice(1)}`;
+        }
+
+        // Source info - UPDATED: Removed all source emojis
+        const sourceNames = {
+            gacha: 'Gacha Pull',
+            combined: 'Item Combination',
+            series_completion: 'Series Completion',
+            admin_grant: 'Admin Grant'
+        };
+        const source = collectionItem.source || 'gacha';
+        description += `\n**Source:** ${sourceNames[source] || 'Unknown'}`;
+
+        embed.setDescription(description);
+
+        // Add item description - UPDATED: Removed 📝 emoji
+        const itemDescription = collectionItem.description || originalItem?.description;
+        if (itemDescription) {
+            embed.addFields({
+                name: 'Description',
+                value: `*${itemDescription}*`,
+                inline: false
+            });
+        }
+
+        // Add flavor text - UPDATED: Removed 💭 emoji
+        const flavorText = collectionItem.flavorText || originalItem?.flavorText;
+        if (flavorText) {
+            embed.addFields({
+                name: 'Flavor Text',
+                value: `*"${flavorText}"*`,
+                inline: false
+            });
+        }
+
+        // Add acquisition date - UPDATED: Removed 📅 emoji
+        if (collectionItem.obtainedAt) {
+            const obtainedDate = new Date(collectionItem.obtainedAt);
+            embed.addFields({
+                name: 'Obtained',
+                value: `<t:${Math.floor(obtainedDate.getTime() / 1000)}:F>`,
+                inline: true
+            });
+        }
+
+        // Add item type info - UPDATED: Removed 🏷️ emoji
+        if (originalItem?.itemType) {
+            const typeNames = {
+                trinket: 'Trinket',
+                collectible: 'Collectible',
+                series: 'Series Item',
+                special: 'Special Item',
+                combined: 'Combined Item'
+            };
+            embed.addFields({
+                name: 'Type',
+                value: typeNames[originalItem.itemType] || 'Unknown',
+                inline: true
+            });
+        }
+
+        // Add back button and action buttons
+        const actionButtons = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`collection_back_${user.raUsername}`)
+                    .setLabel('← Back to Overview')
+                    .setStyle(ButtonStyle.Secondary),
+                
+                new ButtonBuilder()
+                    .setCustomId(`collection_inspect_${user.raUsername}`)
+                    .setLabel('🔍 Inspect Another')
+                    .setStyle(ButtonStyle.Secondary),
+                
+                new ButtonBuilder()
+                    .setCustomId(`collection_combine_${user.raUsername}`)
+                    .setLabel('🔧 Combine Items')
+                    .setStyle(ButtonStyle.Primary)
+            );
+
+        embed.setFooter({ 
+            text: 'This is the same detailed view you see when pulling this item from the gacha!' 
+        });
+
+        await interaction.editReply({
+            embeds: [embed],
+            components: [actionButtons]
+        });
+    },
+
+    // Show filtered items as emoji grid with pagination
+    async showFilteredItems(interaction, user, filter, page = 0) {
+        let items = [...user.gachaCollection];
+        let title = '';
+
+        // Apply filter
+        switch (filter) {
+            case 'all':
+                title = `All Items (${items.length})`;
+                break;
+            case 'mythic':
+            case 'legendary':
+            case 'epic':
+            case 'rare':
+            case 'uncommon':
+            case 'common':
+                items = items.filter(item => item.rarity === filter);
+                const rarityEmoji = gachaService.getRarityEmoji(filter);
+                const rarityName = gachaService.getRarityDisplayName(filter);
+                title = `${rarityEmoji} ${rarityName} Items (${items.length})`;
+                break;
+            case 'stackable':
+                items = items.filter(item => (item.quantity || 1) > 1);
+                title = `Stackable Items (${items.length})`;
+                break;
+            case 'combined':
+                items = items.filter(item => item.source === 'combined');
+                title = `Combined Items (${items.length})`;
+                break;
+            case 'series_completion':
+                items = items.filter(item => item.source === 'series_completion');
+                title = `Series Completion Rewards (${items.length})`;
+                break;
+            default:
+                title = `Filtered Items (${items.length})`;
+        }
+
+        // Sort by rarity (highest first), then by name
+        const rarityOrder = ['mythic', 'legendary', 'epic', 'rare', 'uncommon', 'common'];
+        items.sort((a, b) => {
+            const aRarityIndex = rarityOrder.indexOf(a.rarity);
+            const bRarityIndex = rarityOrder.indexOf(b.rarity);
+            if (aRarityIndex !== bRarityIndex) {
+                return aRarityIndex - bRarityIndex;
+            }
+            return a.itemName.localeCompare(b.itemName);
+        });
+
+        // UPDATED: Higher pagination for emoji grid (60 items per page)
+        const ITEMS_PER_PAGE = 60;
+        const totalPages = Math.ceil(items.length / ITEMS_PER_PAGE);
+        const startIndex = page * ITEMS_PER_PAGE;
+        const endIndex = Math.min(startIndex + ITEMS_PER_PAGE, items.length);
+        const pageItems = items.slice(startIndex, endIndex);
+
+        const embed = new EmbedBuilder()
+            .setTitle(title)
+            .setColor(COLORS.INFO)
+            .setTimestamp();
+
+        if (items.length === 0) {
+            embed.setDescription('No items match this filter.');
+        } else {
+            // UPDATED: Show emoji grid organized by rarity
+            if (['mythic', 'legendary', 'epic', 'rare', 'uncommon', 'common'].includes(filter)) {
+                // For single rarity filter, just show emoji grid without rarity headers
+                let emojiGrid = '';
+                let currentRow = '';
+                const EMOJIS_PER_ROW = 8;
+                
+                for (let i = 0; i < pageItems.length; i++) {
+                    const item = pageItems[i];
+                    const emoji = formatGachaEmoji(item.emojiId, item.emojiName);
+                    const quantity = (item.quantity || 1) > 1 ? `⁽${item.quantity}⁾` : '';
+                    
+                    currentRow += `${emoji}${quantity} `;
+                    
+                    if ((i + 1) % EMOJIS_PER_ROW === 0 || i === pageItems.length - 1) {
+                        emojiGrid += currentRow.trim() + '\n';
+                        currentRow = '';
+                    }
+                }
+                
+                embed.setDescription(emojiGrid.trim() || 'No items to display');
+            } else {
+                // For mixed filters, group by rarity and show emoji grids
+                const rarityGroups = {};
+                pageItems.forEach(item => {
+                    if (!rarityGroups[item.rarity]) {
+                        rarityGroups[item.rarity] = [];
+                    }
+                    rarityGroups[item.rarity].push(item);
+                });
+
+                let description = '';
+                
+                for (const rarity of rarityOrder) {
+                    const rarityItems = rarityGroups[rarity];
+                    if (!rarityItems || rarityItems.length === 0) continue;
+
+                    const rarityEmoji = gachaService.getRarityEmoji(rarity);
+                    const rarityName = gachaService.getRarityDisplayName(rarity);
+                    
+                    description += `\n${rarityEmoji} **${rarityName}** (${rarityItems.length})\n`;
+                    
+                    // Show emoji grid for this rarity
+                    let emojiGrid = '';
+                    let currentRow = '';
+                    const EMOJIS_PER_ROW = 8;
+                    
+                    for (let i = 0; i < rarityItems.length; i++) {
+                        const item = rarityItems[i];
+                        const emoji = formatGachaEmoji(item.emojiId, item.emojiName);
+                        const quantity = (item.quantity || 1) > 1 ? `⁽${item.quantity}⁾` : '';
+                        
+                        currentRow += `${emoji}${quantity} `;
+                        
+                        if ((i + 1) % EMOJIS_PER_ROW === 0 || i === rarityItems.length - 1) {
+                            emojiGrid += currentRow.trim() + '\n';
+                            currentRow = '';
+                        }
+                    }
+                    
+                    description += emojiGrid;
+                }
+
+                embed.setDescription(description.trim());
+            }
+
+            // Add pagination info
+            if (totalPages > 1) {
+                embed.setFooter({ 
+                    text: `Page ${page + 1}/${totalPages} • Showing ${startIndex + 1}-${endIndex} of ${items.length} items • ⁽ⁿ⁾ = quantity • Use Inspect to see details` 
+                });
+            } else {
+                embed.setFooter({ 
+                    text: '⁽ⁿ⁾ = quantity • Use Inspect Item to see details' 
+                });
+            }
+        }
+
+        // Create navigation buttons
+        const components = [];
+        
+        // Add pagination buttons if needed
+        if (totalPages > 1) {
+            const navButtons = new ActionRowBuilder();
+            
+            // Previous page button
+            navButtons.addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`collection_filter_page_${user.raUsername}_${filter}_${Math.max(0, page - 1)}`)
+                    .setLabel('◀ Previous')
+                    .setStyle(ButtonStyle.Secondary)
+                    .setDisabled(page === 0)
+            );
+            
+            // Page indicator (disabled button)
+            navButtons.addComponents(
+                new ButtonBuilder()
+                    .setCustomId('page_indicator')
+                    .setLabel(`${page + 1}/${totalPages}`)
+                    .setStyle(ButtonStyle.Secondary)
+                    .setDisabled(true)
+            );
+            
+            // Next page button
+            navButtons.addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`collection_filter_page_${user.raUsername}_${filter}_${Math.min(totalPages - 1, page + 1)}`)
+                    .setLabel('Next ▶')
+                    .setStyle(ButtonStyle.Secondary)
+                    .setDisabled(page === totalPages - 1)
+            );
+            
+            components.push(navButtons);
+        }
+
+        // Add main action buttons
+        const actionButtons = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`collection_back_${user.raUsername}`)
+                    .setLabel('← Back to Overview')
+                    .setStyle(ButtonStyle.Secondary),
+                
+                new ButtonBuilder()
+                    .setCustomId(`collection_inspect_${user.raUsername}`)
+                    .setLabel('🔍 Inspect Item')
+                    .setStyle(ButtonStyle.Secondary),
+                
+                new ButtonBuilder()
+                    .setCustomId(`collection_combine_${user.raUsername}`)
+                    .setLabel('🔧 Combine Items')
+                    .setStyle(ButtonStyle.Primary)
+            );
+
+        components.push(actionButtons);
+
+        await interaction.editReply({
+            embeds: [embed],
+            components: components
+        });
+    },
+
+    // Show detailed view of a specific series as emoji grid with pagination
+    async showSeriesDetail(interaction, user, seriesFilter, page = 0) {
+        const summary = gachaService.getUserCollectionSummary(user);
+        let items = [];
+        let title = '';
+
+        if (seriesFilter === 'all') {
+            items = user.gachaCollection;
+            title = `All Items (${items.length})`;
+        } else if (seriesFilter === 'individual') {
+            items = user.gachaCollection.filter(item => !item.seriesId);
+            title = `Individual Items (${items.length})`;
+        } else {
+            items = user.gachaCollection.filter(item => item.seriesId === seriesFilter);
+            const seriesName = seriesFilter.charAt(0).toUpperCase() + seriesFilter.slice(1);
+            title = `${seriesName} Series (${items.length})`;
+        }
+
+        // Sort by rarity (highest first), then by name
+        const rarityOrder = ['mythic', 'legendary', 'epic', 'rare', 'uncommon', 'common'];
+        items.sort((a, b) => {
+            const aRarityIndex = rarityOrder.indexOf(a.rarity);
+            const bRarityIndex = rarityOrder.indexOf(b.rarity);
+            if (aRarityIndex !== bRarityIndex) {
+                return aRarityIndex - bRarityIndex;
+            }
+            return a.itemName.localeCompare(b.itemName);
+        });
+
+        // UPDATED: Higher pagination for emoji grid (60 items per page)
+        const ITEMS_PER_PAGE = 60;
+        const totalPages = Math.ceil(items.length / ITEMS_PER_PAGE);
+        const startIndex = page * ITEMS_PER_PAGE;
+        const endIndex = Math.min(startIndex + ITEMS_PER_PAGE, items.length);
+        const pageItems = items.slice(startIndex, endIndex);
+
+        const embed = new EmbedBuilder()
+            .setTitle(title)
+            .setColor(COLORS.INFO)
+            .setTimestamp();
+
+        if (items.length === 0) {
+            embed.setDescription('No items in this category.');
+        } else {
+            // UPDATED: Show emoji grid organized by rarity
+            const rarityGroups = {};
+            pageItems.forEach(item => {
+                if (!rarityGroups[item.rarity]) {
+                    rarityGroups[item.rarity] = [];
+                }
+                rarityGroups[item.rarity].push(item);
+            });
+
+            let description = '';
+            
+            for (const rarity of rarityOrder) {
+                const rarityItems = rarityGroups[rarity];
+                if (!rarityItems || rarityItems.length === 0) continue;
+
+                const rarityEmoji = gachaService.getRarityEmoji(rarity);
+                const rarityName = gachaService.getRarityDisplayName(rarity);
+                
+                description += `\n${rarityEmoji} **${rarityName}** (${rarityItems.length})\n`;
+                
+                // Show emoji grid for this rarity
+                let emojiGrid = '';
+                let currentRow = '';
+                const EMOJIS_PER_ROW = 8;
+                
+                for (let i = 0; i < rarityItems.length; i++) {
+                    const item = rarityItems[i];
+                    const emoji = formatGachaEmoji(item.emojiId, item.emojiName);
+                    const quantity = (item.quantity || 1) > 1 ? `⁽${item.quantity}⁾` : '';
+                    
+                    currentRow += `${emoji}${quantity} `;
+                    
+                    if ((i + 1) % EMOJIS_PER_ROW === 0 || i === rarityItems.length - 1) {
+                        emojiGrid += currentRow.trim() + '\n';
+                        currentRow = '';
+                    }
+                }
+                
+                description += emojiGrid;
+            }
+
+            embed.setDescription(description.trim());
+            
+            // Add pagination info
+            if (totalPages > 1) {
+                embed.setFooter({ 
+                    text: `Page ${page + 1}/${totalPages} • Showing ${startIndex + 1}-${endIndex} of ${items.length} items • ⁽ⁿ⁾ = quantity • Use Inspect to see details` 
+                });
+            } else {
+                embed.setFooter({ 
+                    text: '⁽ⁿ⁾ = quantity • Use Inspect Item to see details' 
+                });
+            }
+        }
+
+        // Create navigation buttons
+        const components = [];
+        
+        // Add pagination buttons if needed
+        if (totalPages > 1) {
+            const navButtons = new ActionRowBuilder();
+            
+            // Previous page button
+            navButtons.addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`collection_series_page_${user.raUsername}_${seriesFilter}_${Math.max(0, page - 1)}`)
+                    .setLabel('◀ Previous')
+                    .setStyle(ButtonStyle.Secondary)
+                    .setDisabled(page === 0)
+            );
+            
+            // Page indicator (disabled button)
+            navButtons.addComponents(
+                new ButtonBuilder()
+                    .setCustomId('page_indicator')
+                    .setLabel(`${page + 1}/${totalPages}`)
+                    .setStyle(ButtonStyle.Secondary)
+                    .setDisabled(true)
+            );
+            
+            // Next page button
+            navButtons.addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`collection_series_page_${user.raUsername}_${seriesFilter}_${Math.min(totalPages - 1, page + 1)}`)
+                    .setLabel('Next ▶')
+                    .setStyle(ButtonStyle.Secondary)
+                    .setDisabled(page === totalPages - 1)
+            );
+            
+            components.push(navButtons);
+        }
+
+        // Add main action buttons
+        const actionButtons = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`collection_back_${user.raUsername}`)
+                    .setLabel('← Back to Overview')
+                    .setStyle(ButtonStyle.Secondary),
+                
+                new ButtonBuilder()
+                    .setCustomId(`collection_inspect_${user.raUsername}`)
+                    .setLabel('🔍 Inspect Item')
+                    .setStyle(ButtonStyle.Secondary),
+                
+                new ButtonBuilder()
+                    .setCustomId(`collection_combine_${user.raUsername}`)
+                    .setLabel('🔧 Combine Items')
+                    .setStyle(ButtonStyle.Primary)
+            );
+
+        components.push(actionButtons);
+
+        await interaction.editReply({
+            embeds: [embed],
+            components: components
+        });
+    },
+
+    // Handle button interactions
+    async handleButtonInteraction(interaction) {
+        if (!interaction.customId.startsWith('collection_')) return;
+
+        await interaction.deferReply({ ephemeral: true });
+
+        try {
+            // NEW: Handle pagination buttons first
+            if (interaction.customId.includes('_page_')) {
+                const parts = interaction.customId.split('_');
+                const username = parts[2];
+                const buttonType = `${parts[1]}_${parts[3]}`; // filter_page or series_page
+                const params = parts.slice(4); // [filter, page]
+                
+                const user = await User.findOne({ 
+                    raUsername: { $regex: new RegExp(`^${username}// src/commands/user/collection.js - FIXED emoji validation for inspect feature
+import { 
+    SlashCommandBuilder, 
+    EmbedBuilder,
+    ActionRowBuilder,
+    ButtonBuilder,
+    ButtonStyle,
+    StringSelectMenuBuilder,
+    ModalBuilder,
+    TextInputBuilder,
+    TextInputStyle
+} from 'discord.js';
+import { User } from '../../models/User.js';
+import { GachaItem, CombinationRule } from '../../models/GachaItem.js';
+import combinationService from '../../services/combinationService.js';
+import gachaService from '../../services/gachaService.js';
+import { formatGachaEmoji } from '../../config/gachaEmojis.js';
+import { COLORS } from '../../utils/FeedUtils.js';
+
+export default {
+    data: new SlashCommandBuilder()
+        .setName('collection')
+        .setDescription('View your gacha collection with filtering and combination options'),
+
+    async execute(interaction) {
+        await interaction.deferReply({ ephemeral: true });
+
+        try {
+            const user = await User.findOne({ discordId: interaction.user.id });
+            if (!user) {
+                return interaction.editReply({
+                    content: '❌ You are not registered. Please ask an admin to register you first.'
+                });
+            }
+
+            if (!user.gachaCollection || user.gachaCollection.length === 0) {
+                return interaction.editReply({
+                    content: '📦 Your collection is empty! Visit the gacha machine to start collecting items.'
+                });
+            }
+
+            // Get collection summary with series breakdown
+            const summary = gachaService.getUserCollectionSummary(user);
+            
+            // Create the main collection embed with series overview
+            const mainEmbed = await this.createMainCollectionEmbed(user, summary);
+            
+            // Create control buttons and dropdown
+            const components = this.createCollectionControls(user, summary);
+            
+            await interaction.editReply({ 
+                embeds: [mainEmbed],
+                components: components
+            });
+
+        } catch (error) {
+            console.error('Error displaying collection:', error);
+            await interaction.editReply({
+                content: '❌ An error occurred while fetching your collection.'
+            });
+        }
+    },
+
+    // Helper function to check if a string is a unicode emoji
+    isUnicodeEmoji(str) {
+        if (!str || str.length === 0) return false;
+        if (str.startsWith(':') || str.startsWith('<:')) return false;
+        
+        const emojiRegex = /^[\u{1F600}-\u{1F64F}]|[\u{1F300}-\u{1F5FF}]|[\u{1F680}-\u{1F6FF}]|[\u{1F1E0}-\u{1F1FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]/u;
+        return emojiRegex.test(str);
+    },
+
+    // Create the main collection overview embed
+    async createMainCollectionEmbed(user, summary) {
+        const embed = new EmbedBuilder()
+            .setTitle(`📦 ${user.raUsername}'s Collection`)
+            .setColor(COLORS.INFO)
+            .setTimestamp();
+
+        // Main stats
+        let description = `**Total Items:** ${summary.totalItems} (${summary.uniqueItems} unique)\n\n`;
+
+        // Series breakdown - the main focus
+        description += '📚 **Collection by Series:**\n';
+        
+        const seriesEntries = Object.entries(summary.seriesBreakdown);
+        if (seriesEntries.length > 0) {
+            // Sort by series name, but put "Individual Items" last
+            seriesEntries.sort(([a], [b]) => {
+                if (a === 'Individual Items') return 1;
+                if (b === 'Individual Items') return -1;
+                return a.localeCompare(b);
+            });
+
+            for (const [seriesName, items] of seriesEntries) {
+                const itemCount = items.length;
+                const totalQuantity = items.reduce((sum, item) => sum + (item.quantity || 1), 0);
+                
+                const displayName = seriesName === 'Individual Items' ? 
+                    '🔸 Individual Items' : 
+                    `🏷️ ${seriesName.charAt(0).toUpperCase() + seriesName.slice(1)} Series`;
+                
+                description += `${displayName}: ${itemCount} types (${totalQuantity} total)\n`;
+            }
+        } else {
+            description += 'No items collected yet\n';
+        }
+
+        description += '\n';
+
+        // Rarity summary (condensed)
+        const rarityEmojis = {
+            mythic: '🌟',
+            legendary: '🟡',
+            epic: '🟣',
+            rare: '🔵',
+            uncommon: '🟢',
+            common: '⚪'
+        };
+
+        description += '💎 **Rarity Summary:**\n';
+        let rarityLine = '';
+        for (const [rarity, emoji] of Object.entries(rarityEmojis)) {
+            const count = summary.rarityCount[rarity] || 0;
+            if (count > 0) {
+                rarityLine += `${emoji}${count} `;
+            }
+        }
+        description += rarityLine || 'No items yet';
+
+        embed.setDescription(description);
+
+        // Add combination stats
+        const combinationStats = combinationService.getCombinationStats(user);
+        embed.addFields({
+            name: '🔧 Combination Activity',
+            value: `**Items Combined:** ${combinationStats.totalCombined}\n` +
+                   `**Unique Combined:** ${combinationStats.uniqueCombined}\n` +
+                   `**Discovery Status:** ${combinationStats.uniqueCombined > 0 ? 'Active Explorer!' : 'Ready to Experiment!'}`,
+            inline: true
+        });
+
+        embed.setFooter({ 
+            text: 'Use the dropdown and buttons below to explore your collection • Click Inspect Item to see full details!' 
+        });
+
+        return embed;
+    },
+
+    // Create control components
+    createCollectionControls(user, summary) {
+        const components = [];
+
+        // Series selection dropdown
+        const seriesOptions = [];
+        const seriesEntries = Object.entries(summary.seriesBreakdown);
+        
+        // Add "All Items" option first
+        seriesOptions.push({
+            label: 'All Items',
+            value: 'all',
+            description: `View all ${summary.totalItems} items`,
+            emoji: '📦'
+        });
+
+        // Add series options
+        seriesEntries.forEach(([seriesName, items]) => {
+            const itemCount = items.length;
+            const totalQuantity = items.reduce((sum, item) => sum + (item.quantity || 1), 0);
+            
+            if (seriesName === 'Individual Items') {
+                seriesOptions.push({
+                    label: 'Individual Items',
+                    value: 'individual',
+                    description: `${itemCount} standalone items (${totalQuantity} total)`,
+                    emoji: '🔸'
+                });
+            } else {
+                seriesOptions.push({
+                    label: `${seriesName.charAt(0).toUpperCase() + seriesName.slice(1)} Series`,
+                    value: seriesName,
+                    description: `${itemCount} types (${totalQuantity} total)`,
+                    emoji: '🏷️'
+                });
+            }
+        });
+
+        // Only add dropdown if there are series to choose from
+        if (seriesOptions.length > 1) {
+            const seriesMenu = new StringSelectMenuBuilder()
+                .setCustomId(`collection_series_${user.raUsername}`)
+                .setPlaceholder('Choose a series to view...')
+                .addOptions(seriesOptions.slice(0, 25)); // Discord limit
+
+            components.push(new ActionRowBuilder().addComponents(seriesMenu));
+        }
+
+        // Filter and action buttons
+        const actionButtons = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`collection_filter_${user.raUsername}`)
+                    .setLabel('🎯 Filters')
+                    .setStyle(ButtonStyle.Secondary),
+                
+                new ButtonBuilder()
+                    .setCustomId(`collection_inspect_${user.raUsername}`)
+                    .setLabel('🔍 Inspect Item')
+                    .setStyle(ButtonStyle.Secondary),
+                
+                new ButtonBuilder()
+                    .setCustomId(`collection_combine_${user.raUsername}`)
+                    .setLabel('🔧 Combine Items')
+                    .setStyle(ButtonStyle.Primary),
+                
+                new ButtonBuilder()
+                    .setCustomId(`collection_stats_${user.raUsername}`)
+                    .setLabel('📊 Statistics')
+                    .setStyle(ButtonStyle.Secondary)
+            );
+
+        components.push(actionButtons);
+
+        return components;
+    },
+
+    // Handle dropdown interactions
+    async handleSelectMenuInteraction(interaction) {
+        if (!interaction.customId.startsWith('collection_series_') && 
+            !interaction.customId.startsWith('collection_filter_apply_') &&
+            !interaction.customId.startsWith('collection_inspect_item_')) return;
+
+        await interaction.deferReply({ ephemeral: true });
+
+        try {
+            let username, selectedValue;
+            
+            if (interaction.customId.startsWith('collection_series_')) {
+                username = interaction.customId.replace('collection_series_', '');
+                selectedValue = interaction.values[0];
+                
+                const user = await User.findOne({ 
+                    raUsername: { $regex: new RegExp(`^${username}$`, 'i') }
+                });
+
+                if (!user || user.discordId !== interaction.user.id) {
+                    return interaction.editReply({
+                        content: '❌ You can only view your own collection.',
+                        ephemeral: true
+                    });
+                }
+
+                // Show detailed view of selected series
                 await this.showSeriesDetail(interaction, user, selectedValue);
                 
             } else if (interaction.customId.startsWith('collection_filter_apply_')) {
@@ -510,20 +1405,22 @@ export default {
         });
     },
 
-    // Show filtered items based on filter selection
-    async showFilteredItems(interaction, user, filter) {
+    // Show filtered items based on filter selection with pagination
+    async showFilteredItems(interaction, user, filter, page = 0) {
         let items = [...user.gachaCollection];
         let title = '';
 
         // Apply filter
         switch (filter) {
             case 'all':
-                title = `📦 All Items (${items.length})`;
+                title = `All Items (${items.length})`;
                 break;
             case 'mythic':
             case 'legendary':
             case 'epic':
             case 'rare':
+            case 'uncommon':
+            case 'common':
                 items = items.filter(item => item.rarity === filter);
                 const rarityEmoji = gachaService.getRarityEmoji(filter);
                 const rarityName = gachaService.getRarityDisplayName(filter);
@@ -531,18 +1428,18 @@ export default {
                 break;
             case 'stackable':
                 items = items.filter(item => (item.quantity || 1) > 1);
-                title = `📚 Stackable Items (${items.length})`;
+                title = `Stackable Items (${items.length})`;
                 break;
             case 'combined':
                 items = items.filter(item => item.source === 'combined');
-                title = `🔧 Combined Items (${items.length})`;
+                title = `Combined Items (${items.length})`;
                 break;
             case 'series_completion':
                 items = items.filter(item => item.source === 'series_completion');
-                title = `🏆 Series Completion Rewards (${items.length})`;
+                title = `Series Completion Rewards (${items.length})`;
                 break;
             default:
-                title = `📦 Filtered Items (${items.length})`;
+                title = `Filtered Items (${items.length})`;
         }
 
         // Sort by rarity (highest first), then by name
@@ -556,6 +1453,13 @@ export default {
             return a.itemName.localeCompare(b.itemName);
         });
 
+        // PAGINATION LOGIC
+        const ITEMS_PER_PAGE = 20; // Show more items per page
+        const totalPages = Math.ceil(items.length / ITEMS_PER_PAGE);
+        const startIndex = page * ITEMS_PER_PAGE;
+        const endIndex = Math.min(startIndex + ITEMS_PER_PAGE, items.length);
+        const pageItems = items.slice(startIndex, endIndex);
+
         const embed = new EmbedBuilder()
             .setTitle(title)
             .setColor(COLORS.INFO)
@@ -564,29 +1468,11 @@ export default {
         if (items.length === 0) {
             embed.setDescription('No items match this filter.');
         } else {
-            // Display items in groups by rarity for better organization
-            const rarityGroups = {};
-            items.forEach(item => {
-                if (!rarityGroups[item.rarity]) {
-                    rarityGroups[item.rarity] = [];
-                }
-                rarityGroups[item.rarity].push(item);
-            });
-
-            let description = '';
-            
-            for (const rarity of rarityOrder) {
-                const rarityItems = rarityGroups[rarity];
-                if (!rarityItems || rarityItems.length === 0) continue;
-
-                const rarityEmoji = gachaService.getRarityEmoji(rarity);
-                const rarityName = gachaService.getRarityDisplayName(rarity);
+            // For single rarity filters, just list all items without grouping
+            if (['mythic', 'legendary', 'epic', 'rare', 'uncommon', 'common'].includes(filter)) {
+                let description = '';
                 
-                if (filter !== rarity) { // Don't show rarity header if we're filtering by that rarity
-                    description += `\n${rarityEmoji} **${rarityName}** (${rarityItems.length})\n`;
-                }
-                
-                for (const item of rarityItems.slice(0, 10)) { // Limit per rarity
+                for (const item of pageItems) {
                     const emoji = formatGachaEmoji(item.emojiId, item.emojiName);
                     const quantity = (item.quantity || 1) > 1 ? ` x${item.quantity}` : '';
                     const sourceIcon = item.source === 'combined' ? ' 🔧' : 
@@ -596,16 +1482,98 @@ export default {
                     description += `${emoji} **${item.itemName}**${quantity}${sourceIcon}${seriesTag}\n`;
                 }
                 
-                if (rarityItems.length > 10) {
-                    description += `*...and ${rarityItems.length - 10} more ${rarityName} items*\n`;
+                embed.setDescription(description.trim());
+            } else {
+                // For mixed filters, group by rarity but show more items
+                const rarityGroups = {};
+                pageItems.forEach(item => {
+                    if (!rarityGroups[item.rarity]) {
+                        rarityGroups[item.rarity] = [];
+                    }
+                    rarityGroups[item.rarity].push(item);
+                });
+
+                let description = '';
+                
+                for (const rarity of rarityOrder) {
+                    const rarityItems = rarityGroups[rarity];
+                    if (!rarityItems || rarityItems.length === 0) continue;
+
+                    const rarityEmoji = gachaService.getRarityEmoji(rarity);
+                    const rarityName = gachaService.getRarityDisplayName(rarity);
+                    
+                    description += `\n${rarityEmoji} **${rarityName}** (${rarityItems.length})\n`;
+                    
+                    // Show more items per rarity (increased from 10 to 15)
+                    for (const item of rarityItems.slice(0, 15)) {
+                        const emoji = formatGachaEmoji(item.emojiId, item.emojiName);
+                        const quantity = (item.quantity || 1) > 1 ? ` x${item.quantity}` : '';
+                        const sourceIcon = item.source === 'combined' ? ' 🔧' : 
+                                         item.source === 'series_completion' ? ' 🏆' : '';
+                        const seriesTag = item.seriesId ? ` [${item.seriesId}]` : '';
+                        
+                        description += `${emoji} **${item.itemName}**${quantity}${sourceIcon}${seriesTag}\n`;
+                    }
+                    
+                    if (rarityItems.length > 15) {
+                        description += `*...and ${rarityItems.length - 15} more ${rarityName} items*\n`;
+                    }
                 }
+
+                embed.setDescription(description.trim());
             }
 
-            embed.setDescription(description.trim());
+            // Add pagination info
+            if (totalPages > 1) {
+                embed.setFooter({ 
+                    text: `Page ${page + 1}/${totalPages} • Showing ${startIndex + 1}-${endIndex} of ${items.length} items • 🔧 = Combined • 🏆 = Series reward • [series] = Series name` 
+                });
+            } else {
+                embed.setFooter({ 
+                    text: '🔧 = Combined • 🏆 = Series reward • [series] = Series name' 
+                });
+            }
         }
 
-        // Add back button and inspect button
-        const backButton = new ActionRowBuilder()
+        // Create navigation buttons
+        const components = [];
+        
+        // Add pagination buttons if needed
+        if (totalPages > 1) {
+            const navButtons = new ActionRowBuilder();
+            
+            // Previous page button
+            navButtons.addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`collection_filter_page_${user.raUsername}_${filter}_${Math.max(0, page - 1)}`)
+                    .setLabel('◀ Previous')
+                    .setStyle(ButtonStyle.Secondary)
+                    .setDisabled(page === 0)
+            );
+            
+            // Page indicator (disabled button)
+            navButtons.addComponents(
+                new ButtonBuilder()
+                    .setCustomId('page_indicator')
+                    .setLabel(`${page + 1}/${totalPages}`)
+                    .setStyle(ButtonStyle.Secondary)
+                    .setDisabled(true)
+            );
+            
+            // Next page button
+            navButtons.addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`collection_filter_page_${user.raUsername}_${filter}_${Math.min(totalPages - 1, page + 1)}`)
+                    .setLabel('Next ▶')
+                    .setStyle(ButtonStyle.Secondary)
+                    .setDisabled(page === totalPages - 1)
+            );
+            
+            components.push(navButtons);
+        }
+
+        // Add main action buttons
+        const actionButtons = new ActionRowBuilder()
             .addComponents(
                 new ButtonBuilder()
                     .setCustomId(`collection_back_${user.raUsername}`)
@@ -623,32 +1591,30 @@ export default {
                     .setStyle(ButtonStyle.Primary)
             );
 
-        embed.setFooter({ 
-            text: '🔧 = Combined • 🏆 = Series reward • [series] = Series name' 
-        });
+        components.push(actionButtons);
 
         await interaction.editReply({
             embeds: [embed],
-            components: [backButton]
+            components: components
         });
     },
 
-    // Show detailed view of a specific series
-    async showSeriesDetail(interaction, user, seriesFilter) {
+    // Show detailed view of a specific series with pagination
+    async showSeriesDetail(interaction, user, seriesFilter, page = 0) {
         const summary = gachaService.getUserCollectionSummary(user);
         let items = [];
         let title = '';
 
         if (seriesFilter === 'all') {
             items = user.gachaCollection;
-            title = `📦 All Items (${items.length})`;
+            title = `All Items (${items.length})`;
         } else if (seriesFilter === 'individual') {
             items = user.gachaCollection.filter(item => !item.seriesId);
-            title = `🔸 Individual Items (${items.length})`;
+            title = `Individual Items (${items.length})`;
         } else {
             items = user.gachaCollection.filter(item => item.seriesId === seriesFilter);
             const seriesName = seriesFilter.charAt(0).toUpperCase() + seriesFilter.slice(1);
-            title = `🏷️ ${seriesName} Series (${items.length})`;
+            title = `${seriesName} Series (${items.length})`;
         }
 
         // Sort by rarity (highest first), then by name
@@ -662,6 +1628,13 @@ export default {
             return a.itemName.localeCompare(b.itemName);
         });
 
+        // PAGINATION LOGIC
+        const ITEMS_PER_PAGE = 20; // Show more items per page
+        const totalPages = Math.ceil(items.length / ITEMS_PER_PAGE);
+        const startIndex = page * ITEMS_PER_PAGE;
+        const endIndex = Math.min(startIndex + ITEMS_PER_PAGE, items.length);
+        const pageItems = items.slice(startIndex, endIndex);
+
         const embed = new EmbedBuilder()
             .setTitle(title)
             .setColor(COLORS.INFO)
@@ -670,9 +1643,9 @@ export default {
         if (items.length === 0) {
             embed.setDescription('No items in this category.');
         } else {
-            // Group by rarity for better display
+            // Group by rarity for better display but show more items
             const rarityGroups = {};
-            items.forEach(item => {
+            pageItems.forEach(item => {
                 if (!rarityGroups[item.rarity]) {
                     rarityGroups[item.rarity] = [];
                 }
@@ -690,7 +1663,8 @@ export default {
                 
                 description += `\n${rarityEmoji} **${rarityName}** (${rarityItems.length})\n`;
                 
-                for (const item of rarityItems.slice(0, 8)) { // Limit per rarity to avoid long embeds
+                // Show more items per rarity (increased from 8 to 15)
+                for (const item of rarityItems.slice(0, 15)) {
                     const emoji = formatGachaEmoji(item.emojiId, item.emojiName);
                     const quantity = (item.quantity || 1) > 1 ? ` x${item.quantity}` : '';
                     const sourceIcon = item.source === 'combined' ? ' 🔧' : 
@@ -699,16 +1673,64 @@ export default {
                     description += `${emoji} **${item.itemName}**${quantity}${sourceIcon}\n`;
                 }
                 
-                if (rarityItems.length > 8) {
-                    description += `*...and ${rarityItems.length - 8} more ${rarityName} items*\n`;
+                if (rarityItems.length > 15) {
+                    description += `*...and ${rarityItems.length - 15} more ${rarityName} items*\n`;
                 }
             }
 
             embed.setDescription(description.trim());
+            
+            // Add pagination info
+            if (totalPages > 1) {
+                embed.setFooter({ 
+                    text: `Page ${page + 1}/${totalPages} • Showing ${startIndex + 1}-${endIndex} of ${items.length} items • 🔧 = Combined item • 🏆 = Series completion reward` 
+                });
+            } else {
+                embed.setFooter({ 
+                    text: '🔧 = Combined item • 🏆 = Series completion reward' 
+                });
+            }
         }
 
-        // Add back button and inspect button
-        const backButton = new ActionRowBuilder()
+        // Create navigation buttons
+        const components = [];
+        
+        // Add pagination buttons if needed
+        if (totalPages > 1) {
+            const navButtons = new ActionRowBuilder();
+            
+            // Previous page button
+            navButtons.addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`collection_series_page_${user.raUsername}_${seriesFilter}_${Math.max(0, page - 1)}`)
+                    .setLabel('◀ Previous')
+                    .setStyle(ButtonStyle.Secondary)
+                    .setDisabled(page === 0)
+            );
+            
+            // Page indicator (disabled button)
+            navButtons.addComponents(
+                new ButtonBuilder()
+                    .setCustomId('page_indicator')
+                    .setLabel(`${page + 1}/${totalPages}`)
+                    .setStyle(ButtonStyle.Secondary)
+                    .setDisabled(true)
+            );
+            
+            // Next page button
+            navButtons.addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`collection_series_page_${user.raUsername}_${seriesFilter}_${Math.min(totalPages - 1, page + 1)}`)
+                    .setLabel('Next ▶')
+                    .setStyle(ButtonStyle.Secondary)
+                    .setDisabled(page === totalPages - 1)
+            );
+            
+            components.push(navButtons);
+        }
+
+        // Add main action buttons
+        const actionButtons = new ActionRowBuilder()
             .addComponents(
                 new ButtonBuilder()
                     .setCustomId(`collection_back_${user.raUsername}`)
@@ -726,27 +1748,895 @@ export default {
                     .setStyle(ButtonStyle.Primary)
             );
 
-        embed.setFooter({ 
-            text: '🔧 = Combined item • 🏆 = Series completion reward' 
-        });
+        components.push(actionButtons);
 
         await interaction.editReply({
             embeds: [embed],
-            components: [backButton]
+            components: components
         });
     },
 
-    // Handle button interactions
-    async handleButtonInteraction(interaction) {
-        if (!interaction.customId.startsWith('collection_')) return;
+, 'i') }
+                });
+
+                if (!user || user.discordId !== interaction.user.id) {
+                    return interaction.editReply({
+                        content: '❌ You can only manage your own collection.',
+                        ephemeral: true
+                    });
+                }
+
+                await this.handlePaginationButton(interaction, user, buttonType, params);
+                return;
+            }
+
+            const [, action, username] = interaction.customId.split('_');
+            
+            const user = await User.findOne({ 
+                raUsername: { $regex: new RegExp(`^${username}// src/commands/user/collection.js - FIXED emoji validation for inspect feature
+import { 
+    SlashCommandBuilder, 
+    EmbedBuilder,
+    ActionRowBuilder,
+    ButtonBuilder,
+    ButtonStyle,
+    StringSelectMenuBuilder,
+    ModalBuilder,
+    TextInputBuilder,
+    TextInputStyle
+} from 'discord.js';
+import { User } from '../../models/User.js';
+import { GachaItem, CombinationRule } from '../../models/GachaItem.js';
+import combinationService from '../../services/combinationService.js';
+import gachaService from '../../services/gachaService.js';
+import { formatGachaEmoji } from '../../config/gachaEmojis.js';
+import { COLORS } from '../../utils/FeedUtils.js';
+
+export default {
+    data: new SlashCommandBuilder()
+        .setName('collection')
+        .setDescription('View your gacha collection with filtering and combination options'),
+
+    async execute(interaction) {
+        await interaction.deferReply({ ephemeral: true });
+
+        try {
+            const user = await User.findOne({ discordId: interaction.user.id });
+            if (!user) {
+                return interaction.editReply({
+                    content: '❌ You are not registered. Please ask an admin to register you first.'
+                });
+            }
+
+            if (!user.gachaCollection || user.gachaCollection.length === 0) {
+                return interaction.editReply({
+                    content: '📦 Your collection is empty! Visit the gacha machine to start collecting items.'
+                });
+            }
+
+            // Get collection summary with series breakdown
+            const summary = gachaService.getUserCollectionSummary(user);
+            
+            // Create the main collection embed with series overview
+            const mainEmbed = await this.createMainCollectionEmbed(user, summary);
+            
+            // Create control buttons and dropdown
+            const components = this.createCollectionControls(user, summary);
+            
+            await interaction.editReply({ 
+                embeds: [mainEmbed],
+                components: components
+            });
+
+        } catch (error) {
+            console.error('Error displaying collection:', error);
+            await interaction.editReply({
+                content: '❌ An error occurred while fetching your collection.'
+            });
+        }
+    },
+
+    // Helper function to check if a string is a unicode emoji
+    isUnicodeEmoji(str) {
+        if (!str || str.length === 0) return false;
+        if (str.startsWith(':') || str.startsWith('<:')) return false;
+        
+        const emojiRegex = /^[\u{1F600}-\u{1F64F}]|[\u{1F300}-\u{1F5FF}]|[\u{1F680}-\u{1F6FF}]|[\u{1F1E0}-\u{1F1FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]/u;
+        return emojiRegex.test(str);
+    },
+
+    // Create the main collection overview embed
+    async createMainCollectionEmbed(user, summary) {
+        const embed = new EmbedBuilder()
+            .setTitle(`📦 ${user.raUsername}'s Collection`)
+            .setColor(COLORS.INFO)
+            .setTimestamp();
+
+        // Main stats
+        let description = `**Total Items:** ${summary.totalItems} (${summary.uniqueItems} unique)\n\n`;
+
+        // Series breakdown - the main focus
+        description += '📚 **Collection by Series:**\n';
+        
+        const seriesEntries = Object.entries(summary.seriesBreakdown);
+        if (seriesEntries.length > 0) {
+            // Sort by series name, but put "Individual Items" last
+            seriesEntries.sort(([a], [b]) => {
+                if (a === 'Individual Items') return 1;
+                if (b === 'Individual Items') return -1;
+                return a.localeCompare(b);
+            });
+
+            for (const [seriesName, items] of seriesEntries) {
+                const itemCount = items.length;
+                const totalQuantity = items.reduce((sum, item) => sum + (item.quantity || 1), 0);
+                
+                const displayName = seriesName === 'Individual Items' ? 
+                    '🔸 Individual Items' : 
+                    `🏷️ ${seriesName.charAt(0).toUpperCase() + seriesName.slice(1)} Series`;
+                
+                description += `${displayName}: ${itemCount} types (${totalQuantity} total)\n`;
+            }
+        } else {
+            description += 'No items collected yet\n';
+        }
+
+        description += '\n';
+
+        // Rarity summary (condensed)
+        const rarityEmojis = {
+            mythic: '🌟',
+            legendary: '🟡',
+            epic: '🟣',
+            rare: '🔵',
+            uncommon: '🟢',
+            common: '⚪'
+        };
+
+        description += '💎 **Rarity Summary:**\n';
+        let rarityLine = '';
+        for (const [rarity, emoji] of Object.entries(rarityEmojis)) {
+            const count = summary.rarityCount[rarity] || 0;
+            if (count > 0) {
+                rarityLine += `${emoji}${count} `;
+            }
+        }
+        description += rarityLine || 'No items yet';
+
+        embed.setDescription(description);
+
+        // Add combination stats
+        const combinationStats = combinationService.getCombinationStats(user);
+        embed.addFields({
+            name: '🔧 Combination Activity',
+            value: `**Items Combined:** ${combinationStats.totalCombined}\n` +
+                   `**Unique Combined:** ${combinationStats.uniqueCombined}\n` +
+                   `**Discovery Status:** ${combinationStats.uniqueCombined > 0 ? 'Active Explorer!' : 'Ready to Experiment!'}`,
+            inline: true
+        });
+
+        embed.setFooter({ 
+            text: 'Use the dropdown and buttons below to explore your collection • Click Inspect Item to see full details!' 
+        });
+
+        return embed;
+    },
+
+    // Create control components
+    createCollectionControls(user, summary) {
+        const components = [];
+
+        // Series selection dropdown
+        const seriesOptions = [];
+        const seriesEntries = Object.entries(summary.seriesBreakdown);
+        
+        // Add "All Items" option first
+        seriesOptions.push({
+            label: 'All Items',
+            value: 'all',
+            description: `View all ${summary.totalItems} items`,
+            emoji: '📦'
+        });
+
+        // Add series options
+        seriesEntries.forEach(([seriesName, items]) => {
+            const itemCount = items.length;
+            const totalQuantity = items.reduce((sum, item) => sum + (item.quantity || 1), 0);
+            
+            if (seriesName === 'Individual Items') {
+                seriesOptions.push({
+                    label: 'Individual Items',
+                    value: 'individual',
+                    description: `${itemCount} standalone items (${totalQuantity} total)`,
+                    emoji: '🔸'
+                });
+            } else {
+                seriesOptions.push({
+                    label: `${seriesName.charAt(0).toUpperCase() + seriesName.slice(1)} Series`,
+                    value: seriesName,
+                    description: `${itemCount} types (${totalQuantity} total)`,
+                    emoji: '🏷️'
+                });
+            }
+        });
+
+        // Only add dropdown if there are series to choose from
+        if (seriesOptions.length > 1) {
+            const seriesMenu = new StringSelectMenuBuilder()
+                .setCustomId(`collection_series_${user.raUsername}`)
+                .setPlaceholder('Choose a series to view...')
+                .addOptions(seriesOptions.slice(0, 25)); // Discord limit
+
+            components.push(new ActionRowBuilder().addComponents(seriesMenu));
+        }
+
+        // Filter and action buttons
+        const actionButtons = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`collection_filter_${user.raUsername}`)
+                    .setLabel('🎯 Filters')
+                    .setStyle(ButtonStyle.Secondary),
+                
+                new ButtonBuilder()
+                    .setCustomId(`collection_inspect_${user.raUsername}`)
+                    .setLabel('🔍 Inspect Item')
+                    .setStyle(ButtonStyle.Secondary),
+                
+                new ButtonBuilder()
+                    .setCustomId(`collection_combine_${user.raUsername}`)
+                    .setLabel('🔧 Combine Items')
+                    .setStyle(ButtonStyle.Primary),
+                
+                new ButtonBuilder()
+                    .setCustomId(`collection_stats_${user.raUsername}`)
+                    .setLabel('📊 Statistics')
+                    .setStyle(ButtonStyle.Secondary)
+            );
+
+        components.push(actionButtons);
+
+        return components;
+    },
+
+    // Handle dropdown interactions
+    async handleSelectMenuInteraction(interaction) {
+        if (!interaction.customId.startsWith('collection_series_') && 
+            !interaction.customId.startsWith('collection_filter_apply_') &&
+            !interaction.customId.startsWith('collection_inspect_item_')) return;
 
         await interaction.deferReply({ ephemeral: true });
 
         try {
-            const [, action, username] = interaction.customId.split('_');
+            let username, selectedValue;
             
-            const user = await User.findOne({ 
-                raUsername: { $regex: new RegExp(`^${username}$`, 'i') }
+            if (interaction.customId.startsWith('collection_series_')) {
+                username = interaction.customId.replace('collection_series_', '');
+                selectedValue = interaction.values[0];
+                
+                const user = await User.findOne({ 
+                    raUsername: { $regex: new RegExp(`^${username}$`, 'i') }
+                });
+
+                if (!user || user.discordId !== interaction.user.id) {
+                    return interaction.editReply({
+                        content: '❌ You can only view your own collection.',
+                        ephemeral: true
+                    });
+                }
+
+                // Show detailed view of selected series
+                await this.showSeriesDetail(interaction, user, selectedValue);
+                
+            } else if (interaction.customId.startsWith('collection_filter_apply_')) {
+                username = interaction.customId.replace('collection_filter_apply_', '');
+                selectedValue = interaction.values[0];
+                
+                const user = await User.findOne({ 
+                    raUsername: { $regex: new RegExp(`^${username}$`, 'i') }
+                });
+
+                if (!user || user.discordId !== interaction.user.id) {
+                    return interaction.editReply({
+                        content: '❌ You can only view your own collection.',
+                        ephemeral: true
+                    });
+                }
+
+                // Apply filter and show results
+                await this.showFilteredItems(interaction, user, selectedValue);
+                
+            } else if (interaction.customId.startsWith('collection_inspect_item_')) {
+                username = interaction.customId.replace('collection_inspect_item_', '');
+                const itemId = interaction.values[0];
+                
+                const user = await User.findOne({ 
+                    raUsername: { $regex: new RegExp(`^${username}$`, 'i') }
+                });
+
+                if (!user || user.discordId !== interaction.user.id) {
+                    return interaction.editReply({
+                        content: '❌ You can only view your own collection.',
+                        ephemeral: true
+                    });
+                }
+
+                // Show detailed item inspection
+                await this.showItemDetail(interaction, user, itemId);
+            }
+
+        } catch (error) {
+            console.error('Error handling collection select menu:', error);
+            await interaction.editReply({
+                content: '❌ An error occurred.',
+                ephemeral: true
+            });
+        }
+    },
+
+    // FIXED: Properly handle emoji validation for Discord select menu
+    async handleInspectButton(interaction, user) {
+        if (!user.gachaCollection || user.gachaCollection.length === 0) {
+            return interaction.editReply({
+                content: '📦 Your collection is empty! Nothing to inspect.'
+            });
+        }
+
+        // Create dropdown with all items in collection
+        const itemOptions = [];
+        
+        // Sort items by rarity (highest first), then by name
+        const rarityOrder = ['mythic', 'legendary', 'epic', 'rare', 'uncommon', 'common'];
+        const sortedItems = [...user.gachaCollection].sort((a, b) => {
+            const aRarityIndex = rarityOrder.indexOf(a.rarity);
+            const bRarityIndex = rarityOrder.indexOf(b.rarity);
+            if (aRarityIndex !== bRarityIndex) {
+                return aRarityIndex - bRarityIndex;
+            }
+            return a.itemName.localeCompare(b.itemName);
+        });
+
+        // Add up to 25 items to dropdown (Discord limit)
+        for (const item of sortedItems.slice(0, 25)) {
+            const rarityEmoji = gachaService.getRarityEmoji(item.rarity);
+            const quantity = (item.quantity || 1) > 1 ? ` x${item.quantity}` : '';
+            const seriesTag = item.seriesId ? ` [${item.seriesId}]` : '';
+            
+            // FIXED: Properly handle emoji for Discord select menu
+            let emojiOption = undefined;
+            
+            if (item.emojiId && item.emojiName) {
+                // Custom emoji - use object format
+                emojiOption = {
+                    id: item.emojiId,
+                    name: item.emojiName
+                };
+            } else if (item.emojiName && this.isUnicodeEmoji(item.emojiName)) {
+                // Unicode emoji - use directly
+                emojiOption = item.emojiName;
+            }
+            // If neither condition is met, emojiOption stays undefined (no emoji)
+            
+            const option = {
+                label: item.itemName,
+                value: item.itemId,
+                description: `${gachaService.getRarityDisplayName(item.rarity)}${quantity}${seriesTag}`.slice(0, 100)
+            };
+            
+            // Only add emoji if we have a valid one
+            if (emojiOption) {
+                option.emoji = emojiOption;
+            }
+            
+            itemOptions.push(option);
+        }
+
+        const inspectMenu = new StringSelectMenuBuilder()
+            .setCustomId(`collection_inspect_item_${user.raUsername}`)
+            .setPlaceholder('Choose an item to inspect...')
+            .addOptions(itemOptions);
+
+        const components = [new ActionRowBuilder().addComponents(inspectMenu)];
+        
+        // Add back button
+        const backButton = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`collection_back_${user.raUsername}`)
+                    .setLabel('← Back to Overview')
+                    .setStyle(ButtonStyle.Secondary)
+            );
+        
+        components.push(backButton);
+
+        await interaction.editReply({
+            content: `🔍 **Choose an item to inspect:**\n` +
+                     `${sortedItems.length > 25 ? `Showing top 25 of ${sortedItems.length} items (sorted by rarity)` : `${sortedItems.length} items available`}`,
+            components: components
+        });
+    },
+
+    // Show detailed view of a specific item
+    async showItemDetail(interaction, user, itemId) {
+        // Find the item in user's collection
+        const collectionItem = user.gachaCollection.find(item => item.itemId === itemId);
+        if (!collectionItem) {
+            return interaction.editReply({
+                content: '❌ Item not found in your collection.'
+            });
+        }
+
+        // Get the original item data from database for complete information
+        const originalItem = await GachaItem.findOne({ itemId });
+        
+        // Create detailed embed similar to pull result
+        const rarityColor = gachaService.getRarityColor(collectionItem.rarity);
+        const rarityEmoji = gachaService.getRarityEmoji(collectionItem.rarity);
+        const rarityName = gachaService.getRarityDisplayName(collectionItem.rarity);
+        const itemEmoji = formatGachaEmoji(collectionItem.emojiId, collectionItem.emojiName);
+        
+        // UPDATED: Removed 🔍 emoji from title
+        const embed = new EmbedBuilder()
+            .setTitle(`Item Details - ${collectionItem.itemName}`)
+            .setColor(rarityColor)
+            .setTimestamp();
+
+        // Main item display - BIG and prominent like pull results
+        let description = `# ${itemEmoji} **${collectionItem.itemName}**\n\n`;
+        
+        // Rarity with emoji
+        description += `${rarityEmoji} **${rarityName}**`;
+        
+        // Quantity info - UPDATED: Removed 📦 emoji
+        if (collectionItem.quantity && collectionItem.quantity > 1) {
+            const maxStack = originalItem?.maxStack || 1;
+            description += `\n**Quantity:** ${collectionItem.quantity}${maxStack > 1 ? `/${maxStack}` : ''}`;
+        }
+        
+        // Series info - UPDATED: Removed 🏷️ emoji
+        if (collectionItem.seriesId) {
+            description += `\n**Series:** ${collectionItem.seriesId.charAt(0).toUpperCase() + collectionItem.seriesId.slice(1)}`;
+        }
+
+        // Source info - UPDATED: Removed all source emojis
+        const sourceNames = {
+            gacha: 'Gacha Pull',
+            combined: 'Item Combination',
+            series_completion: 'Series Completion',
+            admin_grant: 'Admin Grant'
+        };
+        const source = collectionItem.source || 'gacha';
+        description += `\n**Source:** ${sourceNames[source] || 'Unknown'}`;
+
+        embed.setDescription(description);
+
+        // Add item description - UPDATED: Removed 📝 emoji
+        const itemDescription = collectionItem.description || originalItem?.description;
+        if (itemDescription) {
+            embed.addFields({
+                name: 'Description',
+                value: `*${itemDescription}*`,
+                inline: false
+            });
+        }
+
+        // Add flavor text - UPDATED: Removed 💭 emoji
+        const flavorText = collectionItem.flavorText || originalItem?.flavorText;
+        if (flavorText) {
+            embed.addFields({
+                name: 'Flavor Text',
+                value: `*"${flavorText}"*`,
+                inline: false
+            });
+        }
+
+        // Add acquisition date - UPDATED: Removed 📅 emoji
+        if (collectionItem.obtainedAt) {
+            const obtainedDate = new Date(collectionItem.obtainedAt);
+            embed.addFields({
+                name: 'Obtained',
+                value: `<t:${Math.floor(obtainedDate.getTime() / 1000)}:F>`,
+                inline: true
+            });
+        }
+
+        // Add item type info - UPDATED: Removed 🏷️ emoji
+        if (originalItem?.itemType) {
+            const typeNames = {
+                trinket: 'Trinket',
+                collectible: 'Collectible',
+                series: 'Series Item',
+                special: 'Special Item',
+                combined: 'Combined Item'
+            };
+            embed.addFields({
+                name: 'Type',
+                value: typeNames[originalItem.itemType] || 'Unknown',
+                inline: true
+            });
+        }
+
+        // Add back button and action buttons
+        const actionButtons = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`collection_back_${user.raUsername}`)
+                    .setLabel('← Back to Overview')
+                    .setStyle(ButtonStyle.Secondary),
+                
+                new ButtonBuilder()
+                    .setCustomId(`collection_inspect_${user.raUsername}`)
+                    .setLabel('🔍 Inspect Another')
+                    .setStyle(ButtonStyle.Secondary),
+                
+                new ButtonBuilder()
+                    .setCustomId(`collection_combine_${user.raUsername}`)
+                    .setLabel('🔧 Combine Items')
+                    .setStyle(ButtonStyle.Primary)
+            );
+
+        embed.setFooter({ 
+            text: 'This is the same detailed view you see when pulling this item from the gacha!' 
+        });
+
+        await interaction.editReply({
+            embeds: [embed],
+            components: [actionButtons]
+        });
+    },
+
+    // Show filtered items based on filter selection with pagination
+    async showFilteredItems(interaction, user, filter, page = 0) {
+        let items = [...user.gachaCollection];
+        let title = '';
+
+        // Apply filter
+        switch (filter) {
+            case 'all':
+                title = `All Items (${items.length})`;
+                break;
+            case 'mythic':
+            case 'legendary':
+            case 'epic':
+            case 'rare':
+            case 'uncommon':
+            case 'common':
+                items = items.filter(item => item.rarity === filter);
+                const rarityEmoji = gachaService.getRarityEmoji(filter);
+                const rarityName = gachaService.getRarityDisplayName(filter);
+                title = `${rarityEmoji} ${rarityName} Items (${items.length})`;
+                break;
+            case 'stackable':
+                items = items.filter(item => (item.quantity || 1) > 1);
+                title = `Stackable Items (${items.length})`;
+                break;
+            case 'combined':
+                items = items.filter(item => item.source === 'combined');
+                title = `Combined Items (${items.length})`;
+                break;
+            case 'series_completion':
+                items = items.filter(item => item.source === 'series_completion');
+                title = `Series Completion Rewards (${items.length})`;
+                break;
+            default:
+                title = `Filtered Items (${items.length})`;
+        }
+
+        // Sort by rarity (highest first), then by name
+        const rarityOrder = ['mythic', 'legendary', 'epic', 'rare', 'uncommon', 'common'];
+        items.sort((a, b) => {
+            const aRarityIndex = rarityOrder.indexOf(a.rarity);
+            const bRarityIndex = rarityOrder.indexOf(b.rarity);
+            if (aRarityIndex !== bRarityIndex) {
+                return aRarityIndex - bRarityIndex;
+            }
+            return a.itemName.localeCompare(b.itemName);
+        });
+
+        // PAGINATION LOGIC
+        const ITEMS_PER_PAGE = 20; // Show more items per page
+        const totalPages = Math.ceil(items.length / ITEMS_PER_PAGE);
+        const startIndex = page * ITEMS_PER_PAGE;
+        const endIndex = Math.min(startIndex + ITEMS_PER_PAGE, items.length);
+        const pageItems = items.slice(startIndex, endIndex);
+
+        const embed = new EmbedBuilder()
+            .setTitle(title)
+            .setColor(COLORS.INFO)
+            .setTimestamp();
+
+        if (items.length === 0) {
+            embed.setDescription('No items match this filter.');
+        } else {
+            // For single rarity filters, just list all items without grouping
+            if (['mythic', 'legendary', 'epic', 'rare', 'uncommon', 'common'].includes(filter)) {
+                let description = '';
+                
+                for (const item of pageItems) {
+                    const emoji = formatGachaEmoji(item.emojiId, item.emojiName);
+                    const quantity = (item.quantity || 1) > 1 ? ` x${item.quantity}` : '';
+                    const sourceIcon = item.source === 'combined' ? ' 🔧' : 
+                                     item.source === 'series_completion' ? ' 🏆' : '';
+                    const seriesTag = item.seriesId ? ` [${item.seriesId}]` : '';
+                    
+                    description += `${emoji} **${item.itemName}**${quantity}${sourceIcon}${seriesTag}\n`;
+                }
+                
+                embed.setDescription(description.trim());
+            } else {
+                // For mixed filters, group by rarity but show more items
+                const rarityGroups = {};
+                pageItems.forEach(item => {
+                    if (!rarityGroups[item.rarity]) {
+                        rarityGroups[item.rarity] = [];
+                    }
+                    rarityGroups[item.rarity].push(item);
+                });
+
+                let description = '';
+                
+                for (const rarity of rarityOrder) {
+                    const rarityItems = rarityGroups[rarity];
+                    if (!rarityItems || rarityItems.length === 0) continue;
+
+                    const rarityEmoji = gachaService.getRarityEmoji(rarity);
+                    const rarityName = gachaService.getRarityDisplayName(rarity);
+                    
+                    description += `\n${rarityEmoji} **${rarityName}** (${rarityItems.length})\n`;
+                    
+                    // Show more items per rarity (increased from 10 to 15)
+                    for (const item of rarityItems.slice(0, 15)) {
+                        const emoji = formatGachaEmoji(item.emojiId, item.emojiName);
+                        const quantity = (item.quantity || 1) > 1 ? ` x${item.quantity}` : '';
+                        const sourceIcon = item.source === 'combined' ? ' 🔧' : 
+                                         item.source === 'series_completion' ? ' 🏆' : '';
+                        const seriesTag = item.seriesId ? ` [${item.seriesId}]` : '';
+                        
+                        description += `${emoji} **${item.itemName}**${quantity}${sourceIcon}${seriesTag}\n`;
+                    }
+                    
+                    if (rarityItems.length > 15) {
+                        description += `*...and ${rarityItems.length - 15} more ${rarityName} items*\n`;
+                    }
+                }
+
+                embed.setDescription(description.trim());
+            }
+
+            // Add pagination info
+            if (totalPages > 1) {
+                embed.setFooter({ 
+                    text: `Page ${page + 1}/${totalPages} • Showing ${startIndex + 1}-${endIndex} of ${items.length} items • 🔧 = Combined • 🏆 = Series reward • [series] = Series name` 
+                });
+            } else {
+                embed.setFooter({ 
+                    text: '🔧 = Combined • 🏆 = Series reward • [series] = Series name' 
+                });
+            }
+        }
+
+        // Create navigation buttons
+        const components = [];
+        
+        // Add pagination buttons if needed
+        if (totalPages > 1) {
+            const navButtons = new ActionRowBuilder();
+            
+            // Previous page button
+            navButtons.addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`collection_filter_page_${user.raUsername}_${filter}_${Math.max(0, page - 1)}`)
+                    .setLabel('◀ Previous')
+                    .setStyle(ButtonStyle.Secondary)
+                    .setDisabled(page === 0)
+            );
+            
+            // Page indicator (disabled button)
+            navButtons.addComponents(
+                new ButtonBuilder()
+                    .setCustomId('page_indicator')
+                    .setLabel(`${page + 1}/${totalPages}`)
+                    .setStyle(ButtonStyle.Secondary)
+                    .setDisabled(true)
+            );
+            
+            // Next page button
+            navButtons.addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`collection_filter_page_${user.raUsername}_${filter}_${Math.min(totalPages - 1, page + 1)}`)
+                    .setLabel('Next ▶')
+                    .setStyle(ButtonStyle.Secondary)
+                    .setDisabled(page === totalPages - 1)
+            );
+            
+            components.push(navButtons);
+        }
+
+        // Add main action buttons
+        const actionButtons = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`collection_back_${user.raUsername}`)
+                    .setLabel('← Back to Overview')
+                    .setStyle(ButtonStyle.Secondary),
+                
+                new ButtonBuilder()
+                    .setCustomId(`collection_inspect_${user.raUsername}`)
+                    .setLabel('🔍 Inspect Item')
+                    .setStyle(ButtonStyle.Secondary),
+                
+                new ButtonBuilder()
+                    .setCustomId(`collection_combine_${user.raUsername}`)
+                    .setLabel('🔧 Combine Items')
+                    .setStyle(ButtonStyle.Primary)
+            );
+
+        components.push(actionButtons);
+
+        await interaction.editReply({
+            embeds: [embed],
+            components: components
+        });
+    },
+
+    // Show detailed view of a specific series with pagination
+    async showSeriesDetail(interaction, user, seriesFilter, page = 0) {
+        const summary = gachaService.getUserCollectionSummary(user);
+        let items = [];
+        let title = '';
+
+        if (seriesFilter === 'all') {
+            items = user.gachaCollection;
+            title = `All Items (${items.length})`;
+        } else if (seriesFilter === 'individual') {
+            items = user.gachaCollection.filter(item => !item.seriesId);
+            title = `Individual Items (${items.length})`;
+        } else {
+            items = user.gachaCollection.filter(item => item.seriesId === seriesFilter);
+            const seriesName = seriesFilter.charAt(0).toUpperCase() + seriesFilter.slice(1);
+            title = `${seriesName} Series (${items.length})`;
+        }
+
+        // Sort by rarity (highest first), then by name
+        const rarityOrder = ['mythic', 'legendary', 'epic', 'rare', 'uncommon', 'common'];
+        items.sort((a, b) => {
+            const aRarityIndex = rarityOrder.indexOf(a.rarity);
+            const bRarityIndex = rarityOrder.indexOf(b.rarity);
+            if (aRarityIndex !== bRarityIndex) {
+                return aRarityIndex - bRarityIndex;
+            }
+            return a.itemName.localeCompare(b.itemName);
+        });
+
+        // PAGINATION LOGIC
+        const ITEMS_PER_PAGE = 20; // Show more items per page
+        const totalPages = Math.ceil(items.length / ITEMS_PER_PAGE);
+        const startIndex = page * ITEMS_PER_PAGE;
+        const endIndex = Math.min(startIndex + ITEMS_PER_PAGE, items.length);
+        const pageItems = items.slice(startIndex, endIndex);
+
+        const embed = new EmbedBuilder()
+            .setTitle(title)
+            .setColor(COLORS.INFO)
+            .setTimestamp();
+
+        if (items.length === 0) {
+            embed.setDescription('No items in this category.');
+        } else {
+            // Group by rarity for better display but show more items
+            const rarityGroups = {};
+            pageItems.forEach(item => {
+                if (!rarityGroups[item.rarity]) {
+                    rarityGroups[item.rarity] = [];
+                }
+                rarityGroups[item.rarity].push(item);
+            });
+
+            let description = '';
+            
+            for (const rarity of rarityOrder) {
+                const rarityItems = rarityGroups[rarity];
+                if (!rarityItems || rarityItems.length === 0) continue;
+
+                const rarityEmoji = gachaService.getRarityEmoji(rarity);
+                const rarityName = gachaService.getRarityDisplayName(rarity);
+                
+                description += `\n${rarityEmoji} **${rarityName}** (${rarityItems.length})\n`;
+                
+                // Show more items per rarity (increased from 8 to 15)
+                for (const item of rarityItems.slice(0, 15)) {
+                    const emoji = formatGachaEmoji(item.emojiId, item.emojiName);
+                    const quantity = (item.quantity || 1) > 1 ? ` x${item.quantity}` : '';
+                    const sourceIcon = item.source === 'combined' ? ' 🔧' : 
+                                     item.source === 'series_completion' ? ' 🏆' : '';
+                    
+                    description += `${emoji} **${item.itemName}**${quantity}${sourceIcon}\n`;
+                }
+                
+                if (rarityItems.length > 15) {
+                    description += `*...and ${rarityItems.length - 15} more ${rarityName} items*\n`;
+                }
+            }
+
+            embed.setDescription(description.trim());
+            
+            // Add pagination info
+            if (totalPages > 1) {
+                embed.setFooter({ 
+                    text: `Page ${page + 1}/${totalPages} • Showing ${startIndex + 1}-${endIndex} of ${items.length} items • 🔧 = Combined item • 🏆 = Series completion reward` 
+                });
+            } else {
+                embed.setFooter({ 
+                    text: '🔧 = Combined item • 🏆 = Series completion reward' 
+                });
+            }
+        }
+
+        // Create navigation buttons
+        const components = [];
+        
+        // Add pagination buttons if needed
+        if (totalPages > 1) {
+            const navButtons = new ActionRowBuilder();
+            
+            // Previous page button
+            navButtons.addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`collection_series_page_${user.raUsername}_${seriesFilter}_${Math.max(0, page - 1)}`)
+                    .setLabel('◀ Previous')
+                    .setStyle(ButtonStyle.Secondary)
+                    .setDisabled(page === 0)
+            );
+            
+            // Page indicator (disabled button)
+            navButtons.addComponents(
+                new ButtonBuilder()
+                    .setCustomId('page_indicator')
+                    .setLabel(`${page + 1}/${totalPages}`)
+                    .setStyle(ButtonStyle.Secondary)
+                    .setDisabled(true)
+            );
+            
+            // Next page button
+            navButtons.addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`collection_series_page_${user.raUsername}_${seriesFilter}_${Math.min(totalPages - 1, page + 1)}`)
+                    .setLabel('Next ▶')
+                    .setStyle(ButtonStyle.Secondary)
+                    .setDisabled(page === totalPages - 1)
+            );
+            
+            components.push(navButtons);
+        }
+
+        // Add main action buttons
+        const actionButtons = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`collection_back_${user.raUsername}`)
+                    .setLabel('← Back to Overview')
+                    .setStyle(ButtonStyle.Secondary),
+                
+                new ButtonBuilder()
+                    .setCustomId(`collection_inspect_${user.raUsername}`)
+                    .setLabel('🔍 Inspect Item')
+                    .setStyle(ButtonStyle.Secondary),
+                
+                new ButtonBuilder()
+                    .setCustomId(`collection_combine_${user.raUsername}`)
+                    .setLabel('🔧 Combine Items')
+                    .setStyle(ButtonStyle.Primary)
+            );
+
+        components.push(actionButtons);
+
+        await interaction.editReply({
+            embeds: [embed],
+            components: components
+        });
+    },
+
+, 'i') }
             });
 
             if (!user) {
@@ -793,6 +2683,18 @@ export default {
                 content: '❌ An error occurred.',
                 ephemeral: true
             });
+        }
+    },
+
+    // NEW: Handle pagination button interactions
+    async handlePaginationButton(interaction, user, buttonType, params) {
+        const [filter, pageStr] = params;
+        const page = parseInt(pageStr);
+        
+        if (buttonType === 'filter_page') {
+            await this.showFilteredItems(interaction, user, filter, page);
+        } else if (buttonType === 'series_page') {
+            await this.showSeriesDetail(interaction, user, filter, page);
         }
     },
 
