@@ -1,4 +1,4 @@
-// src/services/gachaService.js - UPDATED with proper emoji handling
+// src/services/gachaService.js - FIXED to properly transfer emoji data
 import { User } from '../models/User.js';
 import { GachaItem } from '../models/GachaItem.js';
 import combinationService from './combinationService.js';
@@ -114,6 +114,7 @@ class GachaService {
                 currentWeight += item.dropRate;
                 if (random <= currentWeight) {
                     console.log(`Selected item: ${item.itemName} (${item.dropRate}% chance)`);
+                    console.log(`Item emoji data: emojiId=${item.emojiId}, emojiName=${item.emojiName}`);
                     return item;
                 }
             }
@@ -128,27 +129,46 @@ class GachaService {
     }
 
     /**
-     * Add an item to user's collection using the new User model method
+     * FIXED: Add an item to user's collection with proper emoji data transfer
      */
     addItemToUser(user, gachaItem) {
-        console.log('Adding item to user with emoji data:', {
-            username: user.raUsername,
+        console.log('BEFORE addItemToUser - GachaItem emoji data:', {
             itemId: gachaItem.itemId,
             itemName: gachaItem.itemName,
             emojiId: gachaItem.emojiId,
             emojiName: gachaItem.emojiName
         });
 
-        // Use the new User model method
+        // CRITICAL: Ensure we pass the complete gachaItem with all emoji data
         const addResult = user.addGachaItem(gachaItem, 1, 'gacha');
+
+        console.log('AFTER addGachaItem - Result item emoji data:', {
+            itemId: addResult.item.itemId,
+            itemName: addResult.item.itemName,
+            emojiId: addResult.item.emojiId,
+            emojiName: addResult.item.emojiName
+        });
+
+        // Verify emoji data was transferred correctly
+        if (gachaItem.emojiId && !addResult.item.emojiId) {
+            console.error('❌ EMOJI DATA LOST! emojiId was not transferred correctly');
+            console.error('Source emojiId:', gachaItem.emojiId);
+            console.error('Result emojiId:', addResult.item.emojiId);
+        }
+
+        if (gachaItem.emojiName && !addResult.item.emojiName) {
+            console.error('❌ EMOJI DATA LOST! emojiName was not transferred correctly');
+            console.error('Source emojiName:', gachaItem.emojiName);
+            console.error('Result emojiName:', addResult.item.emojiName);
+        }
 
         // Format result for the UI
         return {
             itemId: gachaItem.itemId,
             itemName: gachaItem.itemName,
             rarity: gachaItem.rarity,
-            emojiName: gachaItem.emojiName,
-            emojiId: gachaItem.emojiId, // Ensure emoji data is preserved
+            emojiName: addResult.item.emojiName, // Use the actual saved data
+            emojiId: addResult.item.emojiId,     // Use the actual saved data
             description: gachaItem.description,
             flavorText: gachaItem.flavorText,
             quantity: addResult.item.quantity,
@@ -211,7 +231,7 @@ class GachaService {
             const hasReward = user.gachaCollection.some(item => item.itemId === completionReward.itemId);
             if (hasReward) return null; // Already completed
 
-            // Award the completion reward using the new method
+            // Award the completion reward using the User model method
             const rewardGachaItem = {
                 itemId: completionReward.itemId,
                 itemName: completionReward.itemName,
