@@ -1,4 +1,4 @@
-// src/commands/user/collection.js - FIXED syntax error and complete with inspect feature
+// src/commands/user/collection.js - FIXED emoji validation for inspect feature
 import { 
     SlashCommandBuilder, 
     EmbedBuilder,
@@ -59,6 +59,15 @@ export default {
                 content: '❌ An error occurred while fetching your collection.'
             });
         }
+    },
+
+    // Helper function to check if a string is a unicode emoji
+    isUnicodeEmoji(str) {
+        if (!str || str.length === 0) return false;
+        if (str.startsWith(':') || str.startsWith('<:')) return false;
+        
+        const emojiRegex = /^[\u{1F600}-\u{1F64F}]|[\u{1F300}-\u{1F5FF}]|[\u{1F680}-\u{1F6FF}]|[\u{1F1E0}-\u{1F1FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]/u;
+        return emojiRegex.test(str);
     },
 
     // Create the main collection overview embed
@@ -290,6 +299,7 @@ export default {
         }
     },
 
+    // FIXED: Properly handle emoji validation for Discord select menu
     async handleInspectButton(interaction, user) {
         if (!user.gachaCollection || user.gachaCollection.length === 0) {
             return interaction.editReply({
@@ -317,12 +327,33 @@ export default {
             const quantity = (item.quantity || 1) > 1 ? ` x${item.quantity}` : '';
             const seriesTag = item.seriesId ? ` [${item.seriesId}]` : '';
             
-            itemOptions.push({
+            // FIXED: Properly handle emoji for Discord select menu
+            let emojiOption = undefined;
+            
+            if (item.emojiId && item.emojiName) {
+                // Custom emoji - use object format
+                emojiOption = {
+                    id: item.emojiId,
+                    name: item.emojiName
+                };
+            } else if (item.emojiName && this.isUnicodeEmoji(item.emojiName)) {
+                // Unicode emoji - use directly
+                emojiOption = item.emojiName;
+            }
+            // If neither condition is met, emojiOption stays undefined (no emoji)
+            
+            const option = {
                 label: item.itemName,
                 value: item.itemId,
-                description: `${gachaService.getRarityDisplayName(item.rarity)}${quantity}${seriesTag}`.slice(0, 100),
-                emoji: item.emojiName
-            });
+                description: `${gachaService.getRarityDisplayName(item.rarity)}${quantity}${seriesTag}`.slice(0, 100)
+            };
+            
+            // Only add emoji if we have a valid one
+            if (emojiOption) {
+                option.emoji = emojiOption;
+            }
+            
+            itemOptions.push(option);
         }
 
         const inspectMenu = new StringSelectMenuBuilder()
