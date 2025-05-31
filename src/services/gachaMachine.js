@@ -1,4 +1,4 @@
-// src/services/gachaMachine.js
+// src/services/gachaMachine.js - FIXED version with proper emoji display
 import { 
     EmbedBuilder, 
     ActionRowBuilder, 
@@ -9,6 +9,7 @@ import {
 import { config } from '../config/config.js';
 import { User } from '../models/User.js';
 import gachaService from './gachaService.js';
+import combinationService from './combinationService.js'; // NEW: Add combination service
 import { COLORS, EMOJIS } from '../utils/FeedUtils.js';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
@@ -97,12 +98,13 @@ class GachaMachine {
                 '• Collectible items (Mario power-ups, Zelda items, etc.)\n' +
                 '• Rare trinkets and special items\n' +
                 '• Series collections with completion rewards\n\n' +
-                '✨ **Collection System:**\n' +
-                '• Collect series items to unlock special rewards\n' +
-                '• Stack duplicate items (where applicable)\n' +
-                '• View your collection with `/collection` or Trophy Case button on `/profile`\n\n' +
+                '✨ **Collection & Combination System:**\n' +
+                '• Collect items and discover combinations through experimentation\n' +
+                '• Some combinations happen automatically (5 green rupees → 1 blue rupee)\n' +
+                '• Others require manual discovery - try different combinations!\n' +
+                '• View your collection with `/collection` and use the Combine button\n\n' +
                 '🎲 **Rarity System:**\n' +
-                '⚪ Common • 🟢 Uncommon • 🔵 Rare • 🟣 Epic • 🟡 Legendary'
+                '⚪ Common • 🟢 Uncommon • 🔵 Rare • 🟣 Epic • 🟡 Legendary • 🌈 Mythic'
             )
             .setColor(COLORS.GOLD)
             .setFooter({ 
@@ -180,7 +182,7 @@ class GachaMachine {
     }
 
     createPullResultEmbed(result, user, pullType) {
-        const { results, completions, newBalance, cost } = result;
+        const { results, completions, autoCombinations, newBalance, cost } = result;
         
         const embed = new EmbedBuilder()
             .setTitle(`🎰 ${pullType === 'single' ? 'Single' : 'Multi'} Pull Results`)
@@ -212,7 +214,8 @@ class GachaMachine {
             if (items.length === 0) return;
 
             items.forEach(item => {
-                const emoji = gachaService.formatEmoji(item.emojiId, item.emojiName);
+                // FIXED: Proper emoji formatting
+                const emoji = this.formatEmoji(item.emojiId, item.emojiName);
                 const rarityEmoji = gachaService.getRarityEmoji(item.rarity);
                 const newFlag = item.isNew ? ' ✨**NEW!**' : '';
                 const stackInfo = item.maxStack > 1 ? ` (${item.quantity}/${item.maxStack})` : '';
@@ -231,11 +234,11 @@ class GachaMachine {
             value: resultsText || 'No items received'
         });
 
-        // Add completions if any
-        if (completions.length > 0) {
+        // Add series completions if any
+        if (completions && completions.length > 0) {
             let completionsText = '';
             completions.forEach(completion => {
-                const rewardEmoji = gachaService.formatEmoji(
+                const rewardEmoji = this.formatEmoji(
                     completion.rewardItem.emojiId, 
                     completion.rewardItem.emojiName
                 );
@@ -249,10 +252,36 @@ class GachaMachine {
             });
         }
 
+        // NEW: Add auto-combinations if any occurred
+        if (autoCombinations && autoCombinations.length > 0) {
+            let autoCombinationsText = '';
+            autoCombinations.forEach(combo => {
+                const resultEmoji = this.formatEmoji(combo.resultItem.emojiId, combo.resultItem.emojiName);
+                autoCombinationsText += `⚡ **Auto-Combination Triggered!**\n`;
+                autoCombinationsText += `${resultEmoji} Created: **${combo.resultQuantity}x ${combo.resultItem.itemName}**\n\n`;
+            });
+            
+            embed.addFields({ 
+                name: '⚡ Auto-Combinations!', 
+                value: autoCombinationsText
+            });
+        }
+
         // Add cost info
         embed.setDescription(`**Cost:** ${cost} GP → **New Balance:** ${newBalance.toLocaleString()} GP`);
 
         return embed;
+    }
+
+    // FIXED: Proper emoji formatting method
+    formatEmoji(emojiId, emojiName) {
+        if (emojiId && emojiName) {
+            return `<:${emojiName}:${emojiId}>`;
+        } else if (emojiName) {
+            // Fallback to emoji name if ID is missing
+            return emojiName;
+        }
+        return '❓'; // Ultimate fallback
     }
 
     async handleCollection(interaction, user) {
@@ -275,16 +304,20 @@ class GachaMachine {
                 `🟣 Epic: ${summary.rarityCount.epic || 0}\n` +
                 `🔵 Rare: ${summary.rarityCount.rare || 0}\n` +
                 `🟢 Uncommon: ${summary.rarityCount.uncommon || 0}\n` +
-                `⚪ Common: ${summary.rarityCount.common || 0}`
+                `⚪ Common: ${summary.rarityCount.common || 0}\n\n` +
+                '**By Source:**\n' +
+                `🎰 Gacha: ${summary.sourceBreakdown.gacha || 0}\n` +
+                `🔧 Combined: ${summary.sourceBreakdown.combined || 0}\n` +
+                `🏆 Series Rewards: ${summary.sourceBreakdown.series_completion || 0}`
             )
-            .setFooter({ text: 'Use /collection for detailed view with filters' })
+            .setFooter({ text: 'Use /collection for detailed view with combination interface!' })
             .setTimestamp();
 
         // Add recent items
         if (summary.recentItems.length > 0) {
             let recentText = '';
             summary.recentItems.slice(0, 5).forEach(item => {
-                const emoji = gachaService.formatEmoji(item.emojiId, item.emojiName);
+                const emoji = this.formatEmoji(item.emojiId, item.emojiName);
                 const rarityEmoji = gachaService.getRarityEmoji(item.rarity);
                 const stackInfo = (item.quantity || 1) > 1 ? ` x${item.quantity}` : '';
                 recentText += `${rarityEmoji} ${emoji} **${item.itemName}**${stackInfo}\n`;
