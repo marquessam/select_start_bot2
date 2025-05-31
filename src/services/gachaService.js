@@ -1,12 +1,12 @@
-// src/services/gachaService.js - FIXED to properly transfer emoji data
+// src/services/gachaService.js - UPDATED with new pricing and better formatting
 import { User } from '../models/User.js';
 import { GachaItem } from '../models/GachaItem.js';
 import combinationService from './combinationService.js';
 
-// Pull costs
+// UPDATED: New pull costs
 const PULL_COSTS = {
-    single: 10,
-    multi: 100    // 11 pulls for 100 GP (10% discount)
+    single: 50,   // Increased from 10
+    multi: 150    // 4 pulls for 150 GP (37.5 GP per pull vs 50 GP single)
 };
 
 class GachaService {
@@ -25,7 +25,7 @@ class GachaService {
      */
     async performPull(user, pullType = 'single') {
         const cost = PULL_COSTS[pullType];
-        const pullCount = pullType === 'multi' ? 11 : 1;
+        const pullCount = pullType === 'multi' ? 4 : 1; // UPDATED: Multi is now 4 pulls
 
         // Check if user has enough GP
         if (!user.hasEnoughGp(cost)) {
@@ -80,7 +80,8 @@ class GachaService {
             completions,
             autoCombinations,
             newBalance: user.gpBalance,
-            cost
+            cost,
+            pullType
         };
     }
 
@@ -272,7 +273,8 @@ class GachaService {
                 uniqueItems: 0,
                 rarityCount: {},
                 recentItems: [],
-                sourceBreakdown: {}
+                sourceBreakdown: {},
+                seriesBreakdown: {}
             };
         }
 
@@ -291,6 +293,8 @@ class GachaService {
             series_completion: 0
         };
 
+        const seriesBreakdown = {};
+
         let totalItems = 0;
         
         user.gachaCollection.forEach(item => {
@@ -305,6 +309,13 @@ class GachaService {
             if (sourceBreakdown[source] !== undefined) {
                 sourceBreakdown[source] += quantity;
             }
+
+            // Track series
+            const series = item.seriesId || 'Individual Items';
+            if (!seriesBreakdown[series]) {
+                seriesBreakdown[series] = [];
+            }
+            seriesBreakdown[series].push(item);
         });
 
         const recentItems = user.gachaCollection
@@ -315,7 +326,8 @@ class GachaService {
             totalItems,
             uniqueItems: user.gachaCollection.length,
             rarityCount,
-            sourceBreakdown
+            sourceBreakdown,
+            seriesCount: Object.keys(seriesBreakdown).length
         });
 
         return {
@@ -323,8 +335,54 @@ class GachaService {
             uniqueItems: user.gachaCollection.length,
             rarityCount,
             recentItems,
-            sourceBreakdown
+            sourceBreakdown,
+            seriesBreakdown
         };
+    }
+
+    /**
+     * UPDATED: Better rarity emojis and colors
+     */
+    getRarityEmoji(rarity) {
+        const emojis = {
+            common: '⚪',      // White circle
+            uncommon: '🟢',   // Green circle  
+            rare: '🔵',       // Blue circle
+            epic: '🟣',       // Purple circle
+            legendary: '🟡',  // Yellow circle
+            mythic: '🌟'      // Star (upgraded from rainbow)
+        };
+        return emojis[rarity] || emojis.common;
+    }
+
+    /**
+     * Get rarity color for embeds
+     */
+    getRarityColor(rarity) {
+        const colors = {
+            common: '#95A5A6',     // Gray
+            uncommon: '#2ECC71',   // Green  
+            rare: '#3498DB',       // Blue
+            epic: '#9B59B6',       // Purple
+            legendary: '#F1C40F',  // Gold
+            mythic: '#E91E63'      // Pink
+        };
+        return colors[rarity] || colors.common;
+    }
+
+    /**
+     * Get rarity display name
+     */
+    getRarityDisplayName(rarity) {
+        const names = {
+            common: 'Common',
+            uncommon: 'Uncommon',
+            rare: 'Rare',
+            epic: 'Epic',
+            legendary: 'Legendary',
+            mythic: 'Mythic'
+        };
+        return names[rarity] || 'Unknown';
     }
 
     /**
@@ -344,36 +402,6 @@ class GachaService {
      */
     formatCollectionItemEmoji(item) {
         return this.formatEmoji(item.emojiId, item.emojiName);
-    }
-
-    /**
-     * Get rarity color
-     */
-    getRarityColor(rarity) {
-        const colors = {
-            common: '#95A5A6',     // Gray
-            uncommon: '#2ECC71',   // Green  
-            rare: '#3498DB',       // Blue
-            epic: '#9B59B6',       // Purple
-            legendary: '#F1C40F',  // Gold
-            mythic: '#E91E63'      // Pink
-        };
-        return colors[rarity] || colors.common;
-    }
-
-    /**
-     * Get rarity emoji
-     */
-    getRarityEmoji(rarity) {
-        const emojis = {
-            common: '⚪',
-            uncommon: '🟢', 
-            rare: '🔵',
-            epic: '🟣',
-            legendary: '🟡',
-            mythic: '🌈'
-        };
-        return emojis[rarity] || emojis.common;
     }
 }
 
