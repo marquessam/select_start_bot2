@@ -1,4 +1,4 @@
-// src/commands/admin/gacha-admin.js - Simplified version
+// src/commands/admin/gacha-admin.js - Enhanced with clear collection functionality
 import { 
     SlashCommandBuilder, 
     EmbedBuilder, 
@@ -183,7 +183,35 @@ export default {
                         .setDescription('Quantity (default: 1)')
                         .setRequired(false)
                         .setMinValue(1)
-                        .setMaxValue(100))),
+                        .setMaxValue(100)))
+
+        // NEW: Clear collection subcommand
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('clear-collection')
+                .setDescription('Clear a user\'s gacha collection')
+                .addStringOption(option =>
+                    option.setName('username')
+                        .setDescription('Username to clear collection for')
+                        .setRequired(true))
+                .addBooleanOption(option =>
+                    option.setName('confirm')
+                        .setDescription('Confirm you want to clear the collection (required)')
+                        .setRequired(true)))
+
+        // NEW: Clear all collections subcommand  
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('clear-all-collections')
+                .setDescription('Clear ALL users\' gacha collections (DANGEROUS)')
+                .addBooleanOption(option =>
+                    option.setName('confirm')
+                        .setDescription('Confirm you want to clear ALL collections (required)')
+                        .setRequired(true))
+                .addStringOption(option =>
+                    option.setName('safety-word')
+                        .setDescription('Type "CLEAR-ALL-GACHA" to confirm')
+                        .setRequired(true))),
 
     async execute(interaction) {
         // Check if user is admin
@@ -224,6 +252,12 @@ export default {
                 case 'give-item':
                     await this.handleGiveItem(interaction);
                     break;
+                case 'clear-collection':
+                    await this.handleClearCollection(interaction);
+                    break;
+                case 'clear-all-collections':
+                    await this.handleClearAllCollections(interaction);
+                    break;
                 default:
                     await interaction.editReply('Subcommand not implemented yet.');
             }
@@ -235,6 +269,111 @@ export default {
         }
     },
 
+    // NEW: Handle clearing a single user's collection
+    async handleClearCollection(interaction) {
+        const username = interaction.options.getString('username');
+        const confirm = interaction.options.getBoolean('confirm');
+
+        if (!confirm) {
+            throw new Error('You must set confirm to true to clear a collection.');
+        }
+
+        const user = await User.findOne({ 
+            raUsername: { $regex: new RegExp(`^${username}$`, 'i') }
+        });
+
+        if (!user) {
+            throw new Error(`User "${username}" not found.`);
+        }
+
+        // Store collection info before clearing
+        const collectionSize = user.gachaCollection?.length || 0;
+        const totalItems = user.gachaCollection?.reduce((sum, item) => sum + (item.quantity || 1), 0) || 0;
+
+        if (collectionSize === 0) {
+            return interaction.editReply({
+                content: `❌ User "${username}" already has an empty collection.`
+            });
+        }
+
+        // Clear the collection
+        user.gachaCollection = [];
+        await user.save();
+
+        const embed = new EmbedBuilder()
+            .setTitle('🗑️ Collection Cleared')
+            .setColor(COLORS.WARNING)
+            .setDescription(`Cleared collection for **${username}**`)
+            .addFields(
+                { name: 'Unique Items Removed', value: collectionSize.toString(), inline: true },
+                { name: 'Total Items Removed', value: totalItems.toString(), inline: true },
+                { name: 'Collection Size Now', value: '0', inline: true }
+            )
+            .setFooter({ text: `Cleared by ${interaction.user.username}` })
+            .setTimestamp();
+
+        await interaction.editReply({ embeds: [embed] });
+    },
+
+    // NEW: Handle clearing ALL users' collections
+    async handleClearAllCollections(interaction) {
+        const confirm = interaction.options.getBoolean('confirm');
+        const safetyWord = interaction.options.getString('safety-word');
+
+        if (!confirm) {
+            throw new Error('You must set confirm to true to clear all collections.');
+        }
+
+        if (safetyWord !== 'CLEAR-ALL-GACHA') {
+            throw new Error('You must type "CLEAR-ALL-GACHA" exactly as the safety word.');
+        }
+
+        // Find all users with gacha collections
+        const usersWithCollections = await User.find({ 
+            gachaCollection: { $exists: true, $ne: [] }
+        });
+
+        if (usersWithCollections.length === 0) {
+            return interaction.editReply({
+                content: '❌ No users found with gacha collections.'
+            });
+        }
+
+        let totalUsersCleared = 0;
+        let totalUniqueItems = 0;
+        let totalItems = 0;
+
+        // Clear all collections
+        for (const user of usersWithCollections) {
+            const collectionSize = user.gachaCollection?.length || 0;
+            const userTotalItems = user.gachaCollection?.reduce((sum, item) => sum + (item.quantity || 1), 0) || 0;
+            
+            totalUniqueItems += collectionSize;
+            totalItems += userTotalItems;
+            
+            user.gachaCollection = [];
+            await user.save();
+            totalUsersCleared++;
+        }
+
+        const embed = new EmbedBuilder()
+            .setTitle('💥 ALL Collections Cleared')
+            .setColor(COLORS.ERROR)
+            .setDescription('**WARNING: All gacha collections have been cleared!**')
+            .addFields(
+                { name: 'Users Affected', value: totalUsersCleared.toString(), inline: true },
+                { name: 'Unique Items Removed', value: totalUniqueItems.toString(), inline: true },
+                { name: 'Total Items Removed', value: totalItems.toString(), inline: true }
+            )
+            .setFooter({ text: `Cleared by ${interaction.user.username} - This action cannot be undone` })
+            .setTimestamp();
+
+        await interaction.editReply({ embeds: [embed] });
+
+        console.log(`🗑️ ALL gacha collections cleared by ${interaction.user.username}: ${totalUsersCleared} users, ${totalItems} total items`);
+    },
+
+    // All existing methods remain the same...
     async handleAddItem(interaction) {
         const emojiInput = interaction.options.getString('emoji-input');
         
@@ -576,8 +715,8 @@ export default {
             throw new Error(`Item "${itemId}" not found.`);
         }
 
-        // Add item to user's collection
-        combinationService.addItemToUser(user, item, quantity);
+        // Add item to user's collection using the User model method
+        const addResult = user.addGachaItem(item, quantity, 'admin_grant');
         await user.save();
 
         // Check for auto-combinations
