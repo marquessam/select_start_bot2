@@ -1,4 +1,4 @@
-// src/commands/user/collection.js - UPDATED to use trophy case emoji approach
+// src/commands/user/collection.js - UPDATED with dropdown menu and series grouping
 import { 
     SlashCommandBuilder, 
     EmbedBuilder,
@@ -14,45 +14,13 @@ import { User } from '../../models/User.js';
 import { GachaItem, CombinationRule } from '../../models/GachaItem.js';
 import combinationService from '../../services/combinationService.js';
 import gachaService from '../../services/gachaService.js';
-import { formatGachaEmoji } from '../../config/gachaEmojis.js'; // NEW: Use centralized emoji formatting
+import { formatGachaEmoji } from '../../config/gachaEmojis.js';
 import { COLORS } from '../../utils/FeedUtils.js';
 
 export default {
     data: new SlashCommandBuilder()
         .setName('collection')
-        .setDescription('View your gacha collection')
-        .addStringOption(option =>
-            option.setName('filter')
-                .setDescription('Filter your collection')
-                .setRequired(false)
-                .addChoices(
-                    { name: 'All items', value: 'all' },
-                    { name: 'Common', value: 'common' },
-                    { name: 'Uncommon', value: 'uncommon' },
-                    { name: 'Rare', value: 'rare' },
-                    { name: 'Epic', value: 'epic' },
-                    { name: 'Legendary', value: 'legendary' },
-                    { name: 'Mythic', value: 'mythic' },
-                    { name: 'Trinkets', value: 'trinket' },
-                    { name: 'Collectibles', value: 'collectible' },
-                    { name: 'Series Items', value: 'series' },
-                    { name: 'Combined Items', value: 'combined' },
-                    { name: 'Stackable (>1)', value: 'stackable' }
-                ))
-        .addStringOption(option =>
-            option.setName('series')
-                .setDescription('Filter by specific series')
-                .setRequired(false))
-        .addStringOption(option =>
-            option.setName('sort')
-                .setDescription('Sort order')
-                .setRequired(false)
-                .addChoices(
-                    { name: 'Recently Obtained', value: 'recent' },
-                    { name: 'Alphabetical', value: 'name' },
-                    { name: 'Rarity', value: 'rarity' },
-                    { name: 'Quantity', value: 'quantity' }
-                )),
+        .setDescription('View your gacha collection with filtering and combination options'),
 
     async execute(interaction) {
         await interaction.deferReply({ ephemeral: true });
@@ -71,29 +39,18 @@ export default {
                 });
             }
 
-            const filter = interaction.options.getString('filter') || 'all';
-            const series = interaction.options.getString('series');
-            const sort = interaction.options.getString('sort') || 'recent';
-
-            const { items, summary } = this.processCollection(user.gachaCollection, filter, series, sort);
-            const embed = await this.createCollectionEmbed(user, items, summary, filter, series, sort);
+            // Get collection summary with series breakdown
+            const summary = gachaService.getUserCollectionSummary(user);
             
-            // Add combination button
-            const buttons = new ActionRowBuilder()
-                .addComponents(
-                    new ButtonBuilder()
-                        .setCustomId(`collection_combine_${user.raUsername}`)
-                        .setLabel('🔧 Combine Items')
-                        .setStyle(ButtonStyle.Primary),
-                    new ButtonBuilder()
-                        .setCustomId(`collection_refresh_${user.raUsername}`)
-                        .setLabel('🔄 Refresh')
-                        .setStyle(ButtonStyle.Secondary)
-                );
-
+            // Create the main collection embed with series overview
+            const mainEmbed = await this.createMainCollectionEmbed(user, summary);
+            
+            // Create control buttons and dropdown
+            const components = this.createCollectionControls(user, summary);
+            
             await interaction.editReply({ 
-                embeds: [embed],
-                components: [buttons]
+                embeds: [mainEmbed],
+                components: components
             });
 
         } catch (error) {
@@ -104,7 +61,292 @@ export default {
         }
     },
 
-    // Handle button interactions for this command
+    // Create the main collection overview embed
+    async createMainCollectionEmbed(user, summary) {
+        const embed = new EmbedBuilder()
+            .setTitle(`📦 ${user.raUsername}'s Collection`)
+            .setColor(COLORS.INFO)
+            .setTimestamp();
+
+        // Main stats
+        let description = `**Total Items:** ${summary.totalItems} (${summary.uniqueItems} unique)\n\n`;
+
+        // Series breakdown - the main focus
+        description += '📚 **Collection by Series:**\n';
+        
+        const seriesEntries = Object.entries(summary.seriesBreakdown);
+        if (seriesEntries.length > 0) {
+            // Sort by series name, but put "Individual Items" last
+            seriesEntries.sort(([a], [b]) => {
+                if (a === 'Individual Items') return 1;
+                if (b === 'Individual Items') return -1;
+                return a.localeCompare(b);
+            });
+
+            for (const [seriesName, items] of seriesEntries) {
+                const itemCount = items.length;
+                const totalQuantity = items.reduce((sum, item) => sum + (item.quantity || 1), 0);
+                
+                const displayName = seriesName === 'Individual Items' ? 
+                    '🔸 Individual Items' : 
+                    `🏷️ ${seriesName.charAt(0).toUpperCase() + seriesName.slice(1)} Series`;
+                
+                description += `${displayName}: ${itemCount} types (${totalQuantity} total)\n`;
+            }
+        } else {
+            description += 'No items collected yet\n';
+        }
+
+        description += '\n';
+
+        // Rarity summary (condensed)
+        const rarityEmojis = {
+            mythic: '🌟',
+            legendary: '🟡',
+            epic: '🟣',
+            rare: '🔵',
+            uncommon: '🟢',
+            common: '⚪'
+        };
+
+        description += '💎 **Rarity Summary:**\n';
+        let rarityLine = '';
+        for (const [rarity, emoji] of Object.entries(rarityEmojis)) {
+            const count = summary.rarityCount[rarity] || 0;
+            if (count > 0) {
+                rarityLine += `${emoji}${count} `;
+            }
+        }
+        description += rarityLine || 'No items yet';
+
+        embed.setDescription(description);
+
+        // Add combination stats
+        const combinationStats = combinationService.getCombinationStats(user);
+        embed.addFields({
+            name: '🔧 Combination Activity',
+            value: `**Items Combined:** ${combinationStats.totalCombined}\n` +
+                   `**Unique Combined:** ${combinationStats.uniqueCombined}\n` +
+                   `**Discovery Status:** ${combinationStats.uniqueCombined > 0 ? 'Active Explorer!' : 'Ready to Experiment!'}`,
+            inline: true
+        });
+
+        embed.setFooter({ 
+            text: 'Use the dropdown and buttons below to explore your collection in detail!' 
+        });
+
+        return embed;
+    },
+
+    // Create control components
+    createCollectionControls(user, summary) {
+        const components = [];
+
+        // Series selection dropdown
+        const seriesOptions = [];
+        const seriesEntries = Object.entries(summary.seriesBreakdown);
+        
+        // Add "All Items" option first
+        seriesOptions.push({
+            label: 'All Items',
+            value: 'all',
+            description: `View all ${summary.totalItems} items`,
+            emoji: '📦'
+        });
+
+        // Add series options
+        seriesEntries.forEach(([seriesName, items]) => {
+            const itemCount = items.length;
+            const totalQuantity = items.reduce((sum, item) => sum + (item.quantity || 1), 0);
+            
+            if (seriesName === 'Individual Items') {
+                seriesOptions.push({
+                    label: 'Individual Items',
+                    value: 'individual',
+                    description: `${itemCount} standalone items (${totalQuantity} total)`,
+                    emoji: '🔸'
+                });
+            } else {
+                seriesOptions.push({
+                    label: `${seriesName.charAt(0).toUpperCase() + seriesName.slice(1)} Series`,
+                    value: seriesName,
+                    description: `${itemCount} types (${totalQuantity} total)`,
+                    emoji: '🏷️'
+                });
+            }
+        });
+
+        // Only add dropdown if there are series to choose from
+        if (seriesOptions.length > 1) {
+            const seriesMenu = new StringSelectMenuBuilder()
+                .setCustomId(`collection_series_${user.raUsername}`)
+                .setPlaceholder('Choose a series to view...')
+                .addOptions(seriesOptions.slice(0, 25)); // Discord limit
+
+            components.push(new ActionRowBuilder().addComponents(seriesMenu));
+        }
+
+        // Filter and action buttons
+        const actionButtons = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`collection_filter_${user.raUsername}`)
+                    .setLabel('🎯 Filters')
+                    .setStyle(ButtonStyle.Secondary),
+                
+                new ButtonBuilder()
+                    .setCustomId(`collection_combine_${user.raUsername}`)
+                    .setLabel('🔧 Combine Items')
+                    .setStyle(ButtonStyle.Primary),
+                
+                new ButtonBuilder()
+                    .setCustomId(`collection_stats_${user.raUsername}`)
+                    .setLabel('📊 Statistics')
+                    .setStyle(ButtonStyle.Secondary),
+
+                new ButtonBuilder()
+                    .setCustomId(`collection_refresh_${user.raUsername}`)
+                    .setLabel('🔄 Refresh')
+                    .setStyle(ButtonStyle.Secondary)
+            );
+
+        components.push(actionButtons);
+
+        return components;
+    },
+
+    // Handle dropdown interactions
+    async handleSelectMenuInteraction(interaction) {
+        if (!interaction.customId.startsWith('collection_series_')) return;
+
+        await interaction.deferReply({ ephemeral: true });
+
+        try {
+            const username = interaction.customId.replace('collection_series_', '');
+            const selectedSeries = interaction.values[0];
+            
+            const user = await User.findOne({ 
+                raUsername: { $regex: new RegExp(`^${username}$`, 'i') }
+            });
+
+            if (!user || user.discordId !== interaction.user.id) {
+                return interaction.editReply({
+                    content: '❌ You can only view your own collection.',
+                    ephemeral: true
+                });
+            }
+
+            // Show detailed view of selected series
+            await this.showSeriesDetail(interaction, user, selectedSeries);
+
+        } catch (error) {
+            console.error('Error handling collection series select:', error);
+            await interaction.editReply({
+                content: '❌ An error occurred.',
+                ephemeral: true
+            });
+        }
+    },
+
+    // Show detailed view of a specific series
+    async showSeriesDetail(interaction, user, seriesFilter) {
+        const summary = gachaService.getUserCollectionSummary(user);
+        let items = [];
+        let title = '';
+
+        if (seriesFilter === 'all') {
+            items = user.gachaCollection;
+            title = `📦 All Items (${items.length})`;
+        } else if (seriesFilter === 'individual') {
+            items = user.gachaCollection.filter(item => !item.seriesId);
+            title = `🔸 Individual Items (${items.length})`;
+        } else {
+            items = user.gachaCollection.filter(item => item.seriesId === seriesFilter);
+            const seriesName = seriesFilter.charAt(0).toUpperCase() + seriesFilter.slice(1);
+            title = `🏷️ ${seriesName} Series (${items.length})`;
+        }
+
+        // Sort by rarity (highest first), then by name
+        const rarityOrder = ['mythic', 'legendary', 'epic', 'rare', 'uncommon', 'common'];
+        items.sort((a, b) => {
+            const aRarityIndex = rarityOrder.indexOf(a.rarity);
+            const bRarityIndex = rarityOrder.indexOf(b.rarity);
+            if (aRarityIndex !== bRarityIndex) {
+                return aRarityIndex - bRarityIndex;
+            }
+            return a.itemName.localeCompare(b.itemName);
+        });
+
+        const embed = new EmbedBuilder()
+            .setTitle(title)
+            .setColor(COLORS.INFO)
+            .setTimestamp();
+
+        if (items.length === 0) {
+            embed.setDescription('No items in this category.');
+        } else {
+            // Group by rarity for better display
+            const rarityGroups = {};
+            items.forEach(item => {
+                if (!rarityGroups[item.rarity]) {
+                    rarityGroups[item.rarity] = [];
+                }
+                rarityGroups[item.rarity].push(item);
+            });
+
+            let description = '';
+            
+            for (const rarity of rarityOrder) {
+                const rarityItems = rarityGroups[rarity];
+                if (!rarityItems || rarityItems.length === 0) continue;
+
+                const rarityEmoji = gachaService.getRarityEmoji(rarity);
+                const rarityName = gachaService.getRarityDisplayName(rarity);
+                
+                description += `\n${rarityEmoji} **${rarityName}** (${rarityItems.length})\n`;
+                
+                for (const item of rarityItems.slice(0, 8)) { // Limit per rarity to avoid long embeds
+                    const emoji = formatGachaEmoji(item.emojiId, item.emojiName);
+                    const quantity = (item.quantity || 1) > 1 ? ` x${item.quantity}` : '';
+                    const sourceIcon = item.source === 'combined' ? ' 🔧' : 
+                                     item.source === 'series_completion' ? ' 🏆' : '';
+                    
+                    description += `${emoji} **${item.itemName}**${quantity}${sourceIcon}\n`;
+                }
+                
+                if (rarityItems.length > 8) {
+                    description += `*...and ${rarityItems.length - 8} more ${rarityName} items*\n`;
+                }
+            }
+
+            embed.setDescription(description.trim());
+        }
+
+        // Add back button
+        const backButton = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`collection_back_${user.raUsername}`)
+                    .setLabel('← Back to Overview')
+                    .setStyle(ButtonStyle.Secondary),
+                
+                new ButtonBuilder()
+                    .setCustomId(`collection_combine_${user.raUsername}`)
+                    .setLabel('🔧 Combine Items')
+                    .setStyle(ButtonStyle.Primary)
+            );
+
+        embed.setFooter({ 
+            text: '🔧 = Combined item • 🏆 = Series completion reward' 
+        });
+
+        await interaction.editReply({
+            embeds: [embed],
+            components: [backButton]
+        });
+    },
+
+    // Handle button interactions
     async handleButtonInteraction(interaction) {
         if (!interaction.customId.startsWith('collection_')) return;
 
@@ -133,8 +375,17 @@ export default {
             }
 
             switch (action) {
+                case 'back':
+                    await this.handleBackToOverview(interaction, user);
+                    break;
+                case 'filter':
+                    await this.handleFilterButton(interaction, user);
+                    break;
                 case 'combine':
                     await this.handleCombineButton(interaction, user);
+                    break;
+                case 'stats':
+                    await this.handleStatsButton(interaction, user);
                     break;
                 case 'refresh':
                     await this.handleRefreshButton(interaction, user);
@@ -150,6 +401,81 @@ export default {
                 ephemeral: true
             });
         }
+    },
+
+    async handleBackToOverview(interaction, user) {
+        const summary = gachaService.getUserCollectionSummary(user);
+        const mainEmbed = await this.createMainCollectionEmbed(user, summary);
+        const components = this.createCollectionControls(user, summary);
+        
+        await interaction.editReply({
+            embeds: [mainEmbed],
+            components: components
+        });
+    },
+
+    async handleFilterButton(interaction, user) {
+        // Create filter dropdown
+        const filterMenu = new StringSelectMenuBuilder()
+            .setCustomId(`collection_filter_apply_${user.raUsername}`)
+            .setPlaceholder('Choose a filter...')
+            .addOptions([
+                {
+                    label: 'All Items',
+                    value: 'all',
+                    description: 'Show all items',
+                    emoji: '📦'
+                },
+                {
+                    label: 'Mythic Rarity',
+                    value: 'mythic',
+                    description: 'Show only mythic items',
+                    emoji: '🌟'
+                },
+                {
+                    label: 'Legendary Rarity',
+                    value: 'legendary',
+                    description: 'Show only legendary items',
+                    emoji: '🟡'
+                },
+                {
+                    label: 'Epic Rarity',
+                    value: 'epic',
+                    description: 'Show only epic items',
+                    emoji: '🟣'
+                },
+                {
+                    label: 'Rare Rarity',
+                    value: 'rare',
+                    description: 'Show only rare items',
+                    emoji: '🔵'
+                },
+                {
+                    label: 'Stackable Items',
+                    value: 'stackable',
+                    description: 'Items with quantity > 1',
+                    emoji: '📚'
+                },
+                {
+                    label: 'Combined Items',
+                    value: 'combined',
+                    description: 'Items made through combination',
+                    emoji: '🔧'
+                },
+                {
+                    label: 'Series Rewards',
+                    value: 'series_completion',
+                    description: 'Items from completing series',
+                    emoji: '🏆'
+                }
+            ]);
+
+        const components = [new ActionRowBuilder().addComponents(filterMenu)];
+        
+        await interaction.editReply({
+            content: '🎯 **Choose a filter to apply:**',
+            components: components
+        });
     },
 
     async handleCombineButton(interaction, user) {
@@ -180,7 +506,6 @@ export default {
         if (available.length > 0) {
             let availableText = '';
             for (const combo of available.slice(0, 5)) {
-                // FIXED: Use centralized emoji formatting like trophy case
                 const resultEmoji = formatGachaEmoji(combo.resultItem.emojiId, combo.resultItem.emojiName);
                 availableText += `${resultEmoji} **${combo.resultItem.itemName}** x${combo.result.quantity}\n`;
                 
@@ -188,7 +513,6 @@ export default {
                 let ingredientsText = '';
                 for (const ing of combo.ingredients) {
                     const item = await GachaItem.findOne({ itemId: ing.itemId });
-                    // FIXED: Use centralized emoji formatting like trophy case
                     const emoji = item ? formatGachaEmoji(item.emojiId, item.emojiName) : '❓';
                     ingredientsText += `${emoji}${ing.quantity} `;
                 }
@@ -202,43 +526,6 @@ export default {
             embed.addFields({ 
                 name: `✅ Ready to Make (${available.length})`, 
                 value: availableText,
-                inline: false 
-            });
-        }
-
-        // Show automatic combinations info
-        if (automatic.length > 0) {
-            let autoText = '';
-            for (const combo of automatic.slice(0, 3)) {
-                // FIXED: Use centralized emoji formatting like trophy case
-                const resultEmoji = formatGachaEmoji(combo.resultItem.emojiId, combo.resultItem.emojiName);
-                const status = combo.canMake ? '⚡ Auto-combining' : '⏳ Waiting';
-                autoText += `${status} ${resultEmoji} **${combo.resultItem.itemName}**\n`;
-            }
-            if (automatic.length > 3) {
-                autoText += `*...and ${automatic.length - 3} more*\n`;
-            }
-            embed.addFields({ 
-                name: `⚡ Automatic Combinations (${automatic.length})`, 
-                value: autoText + '\n*These combine automatically when you have the ingredients*',
-                inline: false 
-            });
-        }
-
-        // Show some missing combinations as hints
-        if (unavailable.length > 0) {
-            let hintText = '';
-            for (const combo of unavailable.slice(0, 3)) {
-                // FIXED: Use centralized emoji formatting like trophy case
-                const resultEmoji = formatGachaEmoji(combo.resultItem.emojiId, combo.resultItem.emojiName);
-                hintText += `${resultEmoji} **${combo.resultItem.itemName}** *(need more items)*\n`;
-            }
-            if (unavailable.length > 3) {
-                hintText += `*...and ${unavailable.length - 3} more*\n`;
-            }
-            embed.addFields({ 
-                name: `🔒 Discovered but Missing Items (${unavailable.length})`, 
-                value: hintText,
                 inline: false 
             });
         }
@@ -265,22 +552,64 @@ export default {
             components.push(new ActionRowBuilder().addComponents(combineMenu));
         }
 
-        // Add info button
-        const infoButton = new ActionRowBuilder()
-            .addComponents(
-                new ButtonBuilder()
-                    .setCustomId(`combine_info_${user.raUsername}`)
-                    .setLabel('ℹ️ How Combinations Work')
-                    .setStyle(ButtonStyle.Secondary),
-                new ButtonBuilder()
-                    .setCustomId(`combine_stats_${user.raUsername}`)
-                    .setLabel('📊 My Combination Stats')
-                    .setStyle(ButtonStyle.Secondary)
-            );
-        
-        components.push(infoButton);
-
         await interaction.editReply({ embeds: [embed], components });
+    },
+
+    async handleStatsButton(interaction, user) {
+        const stats = combinationService.getCombinationStats(user);
+        const summary = gachaService.getUserCollectionSummary(user);
+        
+        const embed = new EmbedBuilder()
+            .setTitle(`📊 ${user.raUsername}'s Collection Statistics`)
+            .setColor(COLORS.INFO)
+            .setTimestamp();
+
+        // Collection stats
+        embed.addFields({
+            name: '📦 Collection Overview',
+            value: `**Total Items:** ${summary.totalItems}\n` +
+                   `**Unique Items:** ${summary.uniqueItems}\n` +
+                   `**Series Collected:** ${Object.keys(summary.seriesBreakdown).length}`,
+            inline: true
+        });
+
+        // Rarity breakdown
+        let rarityText = '';
+        const rarityOrder = ['mythic', 'legendary', 'epic', 'rare', 'uncommon', 'common'];
+        for (const rarity of rarityOrder) {
+            const count = summary.rarityCount[rarity] || 0;
+            if (count > 0) {
+                const emoji = gachaService.getRarityEmoji(rarity);
+                const name = gachaService.getRarityDisplayName(rarity);
+                rarityText += `${emoji} ${name}: ${count}\n`;
+            }
+        }
+
+        embed.addFields({
+            name: '💎 Rarity Breakdown',
+            value: rarityText || 'No items yet',
+            inline: true
+        });
+
+        // Combination stats
+        embed.addFields({
+            name: '🔧 Combination Activity',
+            value: `**Items Combined:** ${stats.totalCombined}\n` +
+                   `**Unique Combined:** ${stats.uniqueCombined}\n` +
+                   `**Discovery Status:** ${stats.uniqueCombined > 0 ? 'Active Explorer!' : 'Ready to Experiment!'}`,
+            inline: true
+        });
+
+        // Source breakdown
+        embed.addFields({
+            name: '🎯 Item Sources',
+            value: `🎰 Gacha: ${summary.sourceBreakdown.gacha || 0}\n` +
+                   `🔧 Combined: ${summary.sourceBreakdown.combined || 0}\n` +
+                   `🏆 Series Rewards: ${summary.sourceBreakdown.series_completion || 0}`,
+            inline: false
+        });
+
+        await interaction.editReply({ embeds: [embed] });
     },
 
     async handleRefreshButton(interaction, user) {
@@ -292,7 +621,6 @@ export default {
         if (autoCombinations.length > 0) {
             message += '\n\n⚡ **Auto-combinations occurred:**\n';
             for (const combo of autoCombinations) {
-                // FIXED: Use centralized emoji formatting like trophy case
                 const resultEmoji = formatGachaEmoji(combo.resultItem.emojiId, combo.resultItem.emojiName);
                 message += `${resultEmoji} ${combo.resultQuantity}x ${combo.resultItem.itemName}\n`;
             }
@@ -301,106 +629,7 @@ export default {
         await interaction.editReply({ content: message });
     },
 
-    // Handle select menu interactions
-    async handleSelectMenuInteraction(interaction) {
-        if (!interaction.customId.startsWith('combine_select_')) return;
-
-        await interaction.deferReply({ ephemeral: true });
-
-        try {
-            const username = interaction.customId.replace('combine_select_', '');
-            const ruleId = interaction.values[0];
-            
-            const user = await User.findOne({ 
-                raUsername: { $regex: new RegExp(`^${username}$`, 'i') }
-            });
-
-            if (!user || user.discordId !== interaction.user.id) {
-                return interaction.editReply({
-                    content: '❌ You can only manage your own collection.',
-                    ephemeral: true
-                });
-            }
-
-            // Show combination preview and confirmation
-            await this.showCombinationPreview(interaction, user, ruleId);
-
-        } catch (error) {
-            console.error('Error handling combine select:', error);
-            await interaction.editReply({
-                content: '❌ An error occurred.',
-                ephemeral: true
-            });
-        }
-    },
-
-    async showCombinationPreview(interaction, user, ruleId) {
-        const preview = await combinationService.previewCombination(user, ruleId);
-        
-        if (!preview.success) {
-            return interaction.editReply({
-                content: `❌ ${preview.error}`
-            });
-        }
-
-        const embed = new EmbedBuilder()
-            .setTitle('🔍 Combination Preview')
-            .setColor(preview.canMake ? COLORS.SUCCESS : COLORS.WARNING)
-            .setDescription(`**${preview.rule.ruleId}**`)
-            .setTimestamp();
-
-        // Show what will be consumed
-        let ingredientsText = '';
-        for (const ingredient of preview.rule.ingredients) {
-            const item = await GachaItem.findOne({ itemId: ingredient.itemId });
-            const userItem = user.gachaCollection?.find(i => i.itemId === ingredient.itemId);
-            const have = userItem ? (userItem.quantity || 1) : 0;
-            // FIXED: Use centralized emoji formatting like trophy case
-            const emoji = item ? formatGachaEmoji(item.emojiId, item.emojiName) : '❓';
-            
-            ingredientsText += `${emoji} **${ingredient.quantity}x** ${item?.itemName || ingredient.itemId} `;
-            ingredientsText += `*(have: ${have})*\n`;
-        }
-        embed.addFields({ name: '📦 Will Consume', value: ingredientsText });
-
-        // Show what will be created
-        // FIXED: Use centralized emoji formatting like trophy case
-        const resultEmoji = formatGachaEmoji(preview.resultItem.emojiId, preview.resultItem.emojiName);
-        embed.addFields({ 
-            name: '🎁 Will Create', 
-            value: `${resultEmoji} **${preview.rule.result.quantity}x ${preview.resultItem.itemName}**\n*${preview.resultItem.description}*`
-        });
-
-        if (preview.resultItem.flavorText) {
-            embed.addFields({ 
-                name: 'About This Item', 
-                value: `*${preview.resultItem.flavorText}*` 
-            });
-        }
-
-        const components = [];
-        
-        if (preview.canMake) {
-            const confirmButton = new ActionRowBuilder()
-                .addComponents(
-                    new ButtonBuilder()
-                        .setCustomId(`combine_confirm_${user.raUsername}_${ruleId}`)
-                        .setLabel('✅ Combine Items')
-                        .setStyle(ButtonStyle.Success),
-                    new ButtonBuilder()
-                        .setCustomId(`combine_cancel_${user.raUsername}`)
-                        .setLabel('❌ Cancel')
-                        .setStyle(ButtonStyle.Secondary)
-                );
-            components.push(confirmButton);
-        } else {
-            embed.setDescription(`❌ **Cannot combine:** ${preview.missing.map(m => `Need ${m.shortage} more ${m.itemId}`).join(', ')}`);
-        }
-
-        await interaction.editReply({ embeds: [embed], components });
-    },
-
-    // Handle combination confirmation
+    // Handle combination confirmation (existing methods)
     async handleCombineConfirm(interaction) {
         if (!interaction.customId.startsWith('combine_confirm_')) return;
 
@@ -429,7 +658,6 @@ export default {
             }
 
             // Success! Show what happened
-            // FIXED: Use centralized emoji formatting like trophy case
             const resultEmoji = formatGachaEmoji(result.resultItem.emojiId, result.resultItem.emojiName);
             
             let message = `🎉 **Combination Successful!**\n\n`;
@@ -438,7 +666,6 @@ export default {
             message += `📦 **Consumed:**\n`;
             for (const ingredient of result.ingredients) {
                 const item = await GachaItem.findOne({ itemId: ingredient.itemId });
-                // FIXED: Use centralized emoji formatting like trophy case
                 const emoji = item ? formatGachaEmoji(item.emojiId, item.emojiName) : '❓';
                 message += `${emoji} ${ingredient.quantity}x ${item?.itemName || ingredient.itemId}\n`;
             }
@@ -451,7 +678,6 @@ export default {
             if (autoCombinations.length > 0) {
                 let autoMessage = '\n⚡ **Bonus auto-combinations triggered:**\n';
                 for (const combo of autoCombinations) {
-                    // FIXED: Use centralized emoji formatting like trophy case
                     const autoEmoji = formatGachaEmoji(combo.resultItem.emojiId, combo.resultItem.emojiName);
                     autoMessage += `${autoEmoji} ${combo.resultQuantity}x ${combo.resultItem.itemName}\n`;
                 }
@@ -469,147 +695,5 @@ export default {
                 ephemeral: true
             });
         }
-    },
-
-    // Existing methods from the original collection command
-    processCollection(collection, filter, series, sort) {
-        let filteredItems = [...collection];
-
-        // Apply filters
-        if (filter && filter !== 'all') {
-            if (filter === 'stackable') {
-                filteredItems = filteredItems.filter(item => (item.quantity || 1) > 1);
-            } else {
-                filteredItems = filteredItems.filter(item => {
-                    return item.rarity === filter || item.itemType === filter;
-                });
-            }
-        }
-
-        if (series) {
-            filteredItems = filteredItems.filter(item => item.seriesId === series);
-        }
-
-        // Apply sorting
-        switch (sort) {
-            case 'name':
-                filteredItems.sort((a, b) => a.itemName.localeCompare(b.itemName));
-                break;
-            case 'rarity':
-                const rarityOrder = ['mythic', 'legendary', 'epic', 'rare', 'uncommon', 'common'];
-                filteredItems.sort((a, b) => {
-                    const aIndex = rarityOrder.indexOf(a.rarity);
-                    const bIndex = rarityOrder.indexOf(b.rarity);
-                    return aIndex - bIndex;
-                });
-                break;
-            case 'quantity':
-                filteredItems.sort((a, b) => (b.quantity || 1) - (a.quantity || 1));
-                break;
-            case 'recent':
-            default:
-                filteredItems.sort((a, b) => new Date(b.obtainedAt) - new Date(a.obtainedAt));
-                break;
-        }
-
-        // Create summary
-        const summary = {
-            total: collection.length,
-            filtered: filteredItems.length,
-            totalQuantity: collection.reduce((sum, item) => sum + (item.quantity || 1), 0),
-            rarityBreakdown: this.getRarityBreakdown(filteredItems),
-            combinationStats: combinationService.getCombinationStats({ gachaCollection: collection })
-        };
-
-        return { items: filteredItems, summary };
-    },
-
-    getRarityBreakdown(items) {
-        const breakdown = {
-            mythic: 0,
-            legendary: 0,
-            epic: 0,
-            rare: 0,
-            uncommon: 0,
-            common: 0
-        };
-
-        items.forEach(item => {
-            if (breakdown[item.rarity] !== undefined) {
-                breakdown[item.rarity] += (item.quantity || 1);
-            }
-        });
-
-        return breakdown;
-    },
-
-    async createCollectionEmbed(user, items, summary, filter, series, sort, page = 0) {
-        const itemsPerPage = 15;
-        const startIndex = page * itemsPerPage;
-        const endIndex = Math.min(startIndex + itemsPerPage, items.length);
-        const pageItems = items.slice(startIndex, endIndex);
-        
-        const embed = new EmbedBuilder()
-            .setTitle(`📦 ${user.raUsername}'s Collection`)
-            .setColor(COLORS.INFO)
-            .setTimestamp();
-
-        // Enhanced description with combination stats
-        let description = `**Total Items:** ${summary.totalQuantity} (${summary.total} unique)\n`;
-        
-        if (filter && filter !== 'all' || series) {
-            description += `**Filtered:** ${summary.filtered} items\n`;
-        }
-
-        description += `**Sort:** ${sort}\n`;
-        description += `**Combinations Made:** ${summary.combinationStats.totalCombined}\n\n`;
-
-        // Add rarity breakdown
-        description += '**By Rarity:**\n';
-        Object.entries(summary.rarityBreakdown).forEach(([rarity, count]) => {
-            if (count > 0) {
-                const emoji = gachaService.getRarityEmoji(rarity);
-                description += `${emoji} ${rarity}: ${count}\n`;
-            }
-        });
-
-        embed.setDescription(description);
-
-        // Add items field
-        if (pageItems.length > 0) {
-            let itemsText = '';
-            
-            for (const item of pageItems) {
-                // FIXED: Use centralized emoji formatting like trophy case
-                const emoji = formatGachaEmoji(item.emojiId, item.emojiName);
-                const rarityEmoji = gachaService.getRarityEmoji(item.rarity);
-                const quantity = (item.quantity || 1) > 1 ? ` x${item.quantity}` : '';
-                const seriesTag = item.seriesId ? ` [${item.seriesId}]` : '';
-                const sourceTag = item.source === 'combined' ? ' 🔧' : '';
-                
-                itemsText += `${rarityEmoji} ${emoji} **${item.itemName}**${quantity}${seriesTag}${sourceTag}\n`;
-            }
-
-            const totalPages = Math.ceil(items.length / itemsPerPage);
-            const fieldName = totalPages > 1 ? 
-                `Items (Page ${page + 1} of ${totalPages})` : 
-                `Items (${pageItems.length})`;
-
-            embed.addFields({ 
-                name: fieldName, 
-                value: itemsText || 'No items found'
-            });
-        } else {
-            embed.addFields({ 
-                name: 'Items', 
-                value: 'No items match your filters'
-            });
-        }
-
-        embed.setFooter({ 
-            text: '🔧 = Made through combination • Use the Combine button to create new items!' 
-        });
-
-        return embed;
     }
 };
