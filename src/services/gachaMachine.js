@@ -1,4 +1,4 @@
-// src/services/gachaMachine.js - FIXED version with proper emoji display
+// src/services/gachaMachine.js - UPDATED with consistent emoji formatting
 import { 
     EmbedBuilder, 
     ActionRowBuilder, 
@@ -9,7 +9,7 @@ import {
 import { config } from '../config/config.js';
 import { User } from '../models/User.js';
 import gachaService from './gachaService.js';
-import combinationService from './combinationService.js'; // NEW: Add combination service
+import combinationService from './combinationService.js';
 import { COLORS, EMOJIS } from '../utils/FeedUtils.js';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
@@ -214,8 +214,8 @@ class GachaMachine {
             if (items.length === 0) return;
 
             items.forEach(item => {
-                // FIXED: Proper emoji formatting
-                const emoji = this.formatEmoji(item.emojiId, item.emojiName);
+                // UPDATED: Use consistent emoji formatting
+                const emoji = gachaService.formatEmoji(item.emojiId, item.emojiName);
                 const rarityEmoji = gachaService.getRarityEmoji(item.rarity);
                 const newFlag = item.isNew ? ' ✨**NEW!**' : '';
                 const stackInfo = item.maxStack > 1 ? ` (${item.quantity}/${item.maxStack})` : '';
@@ -238,7 +238,7 @@ class GachaMachine {
         if (completions && completions.length > 0) {
             let completionsText = '';
             completions.forEach(completion => {
-                const rewardEmoji = this.formatEmoji(
+                const rewardEmoji = gachaService.formatEmoji(
                     completion.rewardItem.emojiId, 
                     completion.rewardItem.emojiName
                 );
@@ -252,11 +252,11 @@ class GachaMachine {
             });
         }
 
-        // NEW: Add auto-combinations if any occurred
+        // Add auto-combinations if any occurred
         if (autoCombinations && autoCombinations.length > 0) {
             let autoCombinationsText = '';
             autoCombinations.forEach(combo => {
-                const resultEmoji = this.formatEmoji(combo.resultItem.emojiId, combo.resultItem.emojiName);
+                const resultEmoji = gachaService.formatEmoji(combo.resultItem.emojiId, combo.resultItem.emojiName);
                 autoCombinationsText += `⚡ **Auto-Combination Triggered!**\n`;
                 autoCombinationsText += `${resultEmoji} Created: **${combo.resultQuantity}x ${combo.resultItem.itemName}**\n\n`;
             });
@@ -271,17 +271,6 @@ class GachaMachine {
         embed.setDescription(`**Cost:** ${cost} GP → **New Balance:** ${newBalance.toLocaleString()} GP`);
 
         return embed;
-    }
-
-    // FIXED: Proper emoji formatting method
-    formatEmoji(emojiId, emojiName) {
-        if (emojiId && emojiName) {
-            return `<:${emojiName}:${emojiId}>`;
-        } else if (emojiName) {
-            // Fallback to emoji name if ID is missing
-            return emojiName;
-        }
-        return '❓'; // Ultimate fallback
     }
 
     async handleCollection(interaction, user) {
@@ -317,7 +306,8 @@ class GachaMachine {
         if (summary.recentItems.length > 0) {
             let recentText = '';
             summary.recentItems.slice(0, 5).forEach(item => {
-                const emoji = this.formatEmoji(item.emojiId, item.emojiName);
+                // UPDATED: Use the User model's emoji formatting method
+                const emoji = user.formatGachaItemEmoji(item);
                 const rarityEmoji = gachaService.getRarityEmoji(item.rarity);
                 const stackInfo = (item.quantity || 1) > 1 ? ` x${item.quantity}` : '';
                 recentText += `${rarityEmoji} ${emoji} **${item.itemName}**${stackInfo}\n`;
