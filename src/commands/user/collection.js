@@ -1,4 +1,4 @@
-// src/commands/user/collection.js - Enhanced with combination interface
+// src/commands/user/collection.js - FIXED with proper emoji formatting
 import { 
     SlashCommandBuilder, 
     EmbedBuilder,
@@ -179,14 +179,16 @@ export default {
         if (available.length > 0) {
             let availableText = '';
             for (const combo of available.slice(0, 5)) {
-                const resultEmoji = `<:${combo.resultItem.emojiName}:${combo.resultItem.emojiId}>`;
+                // FIXED: Use proper emoji formatting
+                const resultEmoji = this.formatItemEmoji(combo.resultItem);
                 availableText += `${resultEmoji} **${combo.resultItem.itemName}** x${combo.result.quantity}\n`;
                 
                 // Show ingredients briefly
                 let ingredientsText = '';
                 for (const ing of combo.ingredients) {
                     const item = await GachaItem.findOne({ itemId: ing.itemId });
-                    const emoji = item ? `<:${item.emojiName}:${item.emojiId}>` : '❓';
+                    // FIXED: Use proper emoji formatting for ingredients
+                    const emoji = item ? this.formatItemEmoji(item) : '❓';
                     ingredientsText += `${emoji}${ing.quantity} `;
                 }
                 availableText += `   *Needs: ${ingredientsText}*\n\n`;
@@ -207,7 +209,8 @@ export default {
         if (automatic.length > 0) {
             let autoText = '';
             for (const combo of automatic.slice(0, 3)) {
-                const resultEmoji = `<:${combo.resultItem.emojiName}:${combo.resultItem.emojiId}>`;
+                // FIXED: Use proper emoji formatting
+                const resultEmoji = this.formatItemEmoji(combo.resultItem);
                 const status = combo.canMake ? '⚡ Auto-combining' : '⏳ Waiting';
                 autoText += `${status} ${resultEmoji} **${combo.resultItem.itemName}**\n`;
             }
@@ -225,7 +228,8 @@ export default {
         if (unavailable.length > 0) {
             let hintText = '';
             for (const combo of unavailable.slice(0, 3)) {
-                const resultEmoji = `<:${combo.resultItem.emojiName}:${combo.resultItem.emojiId}>`;
+                // FIXED: Use proper emoji formatting
+                const resultEmoji = this.formatItemEmoji(combo.resultItem);
                 hintText += `${resultEmoji} **${combo.resultItem.itemName}** *(need more items)*\n`;
             }
             if (unavailable.length > 3) {
@@ -287,7 +291,8 @@ export default {
         if (autoCombinations.length > 0) {
             message += '\n\n⚡ **Auto-combinations occurred:**\n';
             for (const combo of autoCombinations) {
-                const resultEmoji = `<:${combo.resultItem.emojiName}:${combo.resultItem.emojiId}>`;
+                // FIXED: Use proper emoji formatting
+                const resultEmoji = this.formatItemEmoji(combo.resultItem);
                 message += `${resultEmoji} ${combo.resultQuantity}x ${combo.resultItem.itemName}\n`;
             }
         }
@@ -349,7 +354,8 @@ export default {
             const item = await GachaItem.findOne({ itemId: ingredient.itemId });
             const userItem = user.gachaCollection?.find(i => i.itemId === ingredient.itemId);
             const have = userItem ? (userItem.quantity || 1) : 0;
-            const emoji = item ? `<:${item.emojiName}:${item.emojiId}>` : '❓';
+            // FIXED: Use proper emoji formatting
+            const emoji = item ? this.formatItemEmoji(item) : '❓';
             
             ingredientsText += `${emoji} **${ingredient.quantity}x** ${item?.itemName || ingredient.itemId} `;
             ingredientsText += `*(have: ${have})*\n`;
@@ -357,7 +363,8 @@ export default {
         embed.addFields({ name: '📦 Will Consume', value: ingredientsText });
 
         // Show what will be created
-        const resultEmoji = `<:${preview.resultItem.emojiName}:${preview.resultItem.emojiId}>`;
+        // FIXED: Use proper emoji formatting
+        const resultEmoji = this.formatItemEmoji(preview.resultItem);
         embed.addFields({ 
             name: '🎁 Will Create', 
             value: `${resultEmoji} **${preview.rule.result.quantity}x ${preview.resultItem.itemName}**\n*${preview.resultItem.description}*`
@@ -421,7 +428,8 @@ export default {
             }
 
             // Success! Show what happened
-            const resultEmoji = `<:${result.resultItem.emojiName}:${result.resultItem.emojiId}>`;
+            // FIXED: Use proper emoji formatting
+            const resultEmoji = this.formatItemEmoji(result.resultItem);
             
             let message = `🎉 **Combination Successful!**\n\n`;
             message += `${resultEmoji} **Created: ${result.resultQuantity}x ${result.resultItem.itemName}**\n\n`;
@@ -429,7 +437,8 @@ export default {
             message += `📦 **Consumed:**\n`;
             for (const ingredient of result.ingredients) {
                 const item = await GachaItem.findOne({ itemId: ingredient.itemId });
-                const emoji = item ? `<:${item.emojiName}:${item.emojiId}>` : '❓';
+                // FIXED: Use proper emoji formatting
+                const emoji = item ? this.formatItemEmoji(item) : '❓';
                 message += `${emoji} ${ingredient.quantity}x ${item?.itemName || ingredient.itemId}\n`;
             }
 
@@ -441,7 +450,8 @@ export default {
             if (autoCombinations.length > 0) {
                 let autoMessage = '\n⚡ **Bonus auto-combinations triggered:**\n';
                 for (const combo of autoCombinations) {
-                    const autoEmoji = `<:${combo.resultItem.emojiName}:${combo.resultItem.emojiId}>`;
+                    // FIXED: Use proper emoji formatting
+                    const autoEmoji = this.formatItemEmoji(combo.resultItem);
                     autoMessage += `${autoEmoji} ${combo.resultQuantity}x ${combo.resultItem.itemName}\n`;
                 }
                 
@@ -458,6 +468,16 @@ export default {
                 ephemeral: true
             });
         }
+    },
+
+    // FIXED: Proper emoji formatting helper
+    formatItemEmoji(item) {
+        if (item.emojiId && item.emojiName) {
+            return `<:${item.emojiName}:${item.emojiId}>`;
+        } else if (item.emojiName) {
+            return item.emojiName;
+        }
+        return '❓';
     },
 
     // Existing methods from the original collection command
@@ -569,7 +589,8 @@ export default {
             let itemsText = '';
             
             pageItems.forEach(item => {
-                const emoji = gachaService.formatEmoji(item.emojiId, item.emojiName);
+                // FIXED: Use User model's emoji formatting method
+                const emoji = user.formatGachaItemEmoji(item);
                 const rarityEmoji = gachaService.getRarityEmoji(item.rarity);
                 const quantity = (item.quantity || 1) > 1 ? ` x${item.quantity}` : '';
                 const seriesTag = item.seriesId ? ` [${item.seriesId}]` : '';
