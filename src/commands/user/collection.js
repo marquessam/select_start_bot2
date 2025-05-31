@@ -400,8 +400,9 @@ export default {
         const rarityName = gachaService.getRarityDisplayName(collectionItem.rarity);
         const itemEmoji = formatGachaEmoji(collectionItem.emojiId, collectionItem.emojiName);
         
+        // UPDATED: Removed 🔍 emoji from title
         const embed = new EmbedBuilder()
-            .setTitle(`🔍 Item Details - ${collectionItem.itemName}`)
+            .setTitle(`Item Details - ${collectionItem.itemName}`)
             .setColor(rarityColor)
             .setTimestamp();
 
@@ -411,24 +412,18 @@ export default {
         // Rarity with emoji
         description += `${rarityEmoji} **${rarityName}**`;
         
-        // Quantity info
+        // Quantity info - UPDATED: Removed 📦 emoji
         if (collectionItem.quantity && collectionItem.quantity > 1) {
             const maxStack = originalItem?.maxStack || 1;
-            description += `\n📦 **Quantity:** ${collectionItem.quantity}${maxStack > 1 ? `/${maxStack}` : ''}`;
+            description += `\n**Quantity:** ${collectionItem.quantity}${maxStack > 1 ? `/${maxStack}` : ''}`;
         }
         
-        // Series info
+        // Series info - UPDATED: Removed 🏷️ emoji
         if (collectionItem.seriesId) {
-            description += `\n🏷️ **Series:** ${collectionItem.seriesId.charAt(0).toUpperCase() + collectionItem.seriesId.slice(1)}`;
+            description += `\n**Series:** ${collectionItem.seriesId.charAt(0).toUpperCase() + collectionItem.seriesId.slice(1)}`;
         }
 
-        // Source info
-        const sourceEmojis = {
-            gacha: '🎰',
-            combined: '🔧',
-            series_completion: '🏆',
-            admin_grant: '🛠️'
-        };
+        // Source info - UPDATED: Removed all source emojis
         const sourceNames = {
             gacha: 'Gacha Pull',
             combined: 'Item Combination',
@@ -436,41 +431,41 @@ export default {
             admin_grant: 'Admin Grant'
         };
         const source = collectionItem.source || 'gacha';
-        description += `\n${sourceEmojis[source] || '📦'} **Source:** ${sourceNames[source] || 'Unknown'}`;
+        description += `\n**Source:** ${sourceNames[source] || 'Unknown'}`;
 
         embed.setDescription(description);
 
-        // Add item description
+        // Add item description - UPDATED: Removed 📝 emoji
         const itemDescription = collectionItem.description || originalItem?.description;
         if (itemDescription) {
             embed.addFields({
-                name: '📝 Description',
+                name: 'Description',
                 value: `*${itemDescription}*`,
                 inline: false
             });
         }
 
-        // Add flavor text
+        // Add flavor text - UPDATED: Removed 💭 emoji
         const flavorText = collectionItem.flavorText || originalItem?.flavorText;
         if (flavorText) {
             embed.addFields({
-                name: '💭 Flavor Text',
+                name: 'Flavor Text',
                 value: `*"${flavorText}"*`,
                 inline: false
             });
         }
 
-        // Add acquisition date
+        // Add acquisition date - UPDATED: Removed 📅 emoji
         if (collectionItem.obtainedAt) {
             const obtainedDate = new Date(collectionItem.obtainedAt);
             embed.addFields({
-                name: '📅 Obtained',
+                name: 'Obtained',
                 value: `<t:${Math.floor(obtainedDate.getTime() / 1000)}:F>`,
                 inline: true
             });
         }
 
-        // Add item type info
+        // Add item type info - UPDATED: Removed 🏷️ emoji
         if (originalItem?.itemType) {
             const typeNames = {
                 trinket: 'Trinket',
@@ -480,7 +475,7 @@ export default {
                 combined: 'Combined Item'
             };
             embed.addFields({
-                name: '🏷️ Type',
+                name: 'Type',
                 value: typeNames[originalItem.itemType] || 'Unknown',
                 inline: true
             });
