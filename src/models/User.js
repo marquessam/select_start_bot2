@@ -1,4 +1,4 @@
-// src/models/User.js - Enhanced with gacha emoji support
+// src/models/User.js - Complete model with fixed gacha emoji support
 import mongoose from 'mongoose';
 
 const communityAwardSchema = new mongoose.Schema({
@@ -38,7 +38,7 @@ const nominationSchema = new mongoose.Schema({
     }
 });
 
-// Trophy case schema (SIMPLIFIED)
+// Trophy case schema
 const trophyCaseSchema = new mongoose.Schema({
     gameId: {
         type: String,
@@ -92,7 +92,7 @@ const gachaCollectionSchema = new mongoose.Schema({
         enum: ['common', 'uncommon', 'rare', 'epic', 'legendary', 'mythic'],
         required: true
     },
-    // ADDED: Proper emoji support
+    // FIXED: Proper emoji support
     emojiId: {
         type: String,
         default: null       // Discord custom emoji ID
@@ -113,7 +113,7 @@ const gachaCollectionSchema = new mongoose.Schema({
     // ADDED: Source tracking
     source: {
         type: String,
-        enum: ['gacha', 'combined', 'series_completion', 'admin_grant'],
+        enum: ['gacha', 'combined', 'series_completion', 'admin_grant', 'admin_test'],
         default: 'gacha'
     }
 });
@@ -156,8 +156,8 @@ const userSchema = new mongoose.Schema({
             achievements: Number,
             totalAchievements: Number,
             percentage: Number,
-            gameTitle: String,     // ADD THIS
-            gameIconUrl: String    // ADD THIS
+            gameTitle: String,
+            gameIconUrl: String
         },
         default: () => new Map()
     },
@@ -168,8 +168,8 @@ const userSchema = new mongoose.Schema({
             achievements: Number,
             totalAchievements: Number,
             percentage: Number,
-            gameTitle: String,     // ADD THIS
-            gameIconUrl: String    // ADD THIS
+            gameTitle: String,
+            gameIconUrl: String
     },
     default: () => new Map()
 },
@@ -586,7 +586,7 @@ userSchema.methods.getTrophyCount = function() {
     return counts;
 };
 
-// ===== NEW GACHA SYSTEM METHODS =====
+// ===== GACHA SYSTEM METHODS =====
 
 // Format gacha item emoji for display
 userSchema.methods.formatGachaItemEmoji = function(item) {
@@ -604,10 +604,20 @@ userSchema.methods.getGachaItem = function(itemId) {
     return this.gachaCollection.find(item => item.itemId === itemId);
 };
 
-// Add or update gacha item in collection
+// FIXED: Add or update gacha item in collection with proper emoji data transfer
 userSchema.methods.addGachaItem = function(gachaItem, quantity = 1, source = 'gacha') {
+    console.log('🔧 addGachaItem called with:', {
+        itemId: gachaItem.itemId,
+        itemName: gachaItem.itemName,
+        emojiId: gachaItem.emojiId,
+        emojiName: gachaItem.emojiName,
+        quantity: quantity,
+        source: source
+    });
+
     if (!this.gachaCollection) {
         this.gachaCollection = [];
+        console.log('📦 Initialized empty gachaCollection');
     }
 
     const existingItem = this.gachaCollection.find(item => item.itemId === gachaItem.itemId);
@@ -617,6 +627,22 @@ userSchema.methods.addGachaItem = function(gachaItem, quantity = 1, source = 'ga
         const newQuantity = Math.min(existingItem.quantity + quantity, gachaItem.maxStack);
         const previousQuantity = existingItem.quantity;
         existingItem.quantity = newQuantity;
+        
+        // IMPORTANT: Update emoji data even when stacking in case it changed
+        if (gachaItem.emojiId) {
+            existingItem.emojiId = gachaItem.emojiId;
+        }
+        if (gachaItem.emojiName) {
+            existingItem.emojiName = gachaItem.emojiName;
+        }
+        
+        console.log('📚 Stacked item:', {
+            itemName: existingItem.itemName,
+            newQuantity: newQuantity,
+            emojiId: existingItem.emojiId,
+            emojiName: existingItem.emojiName
+        });
+        
         return {
             item: existingItem,
             isNew: false,
@@ -624,28 +650,52 @@ userSchema.methods.addGachaItem = function(gachaItem, quantity = 1, source = 'ga
             previousQuantity: previousQuantity
         };
     } else if (!existingItem) {
-        // Add new item with proper emoji data
+        // Add new item with COMPLETE emoji data transfer
         const newItem = {
             itemId: gachaItem.itemId,
             itemName: gachaItem.itemName,
             itemType: gachaItem.itemType,
             seriesId: gachaItem.seriesId,
             rarity: gachaItem.rarity,
-            emojiId: gachaItem.emojiId, // Ensure this is properly saved
-            emojiName: gachaItem.emojiName, // Ensure this is properly saved
+            // CRITICAL: Ensure emoji data is properly copied
+            emojiId: gachaItem.emojiId || null,        // Explicitly copy emojiId
+            emojiName: gachaItem.emojiName || '❓',     // Explicitly copy emojiName with fallback
             obtainedAt: new Date(),
             quantity: quantity,
             source: source
         };
 
+        console.log('✨ Creating new collection item:', {
+            itemId: newItem.itemId,
+            itemName: newItem.itemName,
+            emojiId: newItem.emojiId,
+            emojiName: newItem.emojiName,
+            source: newItem.source
+        });
+
         this.gachaCollection.push(newItem);
+        
+        // VERIFICATION: Check that emoji data was saved correctly
+        const savedItem = this.gachaCollection[this.gachaCollection.length - 1];
+        console.log('🔍 Verification - saved item emoji data:', {
+            emojiId: savedItem.emojiId,
+            emojiName: savedItem.emojiName
+        });
+        
+        if (gachaItem.emojiId && !savedItem.emojiId) {
+            console.error('❌ CRITICAL: emojiId was not saved correctly!');
+            console.error('Source emojiId:', gachaItem.emojiId);
+            console.error('Saved emojiId:', savedItem.emojiId);
+        }
+        
         return {
-            item: newItem,
+            item: savedItem, // Return the actual saved item
             isNew: true,
             wasStacked: false
         };
     } else {
         // Item exists but can't stack more
+        console.log('🚫 Item exists but cannot stack more:', existingItem.itemName);
         return {
             item: existingItem,
             isNew: false,
