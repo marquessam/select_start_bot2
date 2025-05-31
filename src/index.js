@@ -321,6 +321,21 @@ client.on(Events.InteractionCreate, async interaction => {
             }
             return;
         }
+
+        // NEW: Check if this is a collection inspect item dropdown
+        if (interaction.customId.startsWith('collection_inspect_item_')) {
+            console.log('Routing to collection inspect handler');
+            const collectionCommand = client.commands.get('collection');
+            if (collectionCommand && typeof collectionCommand.handleSelectMenuInteraction === 'function') {
+                await collectionCommand.handleSelectMenuInteraction(interaction);
+            } else {
+                await interaction.reply({
+                    content: '❌ Collection inspect feature not available.',
+                    ephemeral: true
+                });
+            }
+            return;
+        }
         
         // Check if this is a combination-related select menu
         if (interaction.customId.startsWith('combine_select_')) {
