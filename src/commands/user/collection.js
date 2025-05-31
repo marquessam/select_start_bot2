@@ -1,4 +1,4 @@
-// src/commands/user/collection.js - UPDATED with dropdown menu and series grouping
+// src/commands/user/collection.js - FIXED syntax error and complete with inspect feature
 import { 
     SlashCommandBuilder, 
     EmbedBuilder,
@@ -217,7 +217,9 @@ export default {
 
     // Handle dropdown interactions
     async handleSelectMenuInteraction(interaction) {
-        if (!interaction.customId.startsWith('collection_series_') && !interaction.customId.startsWith('collection_filter_apply_')) return;
+        if (!interaction.customId.startsWith('collection_series_') && 
+            !interaction.customId.startsWith('collection_filter_apply_') &&
+            !interaction.customId.startsWith('collection_inspect_item_')) return;
 
         await interaction.deferReply({ ephemeral: true });
 
@@ -229,224 +231,7 @@ export default {
                 selectedValue = interaction.values[0];
                 
                 const user = await User.findOne({ 
-                    raUsername: { $regex: new RegExp(`^${username}// src/commands/user/collection.js - UPDATED with dropdown menu and series grouping
-import { 
-    SlashCommandBuilder, 
-    EmbedBuilder,
-    ActionRowBuilder,
-    ButtonBuilder,
-    ButtonStyle,
-    StringSelectMenuBuilder,
-    ModalBuilder,
-    TextInputBuilder,
-    TextInputStyle
-} from 'discord.js';
-import { User } from '../../models/User.js';
-import { GachaItem, CombinationRule } from '../../models/GachaItem.js';
-import combinationService from '../../services/combinationService.js';
-import gachaService from '../../services/gachaService.js';
-import { formatGachaEmoji } from '../../config/gachaEmojis.js';
-import { COLORS } from '../../utils/FeedUtils.js';
-
-export default {
-    data: new SlashCommandBuilder()
-        .setName('collection')
-        .setDescription('View your gacha collection with filtering and combination options'),
-
-    async execute(interaction) {
-        await interaction.deferReply({ ephemeral: true });
-
-        try {
-            const user = await User.findOne({ discordId: interaction.user.id });
-            if (!user) {
-                return interaction.editReply({
-                    content: '❌ You are not registered. Please ask an admin to register you first.'
-                });
-            }
-
-            if (!user.gachaCollection || user.gachaCollection.length === 0) {
-                return interaction.editReply({
-                    content: '📦 Your collection is empty! Visit the gacha machine to start collecting items.'
-                });
-            }
-
-            // Get collection summary with series breakdown
-            const summary = gachaService.getUserCollectionSummary(user);
-            
-            // Create the main collection embed with series overview
-            const mainEmbed = await this.createMainCollectionEmbed(user, summary);
-            
-            // Create control buttons and dropdown
-            const components = this.createCollectionControls(user, summary);
-            
-            await interaction.editReply({ 
-                embeds: [mainEmbed],
-                components: components
-            });
-
-        } catch (error) {
-            console.error('Error displaying collection:', error);
-            await interaction.editReply({
-                content: '❌ An error occurred while fetching your collection.'
-            });
-        }
-    },
-
-    // Create the main collection overview embed
-    async createMainCollectionEmbed(user, summary) {
-        const embed = new EmbedBuilder()
-            .setTitle(`📦 ${user.raUsername}'s Collection`)
-            .setColor(COLORS.INFO)
-            .setTimestamp();
-
-        // Main stats
-        let description = `**Total Items:** ${summary.totalItems} (${summary.uniqueItems} unique)\n\n`;
-
-        // Series breakdown - the main focus
-        description += '📚 **Collection by Series:**\n';
-        
-        const seriesEntries = Object.entries(summary.seriesBreakdown);
-        if (seriesEntries.length > 0) {
-            // Sort by series name, but put "Individual Items" last
-            seriesEntries.sort(([a], [b]) => {
-                if (a === 'Individual Items') return 1;
-                if (b === 'Individual Items') return -1;
-                return a.localeCompare(b);
-            });
-
-            for (const [seriesName, items] of seriesEntries) {
-                const itemCount = items.length;
-                const totalQuantity = items.reduce((sum, item) => sum + (item.quantity || 1), 0);
-                
-                const displayName = seriesName === 'Individual Items' ? 
-                    '🔸 Individual Items' : 
-                    `🏷️ ${seriesName.charAt(0).toUpperCase() + seriesName.slice(1)} Series`;
-                
-                description += `${displayName}: ${itemCount} types (${totalQuantity} total)\n`;
-            }
-        } else {
-            description += 'No items collected yet\n';
-        }
-
-        description += '\n';
-
-        // Rarity summary (condensed)
-        const rarityEmojis = {
-            mythic: '🌟',
-            legendary: '🟡',
-            epic: '🟣',
-            rare: '🔵',
-            uncommon: '🟢',
-            common: '⚪'
-        };
-
-        description += '💎 **Rarity Summary:**\n';
-        let rarityLine = '';
-        for (const [rarity, emoji] of Object.entries(rarityEmojis)) {
-            const count = summary.rarityCount[rarity] || 0;
-            if (count > 0) {
-                rarityLine += `${emoji}${count} `;
-            }
-        }
-        description += rarityLine || 'No items yet';
-
-        embed.setDescription(description);
-
-        // Add combination stats
-        const combinationStats = combinationService.getCombinationStats(user);
-        embed.addFields({
-            name: '🔧 Combination Activity',
-            value: `**Items Combined:** ${combinationStats.totalCombined}\n` +
-                   `**Unique Combined:** ${combinationStats.uniqueCombined}\n` +
-                   `**Discovery Status:** ${combinationStats.uniqueCombined > 0 ? 'Active Explorer!' : 'Ready to Experiment!'}`,
-            inline: true
-        });
-
-        embed.setFooter({ 
-            text: 'Use the dropdown and buttons below to explore your collection in detail!' 
-        });
-
-        return embed;
-    },
-
-    // Create control components
-    createCollectionControls(user, summary) {
-        const components = [];
-
-        // Series selection dropdown
-        const seriesOptions = [];
-        const seriesEntries = Object.entries(summary.seriesBreakdown);
-        
-        // Add "All Items" option first
-        seriesOptions.push({
-            label: 'All Items',
-            value: 'all',
-            description: `View all ${summary.totalItems} items`,
-            emoji: '📦'
-        });
-
-        // Add series options
-        seriesEntries.forEach(([seriesName, items]) => {
-            const itemCount = items.length;
-            const totalQuantity = items.reduce((sum, item) => sum + (item.quantity || 1), 0);
-            
-            if (seriesName === 'Individual Items') {
-                seriesOptions.push({
-                    label: 'Individual Items',
-                    value: 'individual',
-                    description: `${itemCount} standalone items (${totalQuantity} total)`,
-                    emoji: '🔸'
-                });
-            } else {
-                seriesOptions.push({
-                    label: `${seriesName.charAt(0).toUpperCase() + seriesName.slice(1)} Series`,
-                    value: seriesName,
-                    description: `${itemCount} types (${totalQuantity} total)`,
-                    emoji: '🏷️'
-                });
-            }
-        });
-
-        // Only add dropdown if there are series to choose from
-        if (seriesOptions.length > 1) {
-            const seriesMenu = new StringSelectMenuBuilder()
-                .setCustomId(`collection_series_${user.raUsername}`)
-                .setPlaceholder('Choose a series to view...')
-                .addOptions(seriesOptions.slice(0, 25)); // Discord limit
-
-            components.push(new ActionRowBuilder().addComponents(seriesMenu));
-        }
-
-        // Filter and action buttons
-        const actionButtons = new ActionRowBuilder()
-            .addComponents(
-                new ButtonBuilder()
-                    .setCustomId(`collection_filter_${user.raUsername}`)
-                    .setLabel('🎯 Filters')
-                    .setStyle(ButtonStyle.Secondary),
-                
-                new ButtonBuilder()
-                    .setCustomId(`collection_combine_${user.raUsername}`)
-                    .setLabel('🔧 Combine Items')
-                    .setStyle(ButtonStyle.Primary),
-                
-                new ButtonBuilder()
-                    .setCustomId(`collection_stats_${user.raUsername}`)
-                    .setLabel('📊 Statistics')
-                    .setStyle(ButtonStyle.Secondary),
-
-                new ButtonBuilder()
-                    .setCustomId(`collection_refresh_${user.raUsername}`)
-                    .setLabel('🔄 Refresh')
-                    .setStyle(ButtonStyle.Secondary)
-            );
-
-        components.push(actionButtons);
-
-        return components;
-    },
-
-, 'i') }
+                    raUsername: { $regex: new RegExp(`^${username}$`, 'i') }
                 });
 
                 if (!user || user.discordId !== interaction.user.id) {
@@ -464,224 +249,7 @@ export default {
                 selectedValue = interaction.values[0];
                 
                 const user = await User.findOne({ 
-                    raUsername: { $regex: new RegExp(`^${username}// src/commands/user/collection.js - UPDATED with dropdown menu and series grouping
-import { 
-    SlashCommandBuilder, 
-    EmbedBuilder,
-    ActionRowBuilder,
-    ButtonBuilder,
-    ButtonStyle,
-    StringSelectMenuBuilder,
-    ModalBuilder,
-    TextInputBuilder,
-    TextInputStyle
-} from 'discord.js';
-import { User } from '../../models/User.js';
-import { GachaItem, CombinationRule } from '../../models/GachaItem.js';
-import combinationService from '../../services/combinationService.js';
-import gachaService from '../../services/gachaService.js';
-import { formatGachaEmoji } from '../../config/gachaEmojis.js';
-import { COLORS } from '../../utils/FeedUtils.js';
-
-export default {
-    data: new SlashCommandBuilder()
-        .setName('collection')
-        .setDescription('View your gacha collection with filtering and combination options'),
-
-    async execute(interaction) {
-        await interaction.deferReply({ ephemeral: true });
-
-        try {
-            const user = await User.findOne({ discordId: interaction.user.id });
-            if (!user) {
-                return interaction.editReply({
-                    content: '❌ You are not registered. Please ask an admin to register you first.'
-                });
-            }
-
-            if (!user.gachaCollection || user.gachaCollection.length === 0) {
-                return interaction.editReply({
-                    content: '📦 Your collection is empty! Visit the gacha machine to start collecting items.'
-                });
-            }
-
-            // Get collection summary with series breakdown
-            const summary = gachaService.getUserCollectionSummary(user);
-            
-            // Create the main collection embed with series overview
-            const mainEmbed = await this.createMainCollectionEmbed(user, summary);
-            
-            // Create control buttons and dropdown
-            const components = this.createCollectionControls(user, summary);
-            
-            await interaction.editReply({ 
-                embeds: [mainEmbed],
-                components: components
-            });
-
-        } catch (error) {
-            console.error('Error displaying collection:', error);
-            await interaction.editReply({
-                content: '❌ An error occurred while fetching your collection.'
-            });
-        }
-    },
-
-    // Create the main collection overview embed
-    async createMainCollectionEmbed(user, summary) {
-        const embed = new EmbedBuilder()
-            .setTitle(`📦 ${user.raUsername}'s Collection`)
-            .setColor(COLORS.INFO)
-            .setTimestamp();
-
-        // Main stats
-        let description = `**Total Items:** ${summary.totalItems} (${summary.uniqueItems} unique)\n\n`;
-
-        // Series breakdown - the main focus
-        description += '📚 **Collection by Series:**\n';
-        
-        const seriesEntries = Object.entries(summary.seriesBreakdown);
-        if (seriesEntries.length > 0) {
-            // Sort by series name, but put "Individual Items" last
-            seriesEntries.sort(([a], [b]) => {
-                if (a === 'Individual Items') return 1;
-                if (b === 'Individual Items') return -1;
-                return a.localeCompare(b);
-            });
-
-            for (const [seriesName, items] of seriesEntries) {
-                const itemCount = items.length;
-                const totalQuantity = items.reduce((sum, item) => sum + (item.quantity || 1), 0);
-                
-                const displayName = seriesName === 'Individual Items' ? 
-                    '🔸 Individual Items' : 
-                    `🏷️ ${seriesName.charAt(0).toUpperCase() + seriesName.slice(1)} Series`;
-                
-                description += `${displayName}: ${itemCount} types (${totalQuantity} total)\n`;
-            }
-        } else {
-            description += 'No items collected yet\n';
-        }
-
-        description += '\n';
-
-        // Rarity summary (condensed)
-        const rarityEmojis = {
-            mythic: '🌟',
-            legendary: '🟡',
-            epic: '🟣',
-            rare: '🔵',
-            uncommon: '🟢',
-            common: '⚪'
-        };
-
-        description += '💎 **Rarity Summary:**\n';
-        let rarityLine = '';
-        for (const [rarity, emoji] of Object.entries(rarityEmojis)) {
-            const count = summary.rarityCount[rarity] || 0;
-            if (count > 0) {
-                rarityLine += `${emoji}${count} `;
-            }
-        }
-        description += rarityLine || 'No items yet';
-
-        embed.setDescription(description);
-
-        // Add combination stats
-        const combinationStats = combinationService.getCombinationStats(user);
-        embed.addFields({
-            name: '🔧 Combination Activity',
-            value: `**Items Combined:** ${combinationStats.totalCombined}\n` +
-                   `**Unique Combined:** ${combinationStats.uniqueCombined}\n` +
-                   `**Discovery Status:** ${combinationStats.uniqueCombined > 0 ? 'Active Explorer!' : 'Ready to Experiment!'}`,
-            inline: true
-        });
-
-        embed.setFooter({ 
-            text: 'Use the dropdown and buttons below to explore your collection in detail!' 
-        });
-
-        return embed;
-    },
-
-    // Create control components
-    createCollectionControls(user, summary) {
-        const components = [];
-
-        // Series selection dropdown
-        const seriesOptions = [];
-        const seriesEntries = Object.entries(summary.seriesBreakdown);
-        
-        // Add "All Items" option first
-        seriesOptions.push({
-            label: 'All Items',
-            value: 'all',
-            description: `View all ${summary.totalItems} items`,
-            emoji: '📦'
-        });
-
-        // Add series options
-        seriesEntries.forEach(([seriesName, items]) => {
-            const itemCount = items.length;
-            const totalQuantity = items.reduce((sum, item) => sum + (item.quantity || 1), 0);
-            
-            if (seriesName === 'Individual Items') {
-                seriesOptions.push({
-                    label: 'Individual Items',
-                    value: 'individual',
-                    description: `${itemCount} standalone items (${totalQuantity} total)`,
-                    emoji: '🔸'
-                });
-            } else {
-                seriesOptions.push({
-                    label: `${seriesName.charAt(0).toUpperCase() + seriesName.slice(1)} Series`,
-                    value: seriesName,
-                    description: `${itemCount} types (${totalQuantity} total)`,
-                    emoji: '🏷️'
-                });
-            }
-        });
-
-        // Only add dropdown if there are series to choose from
-        if (seriesOptions.length > 1) {
-            const seriesMenu = new StringSelectMenuBuilder()
-                .setCustomId(`collection_series_${user.raUsername}`)
-                .setPlaceholder('Choose a series to view...')
-                .addOptions(seriesOptions.slice(0, 25)); // Discord limit
-
-            components.push(new ActionRowBuilder().addComponents(seriesMenu));
-        }
-
-        // Filter and action buttons
-        const actionButtons = new ActionRowBuilder()
-            .addComponents(
-                new ButtonBuilder()
-                    .setCustomId(`collection_filter_${user.raUsername}`)
-                    .setLabel('🎯 Filters')
-                    .setStyle(ButtonStyle.Secondary),
-                
-                new ButtonBuilder()
-                    .setCustomId(`collection_combine_${user.raUsername}`)
-                    .setLabel('🔧 Combine Items')
-                    .setStyle(ButtonStyle.Primary),
-                
-                new ButtonBuilder()
-                    .setCustomId(`collection_stats_${user.raUsername}`)
-                    .setLabel('📊 Statistics')
-                    .setStyle(ButtonStyle.Secondary),
-
-                new ButtonBuilder()
-                    .setCustomId(`collection_refresh_${user.raUsername}`)
-                    .setLabel('🔄 Refresh')
-                    .setStyle(ButtonStyle.Secondary)
-            );
-
-        components.push(actionButtons);
-
-        return components;
-    },
-
-, 'i') }
+                    raUsername: { $regex: new RegExp(`^${username}$`, 'i') }
                 });
 
                 if (!user || user.discordId !== interaction.user.id) {
@@ -693,6 +261,24 @@ export default {
 
                 // Apply filter and show results
                 await this.showFilteredItems(interaction, user, selectedValue);
+                
+            } else if (interaction.customId.startsWith('collection_inspect_item_')) {
+                username = interaction.customId.replace('collection_inspect_item_', '');
+                const itemId = interaction.values[0];
+                
+                const user = await User.findOne({ 
+                    raUsername: { $regex: new RegExp(`^${username}$`, 'i') }
+                });
+
+                if (!user || user.discordId !== interaction.user.id) {
+                    return interaction.editReply({
+                        content: '❌ You can only view your own collection.',
+                        ephemeral: true
+                    });
+                }
+
+                // Show detailed item inspection
+                await this.showItemDetail(interaction, user, itemId);
             }
 
         } catch (error) {
@@ -897,6 +483,8 @@ export default {
             components: [actionButtons]
         });
     },
+
+    // Show filtered items based on filter selection
     async showFilteredItems(interaction, user, filter) {
         let items = [...user.gachaCollection];
         let title = '';
@@ -1018,6 +606,8 @@ export default {
             components: [backButton]
         });
     },
+
+    // Show detailed view of a specific series
     async showSeriesDetail(interaction, user, seriesFilter) {
         const summary = gachaService.getUserCollectionSummary(user);
         let items = [];
