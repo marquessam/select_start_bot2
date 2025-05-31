@@ -1,4 +1,4 @@
-// src/index.js - Updated with combination system support
+// src/index.js - Complete updated version with combination system and collection dropdown support
 import { Client, Collection, Events, GatewayIntentBits } from 'discord.js';
 import { config, validateConfig } from './config/config.js';
 import { connectDB } from './models/index.js';
@@ -20,7 +20,7 @@ import arenaFeedService from './services/arenaFeedService.js';
 import gameAwardService from './services/gameAwardService.js';
 import monthlyGPService from './services/monthlyGPService.js';
 import gachaMachine from './services/gachaMachine.js';
-import combinationService from './services/combinationService.js'; // NEW: Import combination service
+import combinationService from './services/combinationService.js';
 import { User } from './models/User.js';
 
 // Import nomination and restriction handlers
@@ -112,7 +112,7 @@ client.on(Events.InteractionCreate, async interaction => {
     }
 });
 
-// Handle button interactions - UPDATED WITH COMBINATION SUPPORT
+// Handle button interactions - UPDATED WITH COMPREHENSIVE GACHA AND COMBINATION SUPPORT
 client.on(Events.InteractionCreate, async interaction => {
     if (!interaction.isButton()) return;
     
@@ -150,7 +150,7 @@ client.on(Events.InteractionCreate, async interaction => {
             return;
         }
 
-        // NEW: Check if this is a collection-related button (combines)
+        // Check if this is a collection-related button
         if (interaction.customId.startsWith('collection_')) {
             console.log('Routing to collection handler');
             const collectionCommand = client.commands.get('collection');
@@ -162,7 +162,7 @@ client.on(Events.InteractionCreate, async interaction => {
             return;
         }
 
-        // NEW: Check if this is a combination-related button
+        // Check if this is a combination-related button
         if (interaction.customId.startsWith('combine_')) {
             console.log('Routing to combination handler');
             
@@ -287,12 +287,42 @@ client.on(Events.InteractionCreate, async interaction => {
     }
 });
 
-// Handle select menu interactions - UPDATED WITH COMBINATION SUPPORT
+// Handle select menu interactions - UPDATED WITH COMPREHENSIVE COLLECTION SUPPORT
 client.on(Events.InteractionCreate, async interaction => {
     if (!interaction.isStringSelectMenu()) return;
     
     try {
-        // NEW: Check if this is a combination-related select menu
+        // NEW: Check if this is a collection series dropdown
+        if (interaction.customId.startsWith('collection_series_')) {
+            console.log('Routing to collection series handler');
+            const collectionCommand = client.commands.get('collection');
+            if (collectionCommand && typeof collectionCommand.handleSelectMenuInteraction === 'function') {
+                await collectionCommand.handleSelectMenuInteraction(interaction);
+            } else {
+                await interaction.reply({
+                    content: '❌ Collection series feature not available.',
+                    ephemeral: true
+                });
+            }
+            return;
+        }
+
+        // NEW: Check if this is a collection filter dropdown
+        if (interaction.customId.startsWith('collection_filter_apply_')) {
+            console.log('Routing to collection filter handler');
+            const collectionCommand = client.commands.get('collection');
+            if (collectionCommand && typeof collectionCommand.handleSelectMenuInteraction === 'function') {
+                await collectionCommand.handleSelectMenuInteraction(interaction);
+            } else {
+                await interaction.reply({
+                    content: '❌ Collection filter feature not available.',
+                    ephemeral: true
+                });
+            }
+            return;
+        }
+        
+        // Check if this is a combination-related select menu
         if (interaction.customId.startsWith('combine_select_')) {
             console.log('Routing to combination select handler');
             const collectionCommand = client.commands.get('collection');
@@ -784,6 +814,7 @@ client.once(Events.ClientReady, async () => {
         console.log('  • Arena timeouts: Hourly at 45 minutes past');
         console.log('  • Gacha Machine: Active and pinned');
         console.log('  • Combination System: Ready for experimentation');
+        console.log('  • Collection Dropdowns: Series and filter support');
         console.log('  • Various other feeds: Hourly');
         
     } catch (error) {
