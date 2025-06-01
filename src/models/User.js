@@ -1,4 +1,4 @@
-// src/models/User.js - Complete model with fixed gacha emoji support
+// src/models/User.js - Complete model with fixed gacha emoji support and player_transfer source
 import mongoose from 'mongoose';
 
 const communityAwardSchema = new mongoose.Schema({
@@ -71,7 +71,7 @@ const trophyCaseSchema = new mongoose.Schema({
     monthKey: String        // YYYY-MM format (null for community awards)
 });
 
-// UPDATED: Enhanced gacha collection schema with proper emoji support
+// FIXED: Enhanced gacha collection schema with proper emoji support AND player_transfer
 const gachaCollectionSchema = new mongoose.Schema({
     itemId: {
         type: String,
@@ -110,10 +110,10 @@ const gachaCollectionSchema = new mongoose.Schema({
         default: 1,
         min: 1
     },
-    // ADDED: Source tracking
+    // FIXED: Added 'player_transfer' to source tracking
     source: {
         type: String,
-        enum: ['gacha', 'combined', 'series_completion', 'admin_grant', 'admin_test'],
+        enum: ['gacha', 'combined', 'series_completion', 'admin_grant', 'admin_test', 'player_transfer'],
         default: 'gacha'
     }
 });
@@ -319,7 +319,7 @@ const userSchema = new mongoose.Schema({
 
     // ===== GACHA SYSTEM FIELDS =====
     
-    // UPDATED: Gacha collection with enhanced emoji support
+    // UPDATED: Gacha collection with enhanced emoji support and player_transfer source
     gachaCollection: [gachaCollectionSchema]
 
 }, {
