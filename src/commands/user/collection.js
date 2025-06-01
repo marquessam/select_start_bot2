@@ -1,4 +1,4 @@
-// src/commands/user/collection.js - Fixed interaction handling
+// src/commands/user/collection.js - Clean collection viewer (no manual combinations)
 import { 
     SlashCommandBuilder, 
     EmbedBuilder,
@@ -35,7 +35,7 @@ export default {
                 });
             }
 
-            // Go straight to showing all items
+            // Show all items by default
             await this.showItemsPage(interaction, user, 'all', 0);
         } catch (error) {
             console.error('Error displaying collection:', error);
@@ -120,14 +120,14 @@ export default {
             embed.setDescription(description.trim());
         }
 
-        // Footer with pagination info
+        // Footer with pagination info and helpful tips
         if (totalPages > 1) {
             embed.setFooter({ 
-                text: `Page ${page + 1}/${totalPages} • ${startIndex + 1}-${endIndex} of ${filteredItems.length} items • ⁽ⁿ⁾ = quantity`
+                text: `Page ${page + 1}/${totalPages} • ${startIndex + 1}-${endIndex} of ${filteredItems.length} items • ⁽ⁿ⁾ = quantity • Use Inspect for details`
             });
         } else {
             embed.setFooter({ 
-                text: `${filteredItems.length} items • ⁽ⁿ⁾ = quantity • Use Inspect to see details`
+                text: `${filteredItems.length} items • ⁽ⁿ⁾ = quantity • Use Inspect for details • Combinations happen automatically!`
             });
         }
 
@@ -175,6 +175,14 @@ export default {
                 .setLabel('🔍 Inspect')
                 .setStyle(ButtonStyle.Primary)
                 .setDisabled(pageItems.length === 0)
+        );
+
+        // Add collection stats button
+        actionRow.addComponents(
+            new ButtonBuilder()
+                .setCustomId(`coll_stats_${user.raUsername}`)
+                .setLabel('📊 Stats')
+                .setStyle(ButtonStyle.Secondary)
         );
 
         components.push(actionRow);
@@ -226,6 +234,61 @@ export default {
         return options.slice(0, 25); // Discord limit
     },
 
+    // Show collection statistics
+    async showCollectionStats(interaction, user) {
+        const summary = gachaService.getUserCollectionSummary(user);
+        
+        const embed = new EmbedBuilder()
+            .setTitle(`${user.raUsername}'s Collection Statistics`)
+            .setColor(COLORS.INFO)
+            .setTimestamp();
+
+        let description = `📦 **Total Items:** ${summary.totalItems}\n`;
+        description += `🎯 **Unique Items:** ${summary.uniqueItems}\n\n`;
+
+        // Rarity breakdown
+        description += `**Rarity Breakdown:**\n`;
+        const rarityOrder = ['mythic', 'legendary', 'epic', 'rare', 'uncommon', 'common'];
+        for (const rarity of rarityOrder) {
+            const count = summary.rarityBreakdown[rarity] || 0;
+            if (count > 0) {
+                const rarityEmoji = gachaService.getRarityEmoji(rarity);
+                const rarityName = gachaService.getRarityDisplayName(rarity);
+                description += `${rarityEmoji} ${rarityName}: ${count}\n`;
+            }
+        }
+
+        // Series breakdown
+        if (Object.keys(summary.seriesBreakdown).length > 0) {
+            description += `\n**Series Breakdown:**\n`;
+            Object.entries(summary.seriesBreakdown)
+                .sort(([,a], [,b]) => b.length - a.length)
+                .slice(0, 5) // Show top 5 series
+                .forEach(([seriesName, items]) => {
+                    const totalQuantity = items.reduce((sum, item) => sum + (item.quantity || 1), 0);
+                    description += `🏷️ ${seriesName}: ${items.length} types (${totalQuantity} total)\n`;
+                });
+        }
+
+        // Automatic combination info
+        description += `\n💡 **Automatic Combinations:**\n`;
+        description += `Items automatically combine when you have the right ingredients!\n`;
+        description += `Check the gacha channel for combination announcements.`;
+
+        embed.setDescription(description);
+
+        // Back button
+        const backButton = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`coll_back_${user.raUsername}_all_0`)
+                    .setLabel('← Back to Collection')
+                    .setStyle(ButtonStyle.Secondary)
+            );
+
+        await interaction.editReply({ embeds: [embed], components: [backButton] });
+    },
+
     // Show item details
     async showItemDetail(interaction, user, itemId, returnFilter, returnPage) {
         const collectionItem = user.gachaCollection.find(item => item.itemId === itemId);
@@ -256,7 +319,7 @@ export default {
 
         const sourceNames = { 
             gacha: 'Gacha Pull', 
-            combined: 'Item Combination', 
+            combined: 'Automatic Combination', 
             series_completion: 'Series Completion', 
             admin_grant: 'Admin Grant' 
         };
@@ -305,7 +368,7 @@ export default {
         return emojiRegex.test(str);
     },
 
-    // FIXED: Handle all interactions - Main entry point from index.js
+    // Main interaction handler - Clean and simplified
     async handleInteraction(interaction) {
         console.log('Collection handleInteraction called with customId:', interaction.customId);
         
@@ -386,6 +449,11 @@ export default {
                         console.log(`Showing inspect menu: filter=${filter}, page=${page}`);
                         await this.showInspectMenu(interaction, user, filter, page);
                     }
+                    break;
+
+                case 'stats':
+                    console.log('Showing collection stats');
+                    await this.showCollectionStats(interaction, user);
                     break;
 
                 case 'back':
