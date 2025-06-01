@@ -1,9 +1,20 @@
-// src/services/combinationService.js - UPDATED with proper emoji handling
+// src/services/combinationService.js - UPDATED with client support and alerts
 import { GachaItem, CombinationRule } from '../models/GachaItem.js';
+import { config } from '../config/config.js';
+import { EmbedBuilder } from 'discord.js';
+import { formatGachaEmoji } from '../config/gachaEmojis.js';
+import { COLORS } from '../utils/FeedUtils.js';
 
 class CombinationService {
     constructor() {
         this.isInitialized = false;
+        this.client = null; // ADD: Client support for alerts
+    }
+
+    // ADD: Method to set Discord client for alerts
+    setClient(client) {
+        this.client = client;
+        console.log('✅ Combination service client set for alerts');
     }
 
     /**
@@ -38,6 +49,9 @@ class CombinationService {
                         if (result.success) {
                             combinationsPerformed.push(result);
                             console.log(`Auto-combination performed: ${rule.ruleId}`);
+                            
+                            // NEW: Send alert for this combination
+                            await this.sendCombinationAlert(user, result);
                         } else {
                             canPerform = false;
                         }
@@ -56,6 +70,107 @@ class CombinationService {
             console.error('Error checking auto-combinations:', error);
             return [];
         }
+    }
+
+    /**
+     * NEW: Send combination alert to gacha channel
+     */
+    async sendCombinationAlert(user, combinationResult) {
+        if (!this.client) {
+            console.log('No client set for combination alerts');
+            return;
+        }
+
+        try {
+            // Get the gacha channel
+            const gachaChannelId = '1377092881885696022'; // Gacha channel
+            const guild = await this.client.guilds.fetch(config.discord.guildId);
+            const channel = await guild.channels.fetch(gachaChannelId);
+            
+            if (!channel) {
+                console.error('Gacha channel not found for combination alert');
+                return;
+            }
+
+            const { ruleId, resultItem, resultQuantity } = combinationResult;
+            
+            // Create a beautiful alert embed
+            const resultEmoji = formatGachaEmoji(resultItem.emojiId, resultItem.emojiName);
+            const rarityEmoji = this.getRarityEmoji(resultItem.rarity);
+            
+            const embed = new EmbedBuilder()
+                .setTitle('⚡ Auto-Combination Triggered!')
+                .setColor(COLORS.SUCCESS)
+                .setDescription(
+                    `${user.raUsername} discovered a combination!\n\n` +
+                    `${resultEmoji} **${resultQuantity}x ${resultItem.itemName}** ${rarityEmoji}\n\n` +
+                    `*${resultItem.description || 'A mysterious creation...'}*`
+                )
+                .setTimestamp();
+
+            // Show the ingredients used if available
+            if (combinationResult.ingredients) {
+                let ingredientsText = '';
+                for (const ingredient of combinationResult.ingredients) {
+                    const ingredientItem = await GachaItem.findOne({ itemId: ingredient.itemId });
+                    if (ingredientItem) {
+                        const emoji = formatGachaEmoji(ingredientItem.emojiId, ingredientItem.emojiName);
+                        ingredientsText += `${emoji} ${ingredient.quantity}x ${ingredientItem.itemName}\n`;
+                    }
+                }
+
+                if (ingredientsText) {
+                    embed.addFields({ 
+                        name: 'Ingredients Used', 
+                        value: ingredientsText,
+                        inline: true 
+                    });
+                }
+            }
+
+            // Add result info
+            embed.addFields({ 
+                name: 'Result', 
+                value: `${resultEmoji} ${resultQuantity}x **${resultItem.itemName}**`,
+                inline: true 
+            });
+
+            // Add some flavor
+            if (resultItem.flavorText) {
+                embed.addFields({
+                    name: 'Flavor Text',
+                    value: `*"${resultItem.flavorText}"*`,
+                    inline: false
+                });
+            }
+
+            embed.setFooter({ 
+                text: `Combination ID: ${ruleId} • All combinations happen automatically!` 
+            });
+
+            // Send the alert
+            await channel.send({ embeds: [embed] });
+            
+            console.log(`✅ Sent combination alert for ${user.raUsername}: ${ruleId}`);
+
+        } catch (error) {
+            console.error('Error sending combination alert:', error);
+        }
+    }
+
+    /**
+     * Get rarity emoji for combinations
+     */
+    getRarityEmoji(rarity) {
+        const emojis = {
+            common: '⚪',
+            uncommon: '🟢',
+            rare: '🔵',
+            epic: '🟣',
+            legendary: '🟡',
+            mythic: '🌟'
+        };
+        return emojis[rarity] || '❓';
     }
 
     /**
@@ -126,7 +241,9 @@ class CombinationService {
                     itemName: resultGachaItem.itemName,
                     emojiId: resultGachaItem.emojiId, // Ensure emoji data is preserved
                     emojiName: resultGachaItem.emojiName,
-                    rarity: resultGachaItem.rarity
+                    rarity: resultGachaItem.rarity,
+                    description: resultGachaItem.description,
+                    flavorText: resultGachaItem.flavorText
                 },
                 resultQuantity: rule.result.quantity,
                 isAutomatic: rule.isAutomatic
@@ -264,6 +381,8 @@ class CombinationService {
             
             if (result.success) {
                 await user.save();
+                // Send alert for manual combinations too
+                await this.sendCombinationAlert(user, result);
             }
 
             return result;
