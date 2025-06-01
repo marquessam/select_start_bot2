@@ -2,6 +2,7 @@ import { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, But
   ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder } from 'discord.js';
 import { ArcadeBoard } from '../../models/ArcadeBoard.js';
 import retroAPI from '../../services/retroAPI.js';
+import monthlyTasksService from '../../services/monthlyTasksService.js';
 import { config } from '../../config/config.js';
 
 // Add this after your imports - NEW Validation Class for Tiebreaker-Breaker
@@ -200,6 +201,18 @@ export default {
                             emoji: '🗑️'
                         },
                         {
+                            label: 'Expire Old Tiebreakers',
+                            description: 'Manually expire tiebreakers that have passed their end date',
+                            value: 'expire_tiebreakers',
+                            emoji: '⏰'
+                        },
+                        {
+                            label: 'Cleanup Old Tiebreakers',
+                            description: 'Delete very old expired tiebreakers (90+ days)',
+                            value: 'cleanup_tiebreakers',
+                            emoji: '🗑️'
+                        },
+                        {
                             label: 'Announce Board',
                             description: 'Announce any type of board',
                             value: 'announce',
@@ -250,6 +263,12 @@ export default {
                     break;
                 case 'remove_tiebreaker':
                     await this.showSelectBoardMenu(interaction, 'tiebreaker', 'remove');
+                    break;
+                case 'expire_tiebreakers':
+                    await this.handleExpireTiebreakers(interaction);
+                    break;
+                case 'cleanup_tiebreakers':
+                    await this.handleCleanupTiebreakers(interaction);
                     break;
                 case 'announce':
                     await this.showAnnounceBoardMenu(interaction);
@@ -363,6 +382,113 @@ export default {
                 embeds: [],
                 components: []
             });
+        }
+        else if (customId === 'adminarcade_cleanup_confirm') {
+            await this.processCleanupTiebreakers(interaction);
+        }
+        else if (customId === 'adminarcade_cleanup_cancel') {
+            await interaction.update({
+                content: 'Cleanup cancelled.',
+                embeds: [],
+                components: []
+            });
+        }
+    },
+
+    // NEW: Handler for expire tiebreakers
+    async handleExpireTiebreakers(interaction) {
+        try {
+            await interaction.deferUpdate();
+
+            const result = await monthlyTasksService.expireOldTiebreakers();
+            
+            const embed = new EmbedBuilder()
+                .setColor(result.success ? '#00FF00' : '#FF0000')
+                .setTitle(result.success ? '⏰ Tiebreaker Expiration Complete' : '❌ Expiration Failed')
+                .setDescription(result.message);
+
+            if (result.success && result.expired.length > 0) {
+                const expiredList = result.expired.map(tb => 
+                    `• ${tb.gameTitle} (${tb.monthKey})`
+                ).join('\n');
+                
+                embed.addFields({ name: 'Expired Tiebreakers', value: expiredList });
+            }
+
+            return interaction.editReply({
+                embeds: [embed],
+                components: []
+            });
+        } catch (error) {
+            console.error('Error handling expire tiebreakers:', error);
+            return interaction.editReply('An error occurred while expiring tiebreakers.');
+        }
+    },
+
+    // NEW: Handler for cleanup tiebreakers
+    async handleCleanupTiebreakers(interaction) {
+        try {
+            await interaction.deferUpdate();
+
+            // Show confirmation first
+            const embed = new EmbedBuilder()
+                .setColor('#FF9900')
+                .setTitle('⚠️ Confirm Cleanup')
+                .setDescription(
+                    'This will permanently delete all tiebreakers that are older than 90 days.\n\n' +
+                    '**This action cannot be undone.**\n\n' +
+                    'Are you sure you want to proceed?'
+                );
+
+            const row = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('adminarcade_cleanup_confirm')
+                        .setLabel('Confirm Cleanup')
+                        .setStyle(ButtonStyle.Danger),
+                    new ButtonBuilder()
+                        .setCustomId('adminarcade_cleanup_cancel')
+                        .setLabel('Cancel')
+                        .setStyle(ButtonStyle.Secondary)
+                );
+
+            return interaction.editReply({
+                embeds: [embed],
+                components: [row]
+            });
+        } catch (error) {
+            console.error('Error handling cleanup tiebreakers:', error);
+            return interaction.editReply('An error occurred while preparing cleanup.');
+        }
+    },
+
+    // NEW: Process cleanup confirmation
+    async processCleanupTiebreakers(interaction) {
+        try {
+            await interaction.deferUpdate();
+            
+            const result = await monthlyTasksService.cleanupOldTiebreakers(90);
+            
+            const embed = new EmbedBuilder()
+                .setColor('#00FF00')
+                .setTitle('🗑️ Cleanup Complete')
+                .setDescription(`Successfully deleted ${result.count} old tiebreaker(s).`);
+
+            if (result.count > 0) {
+                embed.addFields({
+                    name: 'Deleted Tiebreakers',
+                    value: result.tiebreakers.slice(0, 10).join(', ') + 
+                           (result.count > 10 ? '...' : '')
+                });
+            }
+
+            return interaction.editReply({
+                embeds: [embed],
+                components: []
+            });
+        } catch (error) {
+            console.error('Error processing cleanup:', error);
+            return interaction.editReply('An error occurred during cleanup.');
         }
     },
 
@@ -840,7 +966,8 @@ export default {
             const activeTiebreaker = await ArcadeBoard.findOne({
                 boardType: 'tiebreaker',
                 startDate: { $lte: now },
-                endDate: { $gte: now }
+                endDate: { $gte: now },
+                isActive: true
             });
 
             if (activeTiebreaker) {
@@ -1532,6 +1659,18 @@ export default {
                 
                 if (board.startDate && board.endDate) {
                     entryText += `\nPeriod: ${board.startDate.toLocaleDateString()} to ${board.endDate.toLocaleDateString()}`;
+                }
+                
+                // NEW: Add status for tiebreakers
+                if (board.boardType === 'tiebreaker') {
+                    const status = board.isActive === false ? '🔴 Expired' : 
+                                  (board.endDate && board.endDate < new Date()) ? '⚠️ Should Expire' : '🟢 Active';
+                    entryText += `\nStatus: ${status}`;
+                    
+                    // Add expiration date if expired
+                    if (board.isActive === false && board.expiredAt) {
+                        entryText += ` (${board.expiredAt.toLocaleDateString()})`;
+                    }
                 }
                 
                 // NEW: Add tiebreaker-breaker info if available
