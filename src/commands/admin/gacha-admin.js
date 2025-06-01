@@ -1,10 +1,14 @@
-// src/commands/admin/gacha-admin.js - Enhanced with clear collection functionality
+// src/commands/admin/gacha-admin.js - STREAMLINED VERSION with automatic combinations focus
 import { 
     SlashCommandBuilder, 
     EmbedBuilder, 
     ActionRowBuilder,
     ButtonBuilder,
-    ButtonStyle
+    ButtonStyle,
+    ModalBuilder,
+    TextInputBuilder,
+    TextInputStyle,
+    StringSelectMenuBuilder
 } from 'discord.js';
 import { GachaItem, CombinationRule } from '../../models/GachaItem.js';
 import { User } from '../../models/User.js';
@@ -17,6 +21,100 @@ export default {
         .setName('gacha-admin') 
         .setDescription('Admin commands for managing the gacha system')
         
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('list-items')
+                .setDescription('List all gacha items with IDs (paginated)')
+                .addIntegerOption(option =>
+                    option.setName('page')
+                        .setDescription('Page number (default: 1)')
+                        .setMinValue(1)
+                        .setRequired(false))
+                .addStringOption(option =>
+                    option.setName('filter')
+                        .setDescription('Filter items')
+                        .setRequired(false)
+                        .addChoices(
+                            { name: 'All items', value: 'all' },
+                            { name: 'Gacha items (drop rate > 0)', value: 'gacha' },
+                            { name: 'Combination-only (drop rate = 0)', value: 'combo' },
+                            { name: 'By rarity', value: 'rarity' }
+                        )))
+
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('add-combination')
+                .setDescription('Add an AUTOMATIC combination rule'))
+
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('list-combinations')
+                .setDescription('List all automatic combination rules'))
+
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('remove-combination')
+                .setDescription('Remove a combination rule')
+                .addStringOption(option =>
+                    option.setName('rule-id')
+                        .setDescription('Rule ID to remove')
+                        .setRequired(true)))
+
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('give-item')
+                .setDescription('Give item(s) to a user for testing')
+                .addStringOption(option =>
+                    option.setName('username')
+                        .setDescription('Username')
+                        .setRequired(true))
+                .addStringOption(option =>
+                    option.setName('item-id')
+                        .setDescription('Item ID to give')
+                        .setRequired(true))
+                .addIntegerOption(option =>
+                    option.setName('quantity')
+                        .setDescription('Quantity (default: 1)')
+                        .setRequired(false)
+                        .setMinValue(1)
+                        .setMaxValue(100)))
+
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('transfer-item')
+                .setDescription('Transfer item between players')
+                .addStringOption(option =>
+                    option.setName('from-user')
+                        .setDescription('Username giving the item')
+                        .setRequired(true))
+                .addStringOption(option =>
+                    option.setName('to-user')
+                        .setDescription('Username receiving the item')
+                        .setRequired(true))
+                .addStringOption(option =>
+                    option.setName('item-id')
+                        .setDescription('Item ID to transfer')
+                        .setRequired(true))
+                .addIntegerOption(option =>
+                    option.setName('quantity')
+                        .setDescription('Quantity to transfer (default: 1)')
+                        .setRequired(false)
+                        .setMinValue(1)
+                        .setMaxValue(100)))
+
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('clear-collection')
+                .setDescription('Clear a user\'s gacha collection')
+                .addStringOption(option =>
+                    option.setName('username')
+                        .setDescription('Username to clear collection for')
+                        .setRequired(true))
+                .addBooleanOption(option =>
+                    option.setName('confirm')
+                        .setDescription('Confirm you want to clear the collection (required)')
+                        .setRequired(true)))
+
         .addSubcommand(subcommand =>
             subcommand
                 .setName('add-item')
@@ -75,143 +173,7 @@ export default {
                         .setDescription('Max stack size (default: 1)')
                         .setRequired(false)
                         .setMinValue(1)
-                        .setMaxValue(999))
-                .addStringOption(option =>
-                    option.setName('series-id')
-                        .setDescription('Series ID (optional)')
-                        .setRequired(false)))
-
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('add-combination')
-                .setDescription('Add a combination rule')
-                .addStringOption(option =>
-                    option.setName('rule-id')
-                        .setDescription('Unique rule ID')
-                        .setRequired(true))
-                .addStringOption(option =>
-                    option.setName('ingredients')
-                        .setDescription('Format: itemId1:qty1,itemId2:qty2 (e.g., green_rupee:5,small_key:1)')
-                        .setRequired(true))
-                .addStringOption(option =>
-                    option.setName('result')
-                        .setDescription('Format: itemId:quantity (e.g., blue_rupee:1)')
-                        .setRequired(true))
-                .addBooleanOption(option =>
-                    option.setName('automatic')
-                        .setDescription('Should this combine automatically? (default: false)')
-                        .setRequired(false))
-                .addIntegerOption(option =>
-                    option.setName('priority')
-                        .setDescription('Auto-combine priority (higher = combines first, default: 0)')
-                        .setRequired(false)))
-
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('list-items')
-                .setDescription('List gacha items')
-                .addStringOption(option =>
-                    option.setName('filter')
-                        .setDescription('Filter items')
-                        .setRequired(false)
-                        .addChoices(
-                            { name: 'Gacha items (drop rate > 0)', value: 'gacha' },
-                            { name: 'Combination-only (drop rate = 0)', value: 'combo' },
-                            { name: 'By rarity', value: 'rarity' },
-                            { name: 'By series', value: 'series' }
-                        )))
-
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('list-combinations')
-                .setDescription('List combination rules')
-                .addStringOption(option =>
-                    option.setName('filter')
-                        .setDescription('Filter combinations')
-                        .setRequired(false)
-                        .addChoices(
-                            { name: 'Automatic', value: 'auto' },
-                            { name: 'Manual', value: 'manual' },
-                            { name: 'All', value: 'all' }
-                        )))
-
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('test-combination')
-                .setDescription('Test a combination with a user')
-                .addStringOption(option =>
-                    option.setName('rule-id')
-                        .setDescription('Combination rule ID')
-                        .setRequired(true))
-                .addStringOption(option =>
-                    option.setName('username')
-                        .setDescription('Username to test with')
-                        .setRequired(true)))
-
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('remove-item')
-                .setDescription('Remove an item')
-                .addStringOption(option =>
-                    option.setName('item-id')
-                        .setDescription('Item ID to remove')
-                        .setRequired(true)))
-
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('remove-combination')
-                .setDescription('Remove a combination rule')
-                .addStringOption(option =>
-                    option.setName('rule-id')
-                        .setDescription('Rule ID to remove')
-                        .setRequired(true)))
-
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('give-item')
-                .setDescription('Give item(s) to a user for testing')
-                .addStringOption(option =>
-                    option.setName('username')
-                        .setDescription('Username')
-                        .setRequired(true))
-                .addStringOption(option =>
-                    option.setName('item-id')
-                        .setDescription('Item ID to give')
-                        .setRequired(true))
-                .addIntegerOption(option =>
-                    option.setName('quantity')
-                        .setDescription('Quantity (default: 1)')
-                        .setRequired(false)
-                        .setMinValue(1)
-                        .setMaxValue(100)))
-
-        // NEW: Clear collection subcommand
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('clear-collection')
-                .setDescription('Clear a user\'s gacha collection')
-                .addStringOption(option =>
-                    option.setName('username')
-                        .setDescription('Username to clear collection for')
-                        .setRequired(true))
-                .addBooleanOption(option =>
-                    option.setName('confirm')
-                        .setDescription('Confirm you want to clear the collection (required)')
-                        .setRequired(true)))
-
-        // NEW: Clear all collections subcommand  
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('clear-all-collections')
-                .setDescription('Clear ALL users\' gacha collections (DANGEROUS)')
-                .addBooleanOption(option =>
-                    option.setName('confirm')
-                        .setDescription('Confirm you want to clear ALL collections (required)')
-                        .setRequired(true))
-                .addStringOption(option =>
-                    option.setName('safety-word')
-                        .setDescription('Type "CLEAR-ALL-GACHA" to confirm')
-                        .setRequired(true))),
+                        .setMaxValue(999))),
 
     async execute(interaction) {
         // Check if user is admin
@@ -228,23 +190,14 @@ export default {
 
         try {
             switch (subcommand) {
-                case 'add-item':
-                    await this.handleAddItem(interaction);
+                case 'list-items':
+                    await this.handleListItems(interaction);
                     break;
                 case 'add-combination':
                     await this.handleAddCombination(interaction);
                     break;
-                case 'list-items':
-                    await this.handleListItems(interaction);
-                    break;
                 case 'list-combinations':
                     await this.handleListCombinations(interaction);
-                    break;
-                case 'test-combination':
-                    await this.handleTestCombination(interaction);
-                    break;
-                case 'remove-item':
-                    await this.handleRemoveItem(interaction);
                     break;
                 case 'remove-combination':
                     await this.handleRemoveCombination(interaction);
@@ -252,11 +205,14 @@ export default {
                 case 'give-item':
                     await this.handleGiveItem(interaction);
                     break;
+                case 'transfer-item':
+                    await this.handleTransferItem(interaction);
+                    break;
                 case 'clear-collection':
                     await this.handleClearCollection(interaction);
                     break;
-                case 'clear-all-collections':
-                    await this.handleClearAllCollections(interaction);
+                case 'add-item':
+                    await this.handleAddItem(interaction);
                     break;
                 default:
                     await interaction.editReply('Subcommand not implemented yet.');
@@ -269,7 +225,490 @@ export default {
         }
     },
 
-    // NEW: Handle clearing a single user's collection
+    /**
+     * ENHANCED: List items with clear IDs and pagination
+     */
+    async handleListItems(interaction) {
+        const page = interaction.options.getInteger('page') || 1;
+        const filter = interaction.options.getString('filter') || 'all';
+        const itemsPerPage = 20;
+
+        let query = { isActive: true };
+        let title = '📦 All Gacha Items';
+        
+        switch (filter) {
+            case 'gacha':
+                query.dropRate = { $gt: 0 };
+                title = '🎰 Gacha Items (Drop Rate > 0)';
+                break;
+            case 'combo':
+                query.dropRate = 0;
+                title = '🔧 Combination-Only Items';
+                break;
+        }
+
+        const totalItems = await GachaItem.countDocuments(query);
+        const totalPages = Math.ceil(totalItems / itemsPerPage);
+        const skip = (page - 1) * itemsPerPage;
+
+        const items = await GachaItem.find(query)
+            .sort({ dropRate: -1, rarity: 1, itemName: 1 })
+            .skip(skip)
+            .limit(itemsPerPage);
+
+        if (items.length === 0) {
+            return interaction.editReply({ content: 'No items found.' });
+        }
+
+        const embed = new EmbedBuilder()
+            .setTitle(`${title} - Page ${page}/${totalPages}`)
+            .setColor(COLORS.INFO)
+            .setDescription(`Showing ${items.length} items (${totalItems} total)`)
+            .setTimestamp();
+
+        // Create a clean table-like format showing IDs prominently
+        let itemsList = '```\n';
+        itemsList += 'ID                  | NAME              | RARITY    | DROP%\n';
+        itemsList += '─'.repeat(65) + '\n';
+        
+        items.forEach(item => {
+            const id = item.itemId.padEnd(18);
+            const name = item.itemName.length > 16 ? 
+                item.itemName.substring(0, 13) + '...' : 
+                item.itemName.padEnd(16);
+            const rarity = item.rarity.toUpperCase().padEnd(8);
+            const dropRate = item.dropRate.toString().padStart(4) + '%';
+            
+            itemsList += `${id} | ${name} | ${rarity} | ${dropRate}\n`;
+        });
+        itemsList += '```';
+
+        embed.addFields({ name: 'Items', value: itemsList });
+
+        // Add navigation buttons if needed
+        const components = [];
+        if (totalPages > 1) {
+            const buttonRow = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId(`gacha_list_${Math.max(1, page - 1)}_${filter}`)
+                        .setLabel('◀ Previous')
+                        .setStyle(ButtonStyle.Secondary)
+                        .setDisabled(page === 1),
+                    new ButtonBuilder()
+                        .setCustomId(`page_info`)
+                        .setLabel(`Page ${page}/${totalPages}`)
+                        .setStyle(ButtonStyle.Secondary)
+                        .setDisabled(true),
+                    new ButtonBuilder()
+                        .setCustomId(`gacha_list_${Math.min(totalPages, page + 1)}_${filter}`)
+                        .setLabel('Next ▶')
+                        .setStyle(ButtonStyle.Secondary)
+                        .setDisabled(page === totalPages)
+                );
+            components.push(buttonRow);
+        }
+
+        // Add action buttons
+        const actionRow = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId('gacha_add_combination')
+                    .setLabel('➕ Add Combination')
+                    .setStyle(ButtonStyle.Primary),
+                new ButtonBuilder()
+                    .setCustomId('gacha_list_combinations')
+                    .setLabel('📋 List Combinations')
+                    .setStyle(ButtonStyle.Secondary)
+            );
+        components.push(actionRow);
+
+        embed.setFooter({ 
+            text: 'Use the Item ID (first column) when creating combinations' 
+        });
+
+        await interaction.editReply({ embeds: [embed], components });
+    },
+
+    /**
+     * SIMPLIFIED: Add automatic combination with user-friendly interface
+     */
+    async handleAddCombination(interaction) {
+        const modal = new ModalBuilder()
+            .setCustomId('gacha_add_combo_modal')
+            .setTitle('Add Automatic Combination');
+
+        // Simple format input
+        const formatInput = new TextInputBuilder()
+            .setCustomId('combo_format')
+            .setLabel('Combination Rule')
+            .setPlaceholder('Examples:\nsmall_key:5 -> boss_key\nsuper_mario + super_luigi -> shadow_unlock\ngreen_rupee:10 -> blue_rupee:2')
+            .setStyle(TextInputStyle.Paragraph)
+            .setRequired(true);
+
+        // Rule ID (auto-generated if empty)
+        const ruleIdInput = new TextInputBuilder()
+            .setCustomId('rule_id')
+            .setLabel('Rule ID (optional - will auto-generate)')
+            .setPlaceholder('Leave empty for auto-generation')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(false);
+
+        // Priority for auto-combine order
+        const priorityInput = new TextInputBuilder()
+            .setCustomId('priority')
+            .setLabel('Priority (0-100, higher = combines first)')
+            .setPlaceholder('10')
+            .setValue('10')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(false);
+
+        modal.addComponents(
+            new ActionRowBuilder().addComponents(formatInput),
+            new ActionRowBuilder().addComponents(ruleIdInput),
+            new ActionRowBuilder().addComponents(priorityInput)
+        );
+
+        await interaction.showModal(modal);
+    },
+
+    /**
+     * Handle the combination modal submission
+     */
+    async handleCombinationModal(interaction) {
+        await interaction.deferReply({ ephemeral: true });
+
+        const comboFormat = interaction.fields.getTextInputValue('combo_format');
+        const ruleId = interaction.fields.getTextInputValue('rule_id') || 
+            `combo_${Date.now()}`;
+        const priority = parseInt(interaction.fields.getTextInputValue('priority')) || 10;
+
+        try {
+            const parsed = await this.parseSimpleCombination(comboFormat);
+            
+            // Validate all items exist
+            for (const ingredient of parsed.ingredients) {
+                const item = await GachaItem.findOne({ itemId: ingredient.itemId });
+                if (!item) {
+                    throw new Error(`Ingredient item not found: ${ingredient.itemId}`);
+                }
+            }
+
+            const resultItem = await GachaItem.findOne({ itemId: parsed.result.itemId });
+            if (!resultItem) {
+                throw new Error(`Result item not found: ${parsed.result.itemId}`);
+            }
+
+            // Check if rule already exists
+            const existingRule = await CombinationRule.findOne({ ruleId });
+            if (existingRule) {
+                throw new Error(`Rule ID "${ruleId}" already exists.`);
+            }
+
+            // Create the combination rule
+            const newRule = new CombinationRule({
+                ruleId,
+                ingredients: parsed.ingredients,
+                result: parsed.result,
+                isAutomatic: true, // All combinations are automatic now
+                priority,
+                createdBy: interaction.user.username
+            });
+
+            await newRule.save();
+
+            // Create success embed
+            const embed = new EmbedBuilder()
+                .setTitle('✅ Automatic Combination Added')
+                .setColor(COLORS.SUCCESS)
+                .addFields(
+                    { name: 'Rule ID', value: ruleId, inline: true },
+                    { name: 'Priority', value: priority.toString(), inline: true },
+                    { name: 'Format', value: `\`${comboFormat}\``, inline: false }
+                );
+
+            // Show ingredients and result
+            let ingredientsText = '';
+            for (const ing of parsed.ingredients) {
+                const item = await GachaItem.findOne({ itemId: ing.itemId });
+                const emoji = item ? `<:${item.emojiName}:${item.emojiId}>` : '❓';
+                ingredientsText += `${emoji} ${ing.quantity}x **${item?.itemName || ing.itemId}**\n`;
+            }
+            embed.addFields({ name: 'Ingredients', value: ingredientsText });
+
+            const resultEmoji = resultItem ? `<:${resultItem.emojiName}:${resultItem.emojiId}>` : '❓';
+            embed.addFields({ 
+                name: 'Result', 
+                value: `${resultEmoji} ${parsed.result.quantity}x **${resultItem?.itemName || parsed.result.itemId}**` 
+            });
+
+            embed.setDescription('⚡ This combination will happen automatically when users have the ingredients!');
+
+            await interaction.editReply({ embeds: [embed] });
+
+        } catch (error) {
+            console.error('Error creating combination:', error);
+            await interaction.editReply({
+                content: `❌ Error creating combination: ${error.message}\n\n**Format Examples:**\n` +
+                         `• \`small_key:5 -> boss_key\`\n` +
+                         `• \`super_mario + super_luigi -> shadow_unlock\`\n` +
+                         `• \`green_rupee:10 -> blue_rupee:2\``
+            });
+        }
+    },
+
+    /**
+     * Parse simple combination format
+     */
+    async parseSimpleCombination(format) {
+        // Remove extra whitespace
+        format = format.trim();
+
+        // Support both -> and = as separators
+        let separator = '->';
+        if (format.includes(' = ')) separator = ' = ';
+        else if (format.includes('=')) separator = '=';
+
+        const parts = format.split(separator);
+        if (parts.length !== 2) {
+            throw new Error('Format must be: ingredients -> result');
+        }
+
+        const ingredientsPart = parts[0].trim();
+        const resultPart = parts[1].trim();
+
+        // Parse ingredients (support both + and , as separators)
+        const ingredients = [];
+        const ingredientItems = ingredientsPart.split(/[+,]/).map(s => s.trim());
+
+        for (const item of ingredientItems) {
+            if (item.includes(':')) {
+                // Format: item_id:quantity
+                const [itemId, quantityStr] = item.split(':');
+                const quantity = parseInt(quantityStr) || 1;
+                ingredients.push({ itemId: itemId.trim(), quantity });
+            } else {
+                // Format: item_id (quantity defaults to 1)
+                ingredients.push({ itemId: item.trim(), quantity: 1 });
+            }
+        }
+
+        // Parse result
+        let result;
+        if (resultPart.includes(':')) {
+            const [itemId, quantityStr] = resultPart.split(':');
+            const quantity = parseInt(quantityStr) || 1;
+            result = { itemId: itemId.trim(), quantity };
+        } else {
+            result = { itemId: resultPart.trim(), quantity: 1 };
+        }
+
+        return { ingredients, result };
+    },
+
+    /**
+     * List all combinations with clear formatting
+     */
+    async handleListCombinations(interaction) {
+        const rules = await CombinationRule.find({ isActive: true })
+            .sort({ priority: -1, ruleId: 1 });
+
+        if (rules.length === 0) {
+            return interaction.editReply({ content: 'No combination rules found.' });
+        }
+
+        const embed = new EmbedBuilder()
+            .setTitle('⚡ Automatic Combination Rules')
+            .setColor(COLORS.INFO)
+            .setDescription(`Found ${rules.length} active rules`)
+            .setTimestamp();
+
+        let rulesText = '';
+        for (const rule of rules.slice(0, 10)) {
+            const resultItem = await GachaItem.findOne({ itemId: rule.result.itemId });
+            const resultEmoji = resultItem ? `<:${resultItem.emojiName}:${resultItem.emojiId}>` : '❓';
+            
+            rulesText += `**${rule.ruleId}** (Priority: ${rule.priority})\n`;
+            
+            // Show ingredients in simple format
+            const ingredientStrs = rule.ingredients.map(ing => 
+                `${ing.quantity > 1 ? ing.quantity : ''}${ing.itemId}`
+            );
+            rulesText += `${ingredientStrs.join(' + ')} → ${resultEmoji} ${rule.result.quantity}x ${resultItem?.itemName || rule.result.itemId}\n\n`;
+        }
+        
+        if (rules.length > 10) {
+            rulesText += `*...and ${rules.length - 10} more rules*`;
+        }
+
+        embed.addFields({ name: 'Rules', value: rulesText });
+        embed.setFooter({ text: 'All combinations happen automatically when players have ingredients' });
+
+        await interaction.editReply({ embeds: [embed] });
+    },
+
+    /**
+     * NEW: Handle player-to-player transfers
+     */
+    async handleTransferItem(interaction) {
+        const fromUsername = interaction.options.getString('from-user');
+        const toUsername = interaction.options.getString('to-user');
+        const itemId = interaction.options.getString('item-id');
+        const quantity = interaction.options.getInteger('quantity') || 1;
+
+        // Find both users
+        const fromUser = await User.findOne({ 
+            raUsername: { $regex: new RegExp(`^${fromUsername}$`, 'i') }
+        });
+        const toUser = await User.findOne({ 
+            raUsername: { $regex: new RegExp(`^${toUsername}$`, 'i') }
+        });
+
+        if (!fromUser) {
+            throw new Error(`Source user "${fromUsername}" not found.`);
+        }
+        if (!toUser) {
+            throw new Error(`Target user "${toUsername}" not found.`);
+        }
+
+        // Check if from user has the item
+        const fromItem = fromUser.gachaCollection?.find(item => item.itemId === itemId);
+        if (!fromItem) {
+            throw new Error(`${fromUsername} doesn't have item "${itemId}".`);
+        }
+
+        if (fromItem.quantity < quantity) {
+            throw new Error(`${fromUsername} only has ${fromItem.quantity} of "${itemId}", cannot transfer ${quantity}.`);
+        }
+
+        // Get the gacha item definition for transfer
+        const gachaItem = await GachaItem.findOne({ itemId });
+        if (!gachaItem) {
+            throw new Error(`Item "${itemId}" not found in database.`);
+        }
+
+        // Remove from source user
+        const removeSuccess = fromUser.removeGachaItem(itemId, quantity);
+        if (!removeSuccess) {
+            throw new Error('Failed to remove item from source user.');
+        }
+
+        // Add to target user
+        toUser.addGachaItem(gachaItem, quantity, 'player_transfer');
+
+        // Save both users
+        await fromUser.save();
+        await toUser.save();
+
+        // Create success message
+        const itemEmoji = gachaItem.emojiId ? 
+            `<:${gachaItem.emojiName}:${gachaItem.emojiId}>` : 
+            gachaItem.emojiName;
+
+        const embed = new EmbedBuilder()
+            .setTitle('✅ Item Transfer Complete')
+            .setColor(COLORS.SUCCESS)
+            .setDescription(
+                `${itemEmoji} **${quantity}x ${gachaItem.itemName}** transferred\n\n` +
+                `**From:** ${fromUsername}\n` +
+                `**To:** ${toUsername}\n\n` +
+                `⚠️ **Warning:** This transfer is final. Admin will not intervene in player disputes.`
+            )
+            .addFields(
+                { name: 'Transferred by Admin', value: interaction.user.username, inline: true },
+                { name: 'Item ID', value: itemId, inline: true }
+            )
+            .setTimestamp();
+
+        await interaction.editReply({ embeds: [embed] });
+    },
+
+    // Handle button interactions
+    async handleButtonInteraction(interaction) {
+        if (!interaction.customId.startsWith('gacha_')) return;
+
+        await interaction.deferUpdate();
+
+        if (interaction.customId === 'gacha_add_combination') {
+            await this.handleAddCombination(interaction);
+        } else if (interaction.customId === 'gacha_list_combinations') {
+            await this.handleListCombinations(interaction);
+        } else if (interaction.customId.startsWith('gacha_list_')) {
+            // Handle pagination
+            const parts = interaction.customId.split('_');
+            const page = parseInt(parts[2]);
+            const filter = parts[3];
+            
+            // Simulate the list command with new page
+            const mockInteraction = {
+                ...interaction,
+                options: {
+                    getInteger: (name) => name === 'page' ? page : null,
+                    getString: (name) => name === 'filter' ? filter : null
+                }
+            };
+            await this.handleListItems(mockInteraction);
+        }
+    },
+
+    // Handle modal submissions
+    async handleModalSubmit(interaction) {
+        if (interaction.customId === 'gacha_add_combo_modal') {
+            await this.handleCombinationModal(interaction);
+        }
+    },
+
+    // Keep existing methods for other functions...
+    async handleRemoveCombination(interaction) {
+        const ruleId = interaction.options.getString('rule-id');
+        const rule = await CombinationRule.findOneAndDelete({ ruleId });
+        
+        if (!rule) {
+            throw new Error(`Combination rule "${ruleId}" not found.`);
+        }
+
+        await interaction.editReply({
+            content: `✅ Removed combination rule: **${ruleId}**`
+        });
+    },
+
+    async handleGiveItem(interaction) {
+        const username = interaction.options.getString('username');
+        const itemId = interaction.options.getString('item-id');
+        const quantity = interaction.options.getInteger('quantity') || 1;
+
+        const user = await User.findOne({ 
+            raUsername: { $regex: new RegExp(`^${username}$`, 'i') }
+        });
+        if (!user) {
+            throw new Error(`User "${username}" not found.`);
+        }
+
+        const item = await GachaItem.findOne({ itemId });
+        if (!item) {
+            throw new Error(`Item "${itemId}" not found.`);
+        }
+
+        const addResult = user.addGachaItem(item, quantity, 'admin_grant');
+        await user.save();
+
+        // Check for auto-combinations
+        const autoCombinations = await combinationService.checkAutoCombinations(user);
+
+        const emoji = `<:${item.emojiName}:${item.emojiId}>`;
+        let message = `✅ Gave ${emoji} ${quantity}x **${item.itemName}** to ${username}`;
+
+        if (autoCombinations.length > 0) {
+            message += `\n\n⚡ **Auto-combinations triggered:**\n`;
+            for (const combo of autoCombinations) {
+                const resultEmoji = `<:${combo.resultItem.emojiName}:${combo.resultItem.emojiId}>`;
+                message += `${resultEmoji} ${combo.resultQuantity}x ${combo.resultItem.itemName}\n`;
+            }
+        }
+
+        await interaction.editReply({ content: message });
+    },
+
     async handleClearCollection(interaction) {
         const username = interaction.options.getString('username');
         const confirm = interaction.options.getBoolean('confirm');
@@ -286,7 +725,6 @@ export default {
             throw new Error(`User "${username}" not found.`);
         }
 
-        // Store collection info before clearing
         const collectionSize = user.gachaCollection?.length || 0;
         const totalItems = user.gachaCollection?.reduce((sum, item) => sum + (item.quantity || 1), 0) || 0;
 
@@ -296,7 +734,6 @@ export default {
             });
         }
 
-        // Clear the collection
         user.gachaCollection = [];
         await user.save();
 
@@ -315,69 +752,9 @@ export default {
         await interaction.editReply({ embeds: [embed] });
     },
 
-    // NEW: Handle clearing ALL users' collections
-    async handleClearAllCollections(interaction) {
-        const confirm = interaction.options.getBoolean('confirm');
-        const safetyWord = interaction.options.getString('safety-word');
-
-        if (!confirm) {
-            throw new Error('You must set confirm to true to clear all collections.');
-        }
-
-        if (safetyWord !== 'CLEAR-ALL-GACHA') {
-            throw new Error('You must type "CLEAR-ALL-GACHA" exactly as the safety word.');
-        }
-
-        // Find all users with gacha collections
-        const usersWithCollections = await User.find({ 
-            gachaCollection: { $exists: true, $ne: [] }
-        });
-
-        if (usersWithCollections.length === 0) {
-            return interaction.editReply({
-                content: '❌ No users found with gacha collections.'
-            });
-        }
-
-        let totalUsersCleared = 0;
-        let totalUniqueItems = 0;
-        let totalItems = 0;
-
-        // Clear all collections
-        for (const user of usersWithCollections) {
-            const collectionSize = user.gachaCollection?.length || 0;
-            const userTotalItems = user.gachaCollection?.reduce((sum, item) => sum + (item.quantity || 1), 0) || 0;
-            
-            totalUniqueItems += collectionSize;
-            totalItems += userTotalItems;
-            
-            user.gachaCollection = [];
-            await user.save();
-            totalUsersCleared++;
-        }
-
-        const embed = new EmbedBuilder()
-            .setTitle('💥 ALL Collections Cleared')
-            .setColor(COLORS.ERROR)
-            .setDescription('**WARNING: All gacha collections have been cleared!**')
-            .addFields(
-                { name: 'Users Affected', value: totalUsersCleared.toString(), inline: true },
-                { name: 'Unique Items Removed', value: totalUniqueItems.toString(), inline: true },
-                { name: 'Total Items Removed', value: totalItems.toString(), inline: true }
-            )
-            .setFooter({ text: `Cleared by ${interaction.user.username} - This action cannot be undone` })
-            .setTimestamp();
-
-        await interaction.editReply({ embeds: [embed] });
-
-        console.log(`🗑️ ALL gacha collections cleared by ${interaction.user.username}: ${totalUsersCleared} users, ${totalItems} total items`);
-    },
-
-    // All existing methods remain the same...
     async handleAddItem(interaction) {
         const emojiInput = interaction.options.getString('emoji-input');
         
-        // Extract emoji ID and name
         const emojiMatch = emojiInput.match(/<:([^:]+):(\d+)>/);
         if (!emojiMatch) {
             throw new Error('Invalid emoji format. Please paste like: <:name:123456>');
@@ -395,13 +772,11 @@ export default {
             dropRate,
             emojiName,
             emojiId,
-            seriesId: interaction.options.getString('series-id'),
             flavorText: interaction.options.getString('flavor-text'),
             maxStack: interaction.options.getInteger('max-stack') || 1,
             createdBy: interaction.user.username
         };
 
-        // Check if item already exists
         const existingItem = await GachaItem.findOne({ itemId: itemData.itemId });
         if (existingItem) {
             throw new Error(`Item "${itemData.itemId}" already exists.`);
@@ -427,312 +802,7 @@ export default {
         if (itemData.flavorText) {
             embed.addFields({ name: 'Flavor Text', value: `*${itemData.flavorText}*` });
         }
-        if (itemData.seriesId) {
-            embed.addFields({ name: 'Series', value: itemData.seriesId, inline: true });
-        }
 
         await interaction.editReply({ embeds: [embed] });
-    },
-
-    async handleAddCombination(interaction) {
-        const ruleData = {
-            ruleId: interaction.options.getString('rule-id'),
-            isAutomatic: interaction.options.getBoolean('automatic') || false,
-            priority: interaction.options.getInteger('priority') || 0,
-            createdBy: interaction.user.username
-        };
-
-        // Parse ingredients
-        const ingredientsStr = interaction.options.getString('ingredients');
-        const ingredients = [];
-        
-        for (const ingredientStr of ingredientsStr.split(',')) {
-            const [itemId, qtyStr] = ingredientStr.trim().split(':');
-            const quantity = parseInt(qtyStr) || 1;
-            
-            // Verify item exists
-            const item = await GachaItem.findOne({ itemId: itemId.trim() });
-            if (!item) {
-                throw new Error(`Ingredient item not found: ${itemId}`);
-            }
-            
-            ingredients.push({ itemId: itemId.trim(), quantity });
-        }
-
-        // Parse result
-        const resultStr = interaction.options.getString('result');
-        const [resultItemId, resultQtyStr] = resultStr.split(':');
-        const resultQuantity = parseInt(resultQtyStr) || 1;
-        
-        // Verify result item exists
-        const resultItem = await GachaItem.findOne({ itemId: resultItemId.trim() });
-        if (!resultItem) {
-            throw new Error(`Result item not found: ${resultItemId}`);
-        }
-
-        ruleData.ingredients = ingredients;
-        ruleData.result = { itemId: resultItemId.trim(), quantity: resultQuantity };
-
-        // Check if rule already exists
-        const existingRule = await CombinationRule.findOne({ ruleId: ruleData.ruleId });
-        if (existingRule) {
-            throw new Error(`Combination rule "${ruleData.ruleId}" already exists.`);
-        }
-
-        const newRule = new CombinationRule(ruleData);
-        await newRule.save();
-
-        const embed = new EmbedBuilder()
-            .setTitle('✅ Combination Rule Added')
-            .setColor(COLORS.SUCCESS)
-            .addFields(
-                { name: 'Rule ID', value: ruleData.ruleId, inline: true },
-                { name: 'Type', value: ruleData.isAutomatic ? 'Automatic' : 'Manual', inline: true },
-                { name: 'Priority', value: ruleData.priority.toString(), inline: true }
-            );
-
-        // Show ingredients
-        let ingredientsText = '';
-        for (const ing of ingredients) {
-            const item = await GachaItem.findOne({ itemId: ing.itemId });
-            const emoji = `<:${item.emojiName}:${item.emojiId}>`;
-            ingredientsText += `${emoji} ${ing.quantity}x ${item.itemName}\n`;
-        }
-        embed.addFields({ name: 'Ingredients', value: ingredientsText });
-
-        // Show result
-        const resultEmoji = `<:${resultItem.emojiName}:${resultItem.emojiId}>`;
-        embed.addFields({ 
-            name: 'Result', 
-            value: `${resultEmoji} ${resultQuantity}x ${resultItem.itemName}` 
-        });
-
-        if (ruleData.isAutomatic) {
-            embed.setDescription('⚡ This combination will happen automatically when users have the ingredients!');
-        }
-
-        await interaction.editReply({ embeds: [embed] });
-    },
-
-    async handleListItems(interaction) {
-        const filter = interaction.options.getString('filter') || 'all';
-        
-        let query = { isActive: true };
-        let title = '📦 All Items';
-        
-        switch (filter) {
-            case 'gacha':
-                query.dropRate = { $gt: 0 };
-                title = '🎰 Gacha Items';
-                break;
-            case 'combo':
-                query.dropRate = 0;
-                title = '🔧 Combination-Only Items';
-                break;
-        }
-
-        const items = await GachaItem.find(query).sort({ dropRate: -1, rarity: 1, itemName: 1 });
-
-        if (items.length === 0) {
-            return interaction.editReply({ content: 'No items found.' });
-        }
-
-        const embed = new EmbedBuilder()
-            .setTitle(title)
-            .setColor(COLORS.INFO)
-            .setDescription(`Found ${items.length} items`)
-            .setTimestamp();
-
-        // Group by source type
-        const gachaItems = items.filter(item => item.dropRate > 0);
-        const comboItems = items.filter(item => item.dropRate === 0);
-
-        if (gachaItems.length > 0 && filter !== 'combo') {
-            let gachaText = '';
-            gachaItems.slice(0, 10).forEach(item => {
-                const emoji = `<:${item.emojiName}:${item.emojiId}>`;
-                gachaText += `${emoji} **${item.itemName}** (${item.dropRate}%)\n`;
-            });
-            if (gachaItems.length > 10) {
-                gachaText += `\n*...and ${gachaItems.length - 10} more*`;
-            }
-            embed.addFields({ name: `🎰 Gacha Items (${gachaItems.length})`, value: gachaText });
-        }
-
-        if (comboItems.length > 0 && filter !== 'gacha') {
-            let comboText = '';
-            comboItems.slice(0, 10).forEach(item => {
-                const emoji = `<:${item.emojiName}:${item.emojiId}>`;
-                comboText += `${emoji} **${item.itemName}** (combination only)\n`;
-            });
-            if (comboItems.length > 10) {
-                comboText += `\n*...and ${comboItems.length - 10} more*`;
-            }
-            embed.addFields({ name: `🔧 Combination Items (${comboItems.length})`, value: comboText });
-        }
-
-        await interaction.editReply({ embeds: [embed] });
-    },
-
-    async handleListCombinations(interaction) {
-        const filter = interaction.options.getString('filter') || 'all';
-        
-        let query = { isActive: true };
-        if (filter === 'auto') {
-            query.isAutomatic = true;
-        } else if (filter === 'manual') {
-            query.isAutomatic = false;
-        }
-
-        const rules = await CombinationRule.find(query).sort({ priority: -1, ruleId: 1 });
-
-        if (rules.length === 0) {
-            return interaction.editReply({ content: 'No combination rules found.' });
-        }
-
-        const embed = new EmbedBuilder()
-            .setTitle(`🔧 Combination Rules ${filter !== 'all' ? `(${filter})` : ''}`)
-            .setColor(COLORS.INFO)
-            .setDescription(`Found ${rules.length} rules`)
-            .setTimestamp();
-
-        // Show rules
-        let rulesText = '';
-        for (const rule of rules.slice(0, 8)) {
-            const resultItem = await GachaItem.findOne({ itemId: rule.result.itemId });
-            const resultEmoji = resultItem ? `<:${resultItem.emojiName}:${resultItem.emojiId}>` : '❓';
-            const typeIcon = rule.isAutomatic ? '⚡' : '🔧';
-            
-            rulesText += `${typeIcon} **${rule.ruleId}**\n`;
-            rulesText += `   ${rule.ingredients.length} ingredients → ${resultEmoji} ${rule.result.quantity}x ${resultItem?.itemName || 'Unknown'}\n`;
-        }
-        
-        if (rules.length > 8) {
-            rulesText += `\n*...and ${rules.length - 8} more rules*`;
-        }
-
-        embed.addFields({ name: 'Rules', value: rulesText });
-        embed.setFooter({ text: '⚡ = Automatic, 🔧 = Manual' });
-
-        await interaction.editReply({ embeds: [embed] });
-    },
-
-    async handleTestCombination(interaction) {
-        const ruleId = interaction.options.getString('rule-id');
-        const username = interaction.options.getString('username');
-
-        const user = await User.findOne({ raUsername: username });
-        if (!user) {
-            throw new Error(`User "${username}" not found.`);
-        }
-
-        const preview = await combinationService.previewCombination(user, ruleId);
-        if (!preview.success) {
-            throw new Error(preview.error);
-        }
-
-        const embed = new EmbedBuilder()
-            .setTitle(`🧪 Combination Test: ${ruleId}`)
-            .setColor(preview.canMake ? COLORS.SUCCESS : COLORS.WARNING)
-            .addFields(
-                { name: 'User', value: username, inline: true },
-                { name: 'Can Make', value: preview.canMake ? '✅ Yes' : '❌ No', inline: true },
-                { name: 'Type', value: preview.isAutomatic ? 'Automatic' : 'Manual', inline: true }
-            );
-
-        // Show ingredients status
-        let ingredientsText = '';
-        for (const ingredient of preview.rule.ingredients) {
-            const item = await GachaItem.findOne({ itemId: ingredient.itemId });
-            const userItem = user.gachaCollection?.find(i => i.itemId === ingredient.itemId);
-            const have = userItem ? (userItem.quantity || 1) : 0;
-            const status = have >= ingredient.quantity ? '✅' : '❌';
-            const emoji = item ? `<:${item.emojiName}:${item.emojiId}>` : '❓';
-            
-            ingredientsText += `${status} ${emoji} ${ingredient.quantity}x (have: ${have})\n`;
-        }
-        embed.addFields({ name: 'Ingredients', value: ingredientsText });
-
-        // Show result
-        const resultEmoji = `<:${preview.resultItem.emojiName}:${preview.resultItem.emojiId}>`;
-        embed.addFields({ 
-            name: 'Result', 
-            value: `${resultEmoji} ${preview.rule.result.quantity}x ${preview.resultItem.itemName}` 
-        });
-
-        // Show what's missing if can't make
-        if (!preview.canMake && preview.missing.length > 0) {
-            let missingText = '';
-            for (const missing of preview.missing) {
-                const item = await GachaItem.findOne({ itemId: missing.itemId });
-                const emoji = item ? `<:${item.emojiName}:${item.emojiId}>` : '❓';
-                missingText += `${emoji} Need ${missing.shortage} more ${item?.itemName || missing.itemId}\n`;
-            }
-            embed.addFields({ name: 'Missing', value: missingText });
-        }
-
-        await interaction.editReply({ embeds: [embed] });
-    },
-
-    async handleRemoveItem(interaction) {
-        const itemId = interaction.options.getString('item-id');
-        const item = await GachaItem.findOneAndDelete({ itemId });
-        
-        if (!item) {
-            throw new Error(`Item "${itemId}" not found.`);
-        }
-
-        await interaction.editReply({
-            content: `✅ Removed item: **${item.itemName}** (${itemId})`
-        });
-    },
-
-    async handleRemoveCombination(interaction) {
-        const ruleId = interaction.options.getString('rule-id');
-        const rule = await CombinationRule.findOneAndDelete({ ruleId });
-        
-        if (!rule) {
-            throw new Error(`Combination rule "${ruleId}" not found.`);
-        }
-
-        await interaction.editReply({
-            content: `✅ Removed combination rule: **${ruleId}**`
-        });
-    },
-
-    async handleGiveItem(interaction) {
-        const username = interaction.options.getString('username');
-        const itemId = interaction.options.getString('item-id');
-        const quantity = interaction.options.getInteger('quantity') || 1;
-
-        const user = await User.findOne({ raUsername: username });
-        if (!user) {
-            throw new Error(`User "${username}" not found.`);
-        }
-
-        const item = await GachaItem.findOne({ itemId });
-        if (!item) {
-            throw new Error(`Item "${itemId}" not found.`);
-        }
-
-        // Add item to user's collection using the User model method
-        const addResult = user.addGachaItem(item, quantity, 'admin_grant');
-        await user.save();
-
-        // Check for auto-combinations
-        const autoCombinations = await combinationService.checkAutoCombinations(user);
-
-        const emoji = `<:${item.emojiName}:${item.emojiId}>`;
-        let message = `✅ Gave ${emoji} ${quantity}x **${item.itemName}** to ${username}`;
-
-        if (autoCombinations.length > 0) {
-            message += `\n\n⚡ **Auto-combinations triggered:**\n`;
-            for (const combo of autoCombinations) {
-                const resultEmoji = `<:${combo.resultItem.emojiName}:${combo.resultItem.emojiId}>`;
-                message += `${resultEmoji} ${combo.resultQuantity}x ${combo.resultItem.itemName}\n`;
-            }
-        }
-
-        await interaction.editReply({ content: message });
     }
 };
