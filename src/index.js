@@ -528,22 +528,55 @@ async function fixDuplicateIndexes() {
     try {
         console.log('🔧 Checking for duplicate indexes...');
         
-        // Check if we have the problematic index
+        // Get all indexes for the collection
         const indexes = await ArcadeBoard.collection.indexes();
-        const problematicIndex = indexes.find(index => 
-            index.name === 'expiredAt_1' && !index.sparse
-        );
+        console.log('Current indexes:', indexes.map(i => ({ name: i.name, sparse: i.sparse })));
         
-        if (problematicIndex) {
-            console.log('🗑️ Found duplicate expiredAt index, fixing...');
-            await ArcadeBoard.collection.dropIndex('expiredAt_1');
-            console.log('✅ Dropped duplicate index, schema will recreate it correctly');
+        // Find any expiredAt indexes
+        const expiredAtIndexes = indexes.filter(index => index.name === 'expiredAt_1');
+        
+        if (expiredAtIndexes.length > 0) {
+            console.log(`Found ${expiredAtIndexes.length} expiredAt index(es)`);
+            
+            // Drop ALL expiredAt indexes to start fresh
+            for (const index of expiredAtIndexes) {
+                console.log(`🗑️ Dropping existing expiredAt index: ${JSON.stringify(index)}`);
+                try {
+                    await ArcadeBoard.collection.dropIndex('expiredAt_1');
+                    console.log('✅ Successfully dropped expiredAt index');
+                } catch (dropError) {
+                    console.log('Index may have already been dropped:', dropError.message);
+                }
+            }
+            
+            // Wait a moment for the drop to complete
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            
+            // Now create the correct sparse index
+            console.log('🔨 Creating new sparse expiredAt index...');
+            try {
+                await ArcadeBoard.collection.createIndex(
+                    { expiredAt: 1 }, 
+                    { sparse: true, background: true }
+                );
+                console.log('✅ Created new sparse expiredAt index');
+            } catch (createError) {
+                console.log('Index creation handled by schema:', createError.message);
+            }
         } else {
-            console.log('✅ No duplicate indexes found');
+            console.log('✅ No expiredAt indexes found - schema will create the correct one');
         }
+        
+        // Verify the final state
+        const finalIndexes = await ArcadeBoard.collection.indexes();
+        const finalExpiredAtIndex = finalIndexes.find(i => i.name === 'expiredAt_1');
+        if (finalExpiredAtIndex) {
+            console.log('Final expiredAt index:', JSON.stringify(finalExpiredAtIndex));
+        }
+        
     } catch (error) {
-        // If the index doesn't exist or other harmless errors, just continue
-        console.log('ℹ️ Index check completed (may have been already fixed)');
+        console.error('Error in index fixing:', error);
+        console.log('⚠️ Index issues may need manual resolution');
     }
 }
 
