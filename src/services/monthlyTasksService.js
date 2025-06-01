@@ -1,6 +1,7 @@
 import { User } from '../models/User.js';
 import { Challenge } from '../models/Challenge.js';
 import { Poll } from '../models/Poll.js';
+import { ArcadeBoard } from '../models/ArcadeBoard.js';
 import retroAPI from './retroAPI.js';
 import { EmbedBuilder } from 'discord.js';
 import { config } from '../config/config.js';
@@ -40,6 +41,170 @@ class MonthlyTasksService {
         } catch (error) {
             console.error('Error clearing nominations:', error);
         }
+    }
+
+    // NEW: Expire old tiebreakers automatically
+    async expireOldTiebreakers() {
+        try {
+            console.log('🕐 Checking for tiebreakers that need expiration...');
+            
+            const now = new Date();
+            
+            // Find all active tiebreakers that should be expired
+            const expiredTiebreakers = await ArcadeBoard.find({
+                boardType: 'tiebreaker',
+                endDate: { $lt: now }, // End date is in the past
+                isActive: { $ne: false } // Not already marked as inactive
+            });
+
+            if (expiredTiebreakers.length === 0) {
+                console.log('ℹ️ No tiebreakers found that need expiration.');
+                return {
+                    success: true,
+                    message: 'No tiebreakers found that need expiration.',
+                    expired: []
+                };
+            }
+
+            const expiredResults = [];
+
+            // Mark each tiebreaker as expired
+            for (const tiebreaker of expiredTiebreakers) {
+                // Mark as inactive
+                tiebreaker.isActive = false;
+                tiebreaker.expiredAt = now;
+                
+                // Clear any tiebreaker-breaker references since they're no longer valid
+                if (tiebreaker.hasTiebreakerBreaker()) {
+                    tiebreaker.clearTiebreakerBreaker();
+                }
+                
+                await tiebreaker.save();
+                
+                expiredResults.push({
+                    boardId: tiebreaker.boardId,
+                    gameTitle: tiebreaker.gameTitle,
+                    endDate: tiebreaker.endDate,
+                    monthKey: tiebreaker.monthKey
+                });
+                
+                console.log(`⏰ Expired tiebreaker: ${tiebreaker.gameTitle} (${tiebreaker.monthKey})`);
+            }
+
+            // Send notification to admin channel if configured
+            await this.sendTiebreakerExpirationNotification(expiredResults);
+
+            console.log(`✅ Successfully expired ${expiredResults.length} tiebreaker(s).`);
+            
+            return {
+                success: true,
+                message: `Successfully expired ${expiredResults.length} tiebreaker(s).`,
+                expired: expiredResults
+            };
+
+        } catch (error) {
+            console.error('❌ Error expiring old tiebreakers:', error);
+            return {
+                success: false,
+                message: 'An error occurred while expiring tiebreakers.',
+                error: error.message
+            };
+        }
+    }
+
+    // NEW: Clean up very old expired tiebreakers
+    async cleanupOldTiebreakers(daysOld = 90) {
+        try {
+            console.log(`🧹 Cleaning up tiebreakers older than ${daysOld} days...`);
+            
+            const cutoffDate = new Date();
+            cutoffDate.setDate(cutoffDate.getDate() - daysOld);
+
+            const oldTiebreakers = await ArcadeBoard.find({
+                boardType: 'tiebreaker',
+                $or: [
+                    { isActive: false, expiredAt: { $lt: cutoffDate } },
+                    { endDate: { $lt: cutoffDate } }
+                ]
+            });
+
+            if (oldTiebreakers.length === 0) {
+                console.log(`ℹ️ No tiebreakers older than ${daysOld} days found for cleanup.`);
+                return { count: 0, tiebreakers: [] };
+            }
+
+            const deletedTitles = oldTiebreakers.map(tb => tb.gameTitle);
+            
+            // Hard delete the old tiebreakers
+            await ArcadeBoard.deleteMany({
+                _id: { $in: oldTiebreakers.map(tb => tb._id) }
+            });
+
+            console.log(`🗑️ Deleted ${deletedTitles.length} old tiebreaker(s): ${deletedTitles.join(', ')}`);
+            
+            return { count: deletedTitles.length, tiebreakers: deletedTitles };
+
+        } catch (error) {
+            console.error('❌ Error cleaning up old tiebreakers:', error);
+            return { count: 0, tiebreakers: [], error: error.message };
+        }
+    }
+
+    // NEW: Send notification about tiebreaker expiration to admin channel
+    async sendTiebreakerExpirationNotification(expiredTiebreakers) {
+        if (!this.client || expiredTiebreakers.length === 0) {
+            return;
+        }
+
+        try {
+            // Get admin log channel
+            const adminLogChannel = await this.getAdminLogChannel();
+            if (!adminLogChannel) {
+                console.log('⚠️ Admin log channel not found, skipping expiration notification');
+                return;
+            }
+
+            const embed = new EmbedBuilder()
+                .setColor('#FF9900')
+                .setTitle('⏰ Tiebreakers Automatically Expired')
+                .setDescription(
+                    `The following ${expiredTiebreakers.length} tiebreaker(s) have been automatically expired because they passed their end date:`
+                )
+                .setTimestamp();
+
+            if (expiredTiebreakers.length <= 10) {
+                const expiredList = expiredTiebreakers.map(tb => 
+                    `• **${tb.gameTitle}** (${tb.monthKey}) - ended ${tb.endDate.toLocaleDateString()}`
+                ).join('\n');
+                
+                embed.addFields({ 
+                    name: 'Expired Tiebreakers', 
+                    value: expiredList 
+                });
+            } else {
+                embed.addFields({ 
+                    name: 'Expired Tiebreakers', 
+                    value: `${expiredTiebreakers.length} tiebreakers expired. Check logs for details.`
+                });
+            }
+
+            await adminLogChannel.send({ embeds: [embed] });
+
+        } catch (error) {
+            console.error('Error sending tiebreaker expiration notification:', error);
+        }
+    }
+
+    // NEW: Manual trigger for tiebreaker expiration (for testing or manual cleanup)
+    async triggerTiebreakerExpiration() {
+        console.log('🔧 Manual tiebreaker expiration triggered');
+        return await this.expireOldTiebreakers();
+    }
+
+    // NEW: Manual trigger for tiebreaker cleanup
+    async triggerTiebreakerCleanup(daysOld = 90) {
+        console.log('🔧 Manual tiebreaker cleanup triggered');
+        return await this.cleanupOldTiebreakers(daysOld);
     }
 
     async createVotingPoll() {
@@ -640,6 +805,27 @@ class MonthlyTasksService {
             return channel;
         } catch (error) {
             console.error('Error getting voting channel:', error);
+            return null;
+        }
+    }
+
+    // NEW: Get admin log channel for notifications
+    async getAdminLogChannel() {
+        if (!this.client) return null;
+
+        try {
+            // Get the guild
+            const guild = await this.client.guilds.fetch(config.discord.guildId);
+            if (!guild) {
+                console.error('Guild not found');
+                return null;
+            }
+
+            // Get the admin log channel
+            const channel = await guild.channels.fetch(config.discord.adminLogChannelId);
+            return channel;
+        } catch (error) {
+            console.error('Error getting admin log channel:', error);
             return null;
         }
     }
