@@ -1,5 +1,5 @@
 // src/index.js - Complete updated version with tiebreaker expiration system
-import { Client, Collection, Events, GatewayIntentBits } from 'discord.js';
+import { Client, Collection, Events, GatewayIntentBits, EmbedBuilder } from 'discord.js';
 import { config, validateConfig } from './config/config.js';
 import { connectDB } from './models/index.js';
 import { readdirSync } from 'fs';
@@ -22,6 +22,7 @@ import monthlyGPService from './services/monthlyGPService.js';
 import gachaMachine from './services/gachaMachine.js';
 import combinationService from './services/combinationService.js';
 import { User } from './models/User.js';
+import { ArcadeBoard } from './models/ArcadeBoard.js';
 
 // Import nomination and restriction handlers
 import { 
@@ -522,6 +523,30 @@ async function handleMonthStartTiebreakerCleanup() {
     }
 }
 
+// NEW: Function to fix duplicate index issues automatically
+async function fixDuplicateIndexes() {
+    try {
+        console.log('🔧 Checking for duplicate indexes...');
+        
+        // Check if we have the problematic index
+        const indexes = await ArcadeBoard.collection.indexes();
+        const problematicIndex = indexes.find(index => 
+            index.name === 'expiredAt_1' && !index.sparse
+        );
+        
+        if (problematicIndex) {
+            console.log('🗑️ Found duplicate expiredAt index, fixing...');
+            await ArcadeBoard.collection.dropIndex('expiredAt_1');
+            console.log('✅ Dropped duplicate index, schema will recreate it correctly');
+        } else {
+            console.log('✅ No duplicate indexes found');
+        }
+    } catch (error) {
+        // If the index doesn't exist or other harmless errors, just continue
+        console.log('ℹ️ Index check completed (may have been already fixed)');
+    }
+}
+
 // Handle ready event
 client.once(Events.ClientReady, async () => {
     try {
@@ -530,6 +555,9 @@ client.once(Events.ClientReady, async () => {
         // Connect to MongoDB
         await connectDB();
         console.log('Connected to MongoDB');
+
+        // NEW: Fix any duplicate index issues automatically
+        await fixDuplicateIndexes();
 
         // Load commands
         await loadCommands();
