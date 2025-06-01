@@ -1,5 +1,6 @@
-// src/services/combinationService.js - UPDATED with client support and alerts
+// src/services/combinationService.js - UPDATED with Shadow Unlock integration
 import { GachaItem, CombinationRule } from '../models/GachaItem.js';
+import { Challenge } from '../models/Challenge.js';
 import { config } from '../config/config.js';
 import { EmbedBuilder } from 'discord.js';
 import { formatGachaEmoji } from '../config/gachaEmojis.js';
@@ -8,10 +9,10 @@ import { COLORS } from '../utils/FeedUtils.js';
 class CombinationService {
     constructor() {
         this.isInitialized = false;
-        this.client = null; // ADD: Client support for alerts
+        this.client = null;
     }
 
-    // ADD: Method to set Discord client for alerts
+    // Method to set Discord client for alerts
     setClient(client) {
         this.client = client;
         console.log('✅ Combination service client set for alerts');
@@ -50,7 +51,10 @@ class CombinationService {
                             combinationsPerformed.push(result);
                             console.log(`Auto-combination performed: ${rule.ruleId}`);
                             
-                            // NEW: Send alert for this combination
+                            // NEW: Check for shadow unlock and toggle reveal
+                            await this.checkForShadowUnlock(user, result);
+                            
+                            // Send alert for this combination
                             await this.sendCombinationAlert(user, result);
                         } else {
                             canPerform = false;
@@ -73,7 +77,141 @@ class CombinationService {
     }
 
     /**
-     * NEW: Send combination alert to gacha channel
+     * NEW: Check if the combination result is a shadow unlock item and toggle reveal
+     */
+    async checkForShadowUnlock(user, combinationResult) {
+        try {
+            const { resultItem } = combinationResult;
+            
+            // Check if this is the shadow unlock item (ID "999" or name "Shadow Unlock")
+            if (this.isShadowUnlockItem(resultItem)) {
+                console.log(`🌙 Shadow unlock detected for user ${user.raUsername}!`);
+                
+                // Get current month and year
+                const now = new Date();
+                const currentMonth = now.getMonth() + 1; // JS months are 0-indexed
+                const currentYear = now.getFullYear();
+                
+                // Find current month's challenge
+                const monthStart = new Date(currentYear, currentMonth - 1, 1);
+                const nextMonthStart = new Date(currentYear, currentMonth, 1);
+                
+                const currentChallenge = await Challenge.findOne({
+                    date: {
+                        $gte: monthStart,
+                        $lt: nextMonthStart
+                    }
+                });
+                
+                if (!currentChallenge) {
+                    console.log(`No challenge found for ${currentMonth}/${currentYear}`);
+                    return;
+                }
+                
+                if (!currentChallenge.shadow_challange_gameid) {
+                    console.log(`No shadow challenge set for ${currentMonth}/${currentYear}`);
+                    return;
+                }
+                
+                // Check if shadow is already revealed
+                if (currentChallenge.shadow_challange_revealed) {
+                    console.log(`Shadow challenge for ${currentMonth}/${currentYear} is already revealed`);
+                    return;
+                }
+                
+                // REVEAL THE SHADOW CHALLENGE!
+                currentChallenge.shadow_challange_revealed = true;
+                await currentChallenge.save();
+                
+                console.log(`✅ Shadow challenge revealed for ${currentMonth}/${currentYear} by ${user.raUsername}!`);
+                
+                // Send special shadow unlock alert
+                await this.sendShadowUnlockAlert(user, currentChallenge, currentMonth, currentYear);
+                
+            }
+        } catch (error) {
+            console.error('Error checking for shadow unlock:', error);
+        }
+    }
+
+    /**
+     * NEW: Check if an item is the shadow unlock item
+     */
+    isShadowUnlockItem(item) {
+        // Check by item ID (999) or by name (Shadow Unlock)
+        return item.itemId === '999' || 
+               item.itemName?.toLowerCase().includes('shadow unlock') ||
+               item.itemName?.toLowerCase().includes('shadow_unlock');
+    }
+
+    /**
+     * NEW: Send special alert when shadow is unlocked
+     */
+    async sendShadowUnlockAlert(user, challenge, month, year) {
+        if (!this.client) {
+            console.log('No client set for shadow unlock alert');
+            return;
+        }
+
+        try {
+            // Get the general channel for major announcements
+            const generalChannelId = config.discord.generalChannelId || '1224834039804334121'; // Fallback to general
+            const guild = await this.client.guilds.fetch(config.discord.guildId);
+            const channel = await guild.channels.fetch(generalChannelId);
+            
+            if (!channel) {
+                console.error('General channel not found for shadow unlock alert');
+                return;
+            }
+
+            // Get month name
+            const monthNames = ["January", "February", "March", "April", "May", "June",
+                              "July", "August", "September", "October", "November", "December"];
+            const monthName = monthNames[month - 1];
+
+            // Create dramatic shadow unlock embed
+            const embed = new EmbedBuilder()
+                .setTitle('🌙 SHADOW CHALLENGE REVEALED!')
+                .setColor('#9932CC') // Dark purple
+                .setDescription(
+                    `**${user.raUsername}** has unlocked the secrets!\n\n` +
+                    `🔓 The shadow challenge for **${monthName} ${year}** has been revealed!\n\n` +
+                    `**Shadow Game:** ${challenge.shadow_game_title || 'Mystery Game'}\n\n` +
+                    `*The hidden challenge emerges from the darkness...*`
+                )
+                .setTimestamp();
+
+            // Add shadow game thumbnail if available
+            if (challenge.shadow_game_icon_url) {
+                embed.setThumbnail(`https://retroachievements.org${challenge.shadow_game_icon_url}`);
+            }
+
+            // Add some dramatic flair
+            embed.addFields({
+                name: '🎯 How to Participate',
+                value: `Use \`/challenge\` to view the newly revealed shadow challenge details!`,
+                inline: false
+            });
+
+            embed.setFooter({ 
+                text: `Unlocked by ${user.raUsername} through item combination • The shadow awaits...` 
+            });
+
+            // Send the dramatic announcement
+            await channel.send({ 
+                content: `🌙 **BREAKING:** The shadow has been unveiled! 🌙`,
+                embeds: [embed] 
+            });
+            
+            console.log(`✅ Sent shadow unlock alert for ${user.raUsername}`);
+
+        } catch (error) {
+            console.error('Error sending shadow unlock alert:', error);
+        }
+    }
+
+    /**
+     * Send combination alert to gacha channel
      */
     async sendCombinationAlert(user, combinationResult) {
         if (!this.client) {
@@ -98,13 +236,17 @@ class CombinationService {
             const resultEmoji = formatGachaEmoji(resultItem.emojiId, resultItem.emojiName);
             const rarityEmoji = this.getRarityEmoji(resultItem.rarity);
             
+            // Check if this is a shadow unlock for special formatting
+            const isShadowUnlock = this.isShadowUnlockItem(resultItem);
+            
             const embed = new EmbedBuilder()
-                .setTitle('⚡ Auto-Combination Triggered!')
-                .setColor(COLORS.SUCCESS)
+                .setTitle(isShadowUnlock ? '🌙 SHADOW UNLOCK COMBINATION!' : '⚡ Auto-Combination Triggered!')
+                .setColor(isShadowUnlock ? '#9932CC' : COLORS.SUCCESS)
                 .setDescription(
-                    `${user.raUsername} discovered a combination!\n\n` +
+                    `${user.raUsername} ${isShadowUnlock ? 'unlocked the shadow!' : 'discovered a combination!'}\n\n` +
                     `${resultEmoji} **${resultQuantity}x ${resultItem.itemName}** ${rarityEmoji}\n\n` +
-                    `*${resultItem.description || 'A mysterious creation...'}*`
+                    `*${resultItem.description || 'A mysterious creation...'}*` +
+                    (isShadowUnlock ? '\n\n🔓 **The shadow challenge has been revealed!**' : '')
                 )
                 .setTimestamp();
 
@@ -239,7 +381,7 @@ class CombinationService {
                 resultItem: {
                     itemId: resultGachaItem.itemId,
                     itemName: resultGachaItem.itemName,
-                    emojiId: resultGachaItem.emojiId, // Ensure emoji data is preserved
+                    emojiId: resultGachaItem.emojiId,
                     emojiName: resultGachaItem.emojiName,
                     rarity: resultGachaItem.rarity,
                     description: resultGachaItem.description,
@@ -380,6 +522,8 @@ class CombinationService {
             const result = await this.performCombination(user, rule);
             
             if (result.success) {
+                // Check for shadow unlock
+                await this.checkForShadowUnlock(user, result);
                 await user.save();
                 // Send alert for manual combinations too
                 await this.sendCombinationAlert(user, result);
