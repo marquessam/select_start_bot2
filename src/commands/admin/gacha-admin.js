@@ -1,4 +1,4 @@
-// src/commands/admin/gacha-admin.js - CLEAN VERSION with streamlined combinations
+// src/commands/admin/gacha-admin.js - COMPLETE FIXED VERSION with all updates
 import { 
     SlashCommandBuilder, 
     EmbedBuilder, 
@@ -303,16 +303,17 @@ export default {
         await interaction.editReply({ embeds: [embed], components });
     },
 
+    // FIXED: Updated handleAddCombination with shorter placeholder
     async handleAddCombination(interaction) {
         const modal = new ModalBuilder()
             .setCustomId('gacha_add_combo_modal')
             .setTitle('Add Automatic Combination');
 
-        // Simple format input
+        // FIXED: Shortened placeholder to under 100 characters
         const formatInput = new TextInputBuilder()
             .setCustomId('combo_format')
             .setLabel('Combination Rule')
-            .setPlaceholder('Examples:\nsmall_key:5 -> boss_key\nsuper_mario + super_luigi -> shadow_unlock\ngreen_rupee:10 -> blue_rupee:2')
+            .setPlaceholder('small_key:5 -> boss_key OR mario + luigi -> shadow_unlock')
             .setStyle(TextInputStyle.Paragraph)
             .setRequired(true);
 
@@ -415,11 +416,17 @@ export default {
 
         } catch (error) {
             console.error('Error creating combination:', error);
+            // UPDATED: Better error message with more examples
             await interaction.editReply({
                 content: `❌ Error creating combination: ${error.message}\n\n**Format Examples:**\n` +
-                         `• \`small_key:5 -> boss_key\`\n` +
-                         `• \`super_mario + super_luigi -> shadow_unlock\`\n` +
-                         `• \`green_rupee:10 -> blue_rupee:2\``
+                         `• \`small_key:5 -> boss_key\` (5 small keys make 1 boss key)\n` +
+                         `• \`mario + luigi -> shadow_unlock\` (mario + luigi make shadow_unlock)\n` +
+                         `• \`green_rupee:10 -> blue_rupee:2\` (10 green rupees make 2 blue rupees)\n` +
+                         `• \`item1 + item2 + item3 -> special_item\` (multiple ingredients)\n\n` +
+                         `**Format Rules:**\n` +
+                         `• Use \`item_id:quantity\` for specific amounts\n` +
+                         `• Use \`+\` or \`,\` to separate ingredients\n` +
+                         `• Use \`->\` or \`=\` to separate ingredients from result`
             });
         }
     },
@@ -506,6 +513,159 @@ export default {
         embed.setFooter({ text: 'All combinations happen automatically when players have ingredients' });
 
         await interaction.editReply({ embeds: [embed] });
+    },
+
+    // NEW: Separate method for handling list combinations from button
+    async handleListCombinationsFromButton(interaction) {
+        const rules = await CombinationRule.find({ isActive: true })
+            .sort({ priority: -1, ruleId: 1 });
+
+        if (rules.length === 0) {
+            return interaction.editReply({ 
+                content: 'No combination rules found.',
+                embeds: [],
+                components: []
+            });
+        }
+
+        const embed = new EmbedBuilder()
+            .setTitle('⚡ Automatic Combination Rules')
+            .setColor(COLORS.INFO)
+            .setDescription(`Found ${rules.length} active rules`)
+            .setTimestamp();
+
+        let rulesText = '';
+        for (const rule of rules.slice(0, 10)) {
+            const resultItem = await GachaItem.findOne({ itemId: rule.result.itemId });
+            const resultEmoji = resultItem ? `<:${resultItem.emojiName}:${resultItem.emojiId}>` : '❓';
+            
+            rulesText += `**${rule.ruleId}** (Priority: ${rule.priority})\n`;
+            
+            // Show ingredients in simple format
+            const ingredientStrs = rule.ingredients.map(ing => 
+                `${ing.quantity > 1 ? ing.quantity : ''}${ing.itemId}`
+            );
+            rulesText += `${ingredientStrs.join(' + ')} → ${resultEmoji} ${rule.result.quantity}x ${resultItem?.itemName || rule.result.itemId}\n\n`;
+        }
+        
+        if (rules.length > 10) {
+            rulesText += `*...and ${rules.length - 10} more rules*`;
+        }
+
+        embed.addFields({ name: 'Rules', value: rulesText });
+        embed.setFooter({ text: 'All combinations happen automatically when players have ingredients' });
+
+        await interaction.editReply({ embeds: [embed], components: [] });
+    },
+
+    // NEW: Separate method for handling pagination
+    async handleListItemsPagination(interaction, page, filter) {
+        const itemsPerPage = 15;
+
+        let query = { isActive: true };
+        let title = '📦 All Gacha Items';
+        
+        switch (filter) {
+            case 'gacha':
+                query.dropRate = { $gt: 0 };
+                title = '🎰 Gacha Items (Drop Rate > 0)';
+                break;
+            case 'combo':
+                query.dropRate = 0;
+                title = '🔧 Combination-Only Items';
+                break;
+        }
+
+        const totalItems = await GachaItem.countDocuments(query);
+        const totalPages = Math.ceil(totalItems / itemsPerPage);
+        const skip = (page - 1) * itemsPerPage;
+
+        const items = await GachaItem.find(query)
+            .skip(skip)
+            .limit(itemsPerPage);
+
+        // Sort items numerically by ID
+        items.sort((a, b) => {
+            const aNum = parseInt(a.itemId) || 0;
+            const bNum = parseInt(b.itemId) || 0;
+            return aNum - bNum;
+        });
+
+        if (items.length === 0) {
+            return interaction.editReply({ 
+                content: 'No items found.',
+                embeds: [],
+                components: []
+            });
+        }
+
+        const embed = new EmbedBuilder()
+            .setTitle(`${title} - Page ${page}/${totalPages}`)
+            .setColor(COLORS.INFO)
+            .setTimestamp();
+
+        // Create a shorter, more compact format to avoid character limits
+        let itemsList = '';
+        
+        items.forEach(item => {
+            const id = item.itemId.length > 15 ? 
+                item.itemId.substring(0, 12) + '...' : 
+                item.itemId;
+            const name = item.itemName.length > 20 ? 
+                item.itemName.substring(0, 17) + '...' : 
+                item.itemName;
+            const rarity = item.rarity.charAt(0).toUpperCase();
+            
+            itemsList += `**${id}** - ${name} (${rarity}, ${item.dropRate}%)\n`;
+        });
+
+        // Use description instead of fields to avoid 1024 char limit on fields
+        embed.setDescription(`Showing ${items.length} items (${totalItems} total)\n\n${itemsList}`);
+
+        // Add navigation buttons if needed
+        const components = [];
+        if (totalPages > 1) {
+            const buttonRow = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId(`gacha_list_${Math.max(1, page - 1)}_${filter}`)
+                        .setLabel('◀ Previous')
+                        .setStyle(ButtonStyle.Secondary)
+                        .setDisabled(page === 1),
+                    new ButtonBuilder()
+                        .setCustomId(`page_info`)
+                        .setLabel(`Page ${page}/${totalPages}`)
+                        .setStyle(ButtonStyle.Secondary)
+                        .setDisabled(true),
+                    new ButtonBuilder()
+                        .setCustomId(`gacha_list_${Math.min(totalPages, page + 1)}_${filter}`)
+                        .setLabel('Next ▶')
+                        .setStyle(ButtonStyle.Secondary)
+                        .setDisabled(page === totalPages)
+                );
+            components.push(buttonRow);
+        }
+
+        // Add action buttons
+        const actionRow = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId('gacha_add_combination')
+                    .setLabel('➕ Add Combination')
+                    .setStyle(ButtonStyle.Primary),
+                new ButtonBuilder()
+                    .setCustomId('gacha_list_combinations')
+                    .setLabel('📋 List Combinations')
+                    .setStyle(ButtonStyle.Secondary)
+            );
+        components.push(actionRow);
+
+        embed.setFooter({ 
+            text: 'Copy the Item ID (bolded text) when creating combinations' 
+        });
+
+        // FIXED: Use editReply for deferred button interactions
+        await interaction.editReply({ embeds: [embed], components });
     },
 
     async handleRemoveCombination(interaction) {
@@ -655,11 +815,17 @@ export default {
         await interaction.editReply({ embeds: [embed] });
     },
 
-    // Handle button interactions
+    // FIXED: Handle button interactions
     async handleButtonInteraction(interaction) {
         if (!interaction.customId.startsWith('gacha_')) return;
 
-        // FIXED: Check if interaction is already deferred before trying to defer
+        // For modal interactions, don't defer
+        if (interaction.customId === 'gacha_add_combination') {
+            await this.handleAddCombination(interaction);
+            return;
+        }
+
+        // For other interactions, defer the update
         try {
             if (!interaction.deferred && !interaction.replied) {
                 await interaction.deferUpdate();
@@ -668,25 +834,16 @@ export default {
             console.log('Interaction already handled, continuing...');
         }
 
-        if (interaction.customId === 'gacha_add_combination') {
-            await this.handleAddCombination(interaction);
-        } else if (interaction.customId === 'gacha_list_combinations') {
-            await this.handleListCombinations(interaction);
+        if (interaction.customId === 'gacha_list_combinations') {
+            await this.handleListCombinationsFromButton(interaction);
         } else if (interaction.customId.startsWith('gacha_list_')) {
-            // Handle pagination
+            // FIXED: Handle pagination directly without mock interaction
             const parts = interaction.customId.split('_');
             const page = parseInt(parts[2]);
             const filter = parts[3];
             
-            // Simulate the list command with new page
-            const mockInteraction = {
-                ...interaction,
-                options: {
-                    getInteger: (name) => name === 'page' ? page : null,
-                    getString: (name) => name === 'filter' ? filter : null
-                }
-            };
-            await this.handleListItems(mockInteraction);
+            // Handle pagination directly
+            await this.handleListItemsPagination(interaction, page, filter);
         }
     },
 
