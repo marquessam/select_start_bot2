@@ -1,4 +1,4 @@
-// src/commands/user/collection.js - CLEAN VERSION with give item integration
+// src/commands/user/collection.js - COMPLETE FIXED VERSION with interaction handling
 import { 
     SlashCommandBuilder, 
     EmbedBuilder,
@@ -676,20 +676,15 @@ export default {
         return emojiRegex.test(str);
     },
 
-    // Main interaction handler
+    // FIXED: Main interaction handler with proper modal handling
     async handleInteraction(interaction) {
         if (!interaction.customId.startsWith('coll_')) return;
 
         try {
-            await interaction.deferUpdate();
-        } catch (error) {
-            console.error('Error deferring update:', error);
-            return;
-        }
-
-        try {
-            // Handle give confirmation buttons
+            // Handle give confirmation buttons first (these need immediate response)
             if (interaction.customId.startsWith('coll_give_confirm_')) {
+                await interaction.deferUpdate();
+                
                 const parts = interaction.customId.split('_');
                 const givingUsername = parts[3];
                 const receivingUsername = parts[4];
@@ -724,11 +719,42 @@ export default {
             }
 
             if (interaction.customId === 'coll_give_cancel') {
+                await interaction.deferUpdate();
                 await interaction.editReply({
                     content: '❌ Transfer cancelled.',
                     embeds: [],
                     components: []
                 });
+                return;
+            }
+
+            // Handle give button (shows modal - DON'T defer this)
+            if (interaction.customId.startsWith('coll_give_')) {
+                const parts = interaction.customId.split('_');
+                const username = parts[2];
+
+                const user = await User.findOne({ 
+                    raUsername: { $regex: new RegExp(`^${username}$`, 'i') }
+                });
+
+                if (!user || user.discordId !== interaction.user.id) {
+                    await interaction.reply({ 
+                        content: '❌ You can only give items from your own collection.', 
+                        ephemeral: true 
+                    });
+                    return;
+                }
+
+                // Show modal immediately without deferring
+                await this.showGiveItemModal(interaction, user);
+                return;
+            }
+
+            // For all other interactions, defer the update
+            try {
+                await interaction.deferUpdate();
+            } catch (error) {
+                console.error('Error deferring update:', error);
                 return;
             }
 
@@ -786,10 +812,6 @@ export default {
                     }
                     break;
 
-                case 'give':
-                    await this.showGiveItemModal(interaction, user);
-                    break;
-
                 case 'stats':
                     await this.showCollectionStats(interaction, user);
                     break;
@@ -806,10 +828,22 @@ export default {
         } catch (error) {
             console.error('Error handling collection interaction:', error);
             try {
-                await interaction.followUp({ 
-                    content: '❌ An error occurred while processing your request.', 
-                    ephemeral: true 
-                });
+                // Only try to respond if we haven't already responded
+                if (!interaction.replied && !interaction.deferred) {
+                    await interaction.reply({ 
+                        content: '❌ An error occurred while processing your request.', 
+                        ephemeral: true 
+                    });
+                } else if (interaction.deferred) {
+                    await interaction.editReply({ 
+                        content: '❌ An error occurred while processing your request.' 
+                    });
+                } else {
+                    await interaction.followUp({ 
+                        content: '❌ An error occurred while processing your request.', 
+                        ephemeral: true 
+                    });
+                }
             } catch (followUpError) {
                 console.error('Error sending error follow-up:', followUpError);
             }
