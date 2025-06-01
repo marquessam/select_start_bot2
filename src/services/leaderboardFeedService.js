@@ -87,10 +87,12 @@ class LeaderboardFeedService extends FeedManagerBase {
             
             // Generate monthly leaderboard embeds
             const { headerEmbed, participantEmbeds, sortedUsers } = await this.generateLeaderboardEmbeds();
-            if (!headerEmbed || !participantEmbeds || participantEmbeds.length === 0 || !sortedUsers) {
+            if (!headerEmbed || !participantEmbeds || !sortedUsers) {
                 console.error('Failed to generate monthly leaderboard embeds');
                 return;
             }
+
+            console.log(`[LeaderboardFeed] Generated embeds - Header: ${headerEmbed ? 'Yes' : 'No'}, Participants: ${participantEmbeds.length}, Users: ${sortedUsers.length}`);
 
             // Generate yearly leaderboard embeds
             const { yearlyHeaderEmbed, yearlyParticipantEmbeds } = await this.generateYearlyLeaderboardEmbeds();
@@ -628,6 +630,7 @@ class LeaderboardFeedService extends FeedManagerBase {
                     value: 'No one has earned achievements in this challenge this month yet!'
                 });
                 
+                console.log(`[LeaderboardFeed] No participants found - returning empty participant embeds`);
                 return { headerEmbed, participantEmbeds: [], sortedUsers: [] };
             }
 
