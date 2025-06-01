@@ -123,8 +123,10 @@ client.on(Events.InteractionCreate, async interaction => {
     console.log('Channel:', interaction.channel?.name);
     
     try {
-        // Check if this is a gacha-related button - HANDLE DIRECTLY HERE
-        if (interaction.customId.startsWith('gacha_')) {
+        // Check if this is a gacha machine button (not admin buttons)
+        if (interaction.customId === 'gacha_single_pull' || 
+            interaction.customId === 'gacha_multi_pull' || 
+            interaction.customId === 'gacha_collection') {
             console.log('Routing to gacha machine handler');
             
             await interaction.deferReply({ ephemeral: true });
@@ -147,12 +149,16 @@ client.on(Events.InteractionCreate, async interaction => {
                 case 'gacha_collection':
                     await gachaMachine.handleCollection(interaction, user);
                     break;
-                default:
-                    // Handle gacha admin buttons
-                    const gachaAdminCommand = client.commands.get('gacha-admin');
-                    if (gachaAdminCommand && typeof gachaAdminCommand.handleButtonInteraction === 'function') {
-                        await gachaAdminCommand.handleButtonInteraction(interaction);
-                    }
+            }
+            return;
+        }
+
+        // Check if this is a gacha admin button
+        if (interaction.customId.startsWith('gacha_')) {
+            console.log('Routing to gacha admin handler');
+            const gachaAdminCommand = client.commands.get('gacha-admin');
+            if (gachaAdminCommand && typeof gachaAdminCommand.handleButtonInteraction === 'function') {
+                await gachaAdminCommand.handleButtonInteraction(interaction);
             }
             return;
         }
