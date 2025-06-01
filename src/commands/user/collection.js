@@ -1,4 +1,4 @@
-// src/commands/user/collection.js - Simplified and streamlined version
+// src/commands/user/collection.js - Fixed interaction handling
 import { 
     SlashCommandBuilder, 
     EmbedBuilder,
@@ -179,7 +179,20 @@ export default {
 
         components.push(actionRow);
 
-        await interaction.editReply({ embeds: [embed], components: components });
+        // Use editReply if this is coming from a deferred interaction, otherwise followUp
+        try {
+            if (interaction.deferred) {
+                await interaction.editReply({ embeds: [embed], components: components });
+            } else {
+                await interaction.followUp({ embeds: [embed], components: components, ephemeral: true });
+            }
+        } catch (error) {
+            console.error('Error updating collection display:', error);
+            await interaction.followUp({ 
+                content: '❌ Error updating collection display.',
+                ephemeral: true 
+            });
+        }
     },
 
     // Get series options for dropdown
@@ -292,16 +305,34 @@ export default {
         return emojiRegex.test(str);
     },
 
-    // Handle all interactions
+    // FIXED: Handle all interactions - Main entry point from index.js
     async handleInteraction(interaction) {
-        if (!interaction.customId.startsWith('coll_')) return;
+        console.log('Collection handleInteraction called with customId:', interaction.customId);
+        
+        if (!interaction.customId.startsWith('coll_')) {
+            console.log('Not a collection interaction, ignoring');
+            return;
+        }
 
-        await interaction.deferUpdate();
+        // Defer the update to prevent timeout
+        try {
+            await interaction.deferUpdate();
+        } catch (error) {
+            console.error('Error deferring update:', error);
+            return;
+        }
 
         try {
             const parts = interaction.customId.split('_');
+            if (parts.length < 3) {
+                console.error('Invalid customId format:', interaction.customId);
+                return;
+            }
+
             const action = parts[1];
             const username = parts[2];
+
+            console.log(`Processing action: ${action}, username: ${username}`);
 
             const user = await User.findOne({ 
                 raUsername: { $regex: new RegExp(`^${username}$`, 'i') }
@@ -318,49 +349,79 @@ export default {
                 case 'series':
                     if (interaction.isStringSelectMenu()) {
                         const selectedSeries = interaction.values[0];
+                        console.log(`Series selected: ${selectedSeries}`);
                         await this.showItemsPage(interaction, user, selectedSeries, 0);
                     }
                     break;
 
                 case 'prev':
-                    const prevFilter = parts[3];
-                    const currentPage = parseInt(interaction.message.embeds[0].footer?.text?.match(/Page (\d+)/)?.[1] || '1') - 1;
-                    await this.showItemsPage(interaction, user, prevFilter, Math.max(0, currentPage - 1));
+                    if (parts.length >= 4) {
+                        const prevFilter = parts[3];
+                        const currentPage = parseInt(interaction.message.embeds[0].footer?.text?.match(/Page (\d+)/)?.[1] || '1') - 1;
+                        console.log(`Previous page: filter=${prevFilter}, currentPage=${currentPage}`);
+                        await this.showItemsPage(interaction, user, prevFilter, Math.max(0, currentPage - 1));
+                    }
                     break;
 
                 case 'next':
-                    const nextFilter = parts[3];
-                    const nextCurrentPage = parseInt(interaction.message.embeds[0].footer?.text?.match(/Page (\d+)/)?.[1] || '1') - 1;
-                    await this.showItemsPage(interaction, user, nextFilter, nextCurrentPage + 1);
+                    if (parts.length >= 4) {
+                        const nextFilter = parts[3];
+                        const nextCurrentPage = parseInt(interaction.message.embeds[0].footer?.text?.match(/Page (\d+)/)?.[1] || '1') - 1;
+                        console.log(`Next page: filter=${nextFilter}, currentPage=${nextCurrentPage}`);
+                        await this.showItemsPage(interaction, user, nextFilter, nextCurrentPage + 1);
+                    }
                     break;
 
                 case 'inspect':
                     if (interaction.isStringSelectMenu()) {
                         const itemId = interaction.values[0];
-                        const returnFilter = parts[3];
-                        const returnPage = parseInt(parts[4]);
+                        const returnFilter = parts[3] || 'all';
+                        const returnPage = parseInt(parts[4]) || 0;
+                        console.log(`Inspecting item: ${itemId}, returnFilter=${returnFilter}, returnPage=${returnPage}`);
                         await this.showItemDetail(interaction, user, itemId, returnFilter, returnPage);
                     } else {
                         // Show inspect menu
-                        const filter = parts[3];
-                        const page = parseInt(parts[4]);
+                        const filter = parts[3] || 'all';
+                        const page = parseInt(parts[4]) || 0;
+                        console.log(`Showing inspect menu: filter=${filter}, page=${page}`);
                         await this.showInspectMenu(interaction, user, filter, page);
                     }
                     break;
 
                 case 'back':
-                    const backFilter = parts[3];
-                    const backPage = parseInt(parts[4]);
-                    await this.showItemsPage(interaction, user, backFilter, backPage);
+                    if (parts.length >= 5) {
+                        const backFilter = parts[3];
+                        const backPage = parseInt(parts[4]);
+                        console.log(`Going back: filter=${backFilter}, page=${backPage}`);
+                        await this.showItemsPage(interaction, user, backFilter, backPage);
+                    }
                     break;
+
+                default:
+                    console.log(`Unknown action: ${action}`);
+                    await interaction.followUp({
+                        content: '❌ Unknown action.',
+                        ephemeral: true
+                    });
             }
 
         } catch (error) {
             console.error('Error handling collection interaction:', error);
-            await interaction.followUp({ 
-                content: '❌ An error occurred.', 
-                ephemeral: true 
+            console.error('Error details:', {
+                customId: interaction.customId,
+                type: interaction.type,
+                isButton: interaction.isButton(),
+                isSelectMenu: interaction.isStringSelectMenu()
             });
+            
+            try {
+                await interaction.followUp({ 
+                    content: '❌ An error occurred while processing your request.', 
+                    ephemeral: true 
+                });
+            } catch (followUpError) {
+                console.error('Error sending error follow-up:', followUpError);
+            }
         }
     },
 
