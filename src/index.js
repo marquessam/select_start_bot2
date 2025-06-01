@@ -1,4 +1,4 @@
-// src/index.js - Complete updated version with clean collection handling (no manual combinations)
+// src/index.js - Complete updated version with tiebreaker expiration system
 import { Client, Collection, Events, GatewayIntentBits } from 'discord.js';
 import { config, validateConfig } from './config/config.js';
 import { connectDB } from './models/index.js';
@@ -412,6 +412,116 @@ async function handleWeeklyComprehensiveSync() {
     }
 }
 
+// NEW: Function to handle month-end tiebreaker expiration
+async function handleMonthEndTiebreakerExpiration() {
+    try {
+        console.log('🌅 Starting month-end tiebreaker expiration...');
+        
+        const today = new Date();
+        const tomorrow = new Date(today);
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        
+        // Check if tomorrow is the first day of a new month
+        if (tomorrow.getDate() === 1) {
+            console.log('📅 Month transition detected - expiring tiebreakers...');
+            
+            // Expire old tiebreakers
+            const expirationResult = await monthlyTasksService.expireOldTiebreakers();
+            
+            // Log results
+            if (expirationResult.success) {
+                console.log(`✅ Month-end tiebreaker expiration complete. Expired ${expirationResult.expired.length} tiebreaker(s).`);
+                
+                if (expirationResult.expired.length > 0) {
+                    expirationResult.expired.forEach(tb => {
+                        console.log(`   - ${tb.gameTitle} (${tb.monthKey})`);
+                    });
+                }
+                
+                // Send notification to admin log channel
+                try {
+                    const adminLogChannel = await client.channels.fetch(config.discord.adminLogChannelId);
+                    if (adminLogChannel) {
+                        const embed = new EmbedBuilder()
+                            .setColor('#FF9900')
+                            .setTitle('🌅 Monthly Transition - Tiebreaker Expiration')
+                            .setDescription('Automated month-end tiebreaker expiration has completed.')
+                            .setTimestamp();
+
+                        if (expirationResult.expired.length > 0) {
+                            const expiredList = expirationResult.expired.map(tb => 
+                                `• ${tb.gameTitle} (${tb.monthKey})`
+                            ).join('\n');
+                            
+                            embed.addFields({ 
+                                name: `Expired Tiebreakers (${expirationResult.expired.length})`, 
+                                value: expiredList 
+                            });
+                        } else {
+                            embed.addFields({ 
+                                name: 'Result', 
+                                value: 'No tiebreakers needed expiration.' 
+                            });
+                        }
+
+                        await adminLogChannel.send({ embeds: [embed] });
+                    }
+                } catch (notifyError) {
+                    console.error('Error sending tiebreaker expiration notification:', notifyError);
+                }
+            } else {
+                console.error('❌ Month-end tiebreaker expiration failed:', expirationResult.error);
+            }
+        } else {
+            console.log('ℹ️ Not a month transition day, skipping tiebreaker expiration...');
+        }
+    } catch (error) {
+        console.error('❌ Error in month-end tiebreaker expiration:', error);
+    }
+}
+
+// NEW: Function to handle month-start tiebreaker cleanup
+async function handleMonthStartTiebreakerCleanup() {
+    try {
+        console.log('🧹 Starting month-start tiebreaker cleanup...');
+        
+        // Clean up very old tiebreakers (older than 90 days)
+        const cleanupResult = await monthlyTasksService.cleanupOldTiebreakers(90);
+        
+        if (cleanupResult.count > 0) {
+            console.log(`🗑️ Cleaned up ${cleanupResult.count} old tiebreaker(s)`);
+            
+            // Send notification to admin log channel
+            try {
+                const adminLogChannel = await client.channels.fetch(config.discord.adminLogChannelId);
+                if (adminLogChannel) {
+                    const embed = new EmbedBuilder()
+                        .setColor('#00FF00')
+                        .setTitle('🧹 Monthly Cleanup - Old Tiebreakers')
+                        .setDescription('Automated month-start tiebreaker cleanup has completed.')
+                        .addFields({
+                            name: `Old Tiebreakers Deleted (${cleanupResult.count})`,
+                            value: cleanupResult.tiebreakers.slice(0, 10).join(', ') + 
+                                   (cleanupResult.count > 10 ? '...' : '')
+                        })
+                        .setTimestamp();
+
+                    await adminLogChannel.send({ embeds: [embed] });
+                }
+            } catch (notifyError) {
+                console.error('Error sending cleanup notification:', notifyError);
+            }
+        } else {
+            console.log('ℹ️ No old tiebreakers found for cleanup');
+        }
+        
+        console.log('✅ Month-start tiebreaker cleanup complete');
+        
+    } catch (error) {
+        console.error('❌ Error in month-start tiebreaker cleanup:', error);
+    }
+}
+
 // Handle ready event
 client.once(Events.ClientReady, async () => {
     try {
@@ -471,6 +581,15 @@ client.once(Events.ClientReady, async () => {
             });
         });
 
+        // NEW: Schedule month-end tiebreaker expiration (last 4 days of month at 11:30 PM)
+        // This gives time for final submissions before month ends
+        cron.schedule('30 23 28-31 * *', () => {
+            console.log('Running month-end tiebreaker expiration check...');
+            handleMonthEndTiebreakerExpiration().catch(error => {
+                console.error('Error in month-end tiebreaker expiration:', error);
+            });
+        });
+
         // Schedule monthly tasks on the 1st of each month at 00:01
         cron.schedule('1 0 1 * *', () => {
             console.log('Running monthly tasks...');
@@ -480,6 +599,15 @@ client.once(Events.ClientReady, async () => {
             
             // NOTE: Monthly GP is now handled automatically by monthlyGPService
             // No need for manual GP allowance reset
+        });
+
+        // NEW: Schedule month-start tiebreaker cleanup on the 1st of each month at 02:00
+        // This catches any tiebreakers that weren't expired and cleans up very old ones
+        cron.schedule('0 2 1 * *', () => {
+            console.log('Running month-start tiebreaker cleanup...');
+            handleMonthStartTiebreakerCleanup().catch(error => {
+                console.error('Error in month-start tiebreaker cleanup:', error);
+            });
         });
 
         // Schedule arcade service to run daily at 00:15 (just after midnight)
@@ -629,6 +757,22 @@ client.once(Events.ClientReady, async () => {
             }
         }
 
+        // NEW: Check for any tiebreakers that should have been expired on startup
+        if (currentDay <= 3) {
+            console.log('Checking for any tiebreakers that should have been expired...');
+            try {
+                const expirationResult = await monthlyTasksService.expireOldTiebreakers();
+                if (expirationResult.success && expirationResult.expired.length > 0) {
+                    console.log(`⏰ Startup: Expired ${expirationResult.expired.length} overdue tiebreaker(s)`);
+                    expirationResult.expired.forEach(tb => {
+                        console.log(`   - ${tb.gameTitle} (${tb.monthKey})`);
+                    });
+                }
+            } catch (error) {
+                console.error('Error in startup tiebreaker expiration check:', error);
+            }
+        }
+
         // Schedule voting poll creation (runs at midnight UTC on days that are 8 days before end of month)
         cron.schedule('0 0 22-31 * *', async () => {
             const today = new Date();
@@ -706,6 +850,8 @@ client.once(Events.ClientReady, async () => {
         console.log('  • Monthly GP grants: Automatic on 1st of each month');
         console.log('  • Weekly comprehensive yearly sync: Sundays at 3:00 AM');
         console.log('  • Monthly tasks: 1st of each month');
+        console.log('  • Tiebreaker expiration: Last 4 days of month at 11:30 PM'); // NEW
+        console.log('  • Tiebreaker cleanup: 1st of each month at 2:00 AM'); // NEW
         console.log('  • Arcade service: Daily at 12:15 AM');
         console.log('  • Arena feeds: Every 30 minutes');
         console.log('  • Arena timeouts: Hourly at 45 minutes past');
