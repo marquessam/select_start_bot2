@@ -113,14 +113,12 @@ const arcadeBoardSchema = new mongoose.Schema({
     // NEW: Expiration tracking fields
     isActive: {
         type: Boolean,
-        default: true,
-        index: true // Index for faster queries
+        default: true
     },
     
     expiredAt: {
         type: Date,
-        default: null,
-        index: true // Index for cleanup queries
+        default: null
     },
     
     // Tiebreaker-breaker fields (for when tiebreaker is also tied)
