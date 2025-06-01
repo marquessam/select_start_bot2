@@ -153,7 +153,7 @@ arcadeBoardSchema.index({ boardType: 1, startDate: 1, endDate: 1 });
 arcadeBoardSchema.index({ boardType: 1, monthKey: 1 });
 arcadeBoardSchema.index({ boardType: 1, isActive: 1 });
 arcadeBoardSchema.index({ boardType: 1, endDate: 1, isActive: 1 });
-arcadeBoardSchema.index({ expiredAt: 1 }, { sparse: true }); // Sparse index for expiredAt
+//arcadeBoardSchema.index({ expiredAt: 1 }, { sparse: true }); // Sparse index for expiredAt
 
 // Add index for tiebreaker-breaker queries
 arcadeBoardSchema.index({ 
