@@ -1,4 +1,4 @@
-// src/index.js - Complete updated version with combination system and collection dropdown support
+// src/index.js - Complete updated version with clean collection handling (no manual combinations)
 import { Client, Collection, Events, GatewayIntentBits } from 'discord.js';
 import { config, validateConfig } from './config/config.js';
 import { connectDB } from './models/index.js';
@@ -112,7 +112,7 @@ client.on(Events.InteractionCreate, async interaction => {
     }
 });
 
-// Handle button interactions - UPDATED WITH COMPREHENSIVE GACHA AND COMBINATION SUPPORT
+// Handle button interactions - CLEAN VERSION WITHOUT MANUAL COMBINATIONS
 client.on(Events.InteractionCreate, async interaction => {
     if (!interaction.isButton()) return;
     
@@ -150,91 +150,18 @@ client.on(Events.InteractionCreate, async interaction => {
             return;
         }
 
-        // Check if this is a collection-related button
-        if (interaction.customId.startsWith('collection_')) {
+        // Check if this is a collection-related button - CLEAN ROUTING
+        if (interaction.customId.startsWith('coll_')) {
             console.log('Routing to collection handler');
             const collectionCommand = client.commands.get('collection');
-            if (collectionCommand && typeof collectionCommand.handleButtonInteraction === 'function') {
-                await collectionCommand.handleButtonInteraction(interaction);
+            if (collectionCommand && typeof collectionCommand.handleInteraction === 'function') {
+                await collectionCommand.handleInteraction(interaction);
             } else {
-                console.log('Collection command button handler not found');
-            }
-            return;
-        }
-
-        // Check if this is a combination-related button
-        if (interaction.customId.startsWith('combine_')) {
-            console.log('Routing to combination handler');
-            
-            await interaction.deferReply({ ephemeral: true });
-
-            const user = await User.findOne({ discordId: interaction.user.id });
-            if (!user) {
-                return interaction.editReply({
-                    content: '❌ You are not registered! Please ask an admin to register you first.',
+                console.log('Collection command interaction handler not found');
+                await interaction.reply({
+                    content: '❌ Collection feature not available.',
                     ephemeral: true
                 });
-            }
-
-            // Handle different combination button types
-            if (interaction.customId.includes('combine_confirm_')) {
-                // Handle combination confirmation
-                const collectionCommand = client.commands.get('collection');
-                if (collectionCommand && typeof collectionCommand.handleCombineConfirm === 'function') {
-                    await collectionCommand.handleCombineConfirm(interaction);
-                } else {
-                    await interaction.editReply({
-                        content: '❌ Combination handler not available.',
-                        ephemeral: true
-                    });
-                }
-            } else if (interaction.customId.includes('combine_info_')) {
-                // Handle combination info button
-                const infoMessage = `🔧 **How Combinations Work**\n\n` +
-                                  `⚡ **Automatic Combinations:**\n` +
-                                  `• Happen instantly when you have the right ingredients\n` +
-                                  `• Examples: 5 green rupees → 1 blue rupee\n\n` +
-                                  `🧪 **Manual Combinations:**\n` +
-                                  `• Discovered through experimentation\n` +
-                                  `• Use the "Combine Items" button to try different recipes\n` +
-                                  `• Share discoveries with other users!\n\n` +
-                                  `💡 **Tips:**\n` +
-                                  `• Try combining items of the same series\n` +
-                                  `• Higher quantities often create better results\n` +
-                                  `• Some combinations require items from different themes\n` +
-                                  `• Check the community chat for hints and discoveries!`;
-                
-                await interaction.editReply({
-                    content: infoMessage,
-                    ephemeral: true
-                });
-            } else if (interaction.customId.includes('combine_stats_')) {
-                // Handle combination stats button
-                const stats = combinationService.getCombinationStats(user);
-                const statsMessage = `📊 **Your Combination Statistics**\n\n` +
-                                   `🔧 **Items Combined:** ${stats.totalCombined}\n` +
-                                   `📦 **Unique Combined Items:** ${stats.uniqueCombined}\n` +
-                                   `🎯 **Discovery Rate:** ${stats.uniqueCombined > 0 ? 'Active Explorer!' : 'Ready to Experiment!'}\n\n` +
-                                   `💡 **Next Steps:**\n` +
-                                   `• Try combining stackable items in groups of 5 or 10\n` +
-                                   `• Experiment with rare items and common materials\n` +
-                                   `• Ask other users about their discoveries!`;
-                
-                await interaction.editReply({
-                    content: statsMessage,
-                    ephemeral: true
-                });
-            } else {
-                // Generic combination button handler
-                const collectionCommand = client.commands.get('collection');
-                if (collectionCommand && typeof collectionCommand.handleButtonInteraction === 'function') {
-                    await collectionCommand.handleButtonInteraction(interaction);
-                } else {
-                    await interaction.editReply({
-                        content: '❌ Combination feature not available.',
-                        ephemeral: true
-                    });
-                }
             }
             return;
         }
@@ -287,65 +214,20 @@ client.on(Events.InteractionCreate, async interaction => {
     }
 });
 
-// Handle select menu interactions - UPDATED WITH COMPREHENSIVE COLLECTION SUPPORT
+// Handle select menu interactions - CLEAN VERSION WITHOUT MANUAL COMBINATIONS
 client.on(Events.InteractionCreate, async interaction => {
     if (!interaction.isStringSelectMenu()) return;
     
     try {
-        // NEW: Check if this is a collection series dropdown
-        if (interaction.customId.startsWith('collection_series_')) {
-            console.log('Routing to collection series handler');
+        // Check if this is a collection-related select menu - CLEAN ROUTING
+        if (interaction.customId.startsWith('coll_')) {
+            console.log('Routing to collection select menu handler');
             const collectionCommand = client.commands.get('collection');
-            if (collectionCommand && typeof collectionCommand.handleSelectMenuInteraction === 'function') {
-                await collectionCommand.handleSelectMenuInteraction(interaction);
+            if (collectionCommand && typeof collectionCommand.handleInteraction === 'function') {
+                await collectionCommand.handleInteraction(interaction);
             } else {
                 await interaction.reply({
-                    content: '❌ Collection series feature not available.',
-                    ephemeral: true
-                });
-            }
-            return;
-        }
-
-        // NEW: Check if this is a collection filter dropdown
-        if (interaction.customId.startsWith('collection_filter_apply_')) {
-            console.log('Routing to collection filter handler');
-            const collectionCommand = client.commands.get('collection');
-            if (collectionCommand && typeof collectionCommand.handleSelectMenuInteraction === 'function') {
-                await collectionCommand.handleSelectMenuInteraction(interaction);
-            } else {
-                await interaction.reply({
-                    content: '❌ Collection filter feature not available.',
-                    ephemeral: true
-                });
-            }
-            return;
-        }
-
-        // NEW: Check if this is a collection inspect item dropdown
-        if (interaction.customId.startsWith('collection_inspect_item_')) {
-            console.log('Routing to collection inspect handler');
-            const collectionCommand = client.commands.get('collection');
-            if (collectionCommand && typeof collectionCommand.handleSelectMenuInteraction === 'function') {
-                await collectionCommand.handleSelectMenuInteraction(interaction);
-            } else {
-                await interaction.reply({
-                    content: '❌ Collection inspect feature not available.',
-                    ephemeral: true
-                });
-            }
-            return;
-        }
-        
-        // Check if this is a combination-related select menu
-        if (interaction.customId.startsWith('combine_select_')) {
-            console.log('Routing to combination select handler');
-            const collectionCommand = client.commands.get('collection');
-            if (collectionCommand && typeof collectionCommand.handleSelectMenuInteraction === 'function') {
-                await collectionCommand.handleSelectMenuInteraction(interaction);
-            } else {
-                await interaction.reply({
-                    content: '❌ Combination feature not available.',
+                    content: '❌ Collection feature not available.',
                     ephemeral: true
                 });
             }
@@ -828,8 +710,8 @@ client.once(Events.ClientReady, async () => {
         console.log('  • Arena feeds: Every 30 minutes');
         console.log('  • Arena timeouts: Hourly at 45 minutes past');
         console.log('  • Gacha Machine: Active and pinned');
-        console.log('  • Combination System: Ready for experimentation');
-        console.log('  • Collection Dropdowns: Series and filter support');
+        console.log('  • Automatic Combinations: Background processing on gacha pulls');
+        console.log('  • Collection Viewer: Clean interface with series filtering');
         console.log('  • Various other feeds: Hourly');
         
     } catch (error) {
