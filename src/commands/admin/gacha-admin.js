@@ -1,4 +1,4 @@
-// src/commands/admin/gacha-admin.js - COMPLETE FIXED VERSION with all updates
+// src/commands/admin/gacha-admin.js - COMPLETE VERSION with new combination syntax
 import { 
     SlashCommandBuilder, 
     EmbedBuilder, 
@@ -303,17 +303,17 @@ export default {
         await interaction.editReply({ embeds: [embed], components });
     },
 
-    // FIXED: Updated handleAddCombination with shorter placeholder
+    // UPDATED: New combination syntax with x and =
     async handleAddCombination(interaction) {
         const modal = new ModalBuilder()
             .setCustomId('gacha_add_combo_modal')
             .setTitle('Add Automatic Combination');
 
-        // FIXED: Shortened placeholder to under 100 characters
+        // UPDATED: New syntax with x for quantities and = as separator
         const formatInput = new TextInputBuilder()
             .setCustomId('combo_format')
             .setLabel('Combination Rule')
-            .setPlaceholder('small_key:5 -> boss_key OR mario + luigi -> shadow_unlock')
+            .setPlaceholder('025x5 = 107 OR 001 + 003 = 999')
             .setStyle(TextInputStyle.Paragraph)
             .setRequired(true);
 
@@ -416,33 +416,45 @@ export default {
 
         } catch (error) {
             console.error('Error creating combination:', error);
-            // UPDATED: Better error message with more examples
+            // UPDATED: Better error message with new format examples
             await interaction.editReply({
                 content: `❌ Error creating combination: ${error.message}\n\n**Format Examples:**\n` +
-                         `• \`small_key:5 -> boss_key\` (5 small keys make 1 boss key)\n` +
-                         `• \`mario + luigi -> shadow_unlock\` (mario + luigi make shadow_unlock)\n` +
-                         `• \`green_rupee:10 -> blue_rupee:2\` (10 green rupees make 2 blue rupees)\n` +
-                         `• \`item1 + item2 + item3 -> special_item\` (multiple ingredients)\n\n` +
+                         `• \`025x5 = 107\` (5 items with ID 025 make 1 item with ID 107)\n` +
+                         `• \`001 + 003 = 999\` (item 001 + item 003 make item 999)\n` +
+                         `• \`010x3 + 020x2 = 030x5\` (3 of item 010 + 2 of item 020 = 5 of item 030)\n` +
+                         `• \`item1 + item2 + item3 = special_item\` (multiple ingredients)\n\n` +
                          `**Format Rules:**\n` +
-                         `• Use \`item_id:quantity\` for specific amounts\n` +
-                         `• Use \`+\` or \`,\` to separate ingredients\n` +
-                         `• Use \`->\` or \`=\` to separate ingredients from result`
+                         `• Use \`itemIDx#\` for quantities (e.g., \`025x5\` = 5 of item 025)\n` +
+                         `• Use \`+\` or \`,\` to separate multiple ingredients\n` +
+                         `• Use \`=\` to separate ingredients from result (preferred)\n` +
+                         `• \`->\` also works but \`=\` is preferred\n` +
+                         `• If no quantity specified, defaults to 1`
             });
         }
     },
 
+    // UPDATED: New parsing logic for x and = syntax
     async parseSimpleCombination(format) {
         // Remove extra whitespace
         format = format.trim();
 
-        // Support both -> and = as separators
-        let separator = '->';
-        if (format.includes(' = ')) separator = ' = ';
-        else if (format.includes('=')) separator = '=';
+        // UPDATED: Prefer = over -> as separator
+        let separator = '=';
+        if (format.includes(' = ')) {
+            separator = ' = ';
+        } else if (format.includes('=')) {
+            separator = '=';
+        } else if (format.includes(' -> ')) {
+            separator = ' -> ';
+        } else if (format.includes('->')) {
+            separator = '->';
+        } else {
+            throw new Error('Format must use = or -> as separator (e.g., "025x5 = 107")');
+        }
 
         const parts = format.split(separator);
         if (parts.length !== 2) {
-            throw new Error('Format must be: ingredients -> result');
+            throw new Error('Format must be: ingredients = result (e.g., "025x5 = 107")');
         }
 
         const ingredientsPart = parts[0].trim();
@@ -453,8 +465,14 @@ export default {
         const ingredientItems = ingredientsPart.split(/[+,]/).map(s => s.trim());
 
         for (const item of ingredientItems) {
-            if (item.includes(':')) {
-                // Format: item_id:quantity
+            // UPDATED: Support both x and : for quantities, prefer x
+            if (item.includes('x')) {
+                // Format: item_id x quantity (e.g., "025x5")
+                const [itemId, quantityStr] = item.split('x');
+                const quantity = parseInt(quantityStr) || 1;
+                ingredients.push({ itemId: itemId.trim(), quantity });
+            } else if (item.includes(':')) {
+                // Legacy format: item_id:quantity (still supported)
                 const [itemId, quantityStr] = item.split(':');
                 const quantity = parseInt(quantityStr) || 1;
                 ingredients.push({ itemId: itemId.trim(), quantity });
@@ -466,11 +484,18 @@ export default {
 
         // Parse result
         let result;
-        if (resultPart.includes(':')) {
+        if (resultPart.includes('x')) {
+            // Format: item_id x quantity (e.g., "107x2")
+            const [itemId, quantityStr] = resultPart.split('x');
+            const quantity = parseInt(quantityStr) || 1;
+            result = { itemId: itemId.trim(), quantity };
+        } else if (resultPart.includes(':')) {
+            // Legacy format: item_id:quantity (still supported)
             const [itemId, quantityStr] = resultPart.split(':');
             const quantity = parseInt(quantityStr) || 1;
             result = { itemId: itemId.trim(), quantity };
         } else {
+            // Format: item_id (quantity defaults to 1)
             result = { itemId: resultPart.trim(), quantity: 1 };
         }
 
@@ -498,11 +523,12 @@ export default {
             
             rulesText += `**${rule.ruleId}** (Priority: ${rule.priority})\n`;
             
-            // Show ingredients in simple format
+            // UPDATED: Show ingredients in new format with x for quantities
             const ingredientStrs = rule.ingredients.map(ing => 
-                `${ing.quantity > 1 ? ing.quantity : ''}${ing.itemId}`
+                ing.quantity > 1 ? `${ing.itemId}x${ing.quantity}` : ing.itemId
             );
-            rulesText += `${ingredientStrs.join(' + ')} → ${resultEmoji} ${rule.result.quantity}x ${resultItem?.itemName || rule.result.itemId}\n\n`;
+            
+            rulesText += `${ingredientStrs.join(' + ')} = ${resultEmoji} ${resultItem?.itemName || rule.result.itemId}${rule.result.quantity > 1 ? ` (x${rule.result.quantity})` : ''}\n\n`;
         }
         
         if (rules.length > 10) {
@@ -541,11 +567,12 @@ export default {
             
             rulesText += `**${rule.ruleId}** (Priority: ${rule.priority})\n`;
             
-            // Show ingredients in simple format
+            // UPDATED: Show ingredients in new format with x for quantities
             const ingredientStrs = rule.ingredients.map(ing => 
-                `${ing.quantity > 1 ? ing.quantity : ''}${ing.itemId}`
+                ing.quantity > 1 ? `${ing.itemId}x${ing.quantity}` : ing.itemId
             );
-            rulesText += `${ingredientStrs.join(' + ')} → ${resultEmoji} ${rule.result.quantity}x ${resultItem?.itemName || rule.result.itemId}\n\n`;
+            
+            rulesText += `${ingredientStrs.join(' + ')} = ${resultEmoji} ${resultItem?.itemName || rule.result.itemId}${rule.result.quantity > 1 ? ` (x${rule.result.quantity})` : ''}\n\n`;
         }
         
         if (rules.length > 10) {
@@ -815,7 +842,7 @@ export default {
         await interaction.editReply({ embeds: [embed] });
     },
 
-    // FIXED: Handle button interactions
+    // Handle button interactions
     async handleButtonInteraction(interaction) {
         if (!interaction.customId.startsWith('gacha_')) return;
 
@@ -837,7 +864,7 @@ export default {
         if (interaction.customId === 'gacha_list_combinations') {
             await this.handleListCombinationsFromButton(interaction);
         } else if (interaction.customId.startsWith('gacha_list_')) {
-            // FIXED: Handle pagination directly without mock interaction
+            // Handle pagination directly without mock interaction
             const parts = interaction.customId.split('_');
             const page = parseInt(parts[2]);
             const filter = parts[3];
