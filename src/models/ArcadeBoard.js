@@ -110,7 +110,20 @@ const arcadeBoardSchema = new mongoose.Schema({
         default: false
     },
     
-    // NEW: Tiebreaker-breaker fields (for when tiebreaker is also tied)
+    // NEW: Expiration tracking fields
+    isActive: {
+        type: Boolean,
+        default: true,
+        index: true // Index for faster queries
+    },
+    
+    expiredAt: {
+        type: Date,
+        default: null,
+        index: true // Index for cleanup queries
+    },
+    
+    // Tiebreaker-breaker fields (for when tiebreaker is also tied)
     // These fields are used to resolve ties within the primary tiebreaker
     tiebreakerBreakerLeaderboardId: {
         type: Number,
@@ -140,14 +153,38 @@ const arcadeBoardSchema = new mongoose.Schema({
 // Create indexes for frequently queried fields
 arcadeBoardSchema.index({ boardType: 1, startDate: 1, endDate: 1 });
 arcadeBoardSchema.index({ boardType: 1, monthKey: 1 });
+arcadeBoardSchema.index({ boardType: 1, isActive: 1 });
+arcadeBoardSchema.index({ boardType: 1, endDate: 1, isActive: 1 });
+arcadeBoardSchema.index({ expiredAt: 1 }, { sparse: true }); // Sparse index for expiredAt
 
-// NEW: Add index for tiebreaker-breaker queries
+// Add index for tiebreaker-breaker queries
 arcadeBoardSchema.index({ 
     boardType: 1, 
     tiebreakerBreakerLeaderboardId: 1,
     startDate: 1, 
     endDate: 1 
 });
+
+// NEW: Instance methods for expiration management
+arcadeBoardSchema.methods.expire = function() {
+    this.isActive = false;
+    this.expiredAt = new Date();
+    
+    // Clear tiebreaker-breaker when expiring
+    if (this.boardType === 'tiebreaker' && this.hasTiebreakerBreaker()) {
+        this.clearTiebreakerBreaker();
+    }
+    
+    return this.save();
+};
+
+arcadeBoardSchema.methods.isExpired = function() {
+    return this.isActive === false || (this.endDate && this.endDate < new Date());
+};
+
+arcadeBoardSchema.methods.shouldBeExpired = function() {
+    return this.endDate && this.endDate < new Date() && this.isActive !== false;
+};
 
 // Static method to find racing board by month name or month key
 arcadeBoardSchema.statics.findRacingBoardByMonth = async function(monthInput) {
@@ -213,17 +250,19 @@ arcadeBoardSchema.statics.findActiveTiebreaker = function() {
     return this.findOne({
         boardType: 'tiebreaker',
         startDate: { $lte: now },
-        endDate: { $gte: now }
+        endDate: { $gte: now },
+        isActive: true
     });
 };
 
-// NEW: Statics method to find active tiebreaker with tiebreaker-breaker
+// Statics method to find active tiebreaker with tiebreaker-breaker
 arcadeBoardSchema.statics.findActiveTiebreakerWithBreaker = function() {
     const now = new Date();
     return this.findOne({
         boardType: 'tiebreaker',
         startDate: { $lte: now },
         endDate: { $gte: now },
+        isActive: true,
         tiebreakerBreakerLeaderboardId: { $exists: true, $ne: null }
     });
 };
@@ -240,6 +279,57 @@ arcadeBoardSchema.statics.findAllRacingBoards = function() {
     }).sort({ startDate: -1 }); // Sort by start date descending (newest first)
 };
 
+// NEW: Static methods for bulk expiration operations
+arcadeBoardSchema.statics.findExpiredTiebreakers = function() {
+    const now = new Date();
+    return this.find({
+        boardType: 'tiebreaker',
+        endDate: { $lt: now },
+        isActive: { $ne: false }
+    });
+};
+
+arcadeBoardSchema.statics.findActiveTiebreakers = function() {
+    const now = new Date();
+    return this.find({
+        boardType: 'tiebreaker',
+        isActive: true,
+        $or: [
+            { endDate: { $exists: false } },
+            { endDate: { $gte: now } }
+        ]
+    });
+};
+
+arcadeBoardSchema.statics.expireOldTiebreakers = async function() {
+    const expiredTiebreakers = await this.findExpiredTiebreakers();
+    const results = [];
+    
+    for (const tiebreaker of expiredTiebreakers) {
+        await tiebreaker.expire();
+        results.push({
+            boardId: tiebreaker.boardId,
+            gameTitle: tiebreaker.gameTitle,
+            monthKey: tiebreaker.monthKey
+        });
+    }
+    
+    return results;
+};
+
+arcadeBoardSchema.statics.cleanupOldExpired = function(daysOld = 90) {
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - daysOld);
+    
+    return this.deleteMany({
+        boardType: 'tiebreaker',
+        $or: [
+            { isActive: false, expiredAt: { $lt: cutoffDate } },
+            { endDate: { $lt: cutoffDate } }
+        ]
+    });
+};
+
 // Method to check if a racing board is completed but points not yet awarded
 arcadeBoardSchema.methods.isCompletedWithoutPoints = function() {
     const now = new Date();
@@ -248,14 +338,14 @@ arcadeBoardSchema.methods.isCompletedWithoutPoints = function() {
            !this.pointsAwarded;
 };
 
-// NEW: Method to check if this tiebreaker has a tiebreaker-breaker configured
+// Method to check if this tiebreaker has a tiebreaker-breaker configured
 arcadeBoardSchema.methods.hasTiebreakerBreaker = function() {
     return this.boardType === 'tiebreaker' && 
            this.tiebreakerBreakerLeaderboardId && 
            this.tiebreakerBreakerGameId;
 };
 
-// NEW: Method to get tiebreaker-breaker info safely
+// Method to get tiebreaker-breaker info safely
 arcadeBoardSchema.methods.getTiebreakerBreakerInfo = function() {
     if (!this.hasTiebreakerBreaker()) {
         return null;
@@ -269,7 +359,7 @@ arcadeBoardSchema.methods.getTiebreakerBreakerInfo = function() {
     };
 };
 
-// NEW: Method to clear tiebreaker-breaker data
+// Method to clear tiebreaker-breaker data
 arcadeBoardSchema.methods.clearTiebreakerBreaker = function() {
     this.tiebreakerBreakerLeaderboardId = null;
     this.tiebreakerBreakerGameId = null;
@@ -277,7 +367,7 @@ arcadeBoardSchema.methods.clearTiebreakerBreaker = function() {
     this.tiebreakerBreakerDescription = null;
 };
 
-// NEW: Method to set tiebreaker-breaker data
+// Method to set tiebreaker-breaker data
 arcadeBoardSchema.methods.setTiebreakerBreaker = function(leaderboardId, gameId, gameTitle, description = null) {
     this.tiebreakerBreakerLeaderboardId = leaderboardId;
     this.tiebreakerBreakerGameId = gameId;
@@ -285,9 +375,47 @@ arcadeBoardSchema.methods.setTiebreakerBreaker = function(leaderboardId, gameId,
     this.tiebreakerBreakerDescription = description;
 };
 
-// NEW: Virtual to check if board is a tiebreaker with tiebreaker-breaker
+// NEW: Pre-save hook to automatically expire boards that have passed their end date
+arcadeBoardSchema.pre('save', function(next) {
+    // Auto-expire if end date has passed and board is still active
+    if (this.boardType === 'tiebreaker' && this.shouldBeExpired()) {
+        this.isActive = false;
+        this.expiredAt = new Date();
+        
+        // Clear tiebreaker-breaker
+        if (this.hasTiebreakerBreaker()) {
+            this.clearTiebreakerBreaker();
+        }
+    }
+    
+    next();
+});
+
+// Virtual to check if board is a tiebreaker with tiebreaker-breaker
 arcadeBoardSchema.virtual('isTiebreakerWithBreaker').get(function() {
     return this.hasTiebreakerBreaker();
+});
+
+// NEW: Virtual for easy status checking
+arcadeBoardSchema.virtual('status').get(function() {
+    if (this.boardType !== 'tiebreaker') {
+        return this.boardType;
+    }
+    
+    if (this.isActive === false) {
+        return 'expired';
+    }
+    
+    const now = new Date();
+    if (this.endDate && this.endDate < now) {
+        return 'should_expire';
+    }
+    
+    if (this.startDate && this.startDate > now) {
+        return 'upcoming';
+    }
+    
+    return 'active';
 });
 
 export const ArcadeBoard = mongoose.model('ArcadeBoard', arcadeBoardSchema);
