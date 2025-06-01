@@ -221,9 +221,15 @@ export default {
         const skip = (page - 1) * itemsPerPage;
 
         const items = await GachaItem.find(query)
-            .sort({ dropRate: -1, rarity: 1, itemName: 1 })
             .skip(skip)
             .limit(itemsPerPage);
+
+        // FIXED: Sort items numerically by ID
+        items.sort((a, b) => {
+            const aNum = parseInt(a.itemId) || 0;
+            const bNum = parseInt(b.itemId) || 0;
+            return aNum - bNum;
+        });
 
         if (items.length === 0) {
             return interaction.editReply({ content: 'No items found.' });
@@ -653,7 +659,14 @@ export default {
     async handleButtonInteraction(interaction) {
         if (!interaction.customId.startsWith('gacha_')) return;
 
-        await interaction.deferUpdate();
+        // FIXED: Check if interaction is already deferred before trying to defer
+        try {
+            if (!interaction.deferred && !interaction.replied) {
+                await interaction.deferUpdate();
+            }
+        } catch (error) {
+            console.log('Interaction already handled, continuing...');
+        }
 
         if (interaction.customId === 'gacha_add_combination') {
             await this.handleAddCombination(interaction);
