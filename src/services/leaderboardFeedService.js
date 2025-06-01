@@ -63,6 +63,10 @@ class LeaderboardFeedService extends FeedManagerBase {
         this.alertCooldown = 5 * 60 * 1000; // 5 minute cooldown between alerts for same user
         this.debugMode = process.env.NODE_ENV === 'development'; // Enable debug logging in dev
         
+        // Add debugging for month detection
+        this.lastKnownChallenge = null;
+        this.forceRefresh = false;
+        
         // Set the alerts channel for notifications
         AlertUtils.setAlertsChannel(this.alertsChannelId);
     }
@@ -77,6 +81,15 @@ class LeaderboardFeedService extends FeedManagerBase {
         await this.updateLeaderboard();
     }
 
+    // Add method to force refresh (can be called externally)
+    forceRefreshLeaderboard() {
+        console.log('Forcing leaderboard refresh - clearing cached data');
+        this.forceRefresh = true;
+        this.lastKnownChallenge = null;
+        // Clear message cache to force recreation
+        this.messageIds.clear();
+    }
+
     async updateLeaderboard() {
         try {
             const channel = await this.getChannel();
@@ -85,12 +98,35 @@ class LeaderboardFeedService extends FeedManagerBase {
                 return;
             }
             
+            // Enhanced debugging for current date and challenge detection
+            const now = new Date();
+            const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+            const nextMonthStart = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+            const monthName = now.toLocaleString('default', { month: 'long' });
+            const year = now.getFullYear();
+            
+            console.log(`[LeaderboardFeed] Current time: ${now.toISOString()}`);
+            console.log(`[LeaderboardFeed] Looking for challenge in range: ${currentMonthStart.toISOString()} to ${nextMonthStart.toISOString()}`);
+            console.log(`[LeaderboardFeed] Current month: ${monthName} ${year}`);
+            
             // Generate monthly leaderboard embeds
-            const { headerEmbed, participantEmbeds, sortedUsers } = await this.generateLeaderboardEmbeds();
+            const { headerEmbed, participantEmbeds, sortedUsers, challengeInfo } = await this.generateLeaderboardEmbeds();
             if (!headerEmbed || !participantEmbeds || participantEmbeds.length === 0 || !sortedUsers) {
-                console.error('Failed to generate monthly leaderboard embeds');
+                console.error('[LeaderboardFeed] Failed to generate monthly leaderboard embeds');
                 return;
             }
+
+            // Check if this is a new challenge (month changed)
+            if (this.lastKnownChallenge && challengeInfo && 
+                this.lastKnownChallenge.id !== challengeInfo.id) {
+                console.log(`[LeaderboardFeed] NEW CHALLENGE DETECTED! Previous: ${this.lastKnownChallenge.title}, New: ${challengeInfo.title}`);
+                this.forceRefresh = true;
+                this.messageIds.clear(); // Force recreation of all messages
+                this.previousDetailedRanks.clear(); // Clear rank tracking for new month
+            }
+            
+            // Store current challenge info for next comparison
+            this.lastKnownChallenge = challengeInfo;
 
             // Generate yearly leaderboard embeds
             const { yearlyHeaderEmbed, yearlyParticipantEmbeds } = await this.generateYearlyLeaderboardEmbeds();
@@ -106,7 +142,7 @@ class LeaderboardFeedService extends FeedManagerBase {
             // Format timestamp using our utility
             const timestamp = getDiscordTimestamp(new Date());
             
-            const monthlyHeaderContent = `**Monthly Challenge Leaderboard** • ${timestamp} • Updates every 15 minutes`;
+            const monthlyHeaderContent = `**${monthName} ${year} Challenge Leaderboard** • ${timestamp} • Updates every 15 minutes`;
             
             // Calculate how many messages we need in total
             const totalMessagesNeeded = 1 + participantEmbeds.length; // Monthly header + monthly participants
@@ -147,9 +183,11 @@ class LeaderboardFeedService extends FeedManagerBase {
             }
 
             // Check if we need to update or create new messages
-            if (this.messageIds.size === completeMessagesNeeded) {
+            if (this.messageIds.size === completeMessagesNeeded && !this.forceRefresh) {
                 // Update existing messages in proper order
                 try {
+                    console.log(`[LeaderboardFeed] Updating existing ${completeMessagesNeeded} messages`);
+                    
                     // 1. Update monthly header message
                     await this.updateMessage('monthly_header', { content: monthlyHeaderContent, embeds: [headerEmbed] }, true);
                     
@@ -181,15 +219,20 @@ class LeaderboardFeedService extends FeedManagerBase {
                         'points_overview',
                         { content: '', embeds: [pointsOverviewEmbed] }
                     );
+                    
+                    console.log(`[LeaderboardFeed] Successfully updated all messages for ${monthName} ${year}`);
                 } catch (error) {
                     console.error('Error updating leaderboard messages:', error);
                     // If update fails, recreate all messages
                     this.messageIds.clear();
+                    this.forceRefresh = true;
                 }
             } 
             
             // If message count doesn't match or we failed to update, recreate all messages
-            if (this.messageIds.size !== completeMessagesNeeded) {
+            if (this.messageIds.size !== completeMessagesNeeded || this.forceRefresh) {
+                console.log(`[LeaderboardFeed] Recreating all messages - Count: ${this.messageIds.size}/${completeMessagesNeeded}, ForceRefresh: ${this.forceRefresh}`);
+                
                 // Delete any existing messages first
                 await this.clearChannel();
                 
@@ -225,7 +268,13 @@ class LeaderboardFeedService extends FeedManagerBase {
                     'points_overview',
                     { content: '', embeds: [pointsOverviewEmbed] }
                 );
+                
+                console.log(`[LeaderboardFeed] Successfully created all new messages for ${monthName} ${year}`);
             }
+            
+            // Reset force refresh flag
+            this.forceRefresh = false;
+            
         } catch (error) {
             console.error('Error updating leaderboard:', error);
         }
@@ -361,7 +410,9 @@ class LeaderboardFeedService extends FeedManagerBase {
             const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
             const nextMonthStart = new Date(now.getFullYear(), now.getMonth() + 1, 1);
 
-            // Get current challenge
+            console.log(`[GenerateLeaderboard] Searching for challenge between ${currentMonthStart.toISOString()} and ${nextMonthStart.toISOString()}`);
+
+            // Get current challenge - with enhanced error handling
             const currentChallenge = await Challenge.findOne({
                 date: {
                     $gte: currentMonthStart,
@@ -370,9 +421,29 @@ class LeaderboardFeedService extends FeedManagerBase {
             });
 
             if (!currentChallenge) {
-                console.log('No active challenge found for the current month.');
-                return { headerEmbed: null, participantEmbeds: null, sortedUsers: null };
+                console.error(`[GenerateLeaderboard] No challenge found for current month range`);
+                console.log(`[GenerateLeaderboard] Attempting to find ANY challenge for debugging...`);
+                
+                // Debug: Find the most recent challenge
+                const anyChallenge = await Challenge.findOne().sort({ date: -1 });
+                if (anyChallenge) {
+                    console.log(`[GenerateLeaderboard] Most recent challenge found: ${anyChallenge.monthly_game_title} for date ${anyChallenge.date}`);
+                } else {
+                    console.log(`[GenerateLeaderboard] No challenges found in database at all!`);
+                }
+                
+                return { headerEmbed: null, participantEmbeds: null, sortedUsers: null, challengeInfo: null };
             }
+
+            console.log(`[GenerateLeaderboard] Found challenge: ${currentChallenge.monthly_game_title || 'Unknown'} (ID: ${currentChallenge._id}) for date: ${currentChallenge.date}`);
+
+            // Create challenge info for tracking
+            const challengeInfo = {
+                id: currentChallenge._id.toString(),
+                title: currentChallenge.monthly_game_title || 'Unknown Challenge',
+                gameId: currentChallenge.monthly_challange_gameid,
+                date: currentChallenge.date
+            };
 
             // Get game info using RetroAPIUtils
             let gameTitle = currentChallenge.monthly_game_title;
@@ -381,6 +452,7 @@ class LeaderboardFeedService extends FeedManagerBase {
 
             if (!gameTitle || !gameImageUrl) {
                 try {
+                    console.log(`[GenerateLeaderboard] Fetching game info for game ID: ${currentChallenge.monthly_challange_gameid}`);
                     gameInfo = await RetroAPIUtils.getGameInfo(currentChallenge.monthly_challange_gameid);
                     gameTitle = gameInfo.title;
                     gameImageUrl = gameInfo.imageIcon;
@@ -391,9 +463,10 @@ class LeaderboardFeedService extends FeedManagerBase {
                         currentChallenge.monthly_game_icon_url = gameImageUrl;
                         currentChallenge.monthly_game_console = gameInfo.consoleName;
                         await currentChallenge.save();
+                        console.log(`[GenerateLeaderboard] Updated challenge metadata: ${gameTitle}`);
                     }
                 } catch (error) {
-                    console.error('Error fetching game info:', error);
+                    console.error('[GenerateLeaderboard] Error fetching game info:', error);
                 }
             } else {
                 // Create gameInfo object from stored data for consistency
@@ -402,6 +475,9 @@ class LeaderboardFeedService extends FeedManagerBase {
                     imageIcon: gameImageUrl
                 };
             }
+
+            // Update challenge info with resolved title
+            challengeInfo.title = gameTitle;
 
             // Get all registered users
             const users = await User.find({});
@@ -514,6 +590,8 @@ class LeaderboardFeedService extends FeedManagerBase {
                     return b.points - a.points;
                 });
 
+            console.log(`[GenerateLeaderboard] Found ${sortedProgress.length} participants for ${gameTitle}`);
+
             // Check for an active tiebreaker for the current month
             const monthKey = this.getMonthKey(now);
             const activeTiebreaker = await ArcadeBoard.findOne({
@@ -521,6 +599,10 @@ class LeaderboardFeedService extends FeedManagerBase {
                 startDate: { $lte: now },
                 endDate: { $gte: now }
             });
+
+            if (activeTiebreaker) {
+                console.log(`[GenerateLeaderboard] Found active tiebreaker: ${activeTiebreaker.gameTitle}`);
+            }
 
             // Create a working copy of sortedProgress for tiebreaker processing
             const workingSorted = [...sortedProgress];
@@ -557,6 +639,7 @@ class LeaderboardFeedService extends FeedManagerBase {
 
             // Get month name for the title
             const monthName = now.toLocaleString('default', { month: 'long' });
+            const year = now.getFullYear();
             
             // Calculate challenge end date and time remaining using getDiscordTimestamp
             const challengeEndDate = new Date(nextMonthStart);
@@ -570,7 +653,7 @@ class LeaderboardFeedService extends FeedManagerBase {
 
             // Create the header embed using our utility
             const headerEmbed = createHeaderEmbed(
-                `${monthName} Challenge Leaderboard`,
+                `${monthName} ${year} Challenge Leaderboard`,
                 `**Game:** [${gameTitle}](https://retroachievements.org/game/${currentChallenge.monthly_challange_gameid})\n` +
                 `**Total Achievements:** ${currentChallenge.monthly_challange_game_total}\n` +
                 `**Challenge Ends:** ${endDateFormatted}\n` +
@@ -608,7 +691,7 @@ class LeaderboardFeedService extends FeedManagerBase {
                     value: 'No one has earned achievements in this challenge this month yet!'
                 });
                 
-                return { headerEmbed, participantEmbeds: [], sortedUsers: [] };
+                return { headerEmbed, participantEmbeds: [], sortedUsers: [], challengeInfo };
             }
 
             // Create participant embeds (one for each group of users)
@@ -624,7 +707,7 @@ class LeaderboardFeedService extends FeedManagerBase {
                 
                 // Create embed for this page
                 const participantEmbed = createHeaderEmbed(
-                    `${monthName} Challenge - Participants (${startIndex + 1}-${endIndex})`,
+                    `${monthName} ${year} Challenge - Participants (${startIndex + 1}-${endIndex})`,
                     `This page shows participants ranked ${startIndex + 1} to ${endIndex} out of ${workingSorted.length} total.`,
                     {
                         color: COLORS.GOLD,
@@ -670,10 +753,10 @@ class LeaderboardFeedService extends FeedManagerBase {
                 participantEmbeds.push(participantEmbed);
             }
 
-            return { headerEmbed, participantEmbeds, sortedUsers: workingSorted };
+            return { headerEmbed, participantEmbeds, sortedUsers: workingSorted, challengeInfo };
         } catch (error) {
             console.error('Error generating leaderboard embeds:', error);
-            return { headerEmbed: null, participantEmbeds: null, sortedUsers: null };
+            return { headerEmbed: null, participantEmbeds: null, sortedUsers: null, challengeInfo: null };
         }
     }
 
