@@ -1,4 +1,4 @@
-// src/index.js - Complete updated version with tiebreaker expiration system
+// src/index.js - Complete updated version with all new features
 import { Client, Collection, Events, GatewayIntentBits, EmbedBuilder } from 'discord.js';
 import { config, validateConfig } from './config/config.js';
 import { connectDB } from './models/index.js';
@@ -113,7 +113,7 @@ client.on(Events.InteractionCreate, async interaction => {
     }
 });
 
-// Handle button interactions - CLEAN VERSION WITHOUT MANUAL COMBINATIONS
+// Handle button interactions - UPDATED VERSION with all new features
 client.on(Events.InteractionCreate, async interaction => {
     if (!interaction.isButton()) return;
     
@@ -147,11 +147,17 @@ client.on(Events.InteractionCreate, async interaction => {
                 case 'gacha_collection':
                     await gachaMachine.handleCollection(interaction, user);
                     break;
+                default:
+                    // Handle gacha admin buttons
+                    const gachaAdminCommand = client.commands.get('gacha-admin');
+                    if (gachaAdminCommand && typeof gachaAdminCommand.handleButtonInteraction === 'function') {
+                        await gachaAdminCommand.handleButtonInteraction(interaction);
+                    }
             }
             return;
         }
 
-        // Check if this is a collection-related button - CLEAN ROUTING
+        // Check if this is a collection-related button - UPDATED ROUTING
         if (interaction.customId.startsWith('coll_')) {
             console.log('Routing to collection handler');
             const collectionCommand = client.commands.get('collection');
@@ -188,7 +194,7 @@ client.on(Events.InteractionCreate, async interaction => {
             return;
         }
         
-        // Handle other button interactions
+        // Handle other button interactions by command
         console.log('Checking for command-based button handler');
         const commandName = interaction.customId.split('_')[0];
         const command = client.commands.get(commandName);
@@ -215,7 +221,7 @@ client.on(Events.InteractionCreate, async interaction => {
     }
 });
 
-// Handle select menu interactions - CLEAN VERSION WITHOUT MANUAL COMBINATIONS
+// Handle select menu interactions - UPDATED VERSION
 client.on(Events.InteractionCreate, async interaction => {
     if (!interaction.isStringSelectMenu()) return;
     
@@ -276,11 +282,41 @@ client.on(Events.InteractionCreate, async interaction => {
     }
 });
 
-// Handle modal submit interactions
+// Handle modal submit interactions - UPDATED VERSION with all new features
 client.on(Events.InteractionCreate, async interaction => {
     if (!interaction.isModalSubmit()) return;
     
     try {
+        // Check if this is a collection give item modal
+        if (interaction.customId.startsWith('coll_give_modal_')) {
+            console.log('Routing to collection give modal handler');
+            const collectionCommand = client.commands.get('collection');
+            if (collectionCommand && typeof collectionCommand.handleModalSubmit === 'function') {
+                await collectionCommand.handleModalSubmit(interaction);
+            } else {
+                await interaction.reply({
+                    content: '❌ Collection feature not available.',
+                    ephemeral: true
+                });
+            }
+            return;
+        }
+
+        // Check if this is a gacha admin combination modal
+        if (interaction.customId === 'gacha_add_combo_modal') {
+            console.log('Routing to gacha admin combination modal handler');
+            const gachaAdminCommand = client.commands.get('gacha-admin');
+            if (gachaAdminCommand && typeof gachaAdminCommand.handleModalSubmit === 'function') {
+                await gachaAdminCommand.handleModalSubmit(interaction);
+            } else {
+                await interaction.reply({
+                    content: '❌ Gacha admin feature not available.',
+                    ephemeral: true
+                });
+            }
+            return;
+        }
+        
         // Check if this is a nomination-related modal
         if (interaction.customId.startsWith('nomination_')) {
             await handleNominationModalSubmit(interaction);
@@ -413,7 +449,7 @@ async function handleWeeklyComprehensiveSync() {
     }
 }
 
-// NEW: Function to handle month-end tiebreaker expiration
+// Function to handle month-end tiebreaker expiration
 async function handleMonthEndTiebreakerExpiration() {
     try {
         console.log('🌅 Starting month-end tiebreaker expiration...');
@@ -481,7 +517,7 @@ async function handleMonthEndTiebreakerExpiration() {
     }
 }
 
-// NEW: Function to handle month-start tiebreaker cleanup
+// Function to handle month-start tiebreaker cleanup
 async function handleMonthStartTiebreakerCleanup() {
     try {
         console.log('🧹 Starting month-start tiebreaker cleanup...');
@@ -523,7 +559,7 @@ async function handleMonthStartTiebreakerCleanup() {
     }
 }
 
-// NEW: Function to fix duplicate index issues automatically
+// Function to fix duplicate index issues automatically
 async function fixDuplicateIndexes() {
     try {
         console.log('🔧 Checking for duplicate indexes...');
@@ -589,7 +625,7 @@ client.once(Events.ClientReady, async () => {
         await connectDB();
         console.log('Connected to MongoDB');
 
-        // NEW: Fix any duplicate index issues automatically
+        // Fix any duplicate index issues automatically
         await fixDuplicateIndexes();
 
         // Load commands
@@ -609,6 +645,7 @@ client.once(Events.ClientReady, async () => {
         arenaFeedService.setClient(client);
         gameAwardService.setClient(client);
         gachaMachine.setClient(client);
+        combinationService.setClient(client); // NEW: Set client for combination alerts
 
         // START MONTHLY GP SERVICE
         monthlyGPService.start();
@@ -642,8 +679,7 @@ client.once(Events.ClientReady, async () => {
             });
         });
 
-        // NEW: Schedule month-end tiebreaker expiration (last 4 days of month at 11:30 PM)
-        // This gives time for final submissions before month ends
+        // Schedule month-end tiebreaker expiration (last 4 days of month at 11:30 PM)
         cron.schedule('30 23 28-31 * *', () => {
             console.log('Running month-end tiebreaker expiration check...');
             handleMonthEndTiebreakerExpiration().catch(error => {
@@ -657,13 +693,9 @@ client.once(Events.ClientReady, async () => {
             monthlyTasksService.clearAllNominations().catch(error => {
                 console.error('Error clearing nominations:', error);
             });
-            
-            // NOTE: Monthly GP is now handled automatically by monthlyGPService
-            // No need for manual GP allowance reset
         });
 
-        // NEW: Schedule month-start tiebreaker cleanup on the 1st of each month at 02:00
-        // This catches any tiebreakers that weren't expired and cleans up very old ones
+        // Schedule month-start tiebreaker cleanup on the 1st of each month at 02:00
         cron.schedule('0 2 1 * *', () => {
             console.log('Running month-start tiebreaker cleanup...');
             handleMonthStartTiebreakerCleanup().catch(error => {
@@ -672,7 +704,6 @@ client.once(Events.ClientReady, async () => {
         });
 
         // Schedule arcade service to run daily at 00:15 (just after midnight)
-        // This will check for completed racing challenges and award points
         cron.schedule('15 0 * * *', () => {
             console.log('Running scheduled arcade service...');
             arcadeService.start().catch(error => {
@@ -689,7 +720,7 @@ client.once(Events.ClientReady, async () => {
         });
 
         // Schedule arcade alert checks every hour
-        cron.schedule('0 * * * *', () => { // Runs at the start of every hour
+        cron.schedule('0 * * * *', () => {
             console.log('Running arcade alerts check...');
             arcadeAlertService.checkForRankChanges(true).catch(error => {
                 console.error('Error in arcade alerts check:', error);
@@ -697,7 +728,7 @@ client.once(Events.ClientReady, async () => {
         });
 
         // Schedule arcade feed updates every hour
-        cron.schedule('10 * * * *', () => { // Runs at 10 minutes past every hour
+        cron.schedule('10 * * * *', () => {
             console.log('Running arcade feed update...');
             arcadeFeedService.updateArcadeFeed().catch(error => {
                 console.error('Error in arcade feed update:', error);
@@ -713,7 +744,7 @@ client.once(Events.ClientReady, async () => {
         });
 
         // Schedule arena feed updates every 30 minutes
-        cron.schedule('*/30 * * * *', () => { // Runs every 30 minutes
+        cron.schedule('*/30 * * * *', () => {
             console.log('Running arena feed update...');
             arenaFeedService.update().catch(error => {
                 console.error('Error in arena feed update:', error);
@@ -745,14 +776,11 @@ client.once(Events.ClientReady, async () => {
         });
 
         // Schedule automated monthly leaderboard finalization
-        // Run at 00:20 on the 1st of each month (after other monthly tasks)
         cron.schedule('20 0 1 * *', async () => {
             console.log('Finalizing previous month\'s leaderboard...');
             try {
-                // Find the leaderboard command
                 const leaderboardCommand = client.commands.get('leaderboard');
                 if (leaderboardCommand) {
-                    // Create a mock interaction for the finalize function
                     const mockInteraction = {
                         deferReply: async () => {},
                         editReply: async (message) => { 
@@ -769,11 +797,10 @@ client.once(Events.ClientReady, async () => {
                             })
                         }),
                         guild: client.guilds.cache.first(),
-                        member: { permissions: { has: () => true } }, // Mock admin permissions
-                        options: { getBoolean: () => true }  // Mock finalize:true parameter
+                        member: { permissions: { has: () => true } },
+                        options: { getBoolean: () => true }
                     };
                     
-                    // Execute the finalization function directly
                     await leaderboardCommand.finalizePreviousMonth(mockInteraction);
                 }
             } catch (error) {
@@ -782,7 +809,6 @@ client.once(Events.ClientReady, async () => {
         });
 
         // Check if we need to finalize the previous month's leaderboard on startup
-        // Only run the check if it's the first few days of the month (1-3)
         const now = new Date();
         const currentDay = now.getDate();
         if (currentDay <= 3) {
@@ -790,7 +816,6 @@ client.once(Events.ClientReady, async () => {
             try {
                 const leaderboardCommand = client.commands.get('leaderboard');
                 if (leaderboardCommand) {
-                    // Create a mock interaction just like above
                     const mockInteraction = {
                         deferReply: async () => {},
                         editReply: async (message) => { 
@@ -818,7 +843,7 @@ client.once(Events.ClientReady, async () => {
             }
         }
 
-        // NEW: Check for any tiebreakers that should have been expired on startup
+        // Check for any tiebreakers that should have been expired on startup
         if (currentDay <= 3) {
             console.log('Checking for any tiebreakers that should have been expired...');
             try {
@@ -834,12 +859,11 @@ client.once(Events.ClientReady, async () => {
             }
         }
 
-        // Schedule voting poll creation (runs at midnight UTC on days that are 8 days before end of month)
+        // Schedule voting poll creation
         cron.schedule('0 0 22-31 * *', async () => {
             const today = new Date();
             const daysInMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
             
-            // Only run if it's exactly 8 days before the end of the month
             if (today.getDate() === daysInMonth - 8) {
                 console.log('Running scheduled voting poll creation...');
                 monthlyTasksService.createVotingPoll().catch(error => {
@@ -848,12 +872,11 @@ client.once(Events.ClientReady, async () => {
             }
         });
 
-        // Schedule vote counting (runs at midnight UTC on days that are 1 day before end of month)
+        // Schedule vote counting
         cron.schedule('0 0 28-31 * *', async () => {
             const today = new Date();
             const daysInMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
             
-            // Only run if it's exactly 1 day before the end of the month
             if (today.getDate() === daysInMonth - 1) {
                 console.log('Running scheduled vote counting...');
                 monthlyTasksService.countAndAnnounceVotes().catch(error => {
@@ -862,39 +885,18 @@ client.once(Events.ClientReady, async () => {
             }
         });
 
-        // Run initial stats update
+        // Run initial services
         await statsUpdateService.start();
-        
-        // Run initial achievement feed check
         await achievementFeedService.start();
-        
-        // Run initial arcade service check
         await arcadeService.start();
-        
-        // Start the leaderboard feed service
         await leaderboardFeedService.start();
-        
-        // Start the arcade alert service
         await arcadeAlertService.start();
-        
-        // Start the arcade feed service
         await arcadeFeedService.start();
-        
-        // Start the membership check service
         await membershipCheckService.start();
-        
-        // Start the arena service
         await arenaService.start();
-        
-        // Start the arena alert service
         await arenaAlertService.start();
-        
-        // Start the arena feed service
         await arenaFeedService.start();
-        
-        // Initialize the game award service
         await gameAwardService.initialize();
-        console.log('Game Award Service initialized');
 
         // Check for any arena timeouts that may have occurred while the bot was offline
         console.log('Checking for any arena timeouts that occurred while offline...');
@@ -911,14 +913,14 @@ client.once(Events.ClientReady, async () => {
         console.log('  • Monthly GP grants: Automatic on 1st of each month');
         console.log('  • Weekly comprehensive yearly sync: Sundays at 3:00 AM');
         console.log('  • Monthly tasks: 1st of each month');
-        console.log('  • Tiebreaker expiration: Last 4 days of month at 11:30 PM'); // NEW
-        console.log('  • Tiebreaker cleanup: 1st of each month at 2:00 AM'); // NEW
+        console.log('  • Tiebreaker expiration: Last 4 days of month at 11:30 PM');
+        console.log('  • Tiebreaker cleanup: 1st of each month at 2:00 AM');
         console.log('  • Arcade service: Daily at 12:15 AM');
         console.log('  • Arena feeds: Every 30 minutes');
         console.log('  • Arena timeouts: Hourly at 45 minutes past');
         console.log('  • Gacha Machine: Active and pinned');
-        console.log('  • Automatic Combinations: Background processing on gacha pulls');
-        console.log('  • Collection Viewer: Clean interface with series filtering');
+        console.log('  • Automatic Combinations: Background processing with alerts');
+        console.log('  • Collection Viewer: Clean interface with player item giving');
         console.log('  • Various other feeds: Hourly');
         
     } catch (error) {
@@ -936,7 +938,7 @@ process.on('unhandledRejection', error => {
     console.error('Unhandled promise rejection:', error);
 });
 
-// Graceful shutdown handling for Monthly GP Service
+// Graceful shutdown handling
 process.on('SIGINT', () => {
     console.log('Shutting down...');
     monthlyGPService.stop();
