@@ -200,7 +200,7 @@ export default {
     async handleListItems(interaction) {
         const page = interaction.options.getInteger('page') || 1;
         const filter = interaction.options.getString('filter') || 'all';
-        const itemsPerPage = 20;
+        const itemsPerPage = 15; // REDUCED from 20 to avoid character limits
 
         let query = { isActive: true };
         let title = '📦 All Gacha Items';
@@ -232,27 +232,25 @@ export default {
         const embed = new EmbedBuilder()
             .setTitle(`${title} - Page ${page}/${totalPages}`)
             .setColor(COLORS.INFO)
-            .setDescription(`Showing ${items.length} items (${totalItems} total)`)
             .setTimestamp();
 
-        // Create a clean table-like format showing IDs prominently
-        let itemsList = '```\n';
-        itemsList += 'ID                  | NAME              | RARITY    | DROP%\n';
-        itemsList += '─'.repeat(65) + '\n';
+        // Create a shorter, more compact format to avoid character limits
+        let itemsList = '';
         
         items.forEach(item => {
-            const id = item.itemId.padEnd(18);
-            const name = item.itemName.length > 16 ? 
-                item.itemName.substring(0, 13) + '...' : 
-                item.itemName.padEnd(16);
-            const rarity = item.rarity.toUpperCase().padEnd(8);
-            const dropRate = item.dropRate.toString().padStart(4) + '%';
+            const id = item.itemId.length > 15 ? 
+                item.itemId.substring(0, 12) + '...' : 
+                item.itemId;
+            const name = item.itemName.length > 20 ? 
+                item.itemName.substring(0, 17) + '...' : 
+                item.itemName;
+            const rarity = item.rarity.charAt(0).toUpperCase();
             
-            itemsList += `${id} | ${name} | ${rarity} | ${dropRate}\n`;
+            itemsList += `**${id}** - ${name} (${rarity}, ${item.dropRate}%)\n`;
         });
-        itemsList += '```';
 
-        embed.addFields({ name: 'Items', value: itemsList });
+        // Use description instead of fields to avoid 1024 char limit on fields
+        embed.setDescription(`Showing ${items.length} items (${totalItems} total)\n\n${itemsList}`);
 
         // Add navigation buttons if needed
         const components = [];
@@ -293,7 +291,7 @@ export default {
         components.push(actionRow);
 
         embed.setFooter({ 
-            text: 'Use the Item ID (first column) when creating combinations' 
+            text: 'Copy the Item ID (bolded text) when creating combinations' 
         });
 
         await interaction.editReply({ embeds: [embed], components });
