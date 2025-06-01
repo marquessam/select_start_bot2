@@ -656,7 +656,7 @@ export default {
         if (interaction.customId === 'gacha_add_combo_modal') {
             await this.handleCombinationModal(interaction);
         }
-    },
+    },,
 
     // Keep existing methods for other functions...
     async handleRemoveCombination(interaction) {
