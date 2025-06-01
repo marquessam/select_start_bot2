@@ -1,4 +1,4 @@
-// src/commands/admin/gacha-admin.js - STREAMLINED VERSION with automatic combinations focus
+// src/commands/admin/gacha-admin.js - CLEAN VERSION with streamlined combinations
 import { 
     SlashCommandBuilder, 
     EmbedBuilder, 
@@ -7,8 +7,7 @@ import {
     ButtonStyle,
     ModalBuilder,
     TextInputBuilder,
-    TextInputStyle,
-    StringSelectMenuBuilder
+    TextInputStyle
 } from 'discord.js';
 import { GachaItem, CombinationRule } from '../../models/GachaItem.js';
 import { User } from '../../models/User.js';
@@ -37,8 +36,7 @@ export default {
                         .addChoices(
                             { name: 'All items', value: 'all' },
                             { name: 'Gacha items (drop rate > 0)', value: 'gacha' },
-                            { name: 'Combination-only (drop rate = 0)', value: 'combo' },
-                            { name: 'By rarity', value: 'rarity' }
+                            { name: 'Combination-only (drop rate = 0)', value: 'combo' }
                         )))
 
         .addSubcommand(subcommand =>
@@ -75,29 +73,6 @@ export default {
                 .addIntegerOption(option =>
                     option.setName('quantity')
                         .setDescription('Quantity (default: 1)')
-                        .setRequired(false)
-                        .setMinValue(1)
-                        .setMaxValue(100)))
-
-        .addSubcommand(subcommand =>
-            subcommand
-                .setName('transfer-item')
-                .setDescription('Transfer item between players')
-                .addStringOption(option =>
-                    option.setName('from-user')
-                        .setDescription('Username giving the item')
-                        .setRequired(true))
-                .addStringOption(option =>
-                    option.setName('to-user')
-                        .setDescription('Username receiving the item')
-                        .setRequired(true))
-                .addStringOption(option =>
-                    option.setName('item-id')
-                        .setDescription('Item ID to transfer')
-                        .setRequired(true))
-                .addIntegerOption(option =>
-                    option.setName('quantity')
-                        .setDescription('Quantity to transfer (default: 1)')
                         .setRequired(false)
                         .setMinValue(1)
                         .setMaxValue(100)))
@@ -205,9 +180,6 @@ export default {
                 case 'give-item':
                     await this.handleGiveItem(interaction);
                     break;
-                case 'transfer-item':
-                    await this.handleTransferItem(interaction);
-                    break;
                 case 'clear-collection':
                     await this.handleClearCollection(interaction);
                     break;
@@ -225,9 +197,6 @@ export default {
         }
     },
 
-    /**
-     * ENHANCED: List items with clear IDs and pagination
-     */
     async handleListItems(interaction) {
         const page = interaction.options.getInteger('page') || 1;
         const filter = interaction.options.getString('filter') || 'all';
@@ -330,9 +299,6 @@ export default {
         await interaction.editReply({ embeds: [embed], components });
     },
 
-    /**
-     * SIMPLIFIED: Add automatic combination with user-friendly interface
-     */
     async handleAddCombination(interaction) {
         const modal = new ModalBuilder()
             .setCustomId('gacha_add_combo_modal')
@@ -372,9 +338,6 @@ export default {
         await interaction.showModal(modal);
     },
 
-    /**
-     * Handle the combination modal submission
-     */
     async handleCombinationModal(interaction) {
         await interaction.deferReply({ ephemeral: true });
 
@@ -457,9 +420,6 @@ export default {
         }
     },
 
-    /**
-     * Parse simple combination format
-     */
     async parseSimpleCombination(format) {
         // Remove extra whitespace
         format = format.trim();
@@ -506,9 +466,6 @@ export default {
         return { ingredients, result };
     },
 
-    /**
-     * List all combinations with clear formatting
-     */
     async handleListCombinations(interaction) {
         const rules = await CombinationRule.find({ isActive: true })
             .sort({ priority: -1, ruleId: 1 });
@@ -547,118 +504,6 @@ export default {
         await interaction.editReply({ embeds: [embed] });
     },
 
-    /**
-     * NEW: Handle player-to-player transfers
-     */
-    async handleTransferItem(interaction) {
-        const fromUsername = interaction.options.getString('from-user');
-        const toUsername = interaction.options.getString('to-user');
-        const itemId = interaction.options.getString('item-id');
-        const quantity = interaction.options.getInteger('quantity') || 1;
-
-        // Find both users
-        const fromUser = await User.findOne({ 
-            raUsername: { $regex: new RegExp(`^${fromUsername}$`, 'i') }
-        });
-        const toUser = await User.findOne({ 
-            raUsername: { $regex: new RegExp(`^${toUsername}$`, 'i') }
-        });
-
-        if (!fromUser) {
-            throw new Error(`Source user "${fromUsername}" not found.`);
-        }
-        if (!toUser) {
-            throw new Error(`Target user "${toUsername}" not found.`);
-        }
-
-        // Check if from user has the item
-        const fromItem = fromUser.gachaCollection?.find(item => item.itemId === itemId);
-        if (!fromItem) {
-            throw new Error(`${fromUsername} doesn't have item "${itemId}".`);
-        }
-
-        if (fromItem.quantity < quantity) {
-            throw new Error(`${fromUsername} only has ${fromItem.quantity} of "${itemId}", cannot transfer ${quantity}.`);
-        }
-
-        // Get the gacha item definition for transfer
-        const gachaItem = await GachaItem.findOne({ itemId });
-        if (!gachaItem) {
-            throw new Error(`Item "${itemId}" not found in database.`);
-        }
-
-        // Remove from source user
-        const removeSuccess = fromUser.removeGachaItem(itemId, quantity);
-        if (!removeSuccess) {
-            throw new Error('Failed to remove item from source user.');
-        }
-
-        // Add to target user
-        toUser.addGachaItem(gachaItem, quantity, 'player_transfer');
-
-        // Save both users
-        await fromUser.save();
-        await toUser.save();
-
-        // Create success message
-        const itemEmoji = gachaItem.emojiId ? 
-            `<:${gachaItem.emojiName}:${gachaItem.emojiId}>` : 
-            gachaItem.emojiName;
-
-        const embed = new EmbedBuilder()
-            .setTitle('✅ Item Transfer Complete')
-            .setColor(COLORS.SUCCESS)
-            .setDescription(
-                `${itemEmoji} **${quantity}x ${gachaItem.itemName}** transferred\n\n` +
-                `**From:** ${fromUsername}\n` +
-                `**To:** ${toUsername}\n\n` +
-                `⚠️ **Warning:** This transfer is final. Admin will not intervene in player disputes.`
-            )
-            .addFields(
-                { name: 'Transferred by Admin', value: interaction.user.username, inline: true },
-                { name: 'Item ID', value: itemId, inline: true }
-            )
-            .setTimestamp();
-
-        await interaction.editReply({ embeds: [embed] });
-    },
-
-    // Handle button interactions
-    async handleButtonInteraction(interaction) {
-        if (!interaction.customId.startsWith('gacha_')) return;
-
-        await interaction.deferUpdate();
-
-        if (interaction.customId === 'gacha_add_combination') {
-            await this.handleAddCombination(interaction);
-        } else if (interaction.customId === 'gacha_list_combinations') {
-            await this.handleListCombinations(interaction);
-        } else if (interaction.customId.startsWith('gacha_list_')) {
-            // Handle pagination
-            const parts = interaction.customId.split('_');
-            const page = parseInt(parts[2]);
-            const filter = parts[3];
-            
-            // Simulate the list command with new page
-            const mockInteraction = {
-                ...interaction,
-                options: {
-                    getInteger: (name) => name === 'page' ? page : null,
-                    getString: (name) => name === 'filter' ? filter : null
-                }
-            };
-            await this.handleListItems(mockInteraction);
-        }
-    },
-
-    // Handle modal submissions
-    async handleModalSubmit(interaction) {
-        if (interaction.customId === 'gacha_add_combo_modal') {
-            await this.handleCombinationModal(interaction);
-        }
-    },,
-
-    // Keep existing methods for other functions...
     async handleRemoveCombination(interaction) {
         const ruleId = interaction.options.getString('rule-id');
         const rule = await CombinationRule.findOneAndDelete({ ruleId });
@@ -804,5 +649,40 @@ export default {
         }
 
         await interaction.editReply({ embeds: [embed] });
+    },
+
+    // Handle button interactions
+    async handleButtonInteraction(interaction) {
+        if (!interaction.customId.startsWith('gacha_')) return;
+
+        await interaction.deferUpdate();
+
+        if (interaction.customId === 'gacha_add_combination') {
+            await this.handleAddCombination(interaction);
+        } else if (interaction.customId === 'gacha_list_combinations') {
+            await this.handleListCombinations(interaction);
+        } else if (interaction.customId.startsWith('gacha_list_')) {
+            // Handle pagination
+            const parts = interaction.customId.split('_');
+            const page = parseInt(parts[2]);
+            const filter = parts[3];
+            
+            // Simulate the list command with new page
+            const mockInteraction = {
+                ...interaction,
+                options: {
+                    getInteger: (name) => name === 'page' ? page : null,
+                    getString: (name) => name === 'filter' ? filter : null
+                }
+            };
+            await this.handleListItems(mockInteraction);
+        }
+    },
+
+    // Handle modal submissions
+    async handleModalSubmit(interaction) {
+        if (interaction.customId === 'gacha_add_combo_modal') {
+            await this.handleCombinationModal(interaction);
+        }
     }
 };
