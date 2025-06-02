@@ -401,7 +401,108 @@ class CombinationService {
     }
 
     /**
-     * NEW: Trigger combination alerts for admin-given items
+     * NEW: Trigger combination alerts for player-to-player transfers
+     * Similar to admin gifts but with different messaging
+     */
+    async triggerCombinationAlertsForPlayerTransfer(recipient, giftedItemId, giverUsername) {
+        try {
+            // Check for possible combinations with the newly given item
+            const possibleCombinations = await this.checkPossibleCombinations(recipient, giftedItemId);
+            
+            if (possibleCombinations.length === 0) {
+                return { hasCombinations: false };
+            }
+
+            if (!this.client) {
+                console.log('No client set for combination alerts');
+                return { hasCombinations: false, error: 'No Discord client available' };
+            }
+
+            // Send combination alert to gacha channel for the RECIPIENT
+            try {
+                const gachaChannelId = '1377092881885696022'; // Gacha channel
+                const guild = await this.client.guilds.cache.first(); // Get the main guild
+                const channel = await guild.channels.fetch(gachaChannelId);
+                
+                if (!channel) {
+                    console.error('Gacha channel not found for player transfer combination alert');
+                    return { hasCombinations: false, error: 'Gacha channel not found' };
+                }
+
+                // Create a mock interaction that sends to the gacha channel for the RECIPIENT
+                const mockInteraction = {
+                    followUp: async (options) => {
+                        // Get the recipient's Discord member for tagging
+                        let memberTag = `**${recipient.raUsername}**`;
+                        try {
+                            const member = await guild.members.fetch(recipient.discordId);
+                            memberTag = `<@${recipient.discordId}>`;
+                        } catch (error) {
+                            console.log('Could not fetch member for tagging, using username');
+                        }
+
+                        // Send to gacha channel with recipient tagged
+                        await channel.send({
+                            content: `🎁 **Player Gift Alert!** ${memberTag} received an item from **${giverUsername}** and has combination options!`,
+                            ...options,
+                            ephemeral: false // Make sure it's visible in the channel
+                        });
+                    },
+                    user: { id: recipient.discordId, username: recipient.raUsername } // Use RECIPIENT's info
+                };
+
+                // Show the combination alert using our existing system
+                await this.showCombinationAlert(mockInteraction, recipient, possibleCombinations);
+                
+                return { 
+                    hasCombinations: true, 
+                    combinationCount: possibleCombinations.length 
+                };
+
+            } catch (channelError) {
+                console.error('Error sending to gacha channel, trying DM fallback:', channelError);
+                
+                // Fallback: Try to DM the recipient directly
+                try {
+                    const guild = await this.client.guilds.cache.first();
+                    const member = await guild.members.fetch(recipient.discordId);
+                    
+                    const mockDMInteraction = {
+                        followUp: async (options) => {
+                            await member.send({
+                                content: `🎁 **Player Gift + Combinations Available!**\n**${giverUsername}** gave you an item!`,
+                                ...options
+                            });
+                        },
+                        user: { id: recipient.discordId, username: recipient.raUsername }
+                    };
+
+                    await this.showCombinationAlert(mockDMInteraction, recipient, possibleCombinations);
+                    
+                    return { 
+                        hasCombinations: true, 
+                        combinationCount: possibleCombinations.length,
+                        sentViaDM: true
+                    };
+
+                } catch (dmError) {
+                    console.error('Error sending DM combination alert:', dmError);
+                    return { 
+                        hasCombinations: true, 
+                        combinationCount: possibleCombinations.length,
+                        error: 'Could not deliver combination alert to recipient'
+                    };
+                }
+            }
+
+        } catch (error) {
+            console.error('Error triggering combination alerts for player transfer:', error);
+            return { hasCombinations: false, error: error.message };
+        }
+    }
+
+    /**
+     * FIXED: Trigger combination alerts for admin-given items - Send to RECIPIENT not admin
      */
     async triggerCombinationAlertsForAdminGift(user, giftedItemId, adminInteraction) {
         try {
@@ -412,45 +513,87 @@ class CombinationService {
                 return { hasCombinations: false };
             }
 
-            // Create a mock interaction that can show combination alerts
-            const mockInteraction = {
-                followUp: async (options) => {
-                    // Try to send the combination alert as a follow-up to the admin command
-                    try {
-                        await adminInteraction.followUp({
-                            content: `🎁 **${user.raUsername}** received an admin gift and has combination options!`,
-                            ...options,
-                            ephemeral: false // Make it visible so the user can see it
-                        });
-                    } catch (error) {
-                        console.error('Error sending admin combination alert:', error);
-                        
-                        // Fallback: try to DM the user directly
-                        try {
-                            if (this.client) {
-                                const guild = await this.client.guilds.fetch(adminInteraction.guildId);
-                                const member = await guild.members.fetch(user.discordId);
-                                
-                                await member.send({
-                                    content: '🎁 **Admin Gift + Combinations Available!**',
-                                    ...options
-                                });
-                            }
-                        } catch (dmError) {
-                            console.error('Error sending DM combination alert:', dmError);
-                        }
-                    }
-                },
-                user: { id: user.discordId, username: user.raUsername }
-            };
+            if (!this.client) {
+                console.log('No client set for combination alerts');
+                return { hasCombinations: false, error: 'No Discord client available' };
+            }
 
-            // Show the combination alert using our existing system
-            await this.showCombinationAlert(mockInteraction, user, possibleCombinations);
-            
-            return { 
-                hasCombinations: true, 
-                combinationCount: possibleCombinations.length 
-            };
+            // FIXED: Send combination alert to gacha channel for the RECIPIENT, not as admin follow-up
+            try {
+                const gachaChannelId = '1377092881885696022'; // Gacha channel
+                const guild = await this.client.guilds.fetch(adminInteraction.guildId);
+                const channel = await guild.channels.fetch(gachaChannelId);
+                
+                if (!channel) {
+                    console.error('Gacha channel not found for admin gift combination alert');
+                    return { hasCombinations: false, error: 'Gacha channel not found' };
+                }
+
+                // Create a mock interaction that sends to the gacha channel for the RECIPIENT
+                const mockInteraction = {
+                    followUp: async (options) => {
+                        // Get the recipient's Discord member for tagging
+                        let memberTag = `**${user.raUsername}**`;
+                        try {
+                            const member = await guild.members.fetch(user.discordId);
+                            memberTag = `<@${user.discordId}>`;
+                        } catch (error) {
+                            console.log('Could not fetch member for tagging, using username');
+                        }
+
+                        // Send to gacha channel with recipient tagged
+                        await channel.send({
+                            content: `🎁 **Admin Gift Alert!** ${memberTag} received an item and has combination options!`,
+                            ...options,
+                            ephemeral: false // Make sure it's visible in the channel
+                        });
+                    },
+                    user: { id: user.discordId, username: user.raUsername } // Use RECIPIENT's info
+                };
+
+                // Show the combination alert using our existing system
+                await this.showCombinationAlert(mockInteraction, user, possibleCombinations);
+                
+                return { 
+                    hasCombinations: true, 
+                    combinationCount: possibleCombinations.length 
+                };
+
+            } catch (channelError) {
+                console.error('Error sending to gacha channel, trying DM fallback:', channelError);
+                
+                // Fallback: Try to DM the recipient directly
+                try {
+                    const guild = await this.client.guilds.fetch(adminInteraction.guildId);
+                    const member = await guild.members.fetch(user.discordId);
+                    
+                    const mockDMInteraction = {
+                        followUp: async (options) => {
+                            await member.send({
+                                content: '🎁 **Admin Gift + Combinations Available!**',
+                                ...options
+                            });
+                        },
+                        user: { id: user.discordId, username: user.raUsername }
+                    };
+
+                    await this.showCombinationAlert(mockDMInteraction, user, possibleCombinations);
+                    
+                    return { 
+                        hasCombinations: true, 
+                        combinationCount: possibleCombinations.length,
+                        sentViaDM: true
+                    };
+
+                } catch (dmError) {
+                    console.error('Error sending DM combination alert:', dmError);
+                    return { 
+                        hasCombinations: true, 
+                        combinationCount: possibleCombinations.length,
+                        error: 'Could not deliver combination alert to recipient'
+                    };
+                }
+            }
 
         } catch (error) {
             console.error('Error triggering combination alerts for admin gift:', error);
@@ -932,4 +1075,4 @@ class CombinationService {
     }
 }
 
-export default new CombinationService();
+export default new CombinationService(
