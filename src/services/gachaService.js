@@ -1,12 +1,12 @@
-// src/services/gachaService.js - UPDATED with new pricing and better formatting
+// src/services/gachaService.js - UPDATED with combination alerts instead of auto-combining
 import { User } from '../models/User.js';
 import { GachaItem } from '../models/GachaItem.js';
 import combinationService from './combinationService.js';
 
-// UPDATED: New pull costs
+// Pull costs
 const PULL_COSTS = {
-    single: 50,   // Increased from 10
-    multi: 150    // 4 pulls for 150 GP (37.5 GP per pull vs 50 GP single)
+    single: 50,
+    multi: 150
 };
 
 class GachaService {
@@ -22,10 +22,11 @@ class GachaService {
 
     /**
      * Perform a gacha pull for a user
+     * UPDATED: Check for possible combinations instead of auto-combining
      */
     async performPull(user, pullType = 'single') {
         const cost = PULL_COSTS[pullType];
-        const pullCount = pullType === 'multi' ? 4 : 1; // UPDATED: Multi is now 4 pulls
+        const pullCount = pullType === 'multi' ? 4 : 1;
 
         // Check if user has enough GP
         if (!user.hasEnoughGp(cost)) {
@@ -43,6 +44,8 @@ class GachaService {
 
         // Perform the pulls
         const results = [];
+        const newItemIds = []; // Track newly obtained items for combination checking
+        
         for (let i = 0; i < pullCount; i++) {
             const item = await this.selectRandomItem();
             if (item) {
@@ -54,6 +57,7 @@ class GachaService {
                 });
                 const result = this.addItemToUser(user, item);
                 results.push(result);
+                newItemIds.push(item.itemId);
             }
         }
 
@@ -62,23 +66,24 @@ class GachaService {
         // Check for series completions
         const completions = await this.checkSeriesCompletions(user, results);
 
-        // Save user BEFORE checking auto-combinations (important!)
+        // Save user BEFORE checking combinations (important!)
         await user.save();
         console.log('User saved successfully after pull');
 
-        // Check for automatic combinations after adding items
-        const autoCombinations = await combinationService.checkAutoCombinations(user);
+        // UPDATED: Check for possible combinations instead of auto-combining
+        const possibleCombinations = await combinationService.checkPossibleCombinations(user);
+        
+        // Filter combinations that use newly obtained items
+        const relevantCombinations = possibleCombinations.filter(combo => 
+            combo.ingredients.some(ingredient => newItemIds.includes(ingredient.itemId))
+        );
 
-        // Save again if auto-combinations occurred
-        if (autoCombinations.length > 0) {
-            await user.save();
-            console.log(`Auto-combinations occurred: ${autoCombinations.length}, user saved again`);
-        }
+        console.log(`Found ${relevantCombinations.length} relevant combinations for newly obtained items`);
 
         return {
             results,
             completions,
-            autoCombinations,
+            possibleCombinations: relevantCombinations, // Return possible combinations instead of performed ones
             newBalance: user.gpBalance,
             cost,
             pullType
@@ -130,7 +135,7 @@ class GachaService {
     }
 
     /**
-     * FIXED: Add an item to user's collection with proper emoji data transfer
+     * Add an item to user's collection with proper emoji data transfer
      */
     addItemToUser(user, gachaItem) {
         console.log('BEFORE addItemToUser - GachaItem emoji data:', {
@@ -290,7 +295,8 @@ class GachaService {
         const sourceBreakdown = {
             gacha: 0,
             combined: 0,
-            series_completion: 0
+            series_completion: 0,
+            player_transfer: 0
         };
 
         const seriesBreakdown = {};
@@ -308,6 +314,8 @@ class GachaService {
             const source = item.source || 'gacha';
             if (sourceBreakdown[source] !== undefined) {
                 sourceBreakdown[source] += quantity;
+            } else {
+                sourceBreakdown[source] = quantity;
             }
 
             // Track series
@@ -341,7 +349,7 @@ class GachaService {
     }
 
     /**
-     * UPDATED: Better rarity emojis and colors
+     * Rarity system methods
      */
     getRarityEmoji(rarity) {
         const emojis = {
@@ -350,14 +358,11 @@ class GachaService {
             rare: '🔵',       // Blue circle
             epic: '🟣',       // Purple circle
             legendary: '🟡',  // Yellow circle
-            mythic: '🌟'      // Star (upgraded from rainbow)
+            mythic: '🌟'      // Star
         };
         return emojis[rarity] || emojis.common;
     }
 
-    /**
-     * Get rarity color for embeds
-     */
     getRarityColor(rarity) {
         const colors = {
             common: '#95A5A6',     // Gray
@@ -370,9 +375,6 @@ class GachaService {
         return colors[rarity] || colors.common;
     }
 
-    /**
-     * Get rarity display name
-     */
     getRarityDisplayName(rarity) {
         const names = {
             common: 'Common',
@@ -386,7 +388,7 @@ class GachaService {
     }
 
     /**
-     * Format emoji for display - using the same pattern as trophy system
+     * Format emoji for display
      */
     formatEmoji(emojiId, emojiName) {
         if (emojiId && emojiName) {
@@ -397,9 +399,6 @@ class GachaService {
         return '❓';
     }
 
-    /**
-     * Format emoji from user's collection item
-     */
     formatCollectionItemEmoji(item) {
         return this.formatEmoji(item.emojiId, item.emojiName);
     }
