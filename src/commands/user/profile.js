@@ -1,10 +1,11 @@
-// src/commands/user/profile.js - COMPLETE FIXED VERSION with duplicate prevention
+// src/commands/user/profile.js - COMPLETE UPDATED VERSION with collection grid display
 import { 
     SlashCommandBuilder, 
     EmbedBuilder,
     ActionRowBuilder,
     ButtonBuilder,
-    ButtonStyle
+    ButtonStyle,
+    StringSelectMenuBuilder
 } from 'discord.js';
 import { User } from '../../models/User.js';
 import { Challenge } from '../../models/Challenge.js';
@@ -12,6 +13,7 @@ import { getTrophyEmoji, formatTrophyEmoji } from '../../config/trophyEmojis.js'
 import { formatGachaEmoji } from '../../config/gachaEmojis.js';
 import retroAPI from '../../services/retroAPI.js';
 import gachaService from '../../services/gachaService.js';
+import combinationService from '../../services/combinationService.js';
 import { COLORS, EMOJIS } from '../../utils/FeedUtils.js';
 
 // Award points constants - matching yearlyLeaderboard.js exactly
@@ -566,6 +568,278 @@ export default {
     },
 
     /**
+     * UPDATED: Collection button now shows emoji grid like /collection command
+     */
+    async handleCollectionButton(interaction, user) {
+        if (!user.gachaCollection || user.gachaCollection.length === 0) {
+            return interaction.editReply({
+                content: '📦 Your collection is empty! Visit the gacha channel to start collecting items.\n\n' +
+                         '💡 **Tip:** All item combinations happen automatically when you get the right ingredients!',
+                ephemeral: true
+            });
+        }
+
+        // Use the same display logic as the collection command
+        await this.showCollectionItemsPage(interaction, user, 'all', 0);
+    },
+
+    /**
+     * NEW: Show collection items page with emoji grid (adapted from collection.js)
+     */
+    async showCollectionItemsPage(interaction, user, filter = 'all', page = 0) {
+        const ITEMS_PER_PAGE = 25;
+        
+        // Filter items
+        let filteredItems = filter === 'all' ? 
+            user.gachaCollection : 
+            user.gachaCollection.filter(item => item.seriesId === filter);
+
+        const title = filter === 'all' ? 'All Items' : `${filter.charAt(0).toUpperCase() + filter.slice(1)} Series`;
+
+        // Sort by rarity, then by name
+        const rarityOrder = ['mythic', 'legendary', 'epic', 'rare', 'uncommon', 'common'];
+        filteredItems.sort((a, b) => {
+            const aRarityIndex = rarityOrder.indexOf(a.rarity);
+            const bRarityIndex = rarityOrder.indexOf(b.rarity);
+            if (aRarityIndex !== bRarityIndex) return aRarityIndex - bRarityIndex;
+            return a.itemName.localeCompare(b.itemName);
+        });
+
+        // Pagination
+        const totalPages = Math.ceil(filteredItems.length / ITEMS_PER_PAGE);
+        const startIndex = page * ITEMS_PER_PAGE;
+        const endIndex = Math.min(startIndex + ITEMS_PER_PAGE, filteredItems.length);
+        const pageItems = filteredItems.slice(startIndex, endIndex);
+
+        // Create embed
+        const embed = new EmbedBuilder()
+            .setTitle(`${user.raUsername}'s Collection - ${title}`)
+            .setColor(COLORS.INFO)
+            .setTimestamp();
+
+        if (pageItems.length === 0) {
+            embed.setDescription('No items to display.');
+        } else {
+            // Group by rarity and create emoji grid
+            const rarityGroups = {};
+            pageItems.forEach(item => {
+                if (!rarityGroups[item.rarity]) rarityGroups[item.rarity] = [];
+                rarityGroups[item.rarity].push(item);
+            });
+
+            let description = '';
+            for (const rarity of rarityOrder) {
+                const rarityItems = rarityGroups[rarity];
+                if (!rarityItems || rarityItems.length === 0) continue;
+
+                const rarityEmoji = gachaService.getRarityEmoji(rarity);
+                const rarityName = gachaService.getRarityDisplayName(rarity);
+                description += `\n${rarityEmoji} **${rarityName}** (${rarityItems.length})\n`;
+                
+                // Create emoji grid (5 per row)
+                let currentRow = '';
+                for (let i = 0; i < rarityItems.length; i++) {
+                    const item = rarityItems[i];
+                    const emoji = formatGachaEmoji(item.emojiId, item.emojiName);
+                    const quantity = (item.quantity || 1) > 1 ? `⁽${item.quantity}⁾` : '';
+                    currentRow += `${emoji}${quantity} `;
+                    
+                    if ((i + 1) % 5 === 0 || i === rarityItems.length - 1) {
+                        description += currentRow.trim() + '\n';
+                        currentRow = '';
+                    }
+                }
+            }
+            embed.setDescription(description.trim());
+        }
+
+        // Get combination stats
+        const combinationStats = combinationService.getCombinationStats(user);
+
+        // Footer
+        if (totalPages > 1) {
+            embed.setFooter({ 
+                text: `Page ${page + 1}/${totalPages} • ${startIndex + 1}-${endIndex} of ${filteredItems.length} items • ${combinationStats.totalCombined} from auto-combos`
+            });
+        } else {
+            embed.setFooter({ 
+                text: `${filteredItems.length} items • ${combinationStats.totalCombined} from auto-combinations • ⁽ⁿ⁾ = quantity • Use /collection for full interface`
+            });
+        }
+
+        // Create components
+        const components = [];
+
+        // Series dropdown (if multiple series)
+        const seriesOptions = this.getSeriesOptions(user);
+        if (seriesOptions.length > 1) {
+            const seriesMenu = new StringSelectMenuBuilder()
+                .setCustomId(`profile_coll_series_${user.raUsername}`)
+                .setPlaceholder('Choose a series to view...')
+                .addOptions(seriesOptions);
+            components.push(new ActionRowBuilder().addComponents(seriesMenu));
+        }
+
+        // Action buttons
+        const actionRow = new ActionRowBuilder();
+        
+        // Pagination buttons (only if more than one page)
+        if (totalPages > 1) {
+            actionRow.addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`profile_coll_prev_${user.raUsername}_${filter}`)
+                    .setLabel('◀')
+                    .setStyle(ButtonStyle.Secondary)
+                    .setDisabled(page === 0),
+                new ButtonBuilder()
+                    .setCustomId('page_indicator')
+                    .setLabel(`${page + 1}/${totalPages}`)
+                    .setStyle(ButtonStyle.Secondary)
+                    .setDisabled(true),
+                new ButtonBuilder()
+                    .setCustomId(`profile_coll_next_${user.raUsername}_${filter}`)
+                    .setLabel('▶')
+                    .setStyle(ButtonStyle.Secondary)
+                    .setDisabled(page === totalPages - 1)
+            );
+        }
+
+        // Main action button
+        actionRow.addComponents(
+            new ButtonBuilder()
+                .setCustomId(`profile_coll_full_${user.raUsername}`)
+                .setLabel('🔗 Open Full Collection')
+                .setStyle(ButtonStyle.Primary)
+        );
+
+        components.push(actionRow);
+
+        await interaction.editReply({ embeds: [embed], components: components });
+    },
+
+    /**
+     * NEW: Get series options for dropdown (adapted from collection.js)
+     */
+    getSeriesOptions(user) {
+        const summary = gachaService.getUserCollectionSummary(user);
+        const options = [
+            { label: 'All Items', value: 'all', description: `View all ${summary.totalItems} items`, emoji: '📦' }
+        ];
+
+        Object.entries(summary.seriesBreakdown || {}).forEach(([seriesName, items]) => {
+            const itemCount = items.length;
+            const totalQuantity = items.reduce((sum, item) => sum + (item.quantity || 1), 0);
+            
+            if (seriesName === 'Individual Items') {
+                options.push({
+                    label: 'Individual Items',
+                    value: 'individual',
+                    description: `${itemCount} standalone items`,
+                    emoji: '🔸'
+                });
+            } else {
+                options.push({
+                    label: `${seriesName.charAt(0).toUpperCase() + seriesName.slice(1)}`,
+                    value: seriesName,
+                    description: `${itemCount} types (${totalQuantity} total)`,
+                    emoji: '🏷️'
+                });
+            }
+        });
+
+        return options.slice(0, 25); // Discord limit
+    },
+
+    /**
+     * NEW: Handle collection interactions from profile view
+     */
+    async handleCollectionInteraction(interaction) {
+        if (!interaction.customId.startsWith('profile_coll_')) return;
+
+        try {
+            await interaction.deferUpdate();
+
+            const parts = interaction.customId.split('_');
+            if (parts.length < 4) return;
+
+            const action = parts[2]; // 'series', 'prev', 'next', 'full'
+            const username = parts[3];
+
+            const user = await User.findOne({ 
+                raUsername: { $regex: new RegExp(`^${username}$`, 'i') }
+            });
+
+            if (!user) {
+                return interaction.followUp({ 
+                    content: '❌ User not found.', 
+                    ephemeral: true 
+                });
+            }
+
+            switch (action) {
+                case 'series':
+                    if (interaction.isStringSelectMenu()) {
+                        const selectedSeries = interaction.values[0];
+                        await this.showCollectionItemsPage(interaction, user, selectedSeries, 0);
+                    }
+                    break;
+
+                case 'prev':
+                    if (parts.length >= 5) {
+                        const prevFilter = parts[4];
+                        const currentPage = parseInt(interaction.message.embeds[0].footer?.text?.match(/Page (\d+)/)?.[1] || '1') - 1;
+                        await this.showCollectionItemsPage(interaction, user, prevFilter, Math.max(0, currentPage - 1));
+                    }
+                    break;
+
+                case 'next':
+                    if (parts.length >= 5) {
+                        const nextFilter = parts[4];
+                        const nextCurrentPage = parseInt(interaction.message.embeds[0].footer?.text?.match(/Page (\d+)/)?.[1] || '1') - 1;
+                        await this.showCollectionItemsPage(interaction, user, nextFilter, nextCurrentPage + 1);
+                    }
+                    break;
+
+                case 'full':
+                    // Provide instructions to use the full collection command
+                    await interaction.followUp({
+                        content: '💡 **Use `/collection` for the full collection interface!**\n\n' +
+                                 'The full collection command includes:\n' +
+                                 '• 🔍 **Item inspection** with detailed descriptions\n' +
+                                 '• 🎁 **Give items** to other players\n' +
+                                 '• 📊 **Collection statistics**\n' +
+                                 '• ⚡ **Auto-combination tracking**\n\n' +
+                                 'Just type `/collection` to access all features!',
+                        ephemeral: true
+                    });
+                    break;
+            }
+
+        } catch (error) {
+            console.error('Error handling collection interaction:', error);
+            try {
+                if (!interaction.replied && !interaction.deferred) {
+                    await interaction.reply({ 
+                        content: '❌ An error occurred while processing your request.', 
+                        ephemeral: true 
+                    });
+                } else if (interaction.deferred) {
+                    await interaction.editReply({ 
+                        content: '❌ An error occurred while processing your request.' 
+                    });
+                } else {
+                    await interaction.followUp({ 
+                        content: '❌ An error occurred while processing your request.', 
+                        ephemeral: true 
+                    });
+                }
+            } catch (followUpError) {
+                console.error('Error sending error follow-up:', followUpError);
+            }
+        }
+    },
+
+    /**
      * FIXED: Deduplicate Map entries by normalizing keys and keeping best progress
      */
     deduplicateMapEntries(challengeMap) {
@@ -631,121 +905,6 @@ export default {
         
         // Return original if we can't normalize
         return keyStr;
-    },
-
-    // UPDATED: Clean collection display with series grouping
-    async handleCollectionButton(interaction, user) {
-        const collection = user.gachaCollection || [];
-        
-        if (collection.length === 0) {
-            return interaction.editReply({
-                content: '📦 Your collection is empty! \n\n' +
-                         '**How to start collecting:**\n' +
-                         '• Visit the gacha channel and use the machine\n' +
-                         '• Single Pull: 50 GP for 1 item\n' +
-                         '• Multi Pull: 150 GP for 4 items (25% discount!)\n' +
-                         '• Earn GP through monthly challenges and community participation',
-                ephemeral: true
-            });
-        }
-
-        // Get collection summary with series breakdown
-        const summary = gachaService.getUserCollectionSummary(user);
-
-        // UPDATED: Clean collection title - removed 📦 emoji
-        const embed = new EmbedBuilder()
-            .setTitle(`${user.raUsername}'s Collection`)
-            .setColor(COLORS.INFO)
-            .setDescription(`**Total Items:** ${summary.totalItems} (${summary.uniqueItems} unique)`)
-            .setTimestamp();
-
-        // Series breakdown - the main focus
-        if (Object.keys(summary.seriesBreakdown).length > 0) {
-            let seriesText = '';
-            const seriesEntries = Object.entries(summary.seriesBreakdown);
-            
-            // Sort series, putting "Individual Items" last
-            seriesEntries.sort(([a], [b]) => {
-                if (a === 'Individual Items') return 1;
-                if (b === 'Individual Items') return -1;
-                return a.localeCompare(b);
-            });
-
-            for (const [seriesName, items] of seriesEntries.slice(0, 6)) { // Limit to prevent overflow
-                const itemCount = items.length;
-                const totalQuantity = items.reduce((sum, item) => sum + (item.quantity || 1), 0);
-                
-                if (seriesName === 'Individual Items') {
-                    // UPDATED: Removed 🔸 emoji
-                    seriesText += `**Individual Items:** ${itemCount} types (${totalQuantity} total)\n`;
-                } else {
-                    // UPDATED: Removed 🏷️ emoji
-                    const displayName = seriesName.charAt(0).toUpperCase() + seriesName.slice(1);
-                    seriesText += `**${displayName} Series:** ${itemCount} types (${totalQuantity} total)\n`;
-                }
-            }
-
-            if (seriesEntries.length > 6) {
-                seriesText += `*...and ${seriesEntries.length - 6} more series*\n`;
-            }
-
-            embed.addFields({ name: 'Collection by Series', value: seriesText, inline: false });
-        }
-
-        // Rarity breakdown (compact)
-        let rarityText = '';
-        const rarityOrder = ['mythic', 'legendary', 'epic', 'rare', 'uncommon', 'common'];
-        for (const rarity of rarityOrder) {
-            const count = summary.rarityCount[rarity] || 0;
-            if (count > 0) {
-                const rarityEmoji = gachaService.getRarityEmoji(rarity);
-                rarityText += `${rarityEmoji} ${count} `;
-            }
-        }
-
-        if (rarityText) {
-            embed.addFields({ name: 'By Rarity', value: rarityText.trim(), inline: true });
-        }
-
-        // Source breakdown - UPDATED: Removed source emojis
-        embed.addFields({ 
-            name: 'By Source', 
-            value: `Gacha: ${summary.sourceBreakdown.gacha || 0}\n` +
-                   `Combined: ${summary.sourceBreakdown.combined || 0}\n` +
-                   `Series Rewards: ${summary.sourceBreakdown.series_completion || 0}`,
-            inline: true 
-        });
-
-        // Show recent items (compact) - UPDATED: Clean emoji grid display
-        if (summary.recentItems.length > 0) {
-            let recentText = '';
-            let currentRow = '';
-            const EMOJIS_PER_ROW = 8;
-            
-            for (let i = 0; i < Math.min(summary.recentItems.length, 16); i++) {
-                const item = summary.recentItems[i];
-                const emoji = formatGachaEmoji(item.emojiId, item.emojiName);
-                const quantity = (item.quantity || 1) > 1 ? `⁽${item.quantity}⁾` : '';
-                
-                currentRow += `${emoji}${quantity} `;
-                
-                if ((i + 1) % EMOJIS_PER_ROW === 0 || i === Math.min(summary.recentItems.length, 16) - 1) {
-                    recentText += currentRow.trim() + '\n';
-                    currentRow = '';
-                }
-            }
-            
-            embed.addFields({ name: 'Recent Items', value: recentText.trim(), inline: false });
-        }
-
-        embed.setFooter({ 
-            text: 'Use /collection for detailed view with filters, item inspection, and combination interface!' 
-        });
-
-        await interaction.editReply({
-            embeds: [embed],
-            ephemeral: true
-        });
     },
 
     // Helper methods
