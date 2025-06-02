@@ -1070,29 +1070,41 @@ class CombinationService {
     }
 
     /**
-     * Helper to get user and verify permissions - ENHANCED DEBUG VERSION
+     * Helper to get user and verify permissions - FIXED: Discord ID first approach
      */
-    async getUserForInteraction(interaction, username) {
+    async getUserForInteraction(interaction, usernameFromCustomId) {
         const { User } = await import('../models/User.js');
         
         console.log('🔍 COMBINATION PERMISSION DEBUG:');
-        console.log('- Requested username from custom ID:', username);
-        console.log('- Interaction user ID:', interaction.user.id);
-        console.log('- Interaction username:', interaction.user.username);
+        console.log('- RA username from custom ID:', usernameFromCustomId);
+        console.log('- Discord user clicking:', interaction.user.username, '(' + interaction.user.id + ')');
         
-        const user = await User.findOne({ 
-            raUsername: { $regex: new RegExp(`^${username}$`, 'i') }
-        });
-
-        console.log('- Database user found:', user ? 'Yes' : 'No');
-        if (user) {
-            console.log('- Database raUsername:', user.raUsername);
-            console.log('- Database discordId:', user.discordId);
-            console.log('- IDs match:', user.discordId === interaction.user.id);
+        // FIXED: Look up user by Discord ID first (most reliable)
+        const user = await User.findOne({ discordId: interaction.user.id });
+        
+        if (!user) {
+            console.log('❌ DISCORD USER NOT FOUND IN DATABASE');
+            await interaction.editReply({
+                content: '❌ You are not registered in the system. Please contact an admin.',
+                embeds: [],
+                components: []
+            });
+            return null;
         }
-
-        if (!user || user.discordId !== interaction.user.id) {
-            console.log('❌ PERMISSION DENIED - Details above');
+        
+        console.log('✅ Found user in database:');
+        console.log('- Database RA username:', user.raUsername);
+        console.log('- Database Discord ID:', user.discordId);
+        console.log('- Custom ID RA username:', usernameFromCustomId);
+        
+        // FIXED: Verify the RA username matches (case-insensitive)
+        const raUsernamesMatch = user.raUsername.toLowerCase() === usernameFromCustomId.toLowerCase();
+        console.log('- RA usernames match:', raUsernamesMatch);
+        
+        if (!raUsernamesMatch) {
+            console.log('❌ PERMISSION DENIED - RA username mismatch');
+            console.log('- Expected:', usernameFromCustomId);
+            console.log('- Actual:', user.raUsername);
             await interaction.editReply({
                 content: '❌ You can only perform combinations on your own collection.',
                 embeds: [],
@@ -1101,7 +1113,7 @@ class CombinationService {
             return null;
         }
 
-        console.log('✅ PERMISSION GRANTED');
+        console.log('✅ PERMISSION GRANTED - User and RA username verified');
         return user;
     }
 
