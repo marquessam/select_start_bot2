@@ -1,8 +1,8 @@
-// src/services/combinationService.js - UPDATED with Shadow Unlock integration
+// src/services/combinationService.js - COMPLETE UPDATED VERSION with confirmation system and shadow unlock
 import { GachaItem, CombinationRule } from '../models/GachaItem.js';
 import { Challenge } from '../models/Challenge.js';
 import { config } from '../config/config.js';
-import { EmbedBuilder } from 'discord.js';
+import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder } from 'discord.js';
 import { formatGachaEmoji } from '../config/gachaEmojis.js';
 import { COLORS } from '../utils/FeedUtils.js';
 
@@ -19,65 +19,343 @@ class CombinationService {
     }
 
     /**
-     * Check for automatic combinations after user gets new items
+     * UPDATED: Check for possible combinations but DON'T perform them automatically
+     * Returns possible combinations that can be confirmed by the user
      */
-    async checkAutoCombinations(user) {
+    async checkPossibleCombinations(user, triggerItemId = null) {
         try {
             if (!user.gachaCollection || user.gachaCollection.length === 0) {
                 return [];
             }
 
-            // Get all automatic combination rules
-            const autoRules = await CombinationRule.find({ 
-                isAutomatic: true, 
-                isActive: true 
-            }).sort({ priority: -1 }); // Higher priority first
+            // Get all combination rules (both automatic and manual)
+            const rules = await CombinationRule.find({ isActive: true });
+            const possibleCombinations = [];
 
-            const combinationsPerformed = [];
-
-            // Process each rule
-            for (const rule of autoRules) {
-                let canPerform = true;
-                
-                // Keep checking if we can perform this combination
-                while (canPerform) {
-                    // Check if user has all required ingredients
-                    const hasIngredients = this.checkIngredients(user, rule.ingredients);
-                    
-                    if (hasIngredients) {
-                        // Perform the combination
-                        const result = await this.performCombination(user, rule);
-                        if (result.success) {
-                            combinationsPerformed.push(result);
-                            console.log(`Auto-combination performed: ${rule.ruleId}`);
-                            
-                            // NEW: Check for shadow unlock and toggle reveal
-                            await this.checkForShadowUnlock(user, result);
-                            
-                            // Send alert for this combination
-                            await this.sendCombinationAlert(user, result);
-                        } else {
-                            canPerform = false;
-                        }
-                    } else {
-                        canPerform = false;
-                    }
-                }
+            for (const rule of rules) {
+                const combinations = await this.findPossibleCombinationsForRule(user, rule, triggerItemId);
+                possibleCombinations.push(...combinations);
             }
 
-            if (combinationsPerformed.length > 0) {
-                await user.save();
-            }
+            // Sort by priority (higher priority first)
+            possibleCombinations.sort((a, b) => (b.rule.priority || 0) - (a.rule.priority || 0));
 
-            return combinationsPerformed;
+            console.log(`Found ${possibleCombinations.length} possible combinations for ${user.raUsername}`);
+            return possibleCombinations;
+
         } catch (error) {
-            console.error('Error checking auto-combinations:', error);
+            console.error('Error checking possible combinations:', error);
             return [];
         }
     }
 
     /**
-     * NEW: Check if the combination result is a shadow unlock item and toggle reveal
+     * Find all possible combinations for a specific rule
+     * If triggerItemId is provided, only return combinations that use that item
+     */
+    async findPossibleCombinationsForRule(user, rule, triggerItemId = null) {
+        const combinations = [];
+
+        try {
+            // Get user's items grouped by itemId
+            const userItemMap = new Map();
+            user.gachaCollection.forEach(item => {
+                const existing = userItemMap.get(item.itemId) || { quantity: 0, item: item };
+                existing.quantity += (item.quantity || 1);
+                userItemMap.set(item.itemId, existing);
+            });
+
+            // Check if user has ingredients for this rule
+            const requiredIngredients = rule.ingredients;
+            const availableQuantities = [];
+
+            for (const ingredient of requiredIngredients) {
+                const userItem = userItemMap.get(ingredient.itemId);
+                if (!userItem || userItem.quantity < ingredient.quantity) {
+                    return []; // Missing ingredient, can't make this combination
+                }
+                availableQuantities.push(Math.floor(userItem.quantity / ingredient.quantity));
+            }
+
+            // If triggerItemId is specified, make sure this combination uses it
+            if (triggerItemId) {
+                const usesTriggerItem = requiredIngredients.some(ing => ing.itemId === triggerItemId);
+                if (!usesTriggerItem) {
+                    return []; // This combination doesn't use the trigger item
+                }
+            }
+
+            // Calculate how many times this combination can be made
+            const maxCombinations = Math.min(...availableQuantities);
+
+            if (maxCombinations > 0) {
+                // Get the result item info
+                const resultItem = await GachaItem.findOne({ itemId: rule.result.itemId });
+                if (resultItem) {
+                    // Create combination entry
+                    combinations.push({
+                        ruleId: rule.ruleId,
+                        rule: rule,
+                        resultItem: resultItem,
+                        resultQuantity: rule.result.quantity || 1,
+                        maxCombinations: maxCombinations,
+                        ingredients: requiredIngredients.map(ing => ({
+                            itemId: ing.itemId,
+                            quantity: ing.quantity,
+                            available: userItemMap.get(ing.itemId)?.quantity || 0,
+                            item: userItemMap.get(ing.itemId)?.item
+                        }))
+                    });
+                }
+            }
+
+        } catch (error) {
+            console.error(`Error processing rule ${rule.ruleId}:`, error);
+        }
+
+        return combinations;
+    }
+
+    /**
+     * UPDATED: Show combination confirmation UI instead of auto-performing
+     * If multiple combinations possible, show selection menu
+     * If single combination, show direct confirmation
+     */
+    async showCombinationAlert(interaction, user, possibleCombinations) {
+        try {
+            if (possibleCombinations.length === 0) {
+                return; // No combinations to show
+            }
+
+            if (possibleCombinations.length === 1) {
+                // Single combination - show direct confirmation
+                await this.showSingleCombinationConfirmation(interaction, user, possibleCombinations[0]);
+            } else {
+                // Multiple combinations - show selection menu
+                await this.showMultipleCombinationSelection(interaction, user, possibleCombinations);
+            }
+
+        } catch (error) {
+            console.error('Error showing combination alert:', error);
+        }
+    }
+
+    /**
+     * Show confirmation for a single possible combination
+     */
+    async showSingleCombinationConfirmation(interaction, user, combination) {
+        const { resultItem, resultQuantity, ingredients, maxCombinations } = combination;
+        
+        const resultEmoji = formatGachaEmoji(resultItem.emojiId, resultItem.emojiName);
+        const rarityEmoji = this.getRarityEmoji(resultItem.rarity);
+
+        // Build ingredients display
+        let ingredientsText = '';
+        for (const ingredient of ingredients) {
+            const ingredientEmoji = formatGachaEmoji(ingredient.item.emojiId, ingredient.item.emojiName);
+            ingredientsText += `${ingredientEmoji} ${ingredient.quantity}x ${ingredient.item.itemName}\n`;
+        }
+
+        // Check if this is a shadow unlock item for special messaging
+        const isShadowUnlock = this.isShadowUnlockItem(resultItem);
+
+        const embed = new EmbedBuilder()
+            .setTitle(isShadowUnlock ? '🌙 SHADOW UNLOCK AVAILABLE!' : '⚗️ Combination Available!')
+            .setColor(isShadowUnlock ? '#9932CC' : COLORS.WARNING)
+            .setDescription(
+                `You can create ${isShadowUnlock ? '**the Shadow Unlock item**' : 'a new item'} by combining ingredients!\n\n` +
+                `**Recipe:**\n${ingredientsText}\n` +
+                `**Creates:**\n${resultEmoji} ${rarityEmoji} **${resultQuantity}x ${resultItem.itemName}**\n\n` +
+                `**Available combinations:** ${maxCombinations}\n\n` +
+                `⚠️ **This will consume the ingredients!**` +
+                (isShadowUnlock ? '\n\n🔓 **This will reveal this month\'s shadow challenge!**' : '')
+            )
+            .addFields(
+                { name: 'Result Description', value: resultItem.description || 'No description', inline: false }
+            )
+            .setFooter({ text: 'Choose how many combinations to perform, or cancel.' })
+            .setTimestamp();
+
+        // Create buttons for different quantities
+        const actionRow = new ActionRowBuilder();
+        
+        if (maxCombinations >= 1) {
+            actionRow.addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`combo_confirm_${combination.ruleId}_1_${user.raUsername}`)
+                    .setLabel(isShadowUnlock ? 'Unlock Shadow!' : 'Make 1')
+                    .setStyle(isShadowUnlock ? ButtonStyle.Danger : ButtonStyle.Primary)
+                    .setEmoji(isShadowUnlock ? '🌙' : '⚗️')
+            );
+        }
+        
+        if (maxCombinations >= 5 && !isShadowUnlock) {
+            actionRow.addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`combo_confirm_${combination.ruleId}_5_${user.raUsername}`)
+                    .setLabel('Make 5')
+                    .setStyle(ButtonStyle.Primary)
+            );
+        }
+        
+        if (maxCombinations >= 10 && !isShadowUnlock) {
+            actionRow.addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`combo_confirm_${combination.ruleId}_${maxCombinations}_${user.raUsername}`)
+                    .setLabel(`Make All (${maxCombinations})`)
+                    .setStyle(ButtonStyle.Success)
+            );
+        } else if (maxCombinations > 1 && !isShadowUnlock) {
+            actionRow.addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`combo_confirm_${combination.ruleId}_${maxCombinations}_${user.raUsername}`)
+                    .setLabel(`Make All (${maxCombinations})`)
+                    .setStyle(ButtonStyle.Success)
+            );
+        }
+
+        actionRow.addComponents(
+            new ButtonBuilder()
+                .setCustomId(`combo_cancel_${user.raUsername}`)
+                .setLabel('Cancel')
+                .setStyle(ButtonStyle.Secondary)
+        );
+
+        await interaction.followUp({
+            embeds: [embed],
+            components: [actionRow],
+            ephemeral: true
+        });
+    }
+
+    /**
+     * Show selection menu for multiple possible combinations
+     */
+    async showMultipleCombinationSelection(interaction, user, combinations) {
+        // Limit to 25 options for Discord select menu
+        const limitedCombinations = combinations.slice(0, 25);
+
+        // Check if any combinations are shadow unlocks
+        const hasShadowUnlock = limitedCombinations.some(combo => this.isShadowUnlockItem(combo.resultItem));
+
+        const embed = new EmbedBuilder()
+            .setTitle(hasShadowUnlock ? '🌙 SHADOW UNLOCK + MORE AVAILABLE!' : '⚗️ Multiple Combinations Available!')
+            .setColor(hasShadowUnlock ? '#9932CC' : COLORS.INFO)
+            .setDescription(
+                `You have ingredients for multiple combinations!\n` +
+                `Choose which one you'd like to make:\n\n` +
+                `⚠️ **Combinations will consume ingredients!**` +
+                (hasShadowUnlock ? '\n\n🌙 **One option will unlock the shadow challenge!**' : '')
+            )
+            .setFooter({ text: 'Select a combination from the menu below, or cancel.' })
+            .setTimestamp();
+
+        // Create select menu options
+        const selectOptions = limitedCombinations.map((combo, index) => {
+            const resultEmoji = formatGachaEmoji(combo.resultItem.emojiId, combo.resultItem.emojiName);
+            const ingredientNames = combo.ingredients.map(ing => ing.item.itemName).join(' + ');
+            const isShadowUnlock = this.isShadowUnlockItem(combo.resultItem);
+            
+            return {
+                label: `${combo.resultQuantity}x ${combo.resultItem.itemName}${isShadowUnlock ? ' 🌙' : ''}`.slice(0, 100),
+                value: `combo_select_${combo.ruleId}_${user.raUsername}`,
+                description: `${ingredientNames} (max: ${combo.maxCombinations})${isShadowUnlock ? ' - SHADOW!' : ''}`.slice(0, 100),
+                emoji: combo.resultItem.emojiId ? 
+                    { id: combo.resultItem.emojiId, name: combo.resultItem.emojiName } : 
+                    combo.resultItem.emojiName
+            };
+        });
+
+        const selectMenu = new StringSelectMenuBuilder()
+            .setCustomId(`combo_selection_${user.raUsername}`)
+            .setPlaceholder('Choose a combination...')
+            .addOptions(selectOptions);
+
+        const cancelButton = new ButtonBuilder()
+            .setCustomId(`combo_cancel_${user.raUsername}`)
+            .setLabel('Cancel')
+            .setStyle(ButtonStyle.Secondary);
+
+        const components = [
+            new ActionRowBuilder().addComponents(selectMenu),
+            new ActionRowBuilder().addComponents(cancelButton)
+        ];
+
+        await interaction.followUp({
+            embeds: [embed],
+            components: components,
+            ephemeral: true
+        });
+    }
+
+    /**
+     * UPDATED: Perform a specific combination after confirmation
+     */
+    async performCombination(user, ruleId, quantity = 1) {
+        try {
+            const rule = await CombinationRule.findOne({ ruleId, isActive: true });
+            if (!rule) {
+                throw new Error('Combination rule not found');
+            }
+
+            // Verify user still has the required ingredients
+            const possibleCombinations = await this.findPossibleCombinationsForRule(user, rule);
+            if (possibleCombinations.length === 0) {
+                throw new Error('You no longer have the required ingredients');
+            }
+
+            const combination = possibleCombinations[0];
+            if (combination.maxCombinations < quantity) {
+                throw new Error(`You can only make ${combination.maxCombinations} of this combination`);
+            }
+
+            // Get result item
+            const resultItem = await GachaItem.findOne({ itemId: rule.result.itemId });
+            if (!resultItem) {
+                throw new Error('Result item not found');
+            }
+
+            // Remove ingredients from user's collection
+            for (const ingredient of rule.ingredients) {
+                const totalToRemove = ingredient.quantity * quantity;
+                const removeSuccess = user.removeGachaItem(ingredient.itemId, totalToRemove);
+                if (!removeSuccess) {
+                    throw new Error(`Failed to remove ingredient: ${ingredient.itemId}`);
+                }
+            }
+
+            // Add result item(s) to user's collection
+            const totalResultQuantity = (rule.result.quantity || 1) * quantity;
+            const addResult = user.addGachaItem(resultItem, totalResultQuantity, 'combined');
+
+            console.log(`Combination successful: ${user.raUsername} made ${quantity}x ${rule.ruleId}`);
+
+            const result = {
+                success: true,
+                ruleId: rule.ruleId,
+                resultItem: resultItem,
+                resultQuantity: totalResultQuantity,
+                addResult: addResult,
+                rule: rule,
+                ingredients: rule.ingredients
+            };
+
+            // UPDATED: Check for shadow unlock after confirmation
+            await this.checkForShadowUnlock(user, result);
+
+            return result;
+
+        } catch (error) {
+            console.error('Error performing combination:', error);
+            return {
+                success: false,
+                error: error.message
+            };
+        }
+    }
+
+    /**
+     * UPDATED: Check if the combination result is a shadow unlock item and toggle reveal
      */
     async checkForShadowUnlock(user, combinationResult) {
         try {
@@ -135,7 +413,7 @@ class CombinationService {
     }
 
     /**
-     * NEW: Check if an item is the shadow unlock item
+     * Check if an item is the shadow unlock item
      */
     isShadowUnlockItem(item) {
         // Check by item ID (999) or by name (Shadow Unlock)
@@ -145,7 +423,7 @@ class CombinationService {
     }
 
     /**
-     * NEW: Send special alert when shadow is unlocked
+     * Send special alert when shadow is unlocked
      */
     async sendShadowUnlockAlert(user, challenge, month, year) {
         if (!this.client) {
@@ -211,7 +489,135 @@ class CombinationService {
     }
 
     /**
-     * Send combination alert to gacha channel
+     * UPDATED: Handle combination button and select menu interactions
+     */
+    async handleCombinationInteraction(interaction) {
+        try {
+            if (!interaction.customId.startsWith('combo_')) return false;
+
+            // Don't defer update for cancellation buttons
+            if (interaction.customId.includes('_cancel_')) {
+                await interaction.deferUpdate();
+                await interaction.editReply({
+                    content: '❌ Combination cancelled.',
+                    embeds: [],
+                    components: []
+                });
+                return true;
+            }
+
+            await interaction.deferUpdate();
+
+            const parts = interaction.customId.split('_');
+            const action = parts[1]; // confirm, cancel, select, selection
+            
+            if (action === 'confirm') {
+                const ruleId = parts[2];
+                const quantity = parseInt(parts[3]);
+                const username = parts[4];
+
+                // Verify user
+                const user = await this.getUserForInteraction(interaction, username);
+                if (!user) return true;
+
+                // Perform the combination
+                const result = await this.performCombination(user, ruleId, quantity);
+                
+                if (result.success) {
+                    await user.save();
+                    await this.showCombinationSuccess(interaction, result, quantity);
+                    
+                    // Send public alert for successful combinations
+                    await this.sendCombinationAlert(user, result);
+                } else {
+                    await interaction.editReply({
+                        content: `❌ Combination failed: ${result.error}`,
+                        embeds: [],
+                        components: []
+                    });
+                }
+                return true;
+            }
+
+            if (action === 'select') {
+                const ruleId = parts[2];
+                const username = parts[3];
+
+                // Get the specific combination and show confirmation
+                const user = await this.getUserForInteraction(interaction, username);
+                if (!user) return true;
+
+                const rule = await CombinationRule.findOne({ ruleId });
+                const possibleCombinations = await this.findPossibleCombinationsForRule(user, rule);
+                
+                if (possibleCombinations.length > 0) {
+                    await this.showSingleCombinationConfirmation(interaction, user, possibleCombinations[0]);
+                } else {
+                    await interaction.editReply({
+                        content: '❌ This combination is no longer available.',
+                        embeds: [],
+                        components: []
+                    });
+                }
+                return true;
+            }
+
+        } catch (error) {
+            console.error('Error handling combination interaction:', error);
+            await interaction.editReply({
+                content: '❌ An error occurred while processing the combination.',
+                embeds: [],
+                components: []
+            });
+        }
+        return false;
+    }
+
+    /**
+     * Show combination success message
+     */
+    async showCombinationSuccess(interaction, result, quantity) {
+        const { resultItem, resultQuantity, addResult } = result;
+        const resultEmoji = formatGachaEmoji(resultItem.emojiId, resultItem.emojiName);
+        const rarityEmoji = this.getRarityEmoji(resultItem.rarity);
+        const isShadowUnlock = this.isShadowUnlockItem(resultItem);
+
+        const embed = new EmbedBuilder()
+            .setTitle(isShadowUnlock ? '🌙 SHADOW UNLOCKED!' : '✨ Combination Successful!')
+            .setColor(isShadowUnlock ? '#9932CC' : COLORS.SUCCESS)
+            .setDescription(
+                `You created ${isShadowUnlock ? '**the Shadow Unlock item**' : 'a new item'}!\n\n` +
+                `${resultEmoji} ${rarityEmoji} **${resultQuantity}x ${resultItem.itemName}**\n\n` +
+                `*${resultItem.description}*` +
+                (isShadowUnlock ? '\n\n🔓 **The shadow challenge has been revealed to the server!**' : '')
+            )
+            .setFooter({ text: 'The new item has been added to your collection!' })
+            .setTimestamp();
+
+        if (addResult && addResult.wasStacked) {
+            embed.addFields({
+                name: '📚 Stacked',
+                value: `Added to existing stack`,
+                inline: true
+            });
+        }
+
+        if (addResult && addResult.isNew) {
+            embed.addFields({
+                name: '✨ New Item',
+                value: `First time obtaining this item!`,
+                inline: true
+            });
+        }
+
+        await interaction.editReply({
+            embeds: [embed],
+            components: []
+        });
+    }
+
+    /**
+     * Send combination alert to gacha channel (public announcement)
      */
     async sendCombinationAlert(user, combinationResult) {
         if (!this.client) {
@@ -240,10 +646,10 @@ class CombinationService {
             const isShadowUnlock = this.isShadowUnlockItem(resultItem);
             
             const embed = new EmbedBuilder()
-                .setTitle(isShadowUnlock ? '🌙 SHADOW UNLOCK COMBINATION!' : '⚡ Auto-Combination Triggered!')
+                .setTitle(isShadowUnlock ? '🌙 SHADOW UNLOCK COMBINATION!' : '⚗️ Combination Created!')
                 .setColor(isShadowUnlock ? '#9932CC' : COLORS.SUCCESS)
                 .setDescription(
-                    `${user.raUsername} ${isShadowUnlock ? 'unlocked the shadow!' : 'discovered a combination!'}\n\n` +
+                    `${user.raUsername} ${isShadowUnlock ? 'unlocked the shadow!' : 'created a combination!'}\n\n` +
                     `${resultEmoji} **${resultQuantity}x ${resultItem.itemName}** ${rarityEmoji}\n\n` +
                     `*${resultItem.description || 'A mysterious creation...'}*` +
                     (isShadowUnlock ? '\n\n🔓 **The shadow challenge has been revealed!**' : '')
@@ -287,7 +693,7 @@ class CombinationService {
             }
 
             embed.setFooter({ 
-                text: `Combination ID: ${ruleId} • All combinations happen automatically!` 
+                text: `Combination ID: ${ruleId} • Player confirmed this combination` 
             });
 
             // Send the alert
@@ -301,7 +707,37 @@ class CombinationService {
     }
 
     /**
-     * Get rarity emoji for combinations
+     * Helper to get user and verify permissions
+     */
+    async getUserForInteraction(interaction, username) {
+        const { User } = await import('../models/User.js');
+        const user = await User.findOne({ 
+            raUsername: { $regex: new RegExp(`^${username}$`, 'i') }
+        });
+
+        if (!user || user.discordId !== interaction.user.id) {
+            await interaction.editReply({
+                content: '❌ You can only perform combinations on your own collection.',
+                embeds: [],
+                components: []
+            });
+            return null;
+        }
+
+        return user;
+    }
+
+    /**
+     * LEGACY: Kept for backwards compatibility in old code
+     */
+    async checkAutoCombinations(user) {
+        // Return empty array since we no longer auto-combine
+        // This prevents old code from breaking
+        return [];
+    }
+
+    /**
+     * Helper methods
      */
     getRarityEmoji(rarity) {
         const emojis = {
@@ -312,96 +748,25 @@ class CombinationService {
             legendary: '🟡',
             mythic: '🌟'
         };
-        return emojis[rarity] || '❓';
+        return emojis[rarity] || emojis.common;
     }
 
     /**
-     * Check if user has required ingredients
+     * Get combination stats for display (keep for backwards compatibility)
      */
-    checkIngredients(user, ingredients) {
-        for (const ingredient of ingredients) {
-            const userItem = user.gachaCollection.find(item => item.itemId === ingredient.itemId);
-            const userQuantity = userItem ? (userItem.quantity || 1) : 0;
-            
-            if (userQuantity < ingredient.quantity) {
-                return false;
-            }
+    getCombinationStats(user) {
+        if (!user.gachaCollection) {
+            return { totalCombined: 0 };
         }
-        return true;
+
+        const combinedItems = user.gachaCollection.filter(item => item.source === 'combined');
+        const totalCombined = combinedItems.reduce((total, item) => total + (item.quantity || 1), 0);
+
+        return { totalCombined };
     }
 
     /**
-     * Perform a combination
-     */
-    async performCombination(user, rule) {
-        try {
-            // Validate ingredients
-            if (!this.checkIngredients(user, rule.ingredients)) {
-                return { 
-                    success: false, 
-                    error: 'Insufficient ingredients' 
-                };
-            }
-
-            // Get result item from database
-            const resultGachaItem = await GachaItem.findOne({ 
-                itemId: rule.result.itemId, 
-                isActive: true 
-            });
-
-            if (!resultGachaItem) {
-                return { 
-                    success: false, 
-                    error: 'Result item not found' 
-                };
-            }
-
-            // Consume ingredients
-            for (const ingredient of rule.ingredients) {
-                const userItem = user.gachaCollection.find(item => item.itemId === ingredient.itemId);
-                if (userItem) {
-                    userItem.quantity -= ingredient.quantity;
-                    
-                    // Remove item if quantity reaches 0
-                    if (userItem.quantity <= 0) {
-                        user.gachaCollection = user.gachaCollection.filter(item => item.itemId !== ingredient.itemId);
-                    }
-                }
-            }
-
-            // Add result item using the User model method
-            const addResult = user.addGachaItem(resultGachaItem, rule.result.quantity, 'combined');
-
-            console.log(`Combination successful: ${rule.ruleId} -> ${resultGachaItem.itemName} x${rule.result.quantity}`);
-
-            return {
-                success: true,
-                ruleId: rule.ruleId,
-                ingredients: rule.ingredients,
-                resultItem: {
-                    itemId: resultGachaItem.itemId,
-                    itemName: resultGachaItem.itemName,
-                    emojiId: resultGachaItem.emojiId,
-                    emojiName: resultGachaItem.emojiName,
-                    rarity: resultGachaItem.rarity,
-                    description: resultGachaItem.description,
-                    flavorText: resultGachaItem.flavorText
-                },
-                resultQuantity: rule.result.quantity,
-                isAutomatic: rule.isAutomatic
-            };
-
-        } catch (error) {
-            console.error('Error performing combination:', error);
-            return { 
-                success: false, 
-                error: error.message 
-            };
-        }
-    }
-
-    /**
-     * Get possible combinations for a user
+     * Get possible combinations for a user (used by collection command)
      */
     async getPossibleCombinations(user) {
         try {
@@ -448,121 +813,18 @@ class CombinationService {
     }
 
     /**
-     * Preview a combination without performing it
+     * Check if user has required ingredients
      */
-    async previewCombination(user, ruleId) {
-        try {
-            const rule = await CombinationRule.findOne({ ruleId, isActive: true });
-            if (!rule) {
-                return { success: false, error: 'Combination rule not found' };
-            }
-
-            const resultItem = await GachaItem.findOne({ itemId: rule.result.itemId });
-            if (!resultItem) {
-                return { success: false, error: 'Result item not found' };
-            }
-
-            const canMake = this.checkIngredients(user, rule.ingredients);
-            const missing = [];
-
-            if (!canMake) {
-                for (const ingredient of rule.ingredients) {
-                    const userItem = user.gachaCollection.find(item => item.itemId === ingredient.itemId);
-                    const userQuantity = userItem ? (userItem.quantity || 1) : 0;
-                    
-                    if (userQuantity < ingredient.quantity) {
-                        missing.push({
-                            itemId: ingredient.itemId,
-                            required: ingredient.quantity,
-                            have: userQuantity,
-                            shortage: ingredient.quantity - userQuantity
-                        });
-                    }
-                }
-            }
-
-            return {
-                success: true,
-                rule: rule,
-                resultItem: {
-                    itemId: resultItem.itemId,
-                    itemName: resultItem.itemName,
-                    emojiId: resultItem.emojiId,
-                    emojiName: resultItem.emojiName,
-                    rarity: resultItem.rarity,
-                    description: resultItem.description,
-                    flavorText: resultItem.flavorText
-                },
-                canMake: canMake,
-                missing: missing,
-                isAutomatic: rule.isAutomatic
-            };
-
-        } catch (error) {
-            console.error('Error previewing combination:', error);
-            return { success: false, error: error.message };
-        }
-    }
-
-    /**
-     * Attempt a manual combination
-     */
-    async attemptCombination(user, ruleId) {
-        try {
-            const rule = await CombinationRule.findOne({ ruleId, isActive: true });
-            if (!rule) {
-                return { success: false, error: 'Combination rule not found' };
-            }
-
-            // Don't allow manual triggering of automatic rules
-            if (rule.isAutomatic) {
-                return { success: false, error: 'This combination happens automatically' };
-            }
-
-            const result = await this.performCombination(user, rule);
+    checkIngredients(user, ingredients) {
+        for (const ingredient of ingredients) {
+            const userItem = user.gachaCollection.find(item => item.itemId === ingredient.itemId);
+            const userQuantity = userItem ? (userItem.quantity || 1) : 0;
             
-            if (result.success) {
-                // Check for shadow unlock
-                await this.checkForShadowUnlock(user, result);
-                await user.save();
-                // Send alert for manual combinations too
-                await this.sendCombinationAlert(user, result);
+            if (userQuantity < ingredient.quantity) {
+                return false;
             }
-
-            return result;
-
-        } catch (error) {
-            console.error('Error attempting combination:', error);
-            return { success: false, error: error.message };
         }
-    }
-
-    /**
-     * Add item to user's collection (helper for combinations)
-     */
-    addItemToUser(user, gachaItem, quantity = 1, source = 'combined') {
-        // Use the User model's addGachaItem method
-        return user.addGachaItem(gachaItem, quantity, source);
-    }
-
-    /**
-     * Get combination statistics for a user
-     */
-    getCombinationStats(user) {
-        if (!user.gachaCollection) {
-            return {
-                totalCombined: 0,
-                uniqueCombined: 0
-            };
-        }
-
-        const combinedItems = user.gachaCollection.filter(item => item.source === 'combined');
-        const totalCombined = combinedItems.reduce((sum, item) => sum + (item.quantity || 1), 0);
-
-        return {
-            totalCombined: totalCombined,
-            uniqueCombined: combinedItems.length
-        };
+        return true;
     }
 }
 
