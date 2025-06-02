@@ -1,4 +1,4 @@
-// src/services/combinationService.js - CLEAN VERSION with proper permission handling
+// src/services/combinationService.js - CLEANED VERSION
 import { GachaItem, CombinationRule } from '../models/GachaItem.js';
 import { Challenge } from '../models/Challenge.js';
 import { config } from '../config/config.js';
@@ -14,7 +14,6 @@ class CombinationService {
 
     setClient(client) {
         this.client = client;
-        console.log('✅ Combination service client set for alerts');
     }
 
     async checkPossibleCombinations(user, triggerItemId = null) {
@@ -150,7 +149,7 @@ class CombinationService {
         if (maxCombinations >= 1) {
             actionRow.addComponents(
                 new ButtonBuilder()
-                    .setCustomId(`combo_confirm_${combination.ruleId}_1_${user.raUsername}`)
+                    .setCustomId(`combo_confirm_${combination.ruleId}_1`)
                     .setLabel(isShadowUnlock ? 'Unlock Shadow!' : 'Make 1')
                     .setStyle(isShadowUnlock ? ButtonStyle.Danger : ButtonStyle.Primary)
                     .setEmoji(isShadowUnlock ? '🌙' : '⚗️')
@@ -160,17 +159,16 @@ class CombinationService {
         if (maxCombinations >= 5 && !isShadowUnlock) {
             actionRow.addComponents(
                 new ButtonBuilder()
-                    .setCustomId(`combo_confirm_${combination.ruleId}_5_${user.raUsername}`)
+                    .setCustomId(`combo_confirm_${combination.ruleId}_5`)
                     .setLabel('Make 5')
                     .setStyle(ButtonStyle.Primary)
             );
         }
         
-        // FIXED: Only add "Make All" button once, avoid duplicates
         if (maxCombinations > 1 && !isShadowUnlock) {
             actionRow.addComponents(
                 new ButtonBuilder()
-                    .setCustomId(`combo_confirm_${combination.ruleId}_${maxCombinations}_${user.raUsername}`)
+                    .setCustomId(`combo_confirm_${combination.ruleId}_${maxCombinations}`)
                     .setLabel(`Make All (${maxCombinations})`)
                     .setStyle(ButtonStyle.Success)
             );
@@ -178,7 +176,7 @@ class CombinationService {
 
         actionRow.addComponents(
             new ButtonBuilder()
-                .setCustomId(`combo_cancel_${user.raUsername}`)
+                .setCustomId('combo_cancel')
                 .setLabel('Cancel')
                 .setStyle(ButtonStyle.Secondary)
         );
@@ -213,7 +211,7 @@ class CombinationService {
             
             return {
                 label: `${combo.resultQuantity}x ${combo.resultItem.itemName}${isShadowUnlock ? ' 🌙' : ''}`.slice(0, 100),
-                value: `combo_select_${combo.ruleId}_${user.raUsername}`,
+                value: `combo_select_${combo.ruleId}`,
                 description: `${ingredientNames} (max: ${combo.maxCombinations})${isShadowUnlock ? ' - SHADOW!' : ''}`.slice(0, 100),
                 emoji: combo.resultItem.emojiId ? 
                     { id: combo.resultItem.emojiId, name: combo.resultItem.emojiName } : 
@@ -222,12 +220,12 @@ class CombinationService {
         });
 
         const selectMenu = new StringSelectMenuBuilder()
-            .setCustomId(`combo_selection_${user.raUsername}`)
+            .setCustomId('combo_selection')
             .setPlaceholder('Choose a combination...')
             .addOptions(selectOptions);
 
         const cancelButton = new ButtonBuilder()
-            .setCustomId(`combo_cancel_${user.raUsername}`)
+            .setCustomId('combo_cancel')
             .setLabel('Cancel')
             .setStyle(ButtonStyle.Secondary);
 
@@ -304,7 +302,7 @@ class CombinationService {
             return result;
 
         } catch (error) {
-            console.error('❌ Error performing combination:', error);
+            console.error('Error performing combination:', error);
             return {
                 success: false,
                 error: error.message
@@ -588,7 +586,7 @@ class CombinationService {
         try {
             if (!interaction.customId.startsWith('combo_')) return false;
 
-            if (interaction.customId.includes('_cancel_')) {
+            if (interaction.customId.includes('_cancel')) {
                 await interaction.deferUpdate();
                 await interaction.editReply({
                     content: '❌ Combination cancelled.',
@@ -624,9 +622,8 @@ class CombinationService {
                 
                 const ruleId = parts.slice(2, quantityIndex).join('_');
                 const quantity = parseInt(parts[quantityIndex]);
-                const username = parts[quantityIndex + 1];
 
-                const user = await this.getUserForInteraction(interaction, username);
+                const user = await this.getUserForInteraction(interaction);
                 if (!user) return true;
 
                 const result = await this.performCombination(user, ruleId, quantity);
@@ -646,10 +643,9 @@ class CombinationService {
             }
 
             if (action === 'select') {
-                const username = parts[parts.length - 1];
-                const ruleId = parts.slice(2, parts.length - 1).join('_');
+                const ruleId = parts.slice(2).join('_');
 
-                const user = await this.getUserForInteraction(interaction, username);
+                const user = await this.getUserForInteraction(interaction);
                 if (!user) return true;
 
                 const rule = await CombinationRule.findOne({ ruleId });
@@ -668,15 +664,12 @@ class CombinationService {
             }
 
             if (action === 'selection') {
-                const username = parts[parts.length - 1];
-                
                 if (interaction.isStringSelectMenu()) {
                     const selectedValue = interaction.values[0];
                     const selectedParts = selectedValue.split('_');
-                    const selectedUsername = selectedParts[selectedParts.length - 1];
-                    const selectedRuleId = selectedParts.slice(2, selectedParts.length - 1).join('_');
+                    const selectedRuleId = selectedParts.slice(2).join('_');
                     
-                    const user = await this.getUserForInteraction(interaction, selectedUsername);
+                    const user = await this.getUserForInteraction(interaction);
                     if (!user) return true;
 
                     const rule = await CombinationRule.findOne({ ruleId: selectedRuleId });
@@ -817,7 +810,7 @@ class CombinationService {
         }
     }
 
-    async getUserForInteraction(interaction, usernameFromCustomId) {
+    async getUserForInteraction(interaction) {
         const { User } = await import('../models/User.js');
         
         const user = await User.findOne({ discordId: interaction.user.id });
@@ -825,17 +818,6 @@ class CombinationService {
         if (!user) {
             await interaction.editReply({
                 content: '❌ You are not registered in the system. Please contact an admin.',
-                embeds: [],
-                components: []
-            });
-            return null;
-        }
-        
-        const raUsernamesMatch = user.raUsername.toLowerCase().trim() === usernameFromCustomId.toLowerCase().trim();
-        
-        if (!raUsernamesMatch) {
-            await interaction.editReply({
-                content: '❌ You can only perform combinations on your own collection.',
                 embeds: [],
                 components: []
             });
