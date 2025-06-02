@@ -1075,4 +1075,4 @@ class CombinationService {
     }
 }
 
-export default new CombinationService(
+export default new CombinationService();
