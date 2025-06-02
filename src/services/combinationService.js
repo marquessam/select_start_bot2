@@ -179,10 +179,14 @@ class CombinationService {
         // Create buttons for different quantities
         const actionRow = new ActionRowBuilder();
         
+        console.log('🔧 CREATING COMBINATION BUTTONS FOR USER:', user.raUsername);
+        
         if (maxCombinations >= 1) {
+            const buttonId = `combo_confirm_${combination.ruleId}_1_${user.raUsername}`;
+            console.log('- Button 1 custom ID:', buttonId);
             actionRow.addComponents(
                 new ButtonBuilder()
-                    .setCustomId(`combo_confirm_${combination.ruleId}_1_${user.raUsername}`)
+                    .setCustomId(buttonId)
                     .setLabel(isShadowUnlock ? 'Unlock Shadow!' : 'Make 1')
                     .setStyle(isShadowUnlock ? ButtonStyle.Danger : ButtonStyle.Primary)
                     .setEmoji(isShadowUnlock ? '🌙' : '⚗️')
@@ -190,33 +194,41 @@ class CombinationService {
         }
         
         if (maxCombinations >= 5 && !isShadowUnlock) {
+            const buttonId = `combo_confirm_${combination.ruleId}_5_${user.raUsername}`;
+            console.log('- Button 5 custom ID:', buttonId);
             actionRow.addComponents(
                 new ButtonBuilder()
-                    .setCustomId(`combo_confirm_${combination.ruleId}_5_${user.raUsername}`)
+                    .setCustomId(buttonId)
                     .setLabel('Make 5')
                     .setStyle(ButtonStyle.Primary)
             );
         }
         
         if (maxCombinations >= 10 && !isShadowUnlock) {
+            const buttonId = `combo_confirm_${combination.ruleId}_${maxCombinations}_${user.raUsername}`;
+            console.log('- Button All custom ID:', buttonId);
             actionRow.addComponents(
                 new ButtonBuilder()
-                    .setCustomId(`combo_confirm_${combination.ruleId}_${maxCombinations}_${user.raUsername}`)
+                    .setCustomId(buttonId)
                     .setLabel(`Make All (${maxCombinations})`)
                     .setStyle(ButtonStyle.Success)
             );
         } else if (maxCombinations > 1 && !isShadowUnlock) {
+            const buttonId = `combo_confirm_${combination.ruleId}_${maxCombinations}_${user.raUsername}`;
+            console.log('- Button All custom ID:', buttonId);
             actionRow.addComponents(
                 new ButtonBuilder()
-                    .setCustomId(`combo_confirm_${combination.ruleId}_${maxCombinations}_${user.raUsername}`)
+                    .setCustomId(buttonId)
                     .setLabel(`Make All (${maxCombinations})`)
                     .setStyle(ButtonStyle.Success)
             );
         }
 
+        const cancelButtonId = `combo_cancel_${user.raUsername}`;
+        console.log('- Cancel button custom ID:', cancelButtonId);
         actionRow.addComponents(
             new ButtonBuilder()
-                .setCustomId(`combo_cancel_${user.raUsername}`)
+                .setCustomId(cancelButtonId)
                 .setLabel('Cancel')
                 .setStyle(ButtonStyle.Secondary)
         );
@@ -471,7 +483,11 @@ class CombinationService {
                                 ...options
                             });
                         },
-                        user: { id: recipient.discordId, username: recipient.raUsername }
+                        user: { id: recipient.discordId, username: recipient.raUsername },
+                        // FIXED: Add essential Discord user object properties for proper verification
+                        member: member,
+                        guild: guild,
+                        guildId: guild.id
                     };
 
                     await this.showCombinationAlert(mockDMInteraction, recipient, possibleCombinations);
@@ -508,7 +524,11 @@ class CombinationService {
                                 ...options
                             });
                         },
-                        user: { id: recipient.discordId, username: recipient.raUsername }
+                        user: { id: recipient.discordId, username: recipient.raUsername },
+                        // FIXED: Add essential Discord user object properties for proper verification
+                        member: member,
+                        guild: guild,
+                        guildId: guild.id
                     };
 
                     await this.showCombinationAlert(mockDMInteraction, recipient, possibleCombinations);
@@ -607,7 +627,11 @@ class CombinationService {
                                 ...options
                             });
                         },
-                        user: { id: user.discordId, username: user.raUsername }
+                        user: { id: user.discordId, username: user.raUsername },
+                        // FIXED: Add essential Discord user object properties for proper verification
+                        member: member,
+                        guild: guild,
+                        guildId: guild.id
                     };
 
                     await this.showCombinationAlert(mockDMInteraction, user, possibleCombinations);
@@ -644,7 +668,11 @@ class CombinationService {
                                 ...options
                             });
                         },
-                        user: { id: user.discordId, username: user.raUsername }
+                        user: { id: user.discordId, username: user.raUsername },
+                        // FIXED: Add essential Discord user object properties for proper verification
+                        member: member,
+                        guild: guild,
+                        guildId: guild.id
                     };
 
                     await this.showCombinationAlert(mockDMInteraction, user, possibleCombinations);
@@ -807,11 +835,17 @@ class CombinationService {
     }
 
     /**
-     * UPDATED: Handle combination button and select menu interactions
+     * UPDATED: Handle combination button and select menu interactions - ENHANCED DEBUG VERSION
      */
     async handleCombinationInteraction(interaction) {
         try {
             if (!interaction.customId.startsWith('combo_')) return false;
+
+            console.log('🎯 COMBINATION INTERACTION RECEIVED:');
+            console.log('- Custom ID:', interaction.customId);
+            console.log('- User:', interaction.user.username, '(' + interaction.user.id + ')');
+            console.log('- Channel type:', interaction.channel?.type || 'DM');
+            console.log('- Guild:', interaction.guild?.name || 'None');
 
             // Don't defer update for cancellation buttons
             if (interaction.customId.includes('_cancel_')) {
@@ -827,12 +861,18 @@ class CombinationService {
             await interaction.deferUpdate();
 
             const parts = interaction.customId.split('_');
+            console.log('- Custom ID parts:', parts);
             const action = parts[1]; // confirm, cancel, select, selection
             
             if (action === 'confirm') {
                 const ruleId = parts[2];
                 const quantity = parseInt(parts[3]);
                 const username = parts[4];
+                
+                console.log('- Parsed confirm action:');
+                console.log('  - Rule ID:', ruleId);
+                console.log('  - Quantity:', quantity);
+                console.log('  - Username from ID:', username);
 
                 // Verify user
                 const user = await this.getUserForInteraction(interaction, username);
@@ -860,6 +900,10 @@ class CombinationService {
             if (action === 'select') {
                 const ruleId = parts[2];
                 const username = parts[3];
+                
+                console.log('- Parsed select action:');
+                console.log('  - Rule ID:', ruleId);
+                console.log('  - Username from ID:', username);
 
                 // Get the specific combination and show confirmation
                 const user = await this.getUserForInteraction(interaction, username);
@@ -882,6 +926,7 @@ class CombinationService {
 
         } catch (error) {
             console.error('Error handling combination interaction:', error);
+            console.error('Stack trace:', error.stack);
             await interaction.editReply({
                 content: '❌ An error occurred while processing the combination.',
                 embeds: [],
@@ -1025,15 +1070,29 @@ class CombinationService {
     }
 
     /**
-     * Helper to get user and verify permissions
+     * Helper to get user and verify permissions - ENHANCED DEBUG VERSION
      */
     async getUserForInteraction(interaction, username) {
         const { User } = await import('../models/User.js');
+        
+        console.log('🔍 COMBINATION PERMISSION DEBUG:');
+        console.log('- Requested username from custom ID:', username);
+        console.log('- Interaction user ID:', interaction.user.id);
+        console.log('- Interaction username:', interaction.user.username);
+        
         const user = await User.findOne({ 
             raUsername: { $regex: new RegExp(`^${username}$`, 'i') }
         });
 
+        console.log('- Database user found:', user ? 'Yes' : 'No');
+        if (user) {
+            console.log('- Database raUsername:', user.raUsername);
+            console.log('- Database discordId:', user.discordId);
+            console.log('- IDs match:', user.discordId === interaction.user.id);
+        }
+
         if (!user || user.discordId !== interaction.user.id) {
+            console.log('❌ PERMISSION DENIED - Details above');
             await interaction.editReply({
                 content: '❌ You can only perform combinations on your own collection.',
                 embeds: [],
@@ -1042,6 +1101,7 @@ class CombinationService {
             return null;
         }
 
+        console.log('✅ PERMISSION GRANTED');
         return user;
     }
 
