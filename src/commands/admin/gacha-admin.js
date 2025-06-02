@@ -797,8 +797,13 @@ export default {
         let message = `✅ Gave ${emoji} ${quantity}x **${item.itemName}** to ${username}`;
 
         if (combinationResult.hasCombinations) {
-            message += `\n\n⚗️ **Combination Alert Sent!**\n`;
-            message += `${username} can now see ${combinationResult.combinationCount} combination option(s) and choose which ones to perform.`;
+            if (combinationResult.sentViaDM) {
+                message += `\n\n⚗️ **Combination Alert Sent via DM!**\n`;
+                message += `${username} received a direct message with ${combinationResult.combinationCount} combination option(s).`;
+            } else {
+                message += `\n\n⚗️ **Combination Alert Posted in Gacha Channel!**\n`;
+                message += `${username} has been notified about ${combinationResult.combinationCount} combination option(s) in the gacha channel.`;
+            }
         } else if (combinationResult.error) {
             message += `\n\n⚠️ Item given successfully, but there was an issue with combination alerts: ${combinationResult.error}`;
         } else {
