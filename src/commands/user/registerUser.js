@@ -9,6 +9,7 @@ import {
 import { User } from '../../models/User.js';
 import retroAPI from '../../services/retroAPI.js';
 import { config } from '../../config/config.js';
+import gpUtils from '../../utils/gpUtils.js'; // Add GP utilities import
 
 // Member role ID
 const MEMBER_ROLE_ID = '1316292690870014002';
@@ -134,6 +135,21 @@ export default {
                     
                     await user.save();
 
+                    // Award monthly GP to new user
+                    try {
+                        const currentMonth = new Date().toLocaleString('default', { month: 'long', year: 'numeric' });
+                        await gpUtils.awardGP(
+                            user, 
+                            1000, 
+                            'monthly_grant', 
+                            `Monthly GP grant for ${currentMonth} (Registration bonus)`
+                        );
+                        console.log(`✅ Awarded 1000 GP registration bonus to new user: ${raUsername}`);
+                    } catch (gpError) {
+                        console.error('Error awarding registration GP bonus:', gpError);
+                        // Don't fail registration if GP award fails, just log it
+                    }
+
                     // Assign role if user is in the server
                     try {
                         const guildMember = interaction.guild.members.cache.get(discordUser.id);
@@ -158,13 +174,14 @@ export default {
                                 .setDisabled(true)
                         );
 
-                    // Update message with registration confirmation
+                    // Update message with registration confirmation including GP bonus
                     await i.editReply({
                         content: `✅ Registration successful!\n` +
                                `Your RetroAchievements account **${raUsername}** has been linked to your Discord account.\n` +
                                `RA Profile: https://retroachievements.org/user/${raUsername}\n` +
                                `Total Points: ${raUserInfo.points}\n` +
                                `Total Games: ${raUserInfo.totalGames}\n\n` +
+                               `🎁 **Welcome Bonus:** You've been awarded 1,000 GP for this month!\n` +
                                `You've been assigned the Member role and can now participate in challenges!`,
                         embeds: [],
                         components: [disabledRow]
