@@ -390,7 +390,8 @@ export class NominationInteractionHandler {
             const successEmbed = nominateCommand.createStaticSuccessEmbed(
                 gameDataForEmbed, 
                 user, 
-                comment
+                comment,
+                remainingBefore - 1  // Pass the calculated remaining count
             );
 
             // CRITICAL: Post with NO COMPONENTS = static embed
