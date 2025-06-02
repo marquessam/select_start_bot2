@@ -865,11 +865,38 @@ class CombinationService {
             const action = parts[1]; // confirm, cancel, select, selection
             
             if (action === 'confirm') {
-                const ruleId = parts[2];
-                const quantity = parseInt(parts[3]);
-                const username = parts[4];
+                console.log('- Raw custom ID parts:', parts);
                 
-                console.log('- Parsed confirm action:');
+                // FIXED: Handle rule IDs that contain underscores
+                // Format: combo_confirm_{ruleId}_quantity_username
+                // Need to find where the quantity starts (should be a number)
+                let ruleId, quantity, username;
+                
+                // Find the quantity (first numeric part after 'confirm')
+                let quantityIndex = -1;
+                for (let i = 2; i < parts.length; i++) {
+                    if (!isNaN(parseInt(parts[i])) && parseInt(parts[i]) > 0) {
+                        quantityIndex = i;
+                        break;
+                    }
+                }
+                
+                if (quantityIndex === -1) {
+                    console.log('❌ Could not parse quantity from custom ID');
+                    await interaction.editReply({
+                        content: '❌ Invalid combination button format.',
+                        embeds: [],
+                        components: []
+                    });
+                    return true;
+                }
+                
+                // Rule ID is everything between 'confirm' and the quantity
+                ruleId = parts.slice(2, quantityIndex).join('_');
+                quantity = parseInt(parts[quantityIndex]);
+                username = parts[quantityIndex + 1];
+                
+                console.log('- Parsed confirm action (FIXED):');
                 console.log('  - Rule ID:', ruleId);
                 console.log('  - Quantity:', quantity);
                 console.log('  - Username from ID:', username);
@@ -897,11 +924,65 @@ class CombinationService {
                 return true;
             }
 
-            if (action === 'select') {
-                const ruleId = parts[2];
-                const username = parts[3];
+            if (action === 'selection') {
+                // This handles the dropdown selection from showMultipleCombinationSelection
+                console.log('- Raw custom ID parts for selection:', parts);
                 
-                console.log('- Parsed select action:');
+                // Format: combo_selection_username
+                const username = parts[parts.length - 1];
+                
+                console.log('- Parsed selection action:');
+                console.log('  - Username from ID:', username);
+                
+                // Get the selected value from the interaction
+                if (interaction.isStringSelectMenu()) {
+                    const selectedValue = interaction.values[0];
+                    console.log('  - Selected value:', selectedValue);
+                    
+                    // Parse the selected value: combo_select_{ruleId}_username
+                    const selectedParts = selectedValue.split('_');
+                    const selectedUsername = selectedParts[selectedParts.length - 1];
+                    const selectedRuleId = selectedParts.slice(2, selectedParts.length - 1).join('_');
+                    
+                    console.log('  - Selected rule ID:', selectedRuleId);
+                    console.log('  - Selected username:', selectedUsername);
+                    
+                    // Verify user
+                    const user = await this.getUserForInteraction(interaction, selectedUsername);
+                    if (!user) return true;
+
+                    const rule = await CombinationRule.findOne({ ruleId: selectedRuleId });
+                    const possibleCombinations = await this.findPossibleCombinationsForRule(user, rule);
+                    
+                    if (possibleCombinations.length > 0) {
+                        await this.showSingleCombinationConfirmation(interaction, user, possibleCombinations[0]);
+                    } else {
+                        await interaction.editReply({
+                            content: '❌ This combination is no longer available.',
+                            embeds: [],
+                            components: []
+                        });
+                    }
+                } else {
+                    await interaction.editReply({
+                        content: '❌ Invalid selection interaction.',
+                        embeds: [],
+                        components: []
+                    });
+                }
+                return true;
+            }
+
+            if (action === 'select') {
+                console.log('- Raw custom ID parts for select:', parts);
+                
+                // FIXED: Handle rule IDs that contain underscores  
+                // Format: combo_select_{ruleId}_username
+                // Username is always the last part
+                const username = parts[parts.length - 1];
+                const ruleId = parts.slice(2, parts.length - 1).join('_');
+                
+                console.log('- Parsed select action (FIXED):');
                 console.log('  - Rule ID:', ruleId);
                 console.log('  - Username from ID:', username);
 
