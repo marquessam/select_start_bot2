@@ -1,4 +1,4 @@
-// src/services/combinationService.js - COMPLETE UPDATED VERSION with confirmation system and shadow unlock
+// src/services/combinationService.js - COMPLETE FIXED VERSION with confirmation system and debug logging
 import { GachaItem, CombinationRule } from '../models/GachaItem.js';
 import { Challenge } from '../models/Challenge.js';
 import { config } from '../config/config.js';
@@ -289,7 +289,7 @@ class CombinationService {
     }
 
     /**
-     * UPDATED: Perform a specific combination after confirmation
+     * UPDATED: Perform a specific combination after confirmation with FIXED ingredient removal
      */
     async performCombination(user, ruleId, quantity = 1) {
         try {
@@ -315,20 +315,64 @@ class CombinationService {
                 throw new Error('Result item not found');
             }
 
-            // Remove ingredients from user's collection
+            // ENHANCED DEBUGGING: Log before removal
+            console.log('🔧 COMBINATION DEBUG - Before removal:');
+            console.log('Rule ingredients:', rule.ingredients);
+            console.log('User collection before:', user.gachaCollection.map(item => ({
+                itemId: item.itemId,
+                itemName: item.itemName,
+                quantity: item.quantity
+            })));
+
+            // FIXED: Remove ingredients from user's collection with better error handling
+            const removedIngredients = [];
             for (const ingredient of rule.ingredients) {
                 const totalToRemove = ingredient.quantity * quantity;
+                
+                console.log(`🗑️ Attempting to remove: ${totalToRemove}x ${ingredient.itemId}`);
+                
+                // Find the item in user's collection
+                const userItem = user.gachaCollection.find(item => item.itemId === ingredient.itemId);
+                if (!userItem) {
+                    throw new Error(`Ingredient not found in collection: ${ingredient.itemId}`);
+                }
+                
+                console.log(`📦 Found user item: ${userItem.itemName} (quantity: ${userItem.quantity})`);
+                
+                if ((userItem.quantity || 1) < totalToRemove) {
+                    throw new Error(`Insufficient quantity of ${ingredient.itemId}. Need ${totalToRemove}, have ${userItem.quantity || 1}`);
+                }
+
+                // FIXED: Use the correct removeGachaItem method
                 const removeSuccess = user.removeGachaItem(ingredient.itemId, totalToRemove);
                 if (!removeSuccess) {
                     throw new Error(`Failed to remove ingredient: ${ingredient.itemId}`);
                 }
+                
+                removedIngredients.push({
+                    itemId: ingredient.itemId,
+                    itemName: userItem.itemName,
+                    quantityRemoved: totalToRemove
+                });
+                
+                console.log(`✅ Successfully removed: ${totalToRemove}x ${ingredient.itemId}`);
             }
+
+            // ENHANCED DEBUGGING: Log after removal
+            console.log('🔧 COMBINATION DEBUG - After removal:');
+            console.log('User collection after:', user.gachaCollection.map(item => ({
+                itemId: item.itemId,
+                itemName: item.itemName,
+                quantity: item.quantity
+            })));
+            console.log('Removed ingredients:', removedIngredients);
 
             // Add result item(s) to user's collection
             const totalResultQuantity = (rule.result.quantity || 1) * quantity;
             const addResult = user.addGachaItem(resultItem, totalResultQuantity, 'combined');
 
-            console.log(`Combination successful: ${user.raUsername} made ${quantity}x ${rule.ruleId}`);
+            console.log(`✅ Combination successful: ${user.raUsername} made ${quantity}x ${rule.ruleId}`);
+            console.log(`📦 Added result: ${totalResultQuantity}x ${resultItem.itemName}`);
 
             const result = {
                 success: true,
@@ -337,20 +381,80 @@ class CombinationService {
                 resultQuantity: totalResultQuantity,
                 addResult: addResult,
                 rule: rule,
-                ingredients: rule.ingredients
+                ingredients: rule.ingredients,
+                removedIngredients: removedIngredients // NEW: Track what was actually removed
             };
 
-            // UPDATED: Check for shadow unlock after confirmation
+            // Check for shadow unlock after confirmation
             await this.checkForShadowUnlock(user, result);
 
             return result;
 
         } catch (error) {
-            console.error('Error performing combination:', error);
+            console.error('❌ Error performing combination:', error);
+            console.error('Error stack:', error.stack);
             return {
                 success: false,
                 error: error.message
             };
+        }
+    }
+
+    /**
+     * NEW: Trigger combination alerts for admin-given items
+     */
+    async triggerCombinationAlertsForAdminGift(user, giftedItemId, adminInteraction) {
+        try {
+            // Check for possible combinations with the newly given item
+            const possibleCombinations = await this.checkPossibleCombinations(user, giftedItemId);
+            
+            if (possibleCombinations.length === 0) {
+                return { hasCombinations: false };
+            }
+
+            // Create a mock interaction that can show combination alerts
+            const mockInteraction = {
+                followUp: async (options) => {
+                    // Try to send the combination alert as a follow-up to the admin command
+                    try {
+                        await adminInteraction.followUp({
+                            content: `🎁 **${user.raUsername}** received an admin gift and has combination options!`,
+                            ...options,
+                            ephemeral: false // Make it visible so the user can see it
+                        });
+                    } catch (error) {
+                        console.error('Error sending admin combination alert:', error);
+                        
+                        // Fallback: try to DM the user directly
+                        try {
+                            if (this.client) {
+                                const guild = await this.client.guilds.fetch(adminInteraction.guildId);
+                                const member = await guild.members.fetch(user.discordId);
+                                
+                                await member.send({
+                                    content: '🎁 **Admin Gift + Combinations Available!**',
+                                    ...options
+                                });
+                            }
+                        } catch (dmError) {
+                            console.error('Error sending DM combination alert:', dmError);
+                        }
+                    }
+                },
+                user: { id: user.discordId, username: user.raUsername }
+            };
+
+            // Show the combination alert using our existing system
+            await this.showCombinationAlert(mockInteraction, user, possibleCombinations);
+            
+            return { 
+                hasCombinations: true, 
+                combinationCount: possibleCombinations.length 
+            };
+
+        } catch (error) {
+            console.error('Error triggering combination alerts for admin gift:', error);
+            return { hasCombinations: false, error: error.message };
         }
     }
 
