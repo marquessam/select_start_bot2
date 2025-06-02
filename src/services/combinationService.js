@@ -146,6 +146,7 @@ class CombinationService {
 
         const actionRow = new ActionRowBuilder();
         
+        // Always add Make 1 button
         if (maxCombinations >= 1) {
             actionRow.addComponents(
                 new ButtonBuilder()
@@ -156,7 +157,8 @@ class CombinationService {
             );
         }
         
-        if (maxCombinations >= 5 && !isShadowUnlock) {
+        // Add Make 5 button only if not shadow unlock and max is at least 5 but not exactly 5
+        if (maxCombinations >= 5 && maxCombinations !== 5 && !isShadowUnlock) {
             actionRow.addComponents(
                 new ButtonBuilder()
                     .setCustomId(`combo_confirm_${combination.ruleId}_5`)
@@ -165,10 +167,11 @@ class CombinationService {
             );
         }
         
+        // Add Make All button if more than 1 combination possible and not shadow unlock
         if (maxCombinations > 1 && !isShadowUnlock) {
             actionRow.addComponents(
                 new ButtonBuilder()
-                    .setCustomId(`combo_confirm_${combination.ruleId}_${maxCombinations}`)
+                    .setCustomId(`combo_confirm_${combination.ruleId}_all`)
                     .setLabel(`Make All (${maxCombinations})`)
                     .setStyle(ButtonStyle.Success)
             );
@@ -602,7 +605,46 @@ class CombinationService {
             const action = parts[1];
             
             if (action === 'confirm') {
-                // Find quantity (first numeric part after 'confirm')
+                const parts = interaction.customId.split('_');
+                
+                // Handle "all" case
+                if (parts[parts.length - 1] === 'all') {
+                    const ruleId = parts.slice(2, -1).join('_');
+                    
+                    const user = await this.getUserForInteraction(interaction);
+                    if (!user) return true;
+
+                    // Find max combinations available
+                    const rule = await CombinationRule.findOne({ ruleId });
+                    const possibleCombinations = await this.findPossibleCombinationsForRule(user, rule);
+                    
+                    if (possibleCombinations.length === 0) {
+                        await interaction.editReply({
+                            content: '❌ This combination is no longer available.',
+                            embeds: [],
+                            components: []
+                        });
+                        return true;
+                    }
+                    
+                    const maxQuantity = possibleCombinations[0].maxCombinations;
+                    const result = await this.performCombination(user, ruleId, maxQuantity);
+                    
+                    if (result.success) {
+                        await user.save();
+                        await this.showCombinationSuccess(interaction, result, maxQuantity);
+                        await this.sendCombinationAlert(user, result);
+                    } else {
+                        await interaction.editReply({
+                            content: `❌ Combination failed: ${result.error}`,
+                            embeds: [],
+                            components: []
+                        });
+                    }
+                    return true;
+                }
+                
+                // Handle numeric quantity case
                 let quantityIndex = -1;
                 for (let i = 2; i < parts.length; i++) {
                     if (!isNaN(parseInt(parts[i])) && parseInt(parts[i]) > 0) {
