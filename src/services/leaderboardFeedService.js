@@ -61,6 +61,11 @@ class LeaderboardFeedService extends FeedManagerBase {
         this.previousDetailedRanks = new Map(); // Enhanced tracking instead of simple previousTopRanks
         this.lastAlertTime = new Map(); // Track when we last sent alerts for each user
         this.alertCooldown = 5 * 60 * 1000; // 5 minute cooldown between alerts for same user
+        
+        // NEW: Global alert cooldown to prevent alert spam
+        this.globalAlertCooldown = 60 * 60 * 1000; // 1 hour cooldown for all alerts
+        this.lastGlobalAlertTime = 0; // Track when we last sent any alerts
+        
         this.debugMode = process.env.NODE_ENV === 'development'; // Enable debug logging in dev
         
         // Set the alerts channel for notifications
@@ -700,9 +705,6 @@ class LeaderboardFeedService extends FeedManagerBase {
         }
     }
 
-    // All other methods remain exactly the same as your working version...
-    // (I'll include the essential ones but keep the rest unchanged)
-
     // New method to generate yearly leaderboard embeds
     async generateYearlyLeaderboardEmbeds() {
         try {
@@ -845,16 +847,28 @@ class LeaderboardFeedService extends FeedManagerBase {
         }
     }
 
-    // [Include all the other methods from your working version here - they remain unchanged]
-    // checkForRankChanges, assignRanks, etc. - all exactly as they were
-
-    // Enhanced method to check for rank changes including tiebreaker nuances
+    // Enhanced method to check for rank changes with GLOBAL HOURLY COOLDOWN
     async checkForRankChanges(currentRanks) {
         try {
             if (!this.previousDetailedRanks.size) {
                 if (this.debugMode) {
                     console.log('No previous ranks stored, storing current state for future comparison');
                 }
+                this.storeDetailedRanks(currentRanks);
+                return;
+            }
+
+            // NEW: Check global alert cooldown first
+            const now = Date.now();
+            const timeSinceLastGlobalAlert = now - this.lastGlobalAlertTime;
+            
+            if (timeSinceLastGlobalAlert < this.globalAlertCooldown) {
+                const remainingCooldown = Math.round((this.globalAlertCooldown - timeSinceLastGlobalAlert) / 1000 / 60);
+                if (this.debugMode) {
+                    console.log(`[LeaderboardFeed] Global alert cooldown active - ${remainingCooldown} minutes remaining until next alerts can be sent`);
+                }
+                
+                // Still update the stored ranks for future comparison
                 this.storeDetailedRanks(currentRanks);
                 return;
             }
@@ -870,22 +884,21 @@ class LeaderboardFeedService extends FeedManagerBase {
             }
 
             if (this.debugMode) {
-                console.log(`Checking for changes in ${topUsers.length} top users`);
+                console.log(`[LeaderboardFeed] Checking for changes in ${topUsers.length} top users (global cooldown cleared)`);
             }
 
-            // Enhanced change detection with cooldown check
+            // Enhanced change detection with per-user cooldown check
             for (const user of topUsers) {
                 const currentState = this.getUserState(user);
                 const previousState = this.previousDetailedRanks.get(user.username);
                 
-                // Check cooldown for this user
-                const now = Date.now();
-                const lastAlert = this.lastAlertTime.get(user.username) || 0;
-                const timeSinceLastAlert = now - lastAlert;
+                // Check per-user cooldown
+                const lastUserAlert = this.lastAlertTime.get(user.username) || 0;
+                const timeSinceLastUserAlert = now - lastUserAlert;
                 
-                if (timeSinceLastAlert < this.alertCooldown) {
+                if (timeSinceLastUserAlert < this.alertCooldown) {
                     if (this.debugMode) {
-                        console.log(`Skipping alert for ${user.username} - cooldown active (${Math.round((this.alertCooldown - timeSinceLastAlert) / 1000)}s remaining)`);
+                        console.log(`Skipping alert for ${user.username} - user cooldown active (${Math.round((this.alertCooldown - timeSinceLastUserAlert) / 1000)}s remaining)`);
                     }
                     continue;
                 }
@@ -900,7 +913,6 @@ class LeaderboardFeedService extends FeedManagerBase {
                             newRank: user.displayRank,
                             reason: this.determineChangeReason(null, currentState)
                         });
-                        this.lastAlertTime.set(user.username, now);
                     }
                     continue;
                 }
@@ -920,7 +932,6 @@ class LeaderboardFeedService extends FeedManagerBase {
                         previousState,
                         currentState
                     });
-                    this.lastAlertTime.set(user.username, now);
                 } else if (changeInfo.hasChange && this.debugMode) {
                     console.log(`Minor change detected for ${user.username} (not alerting): ${changeInfo.type}`);
                 }
@@ -931,11 +942,10 @@ class LeaderboardFeedService extends FeedManagerBase {
                 if (previousState.displayRank <= 5) {
                     const currentUser = currentRanks.find(u => u.username === username);
                     if (!currentUser || currentUser.displayRank > 5) {
-                        const now = Date.now();
-                        const lastAlert = this.lastAlertTime.get(username) || 0;
-                        const timeSinceLastAlert = now - lastAlert;
+                        const lastUserAlert = this.lastAlertTime.get(username) || 0;
+                        const timeSinceLastUserAlert = now - lastUserAlert;
                         
-                        if (timeSinceLastAlert >= this.alertCooldown) {
+                        if (timeSinceLastUserAlert >= this.alertCooldown) {
                             console.log(`User ${username} fell out of top 5 from rank ${previousState.displayRank}`);
                             alerts.push({
                                 type: 'fallOut',
@@ -943,17 +953,22 @@ class LeaderboardFeedService extends FeedManagerBase {
                                 previousRank: previousState.displayRank,
                                 newRank: currentUser?.displayRank || 'Outside Top 5'
                             });
-                            this.lastAlertTime.set(username, now);
                         }
                     }
                 }
             }
 
             if (alerts.length > 0) {
-                console.log(`Sending ${alerts.length} rank change alerts`);
+                console.log(`[LeaderboardFeed] Sending ${alerts.length} rank change alerts (passed global cooldown)`);
                 await this.sendEnhancedRankChangeAlerts(alerts, currentRanks);
+                
+                // NEW: Update global alert time and individual user alert times
+                this.lastGlobalAlertTime = now;
+                for (const alert of alerts) {
+                    this.lastAlertTime.set(alert.user.username, now);
+                }
             } else if (this.debugMode) {
-                console.log('No significant rank changes detected, no alerts sent');
+                console.log('[LeaderboardFeed] No significant rank changes detected, no alerts sent');
             }
 
             this.storeDetailedRanks(currentRanks);
@@ -961,9 +976,6 @@ class LeaderboardFeedService extends FeedManagerBase {
             console.error('Error in enhanced rank change detection:', error);
         }
     }
-
-    // [Include all the other helper methods from your working version - they remain exactly the same]
-    // isSignificantChange, getUserState, analyzeRankChange, etc.
 
     // Determine if a change is significant enough to warrant an alert
     isSignificantChange(changeInfo, previousState, currentState) {
@@ -1240,6 +1252,14 @@ class LeaderboardFeedService extends FeedManagerBase {
                 this.lastAlertTime.delete(username);
             }
         }
+        
+        // NEW: Clean up global alert time if it's very old (more than 24 hours)
+        if (this.lastGlobalAlertTime > 0 && (now - this.lastGlobalAlertTime) > (24 * 60 * 60 * 1000)) {
+            if (this.debugMode) {
+                console.log('[LeaderboardFeed] Resetting very old global alert time');
+            }
+            this.lastGlobalAlertTime = 0;
+        }
     }
 
     // Enhanced alert sending with more detailed information
@@ -1312,7 +1332,7 @@ class LeaderboardFeedService extends FeedManagerBase {
                 thumbnailUrl = `https://retroachievements.org${currentChallenge.monthly_game_icon_url}`;
             }
 
-            // Send enhanced alert
+            // Send enhanced alert with updated footer
             await AlertUtils.sendPositionChangeAlert({
                 title: `📊 ${monthName} Challenge Update!`,
                 description: `The leaderboard for **${currentChallenge.monthly_challange_title || 'the monthly challenge'}** has been updated with enhanced tracking!`,
@@ -1321,11 +1341,11 @@ class LeaderboardFeedService extends FeedManagerBase {
                 thumbnail: thumbnailUrl,
                 color: COLORS.INFO,
                 footer: { 
-                    text: 'Enhanced alerts now track tiebreaker changes • Data from RetroAchievements • Updates every 15 minutes' 
+                    text: 'Alerts sent hourly • Leaderboard updates every 15 minutes • Data from RetroAchievements' 
                 }
             }, 'monthly');
             
-            console.log(`Sent enhanced monthly challenge alert with ${changes.length} changes detected`);
+            console.log(`[LeaderboardFeed] Sent enhanced monthly challenge alert with ${changes.length} changes detected`);
         } catch (error) {
             console.error('Error sending enhanced rank change alerts:', error);
         }
