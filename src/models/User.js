@@ -1,4 +1,4 @@
-// src/models/User.js - Complete model with fixed gacha emoji support and player_transfer source
+// src/models/User.js - Complete model with FIXED removeGachaItem method and debug logging
 import mongoose from 'mongoose';
 
 const communityAwardSchema = new mongoose.Schema({
@@ -705,20 +705,72 @@ userSchema.methods.addGachaItem = function(gachaItem, quantity = 1, source = 'ga
     }
 };
 
-// Remove gacha item from collection
+// FIXED: Remove gacha item from collection with ENHANCED DEBUG LOGGING
 userSchema.methods.removeGachaItem = function(itemId, quantity = 1) {
-    if (!this.gachaCollection) return false;
+    console.log(`🗑️ removeGachaItem called: itemId=${itemId}, quantity=${quantity}`);
+    
+    if (!this.gachaCollection) {
+        console.log('❌ No gachaCollection found');
+        return false;
+    }
+    
+    console.log('📦 Current collection before removal:', this.gachaCollection.map(item => ({
+        itemId: item.itemId,
+        itemName: item.itemName,
+        quantity: item.quantity || 1
+    })));
     
     const item = this.gachaCollection.find(item => item.itemId === itemId);
-    if (!item) return false;
+    if (!item) {
+        console.log(`❌ Item ${itemId} not found in collection`);
+        return false;
+    }
     
-    if (item.quantity <= quantity) {
+    const currentQuantity = item.quantity || 1;
+    console.log(`📦 Found item: ${item.itemName} with quantity ${currentQuantity}`);
+    console.log(`🔢 Trying to remove ${quantity} from ${currentQuantity}`);
+    
+    if (currentQuantity <= quantity) {
         // Remove item completely
-        this.gachaCollection = this.gachaCollection.filter(item => item.itemId !== itemId);
+        console.log(`🗑️ Removing item completely (${currentQuantity} <= ${quantity})`);
+        const beforeLength = this.gachaCollection.length;
+        
+        // FIXED: More robust filtering to ensure removal
+        this.gachaCollection = this.gachaCollection.filter(collectionItem => {
+            const shouldKeep = collectionItem.itemId !== itemId;
+            if (!shouldKeep) {
+                console.log(`🗑️ Filtering out item: ${collectionItem.itemName} (ID: ${collectionItem.itemId})`);
+            }
+            return shouldKeep;
+        });
+        
+        const afterLength = this.gachaCollection.length;
+        console.log(`📊 Collection length: ${beforeLength} → ${afterLength}`);
+        
+        if (beforeLength === afterLength) {
+            console.log('❌ WARNING: Item was not actually removed from collection!');
+            // Additional debugging
+            console.log('Items in collection with same ID:', this.gachaCollection.filter(i => i.itemId === itemId));
+            return false;
+        }
+        
+        console.log(`✅ Successfully removed ${item.itemName} completely`);
+        console.log('📦 Collection after removal:', this.gachaCollection.map(item => ({
+            itemId: item.itemId,
+            itemName: item.itemName,
+            quantity: item.quantity || 1
+        })));
         return true;
     } else {
         // Reduce quantity
-        item.quantity -= quantity;
+        console.log(`🔢 Reducing quantity: ${currentQuantity} → ${currentQuantity - quantity}`);
+        item.quantity = currentQuantity - quantity;
+        console.log(`✅ Successfully reduced ${item.itemName} quantity to ${item.quantity}`);
+        console.log('📦 Collection after quantity reduction:', this.gachaCollection.map(item => ({
+            itemId: item.itemId,
+            itemName: item.itemName,
+            quantity: item.quantity || 1
+        })));
         return true;
     }
 };
