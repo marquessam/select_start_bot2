@@ -26,39 +26,133 @@ export default {
         .setDescription('Nominate games for the monthly challenge'),
 
     async execute(interaction) {
-        // Always open the interactive menu
-        await this.handleInteractiveMenu(interaction);
+        await this.showMainMenu(interaction);
     },
 
     /**
-     * Create the main menu embed
+     * Show the main nomination menu
      */
-    createMainMenuEmbed() {
-        return new EmbedBuilder()
-            .setTitle('🎮 Monthly Challenge Nominations')
-            .setDescription('Welcome to the nomination system! Select an option below to get started.')
-            .setColor('#0099FF')
-            .setThumbnail('https://retroachievements.org/Images/icon.png')
-            .addFields(
-                {
-                    name: '🎯 Quick Start',
-                    value: '• **Nominate** - Submit a game for next month\n• **Info** - View detailed requirements\n• **Status** - Check your current nominations',
+    async showMainMenu(interaction) {
+        await interaction.deferReply({ ephemeral: true });
+
+        try {
+            const settings = await NominationSettings.getSettings();
+            const user = await User.findOne({ discordId: interaction.user.id });
+            const now = new Date();
+            const currentMonth = now.getMonth();
+            const currentYear = now.getFullYear();
+            
+            const nominationsOpen = settings.areNominationsOpen(now);
+            const currentRestriction = settings.getCurrentMonthRestriction(now);
+            const monthName = MONTH_NAMES[currentMonth];
+
+            const embed = new EmbedBuilder()
+                .setTitle('🎮 Monthly Challenge Nominations')
+                .setDescription('Welcome to the nomination system! Select an option below to get started.')
+                .setColor(nominationsOpen ? '#00FF00' : '#FF0000')
+                .setThumbnail('https://retroachievements.org/Images/icon.png')
+                .addFields(
+                    {
+                        name: '🎯 Quick Start',
+                        value: '• **Nominate** - Submit a game for next month\n• **Info** - View detailed requirements\n• **Status** - Check your current nominations',
+                        inline: false
+                    },
+                    {
+                        name: '📋 Guidelines',
+                        value: '• Up to **2 games** per month\n• Must meet monthly theme requirements\n• Find Game IDs on RetroAchievements.org',
+                        inline: false
+                    }
+                )
+                .setTimestamp();
+
+            // Add status information
+            if (nominationsOpen) {
+                embed.addFields({
+                    name: '✅ Status: OPEN',
+                    value: 'Nominations are currently being accepted!',
+                    inline: true
+                });
+
+                const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
+                const closeDaysStart = daysInMonth - settings.nominationCloseDays + 1;
+                const nextClosing = new Date(currentYear, currentMonth, closeDaysStart);
+                const nextClosingTimestamp = Math.floor(nextClosing.getTime() / 1000);
+                
+                embed.addFields({
+                    name: '⏰ Deadline',
+                    value: `<t:${nextClosingTimestamp}:R>`,
+                    inline: true
+                });
+            } else {
+                embed.addFields({
+                    name: '❌ Status: CLOSED',
+                    value: 'Nominations not currently accepted',
+                    inline: true
+                });
+
+                const nextOpening = settings.getNextOpeningDate(now);
+                const nextOpeningTimestamp = Math.floor(nextOpening.getTime() / 1000);
+                
+                embed.addFields({
+                    name: '📅 Next Opening',
+                    value: `<t:${nextOpeningTimestamp}:R>`,
+                    inline: true
+                });
+            }
+
+            // Current month theme
+            if (currentRestriction && currentRestriction.enabled) {
+                embed.addFields({
+                    name: `🎯 ${monthName} Theme`,
+                    value: `${currentRestriction.restrictionRule.emoji} **${currentRestriction.restrictionRule.name}**\n${currentRestriction.restrictionRule.description.substring(0, 100)}${currentRestriction.restrictionRule.description.length > 100 ? '...' : ''}`,
                     inline: false
-                },
-                {
-                    name: '📋 Guidelines',
-                    value: '• Up to **2 games** per month\n• Must meet monthly theme requirements\n• Find Game IDs on RetroAchievements.org',
+                });
+            } else {
+                embed.addFields({
+                    name: `🔓 ${monthName} Theme`,
+                    value: 'No special restrictions - all games welcome!',
                     inline: false
-                }
-            )
-            .setTimestamp();
+                });
+            }
+
+            // User status
+            if (user) {
+                const currentNominations = user.getCurrentNominations();
+                const remaining = MAX_NOMINATIONS - currentNominations.length;
+                embed.addFields({
+                    name: '📊 Your Status',
+                    value: `${remaining}/${MAX_NOMINATIONS} nominations remaining`,
+                    inline: true
+                });
+            } else {
+                embed.addFields({
+                    name: '⚠️ Not Registered',
+                    value: 'Use `/register` first',
+                    inline: true
+                });
+            }
+
+            const components = this.createMenuComponents();
+
+            await interaction.editReply({
+                embeds: [embed],
+                components: components
+            });
+
+        } catch (error) {
+            console.error('Error in showMainMenu:', error);
+            await interaction.editReply({
+                content: 'An error occurred while creating the nomination menu.',
+                embeds: [],
+                components: []
+            });
+        }
     },
 
     /**
-     * Create menu components (dropdown + buttons)
+     * Create menu components
      */
     createMenuComponents() {
-        // Dropdown menu
         const selectMenu = new StringSelectMenuBuilder()
             .setCustomId('nominate_main_menu')
             .setPlaceholder('Choose an option...')
@@ -89,7 +183,6 @@ export default {
                 }
             ]);
 
-        // Action buttons
         const buttonRow = new ActionRowBuilder()
             .addComponents(
                 new ButtonBuilder()
@@ -112,349 +205,15 @@ export default {
     },
 
     /**
-     * Handle interactive nomination menu
+     * Create static success embed without any buttons
+     * Call this when a nomination is successfully processed
      */
-    async handleInteractiveMenu(interaction) {
-        await interaction.deferReply({ ephemeral: true });
+    createStaticSuccessEmbed(gameData, user, comment = null) {
+        // Calculate remaining nominations BEFORE this nomination was processed
+        const currentNominations = user.getCurrentNominations();
+        const remainingBefore = MAX_NOMINATIONS - currentNominations.length;
+        const remainingAfter = remainingBefore - 1; // Subtract 1 for this nomination
 
-        try {
-            const settings = await NominationSettings.getSettings();
-            const user = await User.findOne({ discordId: interaction.user.id });
-            const now = new Date();
-            const currentMonth = now.getMonth();
-            const currentYear = now.getFullYear();
-            
-            const nominationsOpen = settings.areNominationsOpen(now);
-            const currentRestriction = settings.getCurrentMonthRestriction(now);
-            const monthName = MONTH_NAMES[currentMonth];
-
-            // Create main embed with current status
-            const embed = this.createMainMenuEmbed();
-
-            // Add dynamic status information
-            if (nominationsOpen) {
-                embed.addFields({
-                    name: '✅ Status: OPEN',
-                    value: 'Nominations are currently being accepted!',
-                    inline: true
-                });
-
-                // Show closing time
-                const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
-                const closeDaysStart = daysInMonth - settings.nominationCloseDays + 1;
-                const nextClosing = new Date(currentYear, currentMonth, closeDaysStart);
-                const nextClosingTimestamp = Math.floor(nextClosing.getTime() / 1000);
-                
-                embed.addFields({
-                    name: '⏰ Deadline',
-                    value: `<t:${nextClosingTimestamp}:R>`,
-                    inline: true
-                });
-            } else {
-                embed.addFields({
-                    name: '❌ Status: CLOSED',
-                    value: 'Nominations not currently accepted',
-                    inline: true
-                });
-
-                const nextOpening = settings.getNextOpeningDate(now);
-                const nextOpeningTimestamp = Math.floor(nextOpening.getTime() / 1000);
-                
-                embed.addFields({
-                    name: '📅 Next Opening',
-                    value: `<t:${nextOpeningTimestamp}:R>`,
-                    inline: true
-                });
-            }
-
-            // Current month theme (brief)
-            if (currentRestriction && currentRestriction.enabled) {
-                embed.addFields({
-                    name: `🎯 ${monthName} Theme`,
-                    value: `${currentRestriction.restrictionRule.emoji} **${currentRestriction.restrictionRule.name}**\n${currentRestriction.restrictionRule.description.substring(0, 100)}${currentRestriction.restrictionRule.description.length > 100 ? '...' : ''}`,
-                    inline: false
-                });
-            } else {
-                embed.addFields({
-                    name: `🔓 ${monthName} Theme`,
-                    value: 'No special restrictions - all games welcome!',
-                    inline: false
-                });
-            }
-
-            // User's nomination count (if registered)
-            if (user) {
-                const currentNominations = user.getCurrentNominations();
-                const remaining = MAX_NOMINATIONS - currentNominations.length;
-                embed.addFields({
-                    name: '📊 Your Status',
-                    value: `${remaining}/${MAX_NOMINATIONS} nominations remaining`,
-                    inline: true
-                });
-            } else {
-                embed.addFields({
-                    name: '⚠️ Not Registered',
-                    value: 'Use `/register` first',
-                    inline: true
-                });
-            }
-
-            // Update embed color based on status
-            embed.setColor(nominationsOpen ? '#00FF00' : '#FF0000');
-
-            await interaction.editReply({
-                embeds: [embed],
-                components: this.createMenuComponents()
-            });
-
-        } catch (error) {
-            console.error('Error in handleInteractiveMenu:', error);
-            await interaction.editReply({
-                content: 'An error occurred while creating the nomination menu.',
-                embeds: [],
-                components: []
-            });
-        }
-    },
-
-    /**
-     * Handle detailed information display
-     */
-    async handleDetailedInfo(interaction) {
-        await interaction.deferReply({ ephemeral: true });
-
-        try {
-            const settings = await NominationSettings.getSettings();
-            const now = new Date();
-            const currentMonth = now.getMonth();
-            const currentRestriction = settings.getCurrentMonthRestriction(now);
-
-            const embed = new EmbedBuilder()
-                .setTitle('📋 Detailed Nomination Information')
-                .setColor('#0099FF')
-                .setTimestamp();
-
-            // Current restrictions detail
-            if (currentRestriction && currentRestriction.enabled) {
-                const monthName = MONTH_NAMES[currentMonth];
-                
-                embed.addFields({
-                    name: `${currentRestriction.restrictionRule.emoji} ${monthName} Theme Details`,
-                    value: `**${currentRestriction.restrictionRule.name}**\n${currentRestriction.restrictionRule.description}`,
-                    inline: false
-                });
-
-                // Rule breakdown
-                if (currentRestriction.restrictionRule.rules && currentRestriction.restrictionRule.rules.conditions) {
-                    const conditions = currentRestriction.restrictionRule.rules.conditions;
-                    const ruleType = currentRestriction.restrictionRule.rules.type || 'AND';
-                    
-                    let rulesText = `**Logic:** ${ruleType} (${conditions.length} condition${conditions.length > 1 ? 's' : ''})\n\n`;
-                    
-                    conditions.forEach((condition, index) => {
-                        const conditionText = this.formatCondition(condition);
-                        rulesText += `${index + 1}. ${conditionText}\n`;
-                    });
-
-                    if (rulesText.length <= 1024) {
-                        embed.addFields({
-                            name: '🔍 Rule Details',
-                            value: rulesText,
-                            inline: false
-                        });
-                    }
-                }
-            } else {
-                embed.addFields({
-                    name: '🔓 Current Status',
-                    value: 'No special restrictions - all games are welcome!',
-                    inline: false
-                });
-            }
-
-            // Nomination guidelines
-            embed.addFields({
-                name: '📝 Nomination Guidelines',
-                value: '• You can nominate up to **2 games** per month\n' +
-                       '• Games must meet current month\'s theme requirements\n' +
-                       '• Find Game IDs on RetroAchievements.org in the URL\n' +
-                       '• Duplicate nominations are not allowed\n' +
-                       '• Nominations close during the last 8 days of each month',
-                inline: false
-            });
-
-            // Always blocked (if any)
-            if (settings.alwaysBlockedConsoles.length > 0) {
-                embed.addFields({
-                    name: '🚫 Always Ineligible',
-                    value: settings.alwaysBlockedConsoles.join(', '),
-                    inline: false
-                });
-            }
-
-            // Tips
-            embed.addFields({
-                name: '💡 Pro Tips',
-                value: '• Use `/restrictions test gameid:XXXXX` to test game eligibility\n' +
-                       '• Check upcoming themes to plan ahead\n' +
-                       '• Consider achievement count when nominating',
-                inline: false
-            });
-
-            // Back button
-            const backButton = new ActionRowBuilder()
-                .addComponents(
-                    new ButtonBuilder()
-                        .setCustomId('nominate_back_to_main')
-                        .setLabel('Back to Menu')
-                        .setStyle(ButtonStyle.Secondary)
-                        .setEmoji('⬅️')
-                );
-
-            await interaction.editReply({ 
-                embeds: [embed],
-                components: [backButton]
-            });
-
-        } catch (error) {
-            console.error('Error in handleDetailedInfo:', error);
-            await interaction.editReply('An error occurred while fetching detailed information.');
-        }
-    },
-
-    /**
-     * Handle status check
-     */
-    async handleStatus(interaction) {
-        await interaction.deferReply({ ephemeral: true });
-
-        try {
-            const user = await User.findOne({ discordId: interaction.user.id });
-            
-            if (!user) {
-                const embed = new EmbedBuilder()
-                    .setTitle('⚠️ Registration Required')
-                    .setDescription('You need to register first using `/register` command.')
-                    .setColor('#FF9900');
-
-                const backButton = new ActionRowBuilder()
-                    .addComponents(
-                        new ButtonBuilder()
-                            .setCustomId('nominate_back_to_main')
-                            .setLabel('Back to Menu')
-                            .setStyle(ButtonStyle.Secondary)
-                            .setEmoji('⬅️')
-                    );
-
-                return interaction.editReply({ 
-                    embeds: [embed],
-                    components: [backButton]
-                });
-            }
-
-            const currentNominations = user.getCurrentNominations();
-            const settings = await NominationSettings.getSettings();
-            const now = new Date();
-            const nominationsOpen = settings.areNominationsOpen(now);
-            const remaining = MAX_NOMINATIONS - currentNominations.length;
-
-            const embed = new EmbedBuilder()
-                .setTitle('📊 Your Nomination Status')
-                .setColor(nominationsOpen ? '#00FF00' : '#FF0000')
-                .setTimestamp();
-
-            // Status overview
-            embed.addFields({
-                name: '📈 Overview',
-                value: `**Username:** ${user.raUsername}\n` +
-                       `**Status:** ${nominationsOpen ? '✅ Can nominate' : '❌ Closed'}\n` +
-                       `**Remaining:** ${remaining}/${MAX_NOMINATIONS} nominations\n` +
-                       `**Used:** ${currentNominations.length}/${MAX_NOMINATIONS}`,
-                inline: false
-            });
-
-            // Current nominations
-            if (currentNominations.length > 0) {
-                const nominationsList = currentNominations.map((nom, index) => {
-                    const date = new Date(nom.nominatedAt);
-                    const timestamp = Math.floor(date.getTime() / 1000);
-                    return `**${index + 1}. ${nom.gameTitle}**\n` +
-                           `   *${nom.consoleName}*\n` +
-                           `   Nominated: <t:${timestamp}:R>` +
-                           (nom.comment ? `\n   "${nom.comment}"` : '');
-                }).join('\n\n');
-
-                embed.addFields({
-                    name: '🎮 Your Current Nominations',
-                    value: nominationsList,
-                    inline: false
-                });
-            } else {
-                embed.addFields({
-                    name: '🎮 Your Current Nominations',
-                    value: 'No nominations yet! You can nominate up to 2 games.',
-                    inline: false
-                });
-            }
-
-            // Timing info
-            if (nominationsOpen) {
-                const nextClosing = settings.getNextClosingDate(now);
-                if (nextClosing) {
-                    const nextClosingTimestamp = Math.floor(nextClosing.getTime() / 1000);
-                    embed.addFields({
-                        name: '⏰ Nominations Close',
-                        value: `<t:${nextClosingTimestamp}:F>`,
-                        inline: true
-                    });
-                }
-            } else {
-                const nextOpening = settings.getNextOpeningDate(now);
-                const nextOpeningTimestamp = Math.floor(nextOpening.getTime() / 1000);
-                embed.addFields({
-                    name: '📅 Next Opening',
-                    value: `<t:${nextOpeningTimestamp}:F>`,
-                    inline: true
-                });
-            }
-
-            // Action buttons
-            const actionRow = new ActionRowBuilder();
-            
-            if (nominationsOpen && remaining > 0) {
-                actionRow.addComponents(
-                    new ButtonBuilder()
-                        .setCustomId('nominate_open_form')
-                        .setLabel('Nominate Game')
-                        .setStyle(ButtonStyle.Primary)
-                        .setEmoji('🎮')
-                );
-            }
-
-            actionRow.addComponents(
-                new ButtonBuilder()
-                    .setCustomId('nominate_back_to_main')
-                    .setLabel('Back to Menu')
-                    .setStyle(ButtonStyle.Secondary)
-                    .setEmoji('⬅️')
-            );
-
-            await interaction.editReply({ 
-                embeds: [embed],
-                components: [actionRow]
-            });
-
-        } catch (error) {
-            console.error('Error in handleStatus:', error);
-            await interaction.editReply('An error occurred while fetching your status.');
-        }
-    },
-
-    /**
-     * Create a static success embed (no interactive components)
-     * This creates the EXACT same embed as the current nomination, just without buttons
-     */
-    createSuccessEmbed(gameData, user, comment = null, remainingCount = null) {
         const embed = new EmbedBuilder()
             .setTitle('✅ Game Nominated Successfully!')
             .setDescription(`${user.raUsername} has nominated a game for **Sega Month!** 🎮`)
@@ -501,21 +260,239 @@ export default {
             });
         }
 
-        // Use the provided remaining count (already calculated as remaining - 1)
-        const remaining = remainingCount !== null ? remainingCount : 0;
-        
         embed.addFields({
             name: '📊 Status',
-            value: `${user.raUsername} has ${remaining}/${MAX_NOMINATIONS} nominations remaining`,
+            value: `${user.raUsername} has ${remainingAfter}/${MAX_NOMINATIONS} nominations remaining`,
             inline: false
         });
 
         embed.setTimestamp();
-        
+
         return embed;
     },
 
-    // Nomination processing is handled by the handlers file to preserve original behavior
+    /**
+     * Show detailed information
+     */
+    async showDetailedInfo(interaction) {
+        await interaction.deferReply({ ephemeral: true });
+
+        try {
+            const settings = await NominationSettings.getSettings();
+            const now = new Date();
+            const currentMonth = now.getMonth();
+            const currentRestriction = settings.getCurrentMonthRestriction(now);
+
+            const embed = new EmbedBuilder()
+                .setTitle('📋 Detailed Nomination Information')
+                .setColor('#0099FF')
+                .setTimestamp();
+
+            if (currentRestriction && currentRestriction.enabled) {
+                const monthName = MONTH_NAMES[currentMonth];
+                
+                embed.addFields({
+                    name: `${currentRestriction.restrictionRule.emoji} ${monthName} Theme Details`,
+                    value: `**${currentRestriction.restrictionRule.name}**\n${currentRestriction.restrictionRule.description}`,
+                    inline: false
+                });
+
+                if (currentRestriction.restrictionRule.rules && currentRestriction.restrictionRule.rules.conditions) {
+                    const conditions = currentRestriction.restrictionRule.rules.conditions;
+                    const ruleType = currentRestriction.restrictionRule.rules.type || 'AND';
+                    
+                    let rulesText = `**Logic:** ${ruleType} (${conditions.length} condition${conditions.length > 1 ? 's' : ''})\n\n`;
+                    
+                    conditions.forEach((condition, index) => {
+                        const conditionText = this.formatCondition(condition);
+                        rulesText += `${index + 1}. ${conditionText}\n`;
+                    });
+
+                    if (rulesText.length <= 1024) {
+                        embed.addFields({
+                            name: '🔍 Rule Details',
+                            value: rulesText,
+                            inline: false
+                        });
+                    }
+                }
+            } else {
+                embed.addFields({
+                    name: '🔓 Current Status',
+                    value: 'No special restrictions - all games are welcome!',
+                    inline: false
+                });
+            }
+
+            embed.addFields({
+                name: '📝 Nomination Guidelines',
+                value: '• You can nominate up to **2 games** per month\n' +
+                       '• Games must meet current month\'s theme requirements\n' +
+                       '• Find Game IDs on RetroAchievements.org in the URL\n' +
+                       '• Duplicate nominations are not allowed\n' +
+                       '• Nominations close during the last 8 days of each month',
+                inline: false
+            });
+
+            if (settings.alwaysBlockedConsoles.length > 0) {
+                embed.addFields({
+                    name: '🚫 Always Ineligible',
+                    value: settings.alwaysBlockedConsoles.join(', '),
+                    inline: false
+                });
+            }
+
+            embed.addFields({
+                name: '💡 Pro Tips',
+                value: '• Use `/restrictions test gameid:XXXXX` to test game eligibility\n' +
+                       '• Check upcoming themes to plan ahead\n' +
+                       '• Consider achievement count when nominating',
+                inline: false
+            });
+
+            const backButton = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('nominate_back_to_main')
+                        .setLabel('Back to Menu')
+                        .setStyle(ButtonStyle.Secondary)
+                        .setEmoji('⬅️')
+                );
+
+            await interaction.editReply({ 
+                embeds: [embed],
+                components: [backButton]
+            });
+
+        } catch (error) {
+            console.error('Error in showDetailedInfo:', error);
+            await interaction.editReply('An error occurred while fetching detailed information.');
+        }
+    },
+
+    /**
+     * Show user status
+     */
+    async showUserStatus(interaction) {
+        await interaction.deferReply({ ephemeral: true });
+
+        try {
+            const user = await User.findOne({ discordId: interaction.user.id });
+            
+            if (!user) {
+                const embed = new EmbedBuilder()
+                    .setTitle('⚠️ Registration Required')
+                    .setDescription('You need to register first using `/register` command.')
+                    .setColor('#FF9900');
+
+                const backButton = new ActionRowBuilder()
+                    .addComponents(
+                        new ButtonBuilder()
+                            .setCustomId('nominate_back_to_main')
+                            .setLabel('Back to Menu')
+                            .setStyle(ButtonStyle.Secondary)
+                            .setEmoji('⬅️')
+                    );
+
+                return interaction.editReply({ 
+                    embeds: [embed],
+                    components: [backButton]
+                });
+            }
+
+            const currentNominations = user.getCurrentNominations();
+            const settings = await NominationSettings.getSettings();
+            const now = new Date();
+            const nominationsOpen = settings.areNominationsOpen(now);
+            const remaining = MAX_NOMINATIONS - currentNominations.length;
+
+            const embed = new EmbedBuilder()
+                .setTitle('📊 Your Nomination Status')
+                .setColor(nominationsOpen ? '#00FF00' : '#FF0000')
+                .setTimestamp();
+
+            embed.addFields({
+                name: '📈 Overview',
+                value: `**Username:** ${user.raUsername}\n` +
+                       `**Status:** ${nominationsOpen ? '✅ Can nominate' : '❌ Closed'}\n` +
+                       `**Remaining:** ${remaining}/${MAX_NOMINATIONS} nominations\n` +
+                       `**Used:** ${currentNominations.length}/${MAX_NOMINATIONS}`,
+                inline: false
+            });
+
+            if (currentNominations.length > 0) {
+                const nominationsList = currentNominations.map((nom, index) => {
+                    const date = new Date(nom.nominatedAt);
+                    const timestamp = Math.floor(date.getTime() / 1000);
+                    return `**${index + 1}. ${nom.gameTitle}**\n` +
+                           `   *${nom.consoleName}*\n` +
+                           `   Nominated: <t:${timestamp}:R>` +
+                           (nom.comment ? `\n   "${nom.comment}"` : '');
+                }).join('\n\n');
+
+                embed.addFields({
+                    name: '🎮 Your Current Nominations',
+                    value: nominationsList,
+                    inline: false
+                });
+            } else {
+                embed.addFields({
+                    name: '🎮 Your Current Nominations',
+                    value: 'No nominations yet! You can nominate up to 2 games.',
+                    inline: false
+                });
+            }
+
+            if (nominationsOpen) {
+                const nextClosing = settings.getNextClosingDate(now);
+                if (nextClosing) {
+                    const nextClosingTimestamp = Math.floor(nextClosing.getTime() / 1000);
+                    embed.addFields({
+                        name: '⏰ Nominations Close',
+                        value: `<t:${nextClosingTimestamp}:F>`,
+                        inline: true
+                    });
+                }
+            } else {
+                const nextOpening = settings.getNextOpeningDate(now);
+                const nextOpeningTimestamp = Math.floor(nextOpening.getTime() / 1000);
+                embed.addFields({
+                    name: '📅 Next Opening',
+                    value: `<t:${nextOpeningTimestamp}:F>`,
+                    inline: true
+                });
+            }
+
+            const actionRow = new ActionRowBuilder();
+            
+            if (nominationsOpen && remaining > 0) {
+                actionRow.addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('nominate_open_form')
+                        .setLabel('Nominate Game')
+                        .setStyle(ButtonStyle.Primary)
+                        .setEmoji('🎮')
+                );
+            }
+
+            actionRow.addComponents(
+                new ButtonBuilder()
+                    .setCustomId('nominate_back_to_main')
+                    .setLabel('Back to Menu')
+                    .setStyle(ButtonStyle.Secondary)
+                    .setEmoji('⬅️')
+            );
+
+            await interaction.editReply({ 
+                embeds: [embed],
+                components: [actionRow]
+            });
+
+        } catch (error) {
+            console.error('Error in showUserStatus:', error);
+            await interaction.editReply('An error occurred while fetching your status.');
+        }
+    },
 
     /**
      * Format a restriction condition for display
