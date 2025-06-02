@@ -166,14 +166,8 @@ class CombinationService {
             );
         }
         
-        if (maxCombinations >= 10 && !isShadowUnlock) {
-            actionRow.addComponents(
-                new ButtonBuilder()
-                    .setCustomId(`combo_confirm_${combination.ruleId}_${maxCombinations}_${user.raUsername}`)
-                    .setLabel(`Make All (${maxCombinations})`)
-                    .setStyle(ButtonStyle.Success)
-            );
-        } else if (maxCombinations > 1 && !isShadowUnlock) {
+        // FIXED: Only add "Make All" button once, avoid duplicates
+        if (maxCombinations > 1 && !isShadowUnlock) {
             actionRow.addComponents(
                 new ButtonBuilder()
                     .setCustomId(`combo_confirm_${combination.ruleId}_${maxCombinations}_${user.raUsername}`)
