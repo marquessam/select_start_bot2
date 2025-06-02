@@ -452,22 +452,12 @@ export default {
 
     /**
      * Create a static success embed (no interactive components)
-     * Call this after successful nomination processing and saving to database
-     * 
-     * IMPORTANT: In your handlers file, use like this:
-     * 
-     * const successEmbed = await nominateCommand.createSuccessEmbed(gameData, interaction.user.id, comment);
-     * await interaction.editReply({
-     *     embeds: [successEmbed],
-     *     components: [] // THIS IS CRITICAL - NO COMPONENTS FOR STATIC EMBED
-     * });
+     * This creates the EXACT same embed as the current nomination, just without buttons
      */
-    async createSuccessEmbed(gameData, userId, comment = null) {
-        // Fetch fresh user data to get accurate nomination count
-        const user = await User.findOne({ discordId: userId });
-        
+    createSuccessEmbed(gameData, user, comment = null, remainingCount = null) {
         const embed = new EmbedBuilder()
             .setTitle('✅ Game Nominated Successfully!')
+            .setDescription(`${user.raUsername} has nominated a game for **Sega Month!** 🎮`)
             .setColor('#00FF00')
             .setThumbnail(gameData.ImageIcon)
             .addFields(
@@ -487,13 +477,13 @@ export default {
                     inline: true
                 },
                 {
-                    name: '👤 Nominated By',
-                    value: user.raUsername,
+                    name: '🏢 Publisher',
+                    value: gameData.Publisher || 'Unknown',
                     inline: true
                 },
                 {
-                    name: '🏢 Publisher',
-                    value: gameData.Publisher || 'Unknown',
+                    name: '👨‍💻 Developer',
+                    value: gameData.Developer || 'Unknown',
                     inline: true
                 },
                 {
@@ -505,15 +495,14 @@ export default {
 
         if (comment) {
             embed.addFields({
-                name: '💬 Comment',
+                name: '💭 Why this game?',
                 value: comment,
                 inline: false
             });
         }
 
-        // Get current nominations (should include the just-added nomination)
-        const currentNominations = user.getCurrentNominations();
-        const remaining = MAX_NOMINATIONS - currentNominations.length;
+        // Use the provided remaining count (already calculated as remaining - 1)
+        const remaining = remainingCount !== null ? remainingCount : 0;
         
         embed.addFields({
             name: '📊 Status',
