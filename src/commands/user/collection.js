@@ -618,10 +618,21 @@ export default {
             await givingUser.save();
             await receivingUser.save();
 
-            // Check for auto-combinations
-            const autoCombinations = await combinationService.checkAutoCombinations(receivingUser);
-            if (autoCombinations.length > 0) {
-                await receivingUser.save();
+            // UPDATED: Check for combinations using the player transfer method
+            let combinationResult = { hasCombinations: false };
+            try {
+                // Use the specific player transfer combination alert method
+                combinationResult = await combinationService.triggerCombinationAlertsForPlayerTransfer(
+                    receivingUser, 
+                    itemId, 
+                    givingUser.raUsername
+                );
+            } catch (comboError) {
+                console.error('Error checking combinations for player gift:', comboError);
+                combinationResult = { 
+                    hasCombinations: false, 
+                    error: 'Could not check for combinations' 
+                };
             }
 
             // Create success message
@@ -641,21 +652,31 @@ export default {
                 )
                 .setTimestamp();
 
-            if (autoCombinations.length > 0) {
-                let comboText = '';
-                for (const combo of autoCombinations) {
-                    const resultEmoji = formatGachaEmoji(combo.resultItem.emojiId, combo.resultItem.emojiName);
-                    comboText += `${resultEmoji} ${combo.resultQuantity}x ${combo.resultItem.itemName}\n`;
+            // UPDATED: Add combination alert information with better messaging
+            if (combinationResult.hasCombinations) {
+                if (combinationResult.sentViaDM) {
+                    embed.addFields({
+                        name: '⚗️ Combination Alert Sent!',
+                        value: `${receivingUser.raUsername} was sent a direct message about ${combinationResult.combinationCount} combination option(s) they can now make!`,
+                        inline: false
+                    });
+                } else {
+                    embed.addFields({
+                        name: '⚗️ Combination Alert Posted!',
+                        value: `${receivingUser.raUsername} has been notified in the gacha channel about ${combinationResult.combinationCount} combination option(s) they can now make!`,
+                        inline: false
+                    });
                 }
+            } else if (combinationResult.error && combinationResult.error !== 'Could not check for combinations') {
                 embed.addFields({
-                    name: '⚡ Auto-Combinations Triggered!',
-                    value: `${receivingUser.raUsername} unlocked:\n${comboText}`,
+                    name: '⚠️ Combination Check',
+                    value: `Item transferred successfully, but combination alert had an issue: ${combinationResult.error}`,
                     inline: false
                 });
             }
 
             embed.setFooter({ 
-                text: 'Transfer completed successfully! Thank you for being a good community member.' 
+                text: 'Transfer completed successfully! Thank you for being a generous community member.' 
             });
 
             return { success: true, embed };
