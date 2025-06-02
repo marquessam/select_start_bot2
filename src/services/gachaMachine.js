@@ -1,4 +1,4 @@
-// src/services/gachaMachine.js - UPDATED with clean design and duplicate prevention
+// src/services/gachaMachine.js - UPDATED with combination alerts instead of auto-combining
 import { 
     EmbedBuilder, 
     ActionRowBuilder, 
@@ -53,7 +53,7 @@ class GachaMachine {
             const channel = await this.getChannel();
             if (!channel) return;
 
-            // NEW: Check if gacha machine already exists
+            // Check if gacha machine already exists
             const existingMachine = await this.findExistingGachaMachine(channel);
             if (existingMachine) {
                 console.log('Gacha machine already exists, using existing message');
@@ -98,7 +98,7 @@ class GachaMachine {
         }
     }
 
-    // NEW: Find existing gacha machine in channel
+    // Find existing gacha machine in channel
     async findExistingGachaMachine(channel) {
         try {
             // Fetch recent messages (last 50)
@@ -122,7 +122,7 @@ class GachaMachine {
         }
     }
 
-    // NEW: Update existing machine instead of creating new one
+    // Update existing machine instead of creating new one
     async updateExistingMachine(message) {
         try {
             const { embed, attachment } = this.createMachineEmbed();
@@ -156,11 +156,11 @@ class GachaMachine {
                 '• Collectible items organized by series\n' +
                 '• Rare trinkets and special items\n' +
                 '• Series collections with completion rewards\n\n' +
-                '✨ **Collection & Combination System:**\n' +
-                '• Collect items and discover combinations through experimentation\n' +
-                '• Some combinations happen automatically (5 green rupees → 1 blue rupee)\n' +
-                '• Others require manual discovery - try different combinations!\n' +
-                '• View your collection with `/collection` and use the Combine button\n\n' +
+                '✨ **NEW: Combination System with Confirmation:**\n' +
+                '• When you get items that can be combined, you\'ll get an alert\n' +
+                '• Choose which combinations to perform (ingredients are consumed)\n' +
+                '• Multiple options? Pick which one you want!\n' +
+                '• View your collection with `/collection`\n\n' +
                 '🎲 **Rarity System:**\n' +
                 '⚪ Common • 🟢 Uncommon • 🔵 Rare • 🟣 Epic • 🟡 Legendary • 🌟 Mythic'
             )
@@ -216,16 +216,24 @@ class GachaMachine {
             const result = await gachaService.performPull(user, pullType);
             
             if (pullType === 'multi') {
-                // UPDATED: For multi-pull, send 4 separate embeds
+                // For multi-pull, send 4 separate embeds then check for combinations
                 await this.handleMultiPullEmbeds(interaction, result, user);
             } else {
-                // Single pull - one embed
+                // Single pull - one embed then check for combinations
                 const embed = await this.createSinglePullEmbed(result.results[0], user, result);
                 
                 await interaction.editReply({
                     embeds: [embed],
                     ephemeral: true
                 });
+
+                // Check for combinations after single pull
+                if (result.possibleCombinations && result.possibleCombinations.length > 0) {
+                    // Small delay before showing combination alert
+                    setTimeout(async () => {
+                        await combinationService.showCombinationAlert(interaction, user, result.possibleCombinations);
+                    }, 1500);
+                }
             }
 
         } catch (error) {
@@ -238,7 +246,7 @@ class GachaMachine {
     }
 
     async handleMultiPullEmbeds(interaction, result, user) {
-        const { results, completions, autoCombinations, newBalance, cost } = result;
+        const { results, completions, possibleCombinations, newBalance, cost } = result;
         
         // Send initial summary message
         const summaryEmbed = new EmbedBuilder()
@@ -276,26 +284,33 @@ class GachaMachine {
             }
         }
 
-        // Send completions and auto-combinations if any
-        if (completions.length > 0 || autoCombinations.length > 0) {
+        // Send completions if any
+        if (completions.length > 0) {
             await new Promise(resolve => setTimeout(resolve, 1000));
             
-            const bonusEmbed = await this.createBonusEmbed(completions, autoCombinations);
+            const bonusEmbed = await this.createBonusEmbed(completions, []);
             await interaction.followUp({
                 embeds: [bonusEmbed],
                 ephemeral: true
             });
         }
+
+        // UPDATED: Show combination alerts instead of auto-combination results
+        if (possibleCombinations && possibleCombinations.length > 0) {
+            // Delay before showing combination alert to let user see their pulls
+            setTimeout(async () => {
+                await combinationService.showCombinationAlert(interaction, user, possibleCombinations);
+            }, 2000);
+        }
     }
 
-    // UPDATED: Clean design without competing emojis
+    // Clean design without competing emojis
     async createSinglePullEmbed(item, user, result, pullNumber = null) {
         const rarityColor = gachaService.getRarityColor(item.rarity);
         const rarityEmoji = gachaService.getRarityEmoji(item.rarity);
         const rarityName = gachaService.getRarityDisplayName(item.rarity);
         const itemEmoji = formatGachaEmoji(item.emojiId, item.emojiName);
         
-        // UPDATED: Removed 🎯 emoji from title
         const title = pullNumber ? 
             `Pull ${pullNumber} - ${item.itemName}` : 
             `Single Pull - ${item.itemName}`;
@@ -316,12 +331,10 @@ class GachaMachine {
             description += ` ✨ **NEW!**`;
         }
         
-        // UPDATED: Removed 📦 emoji from quantity info
         if (item.maxStack > 1) {
             description += `\n**Quantity:** ${item.quantity}/${item.maxStack}`;
         }
         
-        // UPDATED: Removed 🏷️ emoji from series info
         if (item.seriesId) {
             description += `\n**Series:** ${item.seriesId.charAt(0).toUpperCase() + item.seriesId.slice(1)}`;
         }
@@ -392,14 +405,7 @@ class GachaMachine {
             }
         }
 
-        // Add auto-combinations
-        if (autoCombinations && autoCombinations.length > 0) {
-            description += '⚡ **Auto-Combinations Triggered!**\n\n';
-            for (const combo of autoCombinations) {
-                const resultEmoji = formatGachaEmoji(combo.resultItem.emojiId, combo.resultItem.emojiName);
-                description += `${resultEmoji} Created: **${combo.resultQuantity}x ${combo.resultItem.itemName}**\n`;
-            }
-        }
+        // REMOVED: Auto-combination display since we now use confirmations
 
         embed.setDescription(description);
         embed.setFooter({ text: 'These bonuses have been added to your collection automatically!' });
@@ -441,10 +447,11 @@ class GachaMachine {
                 `⚪ Common: ${summary.rarityCount.common || 0}\n\n` +
                 '**By Source:**\n' +
                 `🎰 Gacha: ${summary.sourceBreakdown.gacha || 0}\n` +
-                `🔧 Combined: ${summary.sourceBreakdown.combined || 0}\n` +
-                `🏆 Series Rewards: ${summary.sourceBreakdown.series_completion || 0}`
+                `⚗️ Combinations: ${summary.sourceBreakdown.combined || 0}\n` +
+                `🏆 Series Rewards: ${summary.sourceBreakdown.series_completion || 0}\n` +
+                `🎁 Player Gifts: ${summary.sourceBreakdown.player_transfer || 0}`
             )
-            .setFooter({ text: 'Use /collection for detailed view with filters and combination interface!' })
+            .setFooter({ text: 'Use /collection for detailed view with filters and giving interface!' })
             .setTimestamp();
 
         // Add recent items
