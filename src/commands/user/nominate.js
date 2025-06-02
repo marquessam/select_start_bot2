@@ -185,9 +185,10 @@ export default {
             // User's nomination count (if registered)
             if (user) {
                 const currentNominations = user.getCurrentNominations();
+                const remaining = MAX_NOMINATIONS - currentNominations.length;
                 embed.addFields({
-                    name: '📊 Your Progress',
-                    value: `${currentNominations.length}/${MAX_NOMINATIONS} nominations used`,
+                    name: '📊 Your Status',
+                    value: `${remaining}/${MAX_NOMINATIONS} nominations remaining`,
                     inline: true
                 });
             } else {
@@ -355,6 +356,7 @@ export default {
             const settings = await NominationSettings.getSettings();
             const now = new Date();
             const nominationsOpen = settings.areNominationsOpen(now);
+            const remaining = MAX_NOMINATIONS - currentNominations.length;
 
             const embed = new EmbedBuilder()
                 .setTitle('📊 Your Nomination Status')
@@ -366,8 +368,8 @@ export default {
                 name: '📈 Overview',
                 value: `**Username:** ${user.raUsername}\n` +
                        `**Status:** ${nominationsOpen ? '✅ Can nominate' : '❌ Closed'}\n` +
-                       `**Used:** ${currentNominations.length}/${MAX_NOMINATIONS}\n` +
-                       `**Remaining:** ${MAX_NOMINATIONS - currentNominations.length}`,
+                       `**Remaining:** ${remaining}/${MAX_NOMINATIONS} nominations\n` +
+                       `**Used:** ${currentNominations.length}/${MAX_NOMINATIONS}`,
                 inline: false
             });
 
@@ -419,7 +421,7 @@ export default {
             // Action buttons
             const actionRow = new ActionRowBuilder();
             
-            if (nominationsOpen && currentNominations.length < MAX_NOMINATIONS) {
+            if (nominationsOpen && remaining > 0) {
                 actionRow.addComponents(
                     new ButtonBuilder()
                         .setCustomId('nominate_open_form')
@@ -446,6 +448,71 @@ export default {
             console.error('Error in handleStatus:', error);
             await interaction.editReply('An error occurred while fetching your status.');
         }
+    },
+
+    /**
+     * Create a static success embed (no interactive components)
+     * Call this after successful nomination processing
+     */
+    createSuccessEmbed(gameData, user, comment = null) {
+        const embed = new EmbedBuilder()
+            .setTitle('✅ Game Nominated Successfully!')
+            .setColor('#00FF00')
+            .setThumbnail(gameData.ImageIcon)
+            .addFields(
+                {
+                    name: '🎮 Game',
+                    value: gameData.Title,
+                    inline: true
+                },
+                {
+                    name: '🎯 Console',
+                    value: gameData.ConsoleName,
+                    inline: true
+                },
+                {
+                    name: '🏆 Achievements',
+                    value: `${gameData.NumAchievements || 0}`,
+                    inline: true
+                },
+                {
+                    name: '👤 Nominated By',
+                    value: user.raUsername,
+                    inline: true
+                },
+                {
+                    name: '🏢 Publisher',
+                    value: gameData.Publisher || 'Unknown',
+                    inline: true
+                },
+                {
+                    name: '🎭 Genre',
+                    value: gameData.Genre || 'Unknown',
+                    inline: true
+                }
+            );
+
+        if (comment) {
+            embed.addFields({
+                name: '💬 Comment',
+                value: comment,
+                inline: false
+            });
+        }
+
+        // Calculate remaining nominations
+        const currentNominations = user.getCurrentNominations();
+        const remaining = MAX_NOMINATIONS - currentNominations.length;
+        
+        embed.addFields({
+            name: '📊 Status',
+            value: `marquessam has ${remaining}/2 nominations remaining`,
+            inline: false
+        });
+
+        embed.setTimestamp();
+        
+        return embed;
     },
 
     // Nomination processing is handled by the handlers file to preserve original behavior
