@@ -1,4 +1,4 @@
-// src/commands/admin/gacha-admin.js - COMPLETE VERSION with new combination syntax and series support
+// src/commands/admin/gacha-admin.js - COMPLETE FIXED VERSION with debug command
 import { 
     SlashCommandBuilder, 
     EmbedBuilder, 
@@ -42,12 +42,12 @@ export default {
         .addSubcommand(subcommand =>
             subcommand
                 .setName('add-combination')
-                .setDescription('Add an AUTOMATIC combination rule'))
+                .setDescription('Add a combination rule (requires confirmation)'))
 
         .addSubcommand(subcommand =>
             subcommand
                 .setName('list-combinations')
-                .setDescription('List all automatic combination rules'))
+                .setDescription('List all combination rules'))
 
         .addSubcommand(subcommand =>
             subcommand
@@ -56,6 +56,15 @@ export default {
                 .addStringOption(option =>
                     option.setName('rule-id')
                         .setDescription('Rule ID to remove')
+                        .setRequired(true)))
+
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('debug-combination')
+                .setDescription('Debug a specific combination rule')
+                .addStringOption(option =>
+                    option.setName('rule-id')
+                        .setDescription('Rule ID to debug')
                         .setRequired(true)))
 
         .addSubcommand(subcommand =>
@@ -181,6 +190,9 @@ export default {
                 case 'remove-combination':
                     await this.handleRemoveCombination(interaction);
                     break;
+                case 'debug-combination':
+                    await this.handleDebugCombination(interaction);
+                    break;
                 case 'give-item':
                     await this.handleGiveItem(interaction);
                     break;
@@ -204,7 +216,7 @@ export default {
     async handleListItems(interaction) {
         const page = interaction.options.getInteger('page') || 1;
         const filter = interaction.options.getString('filter') || 'all';
-        const itemsPerPage = 15; // REDUCED from 20 to avoid character limits
+        const itemsPerPage = 15;
 
         let query = { isActive: true };
         let title = '📦 All Gacha Items';
@@ -228,7 +240,6 @@ export default {
             .skip(skip)
             .limit(itemsPerPage);
 
-        // FIXED: Sort items numerically by ID
         items.sort((a, b) => {
             const aNum = parseInt(a.itemId) || 0;
             const bNum = parseInt(b.itemId) || 0;
@@ -244,7 +255,6 @@ export default {
             .setColor(COLORS.INFO)
             .setTimestamp();
 
-        // Create a shorter, more compact format to avoid character limits
         let itemsList = '';
         
         items.forEach(item => {
@@ -259,10 +269,8 @@ export default {
             itemsList += `**${id}** - ${name} (${rarity}, ${item.dropRate}%)\n`;
         });
 
-        // Use description instead of fields to avoid 1024 char limit on fields
         embed.setDescription(`Showing ${items.length} items (${totalItems} total)\n\n${itemsList}`);
 
-        // Add navigation buttons if needed
         const components = [];
         if (totalPages > 1) {
             const buttonRow = new ActionRowBuilder()
@@ -286,7 +294,6 @@ export default {
             components.push(buttonRow);
         }
 
-        // Add action buttons
         const actionRow = new ActionRowBuilder()
             .addComponents(
                 new ButtonBuilder()
@@ -307,13 +314,11 @@ export default {
         await interaction.editReply({ embeds: [embed], components });
     },
 
-    // UPDATED: New combination syntax with x and =
     async handleAddCombination(interaction) {
         const modal = new ModalBuilder()
             .setCustomId('gacha_add_combo_modal')
-            .setTitle('Add Automatic Combination');
+            .setTitle('Add Combination Rule');
 
-        // UPDATED: New syntax with x for quantities and = as separator
         const formatInput = new TextInputBuilder()
             .setCustomId('combo_format')
             .setLabel('Combination Rule')
@@ -321,7 +326,6 @@ export default {
             .setStyle(TextInputStyle.Paragraph)
             .setRequired(true);
 
-        // Rule ID (auto-generated if empty)
         const ruleIdInput = new TextInputBuilder()
             .setCustomId('rule_id')
             .setLabel('Rule ID (optional - will auto-generate)')
@@ -329,7 +333,6 @@ export default {
             .setStyle(TextInputStyle.Short)
             .setRequired(false);
 
-        // Priority for auto-combine order
         const priorityInput = new TextInputBuilder()
             .setCustomId('priority')
             .setLabel('Priority (0-100, higher = combines first)')
@@ -371,27 +374,25 @@ export default {
                 throw new Error(`Result item not found: ${parsed.result.itemId}`);
             }
 
-            // Check if rule already exists
             const existingRule = await CombinationRule.findOne({ ruleId });
             if (existingRule) {
                 throw new Error(`Rule ID "${ruleId}" already exists.`);
             }
 
-            // Create the combination rule
+            // UPDATED: All combinations require confirmation now
             const newRule = new CombinationRule({
                 ruleId,
                 ingredients: parsed.ingredients,
                 result: parsed.result,
-                isAutomatic: true, // All combinations are automatic now
+                isAutomatic: false, // UPDATED: No more auto-combinations
                 priority,
                 createdBy: interaction.user.username
             });
 
             await newRule.save();
 
-            // Create success embed
             const embed = new EmbedBuilder()
-                .setTitle('✅ Automatic Combination Added')
+                .setTitle('✅ Combination Rule Added')
                 .setColor(COLORS.SUCCESS)
                 .addFields(
                     { name: 'Rule ID', value: ruleId, inline: true },
@@ -399,7 +400,6 @@ export default {
                     { name: 'Format', value: `\`${comboFormat}\``, inline: false }
                 );
 
-            // Show ingredients and result
             let ingredientsText = '';
             for (const ing of parsed.ingredients) {
                 const item = await GachaItem.findOne({ itemId: ing.itemId });
@@ -414,13 +414,13 @@ export default {
                 value: `${resultEmoji} ${parsed.result.quantity}x **${resultItem?.itemName || parsed.result.itemId}**` 
             });
 
-            embed.setDescription('⚡ This combination will happen automatically when users have the ingredients!');
+            // UPDATED: New description for confirmation system
+            embed.setDescription('⚗️ This combination will show confirmation prompts when users have the ingredients!');
 
             await interaction.editReply({ embeds: [embed] });
 
         } catch (error) {
             console.error('Error creating combination:', error);
-            // UPDATED: Better error message with new format examples
             await interaction.editReply({
                 content: `❌ Error creating combination: ${error.message}\n\n**Format Examples:**\n` +
                          `• \`025x5 = 107\` (5 items with ID 025 make 1 item with ID 107)\n` +
@@ -437,12 +437,9 @@ export default {
         }
     },
 
-    // UPDATED: New parsing logic for x and = syntax
     async parseSimpleCombination(format) {
-        // Remove extra whitespace
         format = format.trim();
 
-        // UPDATED: Prefer = over -> as separator
         let separator = '=';
         if (format.includes(' = ')) {
             separator = ' = ';
@@ -464,42 +461,33 @@ export default {
         const ingredientsPart = parts[0].trim();
         const resultPart = parts[1].trim();
 
-        // Parse ingredients (support both + and , as separators)
         const ingredients = [];
         const ingredientItems = ingredientsPart.split(/[+,]/).map(s => s.trim());
 
         for (const item of ingredientItems) {
-            // UPDATED: Support both x and : for quantities, prefer x
             if (item.includes('x')) {
-                // Format: item_id x quantity (e.g., "025x5")
                 const [itemId, quantityStr] = item.split('x');
                 const quantity = parseInt(quantityStr) || 1;
                 ingredients.push({ itemId: itemId.trim(), quantity });
             } else if (item.includes(':')) {
-                // Legacy format: item_id:quantity (still supported)
                 const [itemId, quantityStr] = item.split(':');
                 const quantity = parseInt(quantityStr) || 1;
                 ingredients.push({ itemId: itemId.trim(), quantity });
             } else {
-                // Format: item_id (quantity defaults to 1)
                 ingredients.push({ itemId: item.trim(), quantity: 1 });
             }
         }
 
-        // Parse result
         let result;
         if (resultPart.includes('x')) {
-            // Format: item_id x quantity (e.g., "107x2")
             const [itemId, quantityStr] = resultPart.split('x');
             const quantity = parseInt(quantityStr) || 1;
             result = { itemId: itemId.trim(), quantity };
         } else if (resultPart.includes(':')) {
-            // Legacy format: item_id:quantity (still supported)
             const [itemId, quantityStr] = resultPart.split(':');
             const quantity = parseInt(quantityStr) || 1;
             result = { itemId: itemId.trim(), quantity };
         } else {
-            // Format: item_id (quantity defaults to 1)
             result = { itemId: resultPart.trim(), quantity: 1 };
         }
 
@@ -515,7 +503,7 @@ export default {
         }
 
         const embed = new EmbedBuilder()
-            .setTitle('⚡ Automatic Combination Rules')
+            .setTitle('⚗️ Combination Rules')
             .setColor(COLORS.INFO)
             .setDescription(`Found ${rules.length} active rules`)
             .setTimestamp();
@@ -527,7 +515,6 @@ export default {
             
             rulesText += `**${rule.ruleId}** (Priority: ${rule.priority})\n`;
             
-            // UPDATED: Show ingredients in new format with x for quantities
             const ingredientStrs = rule.ingredients.map(ing => 
                 ing.quantity > 1 ? `${ing.itemId}x${ing.quantity}` : ing.itemId
             );
@@ -540,12 +527,11 @@ export default {
         }
 
         embed.addFields({ name: 'Rules', value: rulesText });
-        embed.setFooter({ text: 'All combinations happen automatically when players have ingredients' });
+        embed.setFooter({ text: 'All combinations require user confirmation' });
 
         await interaction.editReply({ embeds: [embed] });
     },
 
-    // NEW: Separate method for handling list combinations from button
     async handleListCombinationsFromButton(interaction) {
         const rules = await CombinationRule.find({ isActive: true })
             .sort({ priority: -1, ruleId: 1 });
@@ -559,7 +545,7 @@ export default {
         }
 
         const embed = new EmbedBuilder()
-            .setTitle('⚡ Automatic Combination Rules')
+            .setTitle('⚗️ Combination Rules')
             .setColor(COLORS.INFO)
             .setDescription(`Found ${rules.length} active rules`)
             .setTimestamp();
@@ -571,7 +557,6 @@ export default {
             
             rulesText += `**${rule.ruleId}** (Priority: ${rule.priority})\n`;
             
-            // UPDATED: Show ingredients in new format with x for quantities
             const ingredientStrs = rule.ingredients.map(ing => 
                 ing.quantity > 1 ? `${ing.itemId}x${ing.quantity}` : ing.itemId
             );
@@ -584,12 +569,11 @@ export default {
         }
 
         embed.addFields({ name: 'Rules', value: rulesText });
-        embed.setFooter({ text: 'All combinations happen automatically when players have ingredients' });
+        embed.setFooter({ text: 'All combinations require user confirmation' });
 
         await interaction.editReply({ embeds: [embed], components: [] });
     },
 
-    // NEW: Separate method for handling pagination
     async handleListItemsPagination(interaction, page, filter) {
         const itemsPerPage = 15;
 
@@ -615,7 +599,6 @@ export default {
             .skip(skip)
             .limit(itemsPerPage);
 
-        // Sort items numerically by ID
         items.sort((a, b) => {
             const aNum = parseInt(a.itemId) || 0;
             const bNum = parseInt(b.itemId) || 0;
@@ -635,7 +618,6 @@ export default {
             .setColor(COLORS.INFO)
             .setTimestamp();
 
-        // Create a shorter, more compact format to avoid character limits
         let itemsList = '';
         
         items.forEach(item => {
@@ -650,10 +632,8 @@ export default {
             itemsList += `**${id}** - ${name} (${rarity}, ${item.dropRate}%)\n`;
         });
 
-        // Use description instead of fields to avoid 1024 char limit on fields
         embed.setDescription(`Showing ${items.length} items (${totalItems} total)\n\n${itemsList}`);
 
-        // Add navigation buttons if needed
         const components = [];
         if (totalPages > 1) {
             const buttonRow = new ActionRowBuilder()
@@ -677,7 +657,6 @@ export default {
             components.push(buttonRow);
         }
 
-        // Add action buttons
         const actionRow = new ActionRowBuilder()
             .addComponents(
                 new ButtonBuilder()
@@ -695,7 +674,6 @@ export default {
             text: 'Copy the Item ID (bolded text) when creating combinations' 
         });
 
-        // FIXED: Use editReply for deferred button interactions
         await interaction.editReply({ embeds: [embed], components });
     },
 
@@ -712,6 +690,85 @@ export default {
         });
     },
 
+    // NEW: Debug combination command
+    async handleDebugCombination(interaction) {
+        const ruleId = interaction.options.getString('rule-id');
+        
+        const rule = await CombinationRule.findOne({ ruleId, isActive: true });
+        if (!rule) {
+            return interaction.editReply({
+                content: `❌ Combination rule "${ruleId}" not found.`
+            });
+        }
+
+        const embed = new EmbedBuilder()
+            .setTitle(`🔍 Debug: ${ruleId}`)
+            .setColor(COLORS.INFO)
+            .setTimestamp();
+
+        embed.addFields(
+            { name: 'Rule ID', value: rule.ruleId, inline: true },
+            { name: 'Priority', value: rule.priority?.toString() || '0', inline: true },
+            { name: 'Requires Confirmation', value: 'Yes', inline: true }
+        );
+
+        let ingredientsText = '';
+        let ingredientsValid = true;
+        
+        for (const ingredient of rule.ingredients) {
+            const item = await GachaItem.findOne({ itemId: ingredient.itemId });
+            if (item) {
+                const emoji = `<:${item.emojiName}:${item.emojiId}>`;
+                ingredientsText += `${emoji} **${ingredient.quantity}x ${item.itemName}** (ID: ${ingredient.itemId})\n`;
+                ingredientsText += `  └ Rarity: ${item.rarity}, Drop Rate: ${item.dropRate}%\n`;
+            } else {
+                ingredientsText += `❌ **${ingredient.quantity}x MISSING ITEM** (ID: ${ingredient.itemId})\n`;
+                ingredientsValid = false;
+            }
+        }
+        
+        embed.addFields({ name: 'Ingredients', value: ingredientsText || 'None' });
+
+        const resultItem = await GachaItem.findOne({ itemId: rule.result.itemId });
+        let resultText = '';
+        if (resultItem) {
+            const emoji = `<:${resultItem.emojiName}:${resultItem.emojiId}>`;
+            resultText = `${emoji} **${rule.result.quantity || 1}x ${resultItem.itemName}** (ID: ${rule.result.itemId})\n`;
+            resultText += `└ Rarity: ${resultItem.rarity}, Drop Rate: ${resultItem.dropRate}%`;
+        } else {
+            resultText = `❌ **MISSING RESULT ITEM** (ID: ${rule.result.itemId})`;
+            ingredientsValid = false;
+        }
+        
+        embed.addFields({ name: 'Result', value: resultText });
+
+        const validationText = ingredientsValid ? 
+            '✅ All items exist and rule is valid' : 
+            '❌ Some items are missing - rule will not work';
+        
+        embed.addFields({ name: 'Validation', value: validationText });
+
+        const exampleIngredients = rule.ingredients.map(ing => 
+            ing.quantity > 1 ? `${ing.itemId}x${ing.quantity}` : ing.itemId
+        ).join(' + ');
+        
+        const exampleResult = rule.result.quantity > 1 ? 
+            `${rule.result.itemId}x${rule.result.quantity}` : 
+            rule.result.itemId;
+        
+        embed.addFields({ 
+            name: 'Rule Format', 
+            value: `\`${exampleIngredients} = ${exampleResult}\`` 
+        });
+
+        if (rule.createdBy) {
+            embed.setFooter({ text: `Created by: ${rule.createdBy}` });
+        }
+
+        await interaction.editReply({ embeds: [embed] });
+    },
+
+    // UPDATED: Fixed give-item with combination alerts
     async handleGiveItem(interaction) {
         const username = interaction.options.getString('username');
         const itemId = interaction.options.getString('item-id');
@@ -732,18 +789,20 @@ export default {
         const addResult = user.addGachaItem(item, quantity, 'admin_grant');
         await user.save();
 
-        // Check for auto-combinations
-        const autoCombinations = await combinationService.checkAutoCombinations(user);
-
         const emoji = `<:${item.emojiName}:${item.emojiId}>`;
+        
+        // UPDATED: Use the new combination alert system
+        const combinationResult = await combinationService.triggerCombinationAlertsForAdminGift(user, itemId, interaction);
+
         let message = `✅ Gave ${emoji} ${quantity}x **${item.itemName}** to ${username}`;
 
-        if (autoCombinations.length > 0) {
-            message += `\n\n⚡ **Auto-combinations triggered:**\n`;
-            for (const combo of autoCombinations) {
-                const resultEmoji = `<:${combo.resultItem.emojiName}:${combo.resultItem.emojiId}>`;
-                message += `${resultEmoji} ${combo.resultQuantity}x ${combo.resultItem.itemName}\n`;
-            }
+        if (combinationResult.hasCombinations) {
+            message += `\n\n⚗️ **Combination Alert Sent!**\n`;
+            message += `${username} can now see ${combinationResult.combinationCount} combination option(s) and choose which ones to perform.`;
+        } else if (combinationResult.error) {
+            message += `\n\n⚠️ Item given successfully, but there was an issue with combination alerts: ${combinationResult.error}`;
+        } else {
+            message += `\n\n💡 No combinations available with this item.`;
         }
 
         await interaction.editReply({ content: message });
@@ -814,7 +873,7 @@ export default {
             emojiId,
             flavorText: interaction.options.getString('flavor-text'),
             maxStack: interaction.options.getInteger('max-stack') || 1,
-            seriesId: interaction.options.getString('series-id'), // SERIES SUPPORT
+            seriesId: interaction.options.getString('series-id'),
             createdBy: interaction.user.username
         };
 
@@ -844,7 +903,6 @@ export default {
             embed.addFields({ name: 'Flavor Text', value: `*${itemData.flavorText}*` });
         }
         
-        // SERIES SUPPORT - Show series if specified
         if (itemData.seriesId) {
             embed.addFields({ name: 'Series', value: itemData.seriesId, inline: true });
         }
@@ -852,17 +910,14 @@ export default {
         await interaction.editReply({ embeds: [embed] });
     },
 
-    // Handle button interactions
     async handleButtonInteraction(interaction) {
         if (!interaction.customId.startsWith('gacha_')) return;
 
-        // For modal interactions, don't defer
         if (interaction.customId === 'gacha_add_combination') {
             await this.handleAddCombination(interaction);
             return;
         }
 
-        // For other interactions, defer the update
         try {
             if (!interaction.deferred && !interaction.replied) {
                 await interaction.deferUpdate();
@@ -874,17 +929,14 @@ export default {
         if (interaction.customId === 'gacha_list_combinations') {
             await this.handleListCombinationsFromButton(interaction);
         } else if (interaction.customId.startsWith('gacha_list_')) {
-            // Handle pagination directly without mock interaction
             const parts = interaction.customId.split('_');
             const page = parseInt(parts[2]);
             const filter = parts[3];
             
-            // Handle pagination directly
             await this.handleListItemsPagination(interaction, page, filter);
         }
     },
 
-    // Handle modal submissions
     async handleModalSubmit(interaction) {
         if (interaction.customId === 'gacha_add_combo_modal') {
             await this.handleCombinationModal(interaction);
