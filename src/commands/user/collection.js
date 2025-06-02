@@ -1,4 +1,4 @@
-// src/commands/user/collection.js - COMPLETE FIXED VERSION with interaction handling
+// src/commands/user/collection.js - COMPLETE UPDATED VERSION with new combination system
 import { 
     SlashCommandBuilder, 
     EmbedBuilder,
@@ -36,7 +36,7 @@ export default {
             if (!user.gachaCollection || user.gachaCollection.length === 0) {
                 return interaction.editReply({
                     content: '📦 Your collection is empty! Visit the gacha channel to start collecting items.\n\n' +
-                             '💡 **Tip:** All item combinations happen automatically when you get the right ingredients!'
+                             '💡 **Tip:** When you get the right ingredients, you\'ll receive combination alerts!'
                 });
             }
 
@@ -122,11 +122,11 @@ export default {
         // Footer
         if (totalPages > 1) {
             embed.setFooter({ 
-                text: `Page ${page + 1}/${totalPages} • ${startIndex + 1}-${endIndex} of ${filteredItems.length} items • ${combinationStats.totalCombined} from auto-combos`
+                text: `Page ${page + 1}/${totalPages} • ${startIndex + 1}-${endIndex} of ${filteredItems.length} items • ${combinationStats.totalCombined} from combinations`
             });
         } else {
             embed.setFooter({ 
-                text: `${filteredItems.length} items • ${combinationStats.totalCombined} from auto-combinations • ⁽ⁿ⁾ = quantity`
+                text: `${filteredItems.length} items • ${combinationStats.totalCombined} from combinations • ⁽ⁿ⁾ = quantity`
             });
         }
 
@@ -261,15 +261,15 @@ export default {
         const sourceBreakdown = summary.sourceBreakdown || {};
         description += `\n**By Source:**\n`;
         description += `🎰 Gacha Pulls: ${sourceBreakdown.gacha || 0}\n`;
-        description += `⚡ Auto-Combinations: ${sourceBreakdown.combined || 0}\n`;
+        description += `⚗️ Combinations: ${sourceBreakdown.combined || 0}\n`;
         description += `🏆 Series Rewards: ${sourceBreakdown.series_completion || 0}\n`;
         description += `🎁 Player Gifts: ${sourceBreakdown.player_transfer || 0}\n`;
 
-        // Auto-combination info
-        description += `\n**💡 Auto-Combination System:**\n`;
-        description += `🔮 All combinations happen automatically!\n`;
-        description += `📢 You'll get alerts when they trigger\n`;
-        description += `⚡ Just collect items and watch the magic happen`;
+        // UPDATED: New combination system info
+        description += `\n**💡 Combination System:**\n`;
+        description += `🔮 Combinations require confirmation\n`;
+        description += `📢 You'll get alerts when ingredients are available\n`;
+        description += `⚗️ Check DMs or collection for combination options`;
 
         embed.setDescription(description);
 
@@ -313,7 +313,7 @@ export default {
 
         const sourceNames = { 
             gacha: 'Gacha Pull', 
-            combined: 'Auto-Combination', 
+            combined: 'Combination', 
             series_completion: 'Series Completion', 
             admin_grant: 'Admin Grant',
             player_transfer: 'Player Gift'
@@ -387,7 +387,7 @@ export default {
         const itemOptions = pageItems.map(item => {
             const quantity = (item.quantity || 1) > 1 ? ` x${item.quantity}` : '';
             const seriesTag = item.seriesId ? ` [${item.seriesId}]` : '';
-            const sourceTag = item.source === 'combined' ? ' ⚡' : item.source === 'player_transfer' ? ' 🎁' : '';
+            const sourceTag = item.source === 'combined' ? ' ⚗️' : item.source === 'player_transfer' ? ' 🎁' : '';
             
             let emojiOption = undefined;
             if (item.emojiId && item.emojiName) {
@@ -424,7 +424,7 @@ export default {
         const embed = new EmbedBuilder()
             .setTitle(`🔍 Inspect Item - Page ${page + 1}`)
             .setDescription('Choose an item from this page to view its details.\n\n' +
-                          '**Legend:** ⚡ = Auto-Combined, 🎁 = Player Gift')
+                          '**Legend:** ⚗️ = Combined, 🎁 = Player Gift')
             .setColor(COLORS.INFO);
 
         await interaction.editReply({ embeds: [embed], components: components });
@@ -618,7 +618,7 @@ export default {
             await givingUser.save();
             await receivingUser.save();
 
-            // UPDATED: Check for combinations using the player transfer method
+            // UPDATED: Check for combinations using the new player transfer method
             let combinationResult = { hasCombinations: false };
             try {
                 // Use the specific player transfer combination alert method
@@ -652,21 +652,27 @@ export default {
                 )
                 .setTimestamp();
 
-            // UPDATED: Add combination alert information with better messaging
+            // UPDATED: Handle new combination alert system responses
             if (combinationResult.hasCombinations) {
-                if (combinationResult.sentViaDM) {
-                    embed.addFields({
-                        name: '⚗️ Combination Alert Sent!',
-                        value: `${receivingUser.raUsername} was sent a direct message about ${combinationResult.combinationCount} combination option(s) they can now make!`,
-                        inline: false
-                    });
-                } else {
-                    embed.addFields({
-                        name: '⚗️ Combination Alert Posted!',
-                        value: `${receivingUser.raUsername} has been notified in the gacha channel about ${combinationResult.combinationCount} combination option(s) they can now make!`,
-                        inline: false
-                    });
+                let alertMessage = `${receivingUser.raUsername} now has ${combinationResult.combinationCount} combination option(s) available!`;
+                
+                if (combinationResult.publicAnnouncementSent && combinationResult.sentViaDM) {
+                    alertMessage += '\n• Public announcement posted in gacha channel\n• Private combination options sent via DM';
+                } else if (combinationResult.sentViaDM) {
+                    alertMessage += '\n• Private combination options sent via DM';
+                } else if (combinationResult.publicAnnouncementSent) {
+                    alertMessage += '\n• Public announcement posted in gacha channel';
                 }
+                
+                if (combinationResult.error) {
+                    alertMessage += `\n• Note: ${combinationResult.error}`;
+                }
+                
+                embed.addFields({
+                    name: '⚗️ Combination Alerts Sent!',
+                    value: alertMessage,
+                    inline: false
+                });
             } else if (combinationResult.error && combinationResult.error !== 'Could not check for combinations') {
                 embed.addFields({
                     name: '⚠️ Combination Check',
