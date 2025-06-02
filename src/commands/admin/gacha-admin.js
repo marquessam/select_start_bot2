@@ -1,4 +1,4 @@
-// src/commands/admin/gacha-admin.js - COMPLETE VERSION with new combination syntax
+// src/commands/admin/gacha-admin.js - COMPLETE VERSION with new combination syntax and series support
 import { 
     SlashCommandBuilder, 
     EmbedBuilder, 
@@ -148,7 +148,11 @@ export default {
                         .setDescription('Max stack size (default: 1)')
                         .setRequired(false)
                         .setMinValue(1)
-                        .setMaxValue(999))),
+                        .setMaxValue(999))
+                .addStringOption(option =>
+                    option.setName('series-id')
+                        .setDescription('Series ID (optional)')
+                        .setRequired(false))),
 
     async execute(interaction) {
         // Check if user is admin
@@ -810,6 +814,7 @@ export default {
             emojiId,
             flavorText: interaction.options.getString('flavor-text'),
             maxStack: interaction.options.getInteger('max-stack') || 1,
+            seriesId: interaction.options.getString('series-id'), // SERIES SUPPORT
             createdBy: interaction.user.username
         };
 
@@ -837,6 +842,11 @@ export default {
 
         if (itemData.flavorText) {
             embed.addFields({ name: 'Flavor Text', value: `*${itemData.flavorText}*` });
+        }
+        
+        // SERIES SUPPORT - Show series if specified
+        if (itemData.seriesId) {
+            embed.addFields({ name: 'Series', value: itemData.seriesId, inline: true });
         }
 
         await interaction.editReply({ embeds: [embed] });
