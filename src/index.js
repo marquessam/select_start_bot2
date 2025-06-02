@@ -1,4 +1,4 @@
-// src/index.js - Complete updated version with all new features
+// src/index.js - Complete updated version with combination interaction support
 import { Client, Collection, Events, GatewayIntentBits, EmbedBuilder } from 'discord.js';
 import { config, validateConfig } from './config/config.js';
 import { connectDB } from './models/index.js';
@@ -113,7 +113,7 @@ client.on(Events.InteractionCreate, async interaction => {
     }
 });
 
-// Handle button interactions - UPDATED VERSION with all new features
+// Handle button interactions - UPDATED VERSION with combination support
 client.on(Events.InteractionCreate, async interaction => {
     if (!interaction.isButton()) return;
     
@@ -123,6 +123,13 @@ client.on(Events.InteractionCreate, async interaction => {
     console.log('Channel:', interaction.channel?.name);
     
     try {
+        // NEW: Check if this is a combination-related button FIRST
+        if (interaction.customId.startsWith('combo_')) {
+            console.log('Routing to combination handler');
+            const handled = await combinationService.handleCombinationInteraction(interaction);
+            if (handled) return;
+        }
+
         // Check if this is a gacha machine button (not admin buttons)
         if (interaction.customId === 'gacha_single_pull' || 
             interaction.customId === 'gacha_multi_pull' || 
@@ -163,7 +170,7 @@ client.on(Events.InteractionCreate, async interaction => {
             return;
         }
 
-        // Check if this is a collection-related button - UPDATED ROUTING
+        // Check if this is a collection-related button
         if (interaction.customId.startsWith('coll_')) {
             console.log('Routing to collection handler');
             const collectionCommand = client.commands.get('collection');
@@ -227,12 +234,19 @@ client.on(Events.InteractionCreate, async interaction => {
     }
 });
 
-// Handle select menu interactions - UPDATED VERSION
+// Handle select menu interactions - UPDATED VERSION with combination support
 client.on(Events.InteractionCreate, async interaction => {
     if (!interaction.isStringSelectMenu()) return;
     
     try {
-        // Check if this is a collection-related select menu - CLEAN ROUTING
+        // NEW: Check if this is a combination-related select menu FIRST
+        if (interaction.customId.startsWith('combo_')) {
+            console.log('Routing to combination select menu handler');
+            const handled = await combinationService.handleCombinationInteraction(interaction);
+            if (handled) return;
+        }
+
+        // Check if this is a collection-related select menu
         if (interaction.customId.startsWith('coll_')) {
             console.log('Routing to collection select menu handler');
             const collectionCommand = client.commands.get('collection');
@@ -288,7 +302,7 @@ client.on(Events.InteractionCreate, async interaction => {
     }
 });
 
-// Handle modal submit interactions - UPDATED VERSION with all new features
+// Handle modal submit interactions - UPDATED VERSION with all features
 client.on(Events.InteractionCreate, async interaction => {
     if (!interaction.isModalSubmit()) return;
     
@@ -651,7 +665,7 @@ client.once(Events.ClientReady, async () => {
         arenaFeedService.setClient(client);
         gameAwardService.setClient(client);
         gachaMachine.setClient(client);
-        combinationService.setClient(client); // NEW: Set client for combination alerts
+        combinationService.setClient(client); // UPDATED: Set client for combination alerts
 
         // START MONTHLY GP SERVICE
         monthlyGPService.start();
@@ -925,7 +939,7 @@ client.once(Events.ClientReady, async () => {
         console.log('  • Arena feeds: Every 30 minutes');
         console.log('  • Arena timeouts: Hourly at 45 minutes past');
         console.log('  • Gacha Machine: Active and pinned');
-        console.log('  • Automatic Combinations: Background processing with alerts');
+        console.log('  • Combination System: Confirmation-based with alerts');
         console.log('  • Collection Viewer: Clean interface with player item giving');
         console.log('  • Various other feeds: Hourly');
         
