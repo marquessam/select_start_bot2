@@ -206,14 +206,9 @@ export default {
 
     /**
      * Create static success embed without any buttons
-     * Call this when a nomination is successfully processed
+     * The handlers file should calculate the correct remaining count and pass it here
      */
-    createStaticSuccessEmbed(gameData, user, comment = null) {
-        // Calculate remaining nominations BEFORE this nomination was processed
-        const currentNominations = user.getCurrentNominations();
-        const remainingBefore = MAX_NOMINATIONS - currentNominations.length;
-        const remainingAfter = remainingBefore - 1; // Subtract 1 for this nomination
-
+    createStaticSuccessEmbed(gameData, user, comment = null, remainingCount = null) {
         const embed = new EmbedBuilder()
             .setTitle('✅ Game Nominated Successfully!')
             .setDescription(`${user.raUsername} has nominated a game for **Sega Month!** 🎮`)
@@ -260,9 +255,12 @@ export default {
             });
         }
 
+        // Use the remaining count passed from handlers (already calculated correctly)
+        const remaining = remainingCount !== null ? remainingCount : 0;
+        
         embed.addFields({
             name: '📊 Status',
-            value: `${user.raUsername} has ${remainingAfter}/${MAX_NOMINATIONS} nominations remaining`,
+            value: `${user.raUsername} has ${remaining}/${MAX_NOMINATIONS} nominations remaining`,
             inline: false
         });
 
