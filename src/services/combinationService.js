@@ -1,4 +1,4 @@
-// src/services/combinationService.js - COMPLETE FIXED VERSION with confirmation system and debug logging
+// src/services/combinationService.js - FIXED VERSION with separate public announcements
 import { GachaItem, CombinationRule } from '../models/GachaItem.js';
 import { Challenge } from '../models/Challenge.js';
 import { config } from '../config/config.js';
@@ -401,8 +401,8 @@ class CombinationService {
     }
 
     /**
-     * NEW: Trigger combination alerts for player-to-player transfers
-     * Similar to admin gifts but with different messaging
+     * FIXED: Trigger combination alerts for player-to-player transfers
+     * Now sends public announcement + private interaction options
      */
     async triggerCombinationAlertsForPlayerTransfer(recipient, giftedItemId, giverUsername) {
         try {
@@ -418,7 +418,7 @@ class CombinationService {
                 return { hasCombinations: false, error: 'No Discord client available' };
             }
 
-            // Send combination alert to gacha channel for the RECIPIENT
+            // FIXED: Send PUBLIC announcement without interactive components
             try {
                 const gachaChannelId = '1377092881885696022'; // Gacha channel
                 const guild = await this.client.guilds.cache.first(); // Get the main guild
@@ -429,38 +429,72 @@ class CombinationService {
                     return { hasCombinations: false, error: 'Gacha channel not found' };
                 }
 
-                // Create a mock interaction that sends to the gacha channel for the RECIPIENT
-                const mockInteraction = {
-                    followUp: async (options) => {
-                        // Get the recipient's Discord member for tagging
-                        let memberTag = `**${recipient.raUsername}**`;
-                        try {
-                            const member = await guild.members.fetch(recipient.discordId);
-                            memberTag = `<@${recipient.discordId}>`;
-                        } catch (error) {
-                            console.log('Could not fetch member for tagging, using username');
-                        }
+                // Get the recipient's Discord member for tagging
+                let memberTag = `**${recipient.raUsername}**`;
+                try {
+                    const member = await guild.members.fetch(recipient.discordId);
+                    memberTag = `<@${recipient.discordId}>`;
+                } catch (error) {
+                    console.log('Could not fetch member for tagging, using username');
+                }
 
-                        // Send to gacha channel with recipient tagged
-                        await channel.send({
-                            content: `🎁 **Player Gift Alert!** ${memberTag} received an item from **${giverUsername}** and has combination options!`,
-                            ...options,
-                            ephemeral: false // Make sure it's visible in the channel
-                        });
-                    },
-                    user: { id: recipient.discordId, username: recipient.raUsername } // Use RECIPIENT's info
-                };
+                // FIXED: Send public announcement WITHOUT interactive components
+                const publicEmbed = new EmbedBuilder()
+                    .setTitle('🎁⚗️ Player Gift + Combinations Available!')
+                    .setColor(COLORS.SUCCESS)
+                    .setDescription(
+                        `${memberTag} received an item from **${giverUsername}** and now has **${possibleCombinations.length}** combination option(s) available!\n\n` +
+                        `💡 **${recipient.raUsername}**, check your DMs or use \`/collection\` to see your combination options!`
+                    )
+                    .addFields({
+                        name: '🎯 Available Combinations',
+                        value: possibleCombinations.slice(0, 3).map(combo => {
+                            const resultEmoji = formatGachaEmoji(combo.resultItem.emojiId, combo.resultItem.emojiName);
+                            const isShadowUnlock = this.isShadowUnlockItem(combo.resultItem);
+                            return `${resultEmoji} ${combo.resultItem.itemName}${isShadowUnlock ? ' 🌙' : ''}`;
+                        }).join('\n') + (possibleCombinations.length > 3 ? '\n*...and more!*' : ''),
+                        inline: false
+                    })
+                    .setFooter({ text: 'Interactive options sent privately to the recipient' })
+                    .setTimestamp();
 
-                // Show the combination alert using our existing system
-                await this.showCombinationAlert(mockInteraction, recipient, possibleCombinations);
-                
-                return { 
-                    hasCombinations: true, 
-                    combinationCount: possibleCombinations.length 
-                };
+                await channel.send({ embeds: [publicEmbed] });
+
+                // FIXED: Send PRIVATE interactive options via DM
+                try {
+                    const member = await guild.members.fetch(recipient.discordId);
+                    
+                    const mockDMInteraction = {
+                        followUp: async (options) => {
+                            await member.send({
+                                content: `🎁 **Player Gift + Combinations Available!**\n**${giverUsername}** gave you an item that unlocked combinations!`,
+                                ...options
+                            });
+                        },
+                        user: { id: recipient.discordId, username: recipient.raUsername }
+                    };
+
+                    await this.showCombinationAlert(mockDMInteraction, recipient, possibleCombinations);
+                    
+                    return { 
+                        hasCombinations: true, 
+                        combinationCount: possibleCombinations.length,
+                        sentViaDM: true,
+                        publicAnnouncementSent: true
+                    };
+
+                } catch (dmError) {
+                    console.error('Error sending DM combination alert:', dmError);
+                    return { 
+                        hasCombinations: true, 
+                        combinationCount: possibleCombinations.length,
+                        error: 'Could not deliver private combination options to recipient, but public announcement was sent',
+                        publicAnnouncementSent: true
+                    };
+                }
 
             } catch (channelError) {
-                console.error('Error sending to gacha channel, trying DM fallback:', channelError);
+                console.error('Error sending to gacha channel:', channelError);
                 
                 // Fallback: Try to DM the recipient directly
                 try {
@@ -482,7 +516,8 @@ class CombinationService {
                     return { 
                         hasCombinations: true, 
                         combinationCount: possibleCombinations.length,
-                        sentViaDM: true
+                        sentViaDM: true,
+                        error: 'Could not send public announcement, but private options were sent'
                     };
 
                 } catch (dmError) {
@@ -490,7 +525,7 @@ class CombinationService {
                     return { 
                         hasCombinations: true, 
                         combinationCount: possibleCombinations.length,
-                        error: 'Could not deliver combination alert to recipient'
+                        error: 'Could not deliver combination alerts to recipient'
                     };
                 }
             }
@@ -502,7 +537,8 @@ class CombinationService {
     }
 
     /**
-     * FIXED: Trigger combination alerts for admin-given items - Send to RECIPIENT not admin
+     * FIXED: Trigger combination alerts for admin-given items
+     * Now sends public announcement + private interaction options
      */
     async triggerCombinationAlertsForAdminGift(user, giftedItemId, adminInteraction) {
         try {
@@ -518,7 +554,7 @@ class CombinationService {
                 return { hasCombinations: false, error: 'No Discord client available' };
             }
 
-            // FIXED: Send combination alert to gacha channel for the RECIPIENT, not as admin follow-up
+            // FIXED: Send public announcement + private interactive options
             try {
                 const gachaChannelId = '1377092881885696022'; // Gacha channel
                 const guild = await this.client.guilds.fetch(adminInteraction.guildId);
@@ -529,35 +565,69 @@ class CombinationService {
                     return { hasCombinations: false, error: 'Gacha channel not found' };
                 }
 
-                // Create a mock interaction that sends to the gacha channel for the RECIPIENT
-                const mockInteraction = {
-                    followUp: async (options) => {
-                        // Get the recipient's Discord member for tagging
-                        let memberTag = `**${user.raUsername}**`;
-                        try {
-                            const member = await guild.members.fetch(user.discordId);
-                            memberTag = `<@${user.discordId}>`;
-                        } catch (error) {
-                            console.log('Could not fetch member for tagging, using username');
-                        }
+                // Get the recipient's Discord member for tagging
+                let memberTag = `**${user.raUsername}**`;
+                try {
+                    const member = await guild.members.fetch(user.discordId);
+                    memberTag = `<@${user.discordId}>`;
+                } catch (error) {
+                    console.log('Could not fetch member for tagging, using username');
+                }
 
-                        // Send to gacha channel with recipient tagged
-                        await channel.send({
-                            content: `🎁 **Admin Gift Alert!** ${memberTag} received an item and has combination options!`,
-                            ...options,
-                            ephemeral: false // Make sure it's visible in the channel
-                        });
-                    },
-                    user: { id: user.discordId, username: user.raUsername } // Use RECIPIENT's info
-                };
+                // FIXED: Send public announcement WITHOUT interactive components
+                const publicEmbed = new EmbedBuilder()
+                    .setTitle('🎁⚗️ Admin Gift + Combinations Available!')
+                    .setColor(COLORS.SUCCESS)
+                    .setDescription(
+                        `${memberTag} received an admin gift and now has **${possibleCombinations.length}** combination option(s) available!\n\n` +
+                        `💡 **${user.raUsername}**, check your DMs or use \`/collection\` to see your combination options!`
+                    )
+                    .addFields({
+                        name: '🎯 Available Combinations',
+                        value: possibleCombinations.slice(0, 3).map(combo => {
+                            const resultEmoji = formatGachaEmoji(combo.resultItem.emojiId, combo.resultItem.emojiName);
+                            const isShadowUnlock = this.isShadowUnlockItem(combo.resultItem);
+                            return `${resultEmoji} ${combo.resultItem.itemName}${isShadowUnlock ? ' 🌙' : ''}`;
+                        }).join('\n') + (possibleCombinations.length > 3 ? '\n*...and more!*' : ''),
+                        inline: false
+                    })
+                    .setFooter({ text: 'Interactive options sent privately to the recipient' })
+                    .setTimestamp();
 
-                // Show the combination alert using our existing system
-                await this.showCombinationAlert(mockInteraction, user, possibleCombinations);
-                
-                return { 
-                    hasCombinations: true, 
-                    combinationCount: possibleCombinations.length 
-                };
+                await channel.send({ embeds: [publicEmbed] });
+
+                // FIXED: Send PRIVATE interactive options via DM
+                try {
+                    const member = await guild.members.fetch(user.discordId);
+                    
+                    const mockDMInteraction = {
+                        followUp: async (options) => {
+                            await member.send({
+                                content: '🎁 **Admin Gift + Combinations Available!**',
+                                ...options
+                            });
+                        },
+                        user: { id: user.discordId, username: user.raUsername }
+                    };
+
+                    await this.showCombinationAlert(mockDMInteraction, user, possibleCombinations);
+                    
+                    return { 
+                        hasCombinations: true, 
+                        combinationCount: possibleCombinations.length,
+                        sentViaDM: true,
+                        publicAnnouncementSent: true
+                    };
+
+                } catch (dmError) {
+                    console.error('Error sending DM combination alert:', dmError);
+                    return { 
+                        hasCombinations: true, 
+                        combinationCount: possibleCombinations.length,
+                        error: 'Could not deliver private combination options to recipient, but public announcement was sent',
+                        publicAnnouncementSent: true
+                    };
+                }
 
             } catch (channelError) {
                 console.error('Error sending to gacha channel, trying DM fallback:', channelError);
@@ -582,7 +652,8 @@ class CombinationService {
                     return { 
                         hasCombinations: true, 
                         combinationCount: possibleCombinations.length,
-                        sentViaDM: true
+                        sentViaDM: true,
+                        error: 'Could not send public announcement, but private options were sent'
                     };
 
                 } catch (dmError) {
@@ -590,7 +661,7 @@ class CombinationService {
                     return { 
                         hasCombinations: true, 
                         combinationCount: possibleCombinations.length,
-                        error: 'Could not deliver combination alert to recipient'
+                        error: 'Could not deliver combination alerts to recipient'
                     };
                 }
             }
