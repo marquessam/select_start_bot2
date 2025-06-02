@@ -452,9 +452,20 @@ export default {
 
     /**
      * Create a static success embed (no interactive components)
-     * Call this after successful nomination processing
+     * Call this after successful nomination processing and saving to database
+     * 
+     * IMPORTANT: In your handlers file, use like this:
+     * 
+     * const successEmbed = await nominateCommand.createSuccessEmbed(gameData, interaction.user.id, comment);
+     * await interaction.editReply({
+     *     embeds: [successEmbed],
+     *     components: [] // THIS IS CRITICAL - NO COMPONENTS FOR STATIC EMBED
+     * });
      */
-    createSuccessEmbed(gameData, user, comment = null) {
+    async createSuccessEmbed(gameData, userId, comment = null) {
+        // Fetch fresh user data to get accurate nomination count
+        const user = await User.findOne({ discordId: userId });
+        
         const embed = new EmbedBuilder()
             .setTitle('✅ Game Nominated Successfully!')
             .setColor('#00FF00')
@@ -500,13 +511,13 @@ export default {
             });
         }
 
-        // Calculate remaining nominations
+        // Get current nominations (should include the just-added nomination)
         const currentNominations = user.getCurrentNominations();
         const remaining = MAX_NOMINATIONS - currentNominations.length;
         
         embed.addFields({
             name: '📊 Status',
-            value: `marquessam has ${remaining}/2 nominations remaining`,
+            value: `${user.raUsername} has ${remaining}/${MAX_NOMINATIONS} nominations remaining`,
             inline: false
         });
 
