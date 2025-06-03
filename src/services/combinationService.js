@@ -595,7 +595,7 @@ class CombinationService {
                     const user = await this.getUserForInteraction(interaction);
                     if (!user) return true;
 
-                    // Use ruleId field lookup
+                    // Use ruleId field lookup - same as working automatic system
                     const rule = await CombinationRule.findOne({ ruleId: buttonId, isActive: true });
                     
                     if (!rule) {
@@ -640,7 +640,20 @@ class CombinationService {
                 const user = await this.getUserForInteraction(interaction);
                 if (!user) return true;
 
-                const result = await this.performCombination(user, buttonId, quantity);
+                // Get the rule object using ruleId lookup - same as working automatic system
+                const rule = await CombinationRule.findOne({ ruleId: buttonId, isActive: true });
+                
+                if (!rule) {
+                    await interaction.editReply({
+                        content: `❌ Combination rule not found.`,
+                        embeds: [],
+                        components: []
+                    });
+                    return true;
+                }
+
+                // Pass rule object directly - same as working automatic system
+                const result = await this.performCombination(user, rule, quantity);
                 
                 if (result.success) {
                     await user.save();
