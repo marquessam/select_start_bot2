@@ -1,4 +1,4 @@
-// src/index.js - Complete updated version with MongoDB timeout fixes and combination interaction support
+// src/index.js - Complete updated version with MongoDB timeout fixes, combination interaction support, and GP reward integration
 import { Client, Collection, Events, GatewayIntentBits, EmbedBuilder } from 'discord.js';
 import { config, validateConfig } from './config/config.js';
 import { connectDB, checkDatabaseHealth } from './models/index.js';
@@ -19,6 +19,7 @@ import arenaAlertService from './services/arenaAlertService.js';
 import arenaFeedService from './services/arenaFeedService.js';
 import gameAwardService from './services/gameAwardService.js';
 import monthlyGPService from './services/monthlyGPService.js';
+import gpRewardService from './services/gpRewardService.js';
 import gachaMachine from './services/gachaMachine.js';
 import combinationService from './services/combinationService.js';
 import { User } from './models/User.js';
@@ -636,7 +637,7 @@ async function fixDuplicateIndexes() {
     }
 }
 
-// Handle ready event - UPDATED with MongoDB timeout fixes
+// Handle ready event - UPDATED with MongoDB timeout fixes and GP reward service
 client.once(Events.ClientReady, async () => {
     try {
         console.log(`Logged in as ${client.user.tag}`);
@@ -699,6 +700,13 @@ client.once(Events.ClientReady, async () => {
         // START MONTHLY GP SERVICE
         monthlyGPService.start();
         console.log('✅ Monthly GP Service initialized - automatic grants on 1st of each month');
+
+        // INITIALIZE GP REWARD SERVICE
+        console.log('🎁 Initializing GP reward service...');
+        // The service is already initialized when imported, but log the configuration
+        const rewardStats = gpRewardService.getRewardStats();
+        console.log('✅ GP reward service ready');
+        console.log('💰 GP reward amounts:', rewardStats.rewardAmounts);
 
         // START GACHA MACHINE
         await gachaMachine.start();
@@ -973,6 +981,7 @@ client.once(Events.ClientReady, async () => {
         console.log('  • Arena completed challenges: Every 15 minutes');
         console.log('  • Arena alerts: Every 15 minutes');
         console.log('  • Monthly GP grants: Automatic on 1st of each month');
+        console.log('  • GP Rewards: Automatic for nominations, votes, and game awards');
         console.log('  • Weekly comprehensive yearly sync: Sundays at 3:00 AM');
         console.log('  • Monthly tasks: 1st of each month');
         console.log('  • Tiebreaker expiration: Last 4 days of month at 11:30 PM');
@@ -1015,11 +1024,12 @@ process.on('unhandledRejection', error => {
     console.error('Unhandled promise rejection:', error);
 });
 
-// Graceful shutdown handling
+// Graceful shutdown handling with GP reward service cleanup
 process.on('SIGINT', () => {
     console.log('Shutting down...');
     monthlyGPService.stop();
     gachaMachine.stop();
+    gpRewardService.cleanupRewardHistory();
     process.exit(0);
 });
 
@@ -1027,6 +1037,7 @@ process.on('SIGTERM', () => {
     console.log('Shutting down...');
     monthlyGPService.stop();
     gachaMachine.stop();
+    gpRewardService.cleanupRewardHistory();
     process.exit(0);
 });
 
