@@ -21,9 +21,6 @@ export const connectDB = async () => {
         
         // IMPROVED connection options to prevent timeouts
         const options = {
-            // Disable buffering (critical for timeout prevention)
-            bufferCommands: false,
-            
             // Timeout settings
             serverSelectionTimeoutMS: 30000, // 30 seconds to select server
             socketTimeoutMS: 45000,          // 45 seconds for socket operations  
@@ -60,6 +57,10 @@ export const connectDB = async () => {
         if (pingTime > 3000) {
             console.warn('⚠️ High database latency detected');
         }
+
+        // CRITICAL: Set bufferCommands to false AFTER connection is established
+        mongoose.set('bufferCommands', false);
+        console.log('🔧 Disabled command buffering after connection established');
 
         // Initialize ALL models with proper error handling and timeouts
         console.log('🔧 Initializing database indexes...');
