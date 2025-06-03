@@ -653,24 +653,38 @@ client.once(Events.ClientReady, async () => {
             console.warn('⚠️ Database health check failed:', healthCheck.error);
         }
 
+        // DISABLE: Any old emoji caching that might still be running
+        try {
+            const { disableOldEmojiCaching } = await import('./config/gachaEmojis.js');
+            disableOldEmojiCaching();
+            console.log('🔧 Disabled old emoji caching mechanisms');
+        } catch (disableError) {
+            console.log('ℹ️ No old emoji caching to disable');
+        }
+
         // INITIALIZE: Emoji cache service (replaces problematic emoji caching)
+        // IMPORTANT: Only initialize after database is connected
         let emojiCacheService;
         try {
             console.log('🎭 Initializing emoji cache service...');
             emojiCacheService = (await import('./services/emojiCacheService.js')).default;
             
+            // Wait a moment for connection to fully stabilize
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            
             // Initial cache population (with fallback)
+            console.log('🔄 Performing initial emoji cache population...');
             const cacheResults = await emojiCacheService.refreshAll();
             if (cacheResults.gacha.success) {
                 console.log(`✅ Gacha emoji cache: ${cacheResults.gacha.count} items`);
             } else {
-                console.warn('⚠️ Gacha emoji cache failed, using fallbacks');
+                console.warn('⚠️ Gacha emoji cache failed, using fallbacks:', cacheResults.gacha.error);
             }
             
             if (cacheResults.trophy.success) {
                 console.log(`✅ Trophy emoji cache: ${cacheResults.trophy.count} items`);
             } else {
-                console.warn('⚠️ Trophy emoji cache failed, using fallbacks');
+                console.warn('⚠️ Trophy emoji cache failed, using fallbacks:', cacheResults.trophy.error);
             }
         } catch (emojiError) {
             console.warn('⚠️ Emoji cache service initialization failed:', emojiError.message);
@@ -707,14 +721,15 @@ client.once(Events.ClientReady, async () => {
         await gachaMachine.start();
         console.log('✅ Gacha Machine initialized and pinned in gacha channel');
 
-        // Schedule emoji cache refresh every 10 minutes (prevent future timeouts)
+        // Schedule emoji cache refresh every 30 minutes (prevent future timeouts)
         if (emojiCacheService) {
-            cron.schedule('*/10 * * * *', () => {
+            cron.schedule('*/30 * * * *', () => {
                 console.log('🎭 Auto-refreshing emoji caches...');
                 emojiCacheService.autoRefreshIfNeeded().catch(error => {
                     console.error('Emoji cache auto-refresh failed:', error.message);
                 });
             });
+            console.log('✅ Emoji cache auto-refresh scheduled every 30 minutes');
         }
 
         // Schedule stats updates every 30 minutes
@@ -984,7 +999,7 @@ client.once(Events.ClientReady, async () => {
         console.log('  • Combination System: Confirmation-based with alerts');
         console.log('  • Collection Viewer: Clean interface with player item giving and trade sharing');
         if (emojiCacheService) {
-            console.log('  • Emoji cache refresh: Every 10 minutes');
+            console.log('  • Emoji cache refresh: Every 30 minutes');
         }
         console.log('  • Various other feeds: Hourly');
         
