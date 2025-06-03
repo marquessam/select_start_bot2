@@ -1,4 +1,5 @@
 // src/services/emojiCacheService.js - NEW FILE to replace problematic emoji caching
+import mongoose from 'mongoose';
 import { GachaItem, TrophyEmoji, safeQuery } from '../models/index.js';
 
 class EmojiCacheService {
@@ -18,18 +19,22 @@ class EmojiCacheService {
             return { success: true, cached: true };
         }
 
+        // Check if database is connected
+        if (mongoose.connection.readyState !== 1) {
+            console.warn('⚠️ Database not connected, skipping gacha emoji refresh');
+            return { success: false, error: 'Database not connected' };
+        }
+
         this.isRefreshing = true;
-        const maxRetries = 3;
         
         try {
             console.log('🔄 Refreshing gacha emoji cache...');
             
-            // Use safeQuery with timeout and retries
+            // Use safeQuery without .timeout() since it's not available
             const gachaItems = await safeQuery(
                 () => GachaItem.find({})
                     .select('itemId emojiId emojiName itemName rarity')
-                    .lean()
-                    .timeout(20000),
+                    .lean(),
                 25000, // 25 second overall timeout
                 [] // Return empty array on failure
             );
@@ -83,15 +88,20 @@ class EmojiCacheService {
 
     // FIXED: Trophy emoji refresh with proper timeout handling  
     async refreshTrophyEmojis() {
+        // Check if database is connected
+        if (mongoose.connection.readyState !== 1) {
+            console.warn('⚠️ Database not connected, skipping trophy emoji refresh');
+            return { success: false, error: 'Database not connected' };
+        }
+
         try {
             console.log('🏆 Refreshing trophy emoji cache...');
             
-            // Use safeQuery with timeout
+            // Use safeQuery without .timeout()
             const trophyEmojis = await safeQuery(
                 () => TrophyEmoji.find({})
                     .select('challengeType monthKey emojiId emojiName')
-                    .lean()
-                    .timeout(20000),
+                    .lean(),
                 25000,
                 []
             );
