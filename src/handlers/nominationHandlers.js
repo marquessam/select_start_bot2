@@ -1,4 +1,4 @@
-// src/handlers/nominationHandlers.js
+// src/handlers/nominationHandlers.js - Complete with GP reward integration
 // Handle button interactions, modals, and select menus for the nomination system
 
 import { 
@@ -13,6 +13,7 @@ import {
 import { User } from '../models/User.js';
 import { NominationSettings } from '../models/NominationSettings.js';
 import enhancedRetroAPI from '../services/enhancedRetroAPI.js';
+import gpRewardService from '../services/gpRewardService.js';
 import { config } from '../config/config.js';
 
 const MONTH_NAMES = [
@@ -221,7 +222,7 @@ export class NominationInteractionHandler {
         // Create the modal form
         const modal = new ModalBuilder()
             .setCustomId('nomination_form')
-            .setTitle('🎮 Nominate a Game');
+            .setTitle('🎮 Nominate a Game (+20 GP)');
 
         // Game ID input
         const gameIdInput = new TextInputBuilder()
@@ -238,7 +239,7 @@ export class NominationInteractionHandler {
             .setCustomId('nomination_comment')
             .setLabel('Why this game? (Optional)')
             .setStyle(TextInputStyle.Paragraph)
-            .setPlaceholder('Tell us why you chose this game...')
+            .setPlaceholder('Tell us why you chose this game... (+20 GP for nominating!)')
             .setRequired(false)
             .setMaxLength(500);
 
@@ -252,7 +253,7 @@ export class NominationInteractionHandler {
     }
 
     /**
-     * Handle the nomination form submission - Posts publicly with STATIC EMBED (no buttons)
+     * Handle the nomination form submission - Posts publicly with STATIC EMBED (no buttons) + GP REWARD
      */
     static async handleNominationFormSubmit(interaction) {
         // Post publicly for community to see
@@ -282,7 +283,7 @@ export class NominationInteractionHandler {
     }
 
     /**
-     * Process nomination and create STATIC SUCCESS EMBED (no buttons)
+     * Process nomination and create STATIC SUCCESS EMBED (no buttons) + AWARD GP
      */
     static async processNomination(interaction, gameId, comment) {
         try {
@@ -371,6 +372,17 @@ export class NominationInteractionHandler {
             }
             user.nominations.push(nomination);
             await user.save();
+
+            console.log(`✅ Nomination saved to database for ${user.raUsername}: ${gameData.title}`);
+            
+            // *** AWARD GP FOR NOMINATION ***
+            try {
+                await gpRewardService.awardNominationGP(user, gameData.title);
+                console.log(`✅ Successfully awarded nomination GP to ${user.raUsername} for ${gameData.title}`);
+            } catch (gpError) {
+                console.error(`Error awarding nomination GP to ${user.raUsername}:`, gpError);
+                // Don't fail the nomination because of GP error - continue with announcement
+            }
             
             // Create STATIC success embed using the nominate command method
             const nominateCommand = interaction.client.commands.get('nominate');
@@ -386,7 +398,7 @@ export class NominationInteractionHandler {
                 ImageIcon: `https://retroachievements.org${gameData.imageIcon}`
             };
 
-            // Create static embed with correct remaining count (remainingBefore - 1)
+            // Create static embed with correct remaining count (remainingBefore - 1) and GP reward info
             const successEmbed = nominateCommand.createStaticSuccessEmbed(
                 gameDataForEmbed, 
                 user, 
@@ -394,16 +406,23 @@ export class NominationInteractionHandler {
                 remainingBefore - 1  // Pass the calculated remaining count
             );
 
+            // Add GP reward field to the embed
+            successEmbed.addFields({
+                name: '💰 GP Reward',
+                value: '+20 GP awarded for nomination!',
+                inline: true
+            });
+
             // CRITICAL: Post with NO COMPONENTS = static embed
             await interaction.editReply({
                 embeds: [successEmbed],
                 components: []  // NO BUTTONS = STATIC EMBED
             });
 
-            // Send private confirmation
+            // Send private confirmation with GP info
             try {
                 await interaction.followUp({
-                    content: `✅ **Nomination confirmed!** Your nomination for **${gameData.title}** has been posted publicly.`,
+                    content: `✅ **Nomination confirmed!** Your nomination for **${gameData.title}** has been posted publicly.\n\n💰 **+20 GP** has been added to your balance!`,
                     ephemeral: true
                 });
             } catch (followUpError) {
@@ -468,6 +487,12 @@ export class NominationInteractionHandler {
             embed.addFields({
                 name: '💡 Planning Ahead',
                 value: 'Use the detailed info option to check specific month requirements\nThemes may be added or changed by administrators',
+                inline: false
+            });
+
+            embed.addFields({
+                name: '💰 GP Rewards',
+                value: '🎮 **+20 GP** for each game nomination\n🗳️ **+20 GP** for voting in polls\n🏆 **Bonus GP** for challenge participation!',
                 inline: false
             });
 
