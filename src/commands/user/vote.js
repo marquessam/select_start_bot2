@@ -1,6 +1,8 @@
+// src/commands/user/vote.js - Complete with GP reward integration
 import { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, StringSelectMenuBuilder, ButtonBuilder, ButtonStyle, ComponentType } from 'discord.js';
 import { User } from '../../models/User.js';
 import { Poll } from '../../models/Poll.js';
+import gpRewardService from '../../services/gpRewardService.js';
 
 // Admin channel ID for vote logging
 const ADMIN_CHANNEL_ID = '1304814893857374270';
@@ -101,14 +103,15 @@ export default {
                     `⏰ Voting ends <t:${Math.floor(activePoll.endDate.getTime() / 1000)}:R>` +
                     (activePoll.isTiebreaker ? 
                         '\n\n🎯 **This is the final round!** If there\'s still a tie, a winner will be randomly selected.' :
-                        '\n\n🔥 **New:** If there\'s a tie, an automatic 24-hour tiebreaker vote will start!'
+                        '\n\n🔥 **New:** If there\'s a tie, an automatic 24-hour tiebreaker vote will start!' +
+                        '\n\n💰 **Earn 20 GP for voting!**'
                     )
                 )
                 .setColor(pollColor)
                 .setFooter({ 
                     text: activePoll.isTiebreaker ? 
                         'Tiebreaker Vote - Select ONE game below!' :
-                        'Select your choices below, then click Submit Vote!' 
+                        'Select your choices below, then click Submit Vote! (+20 GP reward)' 
                 });
 
             // Create select menu options from the games
@@ -187,7 +190,7 @@ export default {
                 // Submit and cancel buttons
                 const submitButton = new ButtonBuilder()
                     .setCustomId('vote_submit')
-                    .setLabel('Submit Vote')
+                    .setLabel('Submit Vote (+20 GP)')
                     .setStyle(ButtonStyle.Success)
                     .setEmoji('✅');
 
@@ -265,7 +268,7 @@ export default {
 
                 const submitButton = new ButtonBuilder()
                     .setCustomId('vote_submit')
-                    .setLabel('Submit Tiebreaker Vote')
+                    .setLabel('Submit Tiebreaker Vote (+20 GP)')
                     .setStyle(ButtonStyle.Danger)
                     .setEmoji('✅');
 
@@ -377,7 +380,7 @@ export default {
             // Submit and cancel buttons
             const submitButton = new ButtonBuilder()
                 .setCustomId('vote_submit')
-                .setLabel('Submit Vote')
+                .setLabel('Submit Vote (+20 GP)')
                 .setStyle(ButtonStyle.Success)
                 .setEmoji('✅');
 
@@ -425,7 +428,7 @@ export default {
         }
     },
 
-    // Handle button interactions with admin logging  
+    // Handle button interactions with admin logging and GP rewards
     async handleButtonInteraction(interaction) {
         await interaction.deferUpdate();
 
@@ -537,6 +540,18 @@ export default {
                     const pollTypeText = activePoll.isTiebreaker ? 'tiebreaker' : 'regular';
                     console.log(`User ${interaction.user.id} (${raUsername}) successfully voted in ${pollTypeText} poll: ${votes.join(', ')}`);
                     
+                    // *** AWARD GP FOR VOTING ***
+                    try {
+                        if (user) {
+                            const pollType = activePoll.isTiebreaker ? 'tiebreaker' : 'monthly';
+                            await gpRewardService.awardVotingGP(user, pollType);
+                            console.log(`Awarded 20 GP to ${raUsername} for voting in ${pollType} poll`);
+                        }
+                    } catch (gpError) {
+                        console.error('Error awarding voting GP:', gpError);
+                        // Don't fail the vote because of GP error
+                    }
+                    
                     // Send log to admin channel
                     try {
                         const adminChannel = await interaction.client.channels.fetch(ADMIN_CHANNEL_ID);
@@ -556,7 +571,8 @@ export default {
                                             `🥇 **${selectedChoices[0]}**` :
                                             `🥇 **${selectedChoices[0]}**\n🥈 **${selectedChoices[1]}**`), 
                                         inline: false
-                                    }
+                                    },
+                                    { name: 'GP Reward', value: '💰 +20 GP awarded', inline: true }
                                 )
                                 .setFooter({ text: `User ID: ${interaction.user.id}` })
                                 .setTimestamp();
@@ -586,15 +602,22 @@ export default {
                     .setTitle(`✅ ${pollTypeText} Vote Recorded!`)
                     .setDescription(`Thank you for voting${activePoll.isTiebreaker ? ' in the tiebreaker' : ''}! Your vote has been recorded.`)
                     .setColor(activePoll.isTiebreaker ? '#FF4500' : '#00FF00')
-                    .addFields({
-                        name: activePoll.isTiebreaker ? 'Your Choice' : 'Your Votes',
-                        value: activePoll.isTiebreaker ? 
-                            `🔥 **${selectedChoices[0]}**` :
-                            (selectedChoices.length === 1 ? 
-                                `🥇 **${selectedChoices[0]}**` :
-                                `🥇 **${selectedChoices[0]}**\n🥈 **${selectedChoices[1]}**`),
-                        inline: false
-                    })
+                    .addFields(
+                        {
+                            name: activePoll.isTiebreaker ? 'Your Choice' : 'Your Votes',
+                            value: activePoll.isTiebreaker ? 
+                                `🔥 **${selectedChoices[0]}**` :
+                                (selectedChoices.length === 1 ? 
+                                    `🥇 **${selectedChoices[0]}**` :
+                                    `🥇 **${selectedChoices[0]}**\n🥈 **${selectedChoices[1]}**`),
+                            inline: false
+                        },
+                        {
+                            name: '💰 GP Reward',
+                            value: '+20 GP added to your balance!',
+                            inline: true
+                        }
+                    )
                     .setFooter({ text: 'Your vote is final and cannot be changed.' });
 
                 await interaction.editReply({
