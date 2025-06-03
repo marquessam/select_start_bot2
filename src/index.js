@@ -1,7 +1,7 @@
-// src/index.js - Complete updated version with combination interaction support
+// src/index.js - Complete updated version with MongoDB timeout fixes and combination interaction support
 import { Client, Collection, Events, GatewayIntentBits, EmbedBuilder } from 'discord.js';
 import { config, validateConfig } from './config/config.js';
-import { connectDB } from './models/index.js';
+import { connectDB, checkDatabaseHealth } from './models/index.js';
 import { readdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -636,14 +636,46 @@ async function fixDuplicateIndexes() {
     }
 }
 
-// Handle ready event
+// Handle ready event - UPDATED with MongoDB timeout fixes
 client.once(Events.ClientReady, async () => {
     try {
         console.log(`Logged in as ${client.user.tag}`);
 
-        // Connect to MongoDB
-        await connectDB();
-        console.log('Connected to MongoDB');
+        // FIRST: Connect to MongoDB with improved timeout settings
+        await connectDB(); // This now includes GachaItem and TrophyEmoji models
+        console.log('✅ Connected to MongoDB with all models initialized');
+
+        // TEST: Quick database health check
+        const healthCheck = await checkDatabaseHealth();
+        if (healthCheck.healthy) {
+            console.log(`🏥 Database health: OK (${healthCheck.latency}ms ping)`);
+        } else {
+            console.warn('⚠️ Database health check failed:', healthCheck.error);
+        }
+
+        // INITIALIZE: Emoji cache service (replaces problematic emoji caching)
+        let emojiCacheService;
+        try {
+            console.log('🎭 Initializing emoji cache service...');
+            emojiCacheService = (await import('./services/emojiCacheService.js')).default;
+            
+            // Initial cache population (with fallback)
+            const cacheResults = await emojiCacheService.refreshAll();
+            if (cacheResults.gacha.success) {
+                console.log(`✅ Gacha emoji cache: ${cacheResults.gacha.count} items`);
+            } else {
+                console.warn('⚠️ Gacha emoji cache failed, using fallbacks');
+            }
+            
+            if (cacheResults.trophy.success) {
+                console.log(`✅ Trophy emoji cache: ${cacheResults.trophy.count} items`);
+            } else {
+                console.warn('⚠️ Trophy emoji cache failed, using fallbacks');
+            }
+        } catch (emojiError) {
+            console.warn('⚠️ Emoji cache service initialization failed:', emojiError.message);
+            console.log('   Continuing without emoji cache service...');
+        }
 
         // Fix any duplicate index issues automatically
         await fixDuplicateIndexes();
@@ -674,6 +706,16 @@ client.once(Events.ClientReady, async () => {
         // START GACHA MACHINE
         await gachaMachine.start();
         console.log('✅ Gacha Machine initialized and pinned in gacha channel');
+
+        // Schedule emoji cache refresh every 10 minutes (prevent future timeouts)
+        if (emojiCacheService) {
+            cron.schedule('*/10 * * * *', () => {
+                console.log('🎭 Auto-refreshing emoji caches...');
+                emojiCacheService.autoRefreshIfNeeded().catch(error => {
+                    console.error('Emoji cache auto-refresh failed:', error.message);
+                });
+            });
+        }
 
         // Schedule stats updates every 30 minutes
         cron.schedule('*/30 * * * *', () => {
@@ -940,12 +982,29 @@ client.once(Events.ClientReady, async () => {
         console.log('  • Arena timeouts: Hourly at 45 minutes past');
         console.log('  • Gacha Machine: Active and pinned');
         console.log('  • Combination System: Confirmation-based with alerts');
-        console.log('  • Collection Viewer: Clean interface with player item giving');
+        console.log('  • Collection Viewer: Clean interface with player item giving and trade sharing');
+        if (emojiCacheService) {
+            console.log('  • Emoji cache refresh: Every 10 minutes');
+        }
         console.log('  • Various other feeds: Hourly');
         
     } catch (error) {
-        console.error('Error during initialization:', error);
-        process.exit(1);
+        console.error('❌ Error during initialization:', error);
+        
+        // More specific error handling
+        if (error.message.includes('buffering timed out')) {
+            console.error('🔧 Database timeout detected. Suggestions:');
+            console.error('   - Check MongoDB connection string');
+            console.error('   - Verify network connectivity');
+            console.error('   - Check if MongoDB Atlas IP whitelist includes your server');
+        }
+        
+        // Don't exit in development for easier debugging
+        if (process.env.NODE_ENV === 'production') {
+            process.exit(1);
+        } else {
+            console.log('⚠️ Development mode: continuing with limited functionality');
+        }
     }
 });
 
