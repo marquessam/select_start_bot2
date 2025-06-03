@@ -181,6 +181,10 @@ class CombinationService {
             new ButtonBuilder()
                 .setCustomId('combo_cancel')
                 .setLabel('Cancel')
+                .setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder()
+                .setCustomId('combo_to_collection')
+                .setLabel('← View Collection')
                 .setStyle(ButtonStyle.Secondary)
         );
 
@@ -232,9 +236,14 @@ class CombinationService {
             .setLabel('Cancel')
             .setStyle(ButtonStyle.Secondary);
 
+        const collectionButton = new ButtonBuilder()
+            .setCustomId('combo_to_collection')
+            .setLabel('← View Collection')
+            .setStyle(ButtonStyle.Secondary);
+
         const components = [
             new ActionRowBuilder().addComponents(selectMenu),
-            new ActionRowBuilder().addComponents(cancelButton)
+            new ActionRowBuilder().addComponents(cancelButton, collectionButton)
         ];
 
         await interaction.followUp({
@@ -344,7 +353,7 @@ class CombinationService {
                         .setColor(COLORS.SUCCESS)
                         .setDescription(
                             `${memberTag} received an item from **${giverUsername}** and now has **${possibleCombinations.length}** combination option(s) available!\n\n` +
-                            `💡 **${recipient.raUsername}**, check your DMs for combination options!`
+                            `💡 **${recipient.raUsername}**, use \`/collection\` to confirm your combinations!`
                         )
                         .addFields({
                             name: '🎯 Available Combinations',
@@ -360,37 +369,11 @@ class CombinationService {
                     await channel.send({ embeds: [publicEmbed] });
                 }
 
-                // Send private DM
-                try {
-                    const member = await guild.members.fetch(recipient.discordId);
-                    
-                    const mockDMInteraction = {
-                        followUp: async (options) => {
-                            await member.send({
-                                content: `🎁 **Player Gift + Combinations Available!**\n**${giverUsername}** gave you an item that unlocked combinations!`,
-                                ...options
-                            });
-                        },
-                        user: { id: recipient.discordId, username: recipient.raUsername }
-                    };
-
-                    await this.showCombinationAlert(mockDMInteraction, recipient, possibleCombinations);
-                    
-                    return { 
-                        hasCombinations: true, 
-                        combinationCount: possibleCombinations.length,
-                        sentViaDM: true,
-                        publicAnnouncementSent: true
-                    };
-
-                } catch (dmError) {
-                    console.error('Error sending DM combination alert:', dmError);
-                    return { 
-                        hasCombinations: true, 
-                        combinationCount: possibleCombinations.length,
-                        error: 'Could not deliver private combination options'
-                    };
-                }
+                return { 
+                    hasCombinations: true, 
+                    combinationCount: possibleCombinations.length,
+                    publicAnnouncementSent: true
+                };
 
             } catch (channelError) {
                 console.error('Error sending to gacha channel:', channelError);
@@ -438,7 +421,7 @@ class CombinationService {
                         .setColor(COLORS.SUCCESS)
                         .setDescription(
                             `${memberTag} received an admin gift and now has **${possibleCombinations.length}** combination option(s) available!\n\n` +
-                            `💡 **${user.raUsername}**, check your DMs for combination options!`
+                            `💡 **${user.raUsername}**, use \`/collection\` to confirm your combinations!`
                         )
                         .addFields({
                             name: '🎯 Available Combinations',
@@ -454,37 +437,11 @@ class CombinationService {
                     await channel.send({ embeds: [publicEmbed] });
                 }
 
-                // Send private DM
-                try {
-                    const member = await guild.members.fetch(user.discordId);
-                    
-                    const mockDMInteraction = {
-                        followUp: async (options) => {
-                            await member.send({
-                                content: '🎁 **Admin Gift + Combinations Available!**',
-                                ...options
-                            });
-                        },
-                        user: { id: user.discordId, username: user.raUsername }
-                    };
-
-                    await this.showCombinationAlert(mockDMInteraction, user, possibleCombinations);
-                    
-                    return { 
-                        hasCombinations: true, 
-                        combinationCount: possibleCombinations.length,
-                        sentViaDM: true,
-                        publicAnnouncementSent: true
-                    };
-
-                } catch (dmError) {
-                    console.error('Error sending DM combination alert:', dmError);
-                    return { 
-                        hasCombinations: true, 
-                        combinationCount: possibleCombinations.length,
-                        error: 'Could not deliver private combination options'
-                    };
-                }
+                return { 
+                    hasCombinations: true, 
+                    combinationCount: possibleCombinations.length,
+                    publicAnnouncementSent: true
+                };
 
             } catch (channelError) {
                 console.error('Error sending to gacha channel:', channelError);
@@ -589,13 +546,30 @@ class CombinationService {
         try {
             if (!interaction.customId.startsWith('combo_')) return false;
 
-            if (interaction.customId.includes('_cancel')) {
+            if (interaction.customId.includes('_cancel') || interaction.customId === 'combo_to_collection') {
                 await interaction.deferUpdate();
-                await interaction.editReply({
-                    content: '❌ Combination cancelled.',
-                    embeds: [],
-                    components: []
-                });
+                
+                if (interaction.customId === 'combo_to_collection') {
+                    // Return to collection view - we'll let the collection command handle this
+                    const user = await this.getUserForInteraction(interaction);
+                    if (user) {
+                        // Import collection command dynamically
+                        const { default: collectionCommand } = await import('../commands/user/collection.js');
+                        await collectionCommand.showItemsPage(interaction, user, 'all', 0);
+                    } else {
+                        await interaction.editReply({
+                            content: '❌ Could not load your collection.',
+                            embeds: [],
+                            components: []
+                        });
+                    }
+                } else {
+                    await interaction.editReply({
+                        content: '❌ Combination cancelled.',
+                        embeds: [],
+                        components: []
+                    });
+                }
                 return true;
             }
 
@@ -777,7 +751,14 @@ class CombinationService {
 
         await interaction.editReply({
             embeds: [embed],
-            components: []
+            components: [
+                new ActionRowBuilder().addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('combo_to_collection')
+                        .setLabel('← View Collection')
+                        .setStyle(ButtonStyle.Primary)
+                )
+            ]
         });
     }
 
