@@ -1,4 +1,4 @@
-// src/services/gameAwardService.js
+// src/services/gameAwardService.js - Complete with GP reward integration
 import { User } from '../models/User.js';
 import { Challenge } from '../models/Challenge.js';
 import retroAPI from './retroAPI.js';
@@ -6,6 +6,7 @@ import { config } from '../config/config.js';
 import { EmbedBuilder } from 'discord.js';
 import RetroAPIUtils from '../utils/RetroAPIUtils.js';
 import AlertUtils, { ALERT_TYPES } from '../utils/AlertUtils.js';
+import gpRewardService from './gpRewardService.js';
 
 const AWARD_EMOJIS = {
     MASTERY: '✨',
@@ -626,7 +627,7 @@ class GameAwardService {
     }
 
     /**
-     * FIXED: Announce regular game award (always goes to mastery channel)
+     * FIXED: Announce regular game award (always goes to mastery channel) + Award GP
      */
     async announceRegularAward(user, gameInfo, gameId, isMastery, isBeaten) {
         const profileImageUrl = await this.getUserProfileImageUrl(user.raUsername);
@@ -647,10 +648,19 @@ class GameAwardService {
             isMastery: isMastery,
             isBeaten: isBeaten
         }, ALERT_TYPES.MASTERY); // Always use MASTERY channel for regular games
+
+        // *** ADD GP REWARD FOR REGULAR GAME COMPLETION ***
+        try {
+            await gpRewardService.awardRegularGameGP(user, gameInfo.title, isMastery);
+            console.log(`✅ Successfully awarded ${isMastery ? 'mastery' : 'beaten'} GP to ${user.raUsername} for ${gameInfo.title}`);
+        } catch (gpError) {
+            console.error(`Error awarding regular game GP to ${user.raUsername}:`, gpError);
+            // Don't fail the announcement because of GP error
+        }
     }
 
     /**
-     * FIXED: Announce monthly/shadow award (goes to appropriate channel)
+     * FIXED: Announce monthly/shadow award (goes to appropriate channel) + Award GP
      */
     async announceMonthlyAward(user, gameInfo, gameId, awardType, systemType) {
         let awardTitle = '';
@@ -693,6 +703,15 @@ class GameAwardService {
             color: awardColor,
             isAward: true
         }, alertType); // Use the correct alert type for proper channel routing
+
+        // *** ADD GP REWARD FOR CHALLENGE COMPLETION ***
+        try {
+            await gpRewardService.awardChallengeGP(user, gameInfo.title, awardType, systemType);
+            console.log(`✅ Successfully awarded ${awardType} GP to ${user.raUsername} for ${systemType} challenge`);
+        } catch (gpError) {
+            console.error(`Error awarding challenge GP to ${user.raUsername}:`, gpError);
+            // Don't fail the announcement because of GP error
+        }
     }
 
     /**
