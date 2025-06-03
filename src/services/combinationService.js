@@ -23,6 +23,12 @@ class CombinationService {
             }
 
             const rules = await CombinationRule.find({ isActive: true });
+            console.log('🔍 Debug - Found combination rules:', rules.map(r => ({
+                ruleId: r.ruleId,
+                isActive: r.isActive,
+                priority: r.priority
+            })));
+            
             const possibleCombinations = [];
 
             for (const rule of rules) {
@@ -31,6 +37,13 @@ class CombinationService {
             }
 
             possibleCombinations.sort((a, b) => (b.rule.priority || 0) - (a.rule.priority || 0));
+            
+            console.log('🔍 Debug - Final possible combinations:', possibleCombinations.map(c => ({
+                ruleId: c.ruleId,
+                resultItem: c.resultItem.itemName,
+                maxCombinations: c.maxCombinations
+            })));
+            
             return possibleCombinations;
 
         } catch (error) {
@@ -43,6 +56,12 @@ class CombinationService {
         const combinations = [];
 
         try {
+            console.log('🔍 Debug - findPossibleCombinationsForRule called with rule:', {
+                ruleId: rule.ruleId,
+                isActive: rule.isActive,
+                ingredients: rule.ingredients?.length
+            });
+            
             const userItemMap = new Map();
             user.gachaCollection.forEach(item => {
                 const existing = userItemMap.get(item.itemId) || { quantity: 0, item: item };
@@ -73,8 +92,12 @@ class CombinationService {
             if (maxCombinations > 0) {
                 const resultItem = await GachaItem.findOne({ itemId: rule.result.itemId });
                 if (resultItem) {
-                    combinations.push({
-                        ruleId: rule.ruleId,
+                    // Check if ruleId exists, use _id as fallback
+                    const ruleIdToUse = rule.ruleId || rule._id.toString();
+                    console.log('🔍 Debug - Using ruleId:', ruleIdToUse, '(original:', rule.ruleId, ')');
+                    
+                    const combinationObj = {
+                        ruleId: ruleIdToUse,
                         rule: rule,
                         resultItem: resultItem,
                         resultQuantity: rule.result.quantity || 1,
@@ -85,7 +108,15 @@ class CombinationService {
                             available: userItemMap.get(ing.itemId)?.quantity || 0,
                             item: userItemMap.get(ing.itemId)?.item
                         }))
+                    };
+                    
+                    console.log('🔍 Debug - Created combination object:', {
+                        ruleId: combinationObj.ruleId,
+                        resultItemName: combinationObj.resultItem.itemName,
+                        maxCombinations: combinationObj.maxCombinations
                     });
+                    
+                    combinations.push(combinationObj);
                 }
             }
 
@@ -115,6 +146,13 @@ class CombinationService {
 
     async showSingleCombinationConfirmation(interaction, user, combination) {
         const { resultItem, resultQuantity, ingredients, maxCombinations } = combination;
+        
+        // Debug logging
+        console.log('🔍 Debug - Creating buttons for combination:', {
+            ruleId: combination.ruleId,
+            resultItem: resultItem.itemName,
+            maxCombinations
+        });
         
         const resultEmoji = formatGachaEmoji(resultItem.emojiId, resultItem.emojiName);
         const rarityEmoji = this.getRarityEmoji(resultItem.rarity);
@@ -148,9 +186,12 @@ class CombinationService {
         
         // Always add Make 1 button
         if (maxCombinations >= 1) {
+            const button1CustomId = `combo_confirm_${combination.ruleId}_1`;
+            console.log('🔍 Debug - Make 1 button custom ID:', button1CustomId);
+            
             actionRow.addComponents(
                 new ButtonBuilder()
-                    .setCustomId(`combo_confirm_${combination.ruleId}_1`)
+                    .setCustomId(button1CustomId)
                     .setLabel(isShadowUnlock ? 'Unlock Shadow!' : 'Make 1')
                     .setStyle(isShadowUnlock ? ButtonStyle.Danger : ButtonStyle.Primary)
                     .setEmoji(isShadowUnlock ? '🌙' : '⚗️')
@@ -159,9 +200,12 @@ class CombinationService {
         
         // Add Make 5 button only if not shadow unlock and max is at least 5 but not exactly 5
         if (maxCombinations >= 5 && maxCombinations !== 5 && !isShadowUnlock) {
+            const button5CustomId = `combo_confirm_${combination.ruleId}_5`;
+            console.log('🔍 Debug - Make 5 button custom ID:', button5CustomId);
+            
             actionRow.addComponents(
                 new ButtonBuilder()
-                    .setCustomId(`combo_confirm_${combination.ruleId}_5`)
+                    .setCustomId(button5CustomId)
                     .setLabel('Make 5')
                     .setStyle(ButtonStyle.Primary)
             );
@@ -169,9 +213,12 @@ class CombinationService {
         
         // Add Make All button if more than 1 combination possible and not shadow unlock
         if (maxCombinations > 1 && !isShadowUnlock) {
+            const buttonAllCustomId = `combo_confirm_${combination.ruleId}_all`;
+            console.log('🔍 Debug - Make All button custom ID:', buttonAllCustomId);
+            
             actionRow.addComponents(
                 new ButtonBuilder()
-                    .setCustomId(`combo_confirm_${combination.ruleId}_all`)
+                    .setCustomId(buttonAllCustomId)
                     .setLabel(`Make All (${maxCombinations})`)
                     .setStyle(ButtonStyle.Success)
             );
@@ -257,14 +304,26 @@ class CombinationService {
         try {
             console.log('🔍 Debug - performCombination called with ruleId:', ruleId, 'quantity:', quantity);
             
-            const rule = await CombinationRule.findOne({ ruleId, isActive: true });
-            console.log('🔍 Debug - Database lookup result:', rule ? `Found rule: ${rule.ruleId}` : 'Rule not found');
+            // Try to find by ruleId first, then by _id as fallback
+            let rule = await CombinationRule.findOne({ ruleId, isActive: true });
+            
+            if (!rule && ruleId) {
+                // Try finding by MongoDB _id if ruleId didn't work
+                try {
+                    rule = await CombinationRule.findOne({ _id: ruleId, isActive: true });
+                    console.log('🔍 Debug - Found rule by _id instead of ruleId');
+                } catch (err) {
+                    console.log('🔍 Debug - _id lookup also failed:', err.message);
+                }
+            }
+            
+            console.log('🔍 Debug - Database lookup result:', rule ? `Found rule: ${rule.ruleId || rule._id}` : 'Rule not found');
             
             if (!rule) {
                 // Show available rules for debugging
                 const allRules = await CombinationRule.find({ isActive: true });
                 console.log('🔍 Debug - Available active rules:');
-                allRules.forEach(r => console.log(`  - "${r.ruleId}" (active: ${r.isActive})`));
+                allRules.forEach(r => console.log(`  - ruleId: "${r.ruleId}", _id: "${r._id}", active: ${r.isActive}`));
                 
                 throw new Error(`Combination rule "${ruleId}" not found`);
             }
