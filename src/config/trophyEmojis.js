@@ -37,7 +37,7 @@ async function getTrophyEmoji(challengeType, monthKey, awardLevel) {
         const now = Date.now();
         if (now - cacheLastUpdated > CACHE_DURATION && !isRefreshing) {
             // Don't await to avoid blocking
-            refreshEmojiCache().catch(error => {
+            refreshEmojiCacheInternal().catch(error => {
                 console.error('Background trophy emoji cache refresh failed:', error.message);
             });
         }
@@ -79,7 +79,7 @@ function formatTrophyEmoji(emojiId, emojiName) {
 }
 
 // Function to refresh emoji cache from database - WITH SAFETY CHECKS
-async function refreshEmojiCache() {
+async function refreshEmojiCacheInternal() {
     if (isRefreshing) {
         console.log('🏆 Trophy emoji cache refresh already in progress, skipping...');
         return;
@@ -139,7 +139,7 @@ export const refreshTrophyEmojiCache = async () => {
         return;
     }
     console.log('🔄 Old trophy emoji cache function called - delegating to new safe version');
-    return refreshEmojiCache();
+    return refreshEmojiCacheInternal();
 };
 
 // Function to manually clear cache (useful after updates)
@@ -164,7 +164,7 @@ function getEmojiCacheInfo() {
 function initializeCache() {
     if (isDatabaseConnected()) {
         console.log('🏆 Database connected, initializing trophy emoji cache...');
-        refreshEmojiCache().catch(error => {
+        refreshEmojiCacheInternal().catch(error => {
             console.error('Initial trophy emoji cache failed:', error.message);
         });
     } else {
@@ -174,7 +174,7 @@ function initializeCache() {
         if (mongoose.connection.readyState === 0 || mongoose.connection.readyState === 2) {
             const connectionHandler = () => {
                 console.log('🏆 Database connected, late-initializing trophy emoji cache...');
-                refreshEmojiCache().catch(error => {
+                refreshEmojiCacheInternal().catch(error => {
                     console.error('Late trophy emoji cache init failed:', error.message);
                 });
                 mongoose.connection.off('connected', connectionHandler);
@@ -194,6 +194,6 @@ export {
     formatTrophyEmoji,
     clearEmojiCache,
     getEmojiCacheInfo,
-    refreshEmojiCache as safeCacheRefresh,
+    refreshEmojiCacheInternal as safeCacheRefresh,
     refreshTrophyEmojiCache
 };
