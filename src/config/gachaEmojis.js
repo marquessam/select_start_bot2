@@ -66,7 +66,7 @@ async function getGachaEmoji(itemId) {
         const now = Date.now();
         if (now - cacheLastUpdated > CACHE_DURATION && !isRefreshing) {
             // Don't await to avoid blocking
-            refreshGachaEmojiCache().catch(error => {
+            refreshGachaEmojiCacheInternal().catch(error => {
                 console.error('Background emoji cache refresh failed:', error.message);
             });
         }
@@ -128,7 +128,7 @@ function formatGachaEmoji(emojiId, emojiName) {
 }
 
 // Function to refresh emoji cache from database - WITH SAFETY CHECKS
-async function refreshGachaEmojiCache() {
+async function refreshGachaEmojiCacheInternal() {
     if (isRefreshing) {
         console.log('📦 Gacha emoji cache refresh already in progress, skipping...');
         return;
@@ -187,7 +187,7 @@ export const refreshGachaEmojiCache = async () => {
         return;
     }
     console.log('🔄 Old gacha emoji cache function called - delegating to new safe version');
-    return refreshGachaEmojiCache();
+    return refreshGachaEmojiCacheInternal();
 };
 
 // Function to manually clear cache (useful after updates)
@@ -212,7 +212,7 @@ function getGachaEmojiCacheInfo() {
 function initializeCache() {
     if (isDatabaseConnected()) {
         console.log('📦 Database connected, initializing gacha emoji cache...');
-        refreshGachaEmojiCache().catch(error => {
+        refreshGachaEmojiCacheInternal().catch(error => {
             console.error('Initial gacha emoji cache failed:', error.message);
         });
     } else {
@@ -222,7 +222,7 @@ function initializeCache() {
         if (mongoose.connection.readyState === 0 || mongoose.connection.readyState === 2) {
             const connectionHandler = () => {
                 console.log('📦 Database connected, late-initializing gacha emoji cache...');
-                refreshGachaEmojiCache().catch(error => {
+                refreshGachaEmojiCacheInternal().catch(error => {
                     console.error('Late gacha emoji cache init failed:', error.message);
                 });
                 mongoose.connection.off('connected', connectionHandler);
@@ -245,5 +245,5 @@ export {
     formatGachaEmoji,
     clearGachaEmojiCache,
     getGachaEmojiCacheInfo,
-    refreshGachaEmojiCache as safeCacheRefresh
+    refreshGachaEmojiCacheInternal as safeCacheRefresh
 };
