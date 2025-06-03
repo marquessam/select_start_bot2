@@ -213,14 +213,21 @@ class CombinationService {
             .setFooter({ text: 'Select a combination from the menu below, or cancel.' })
             .setTimestamp();
 
+        // Store all rules in global map with unique keys
+        global.tempRules = global.tempRules || new Map();
+        
         const selectOptions = limitedCombinations.map((combo, index) => {
             const resultEmoji = formatGachaEmoji(combo.resultItem.emojiId, combo.resultItem.emojiName);
             const ingredientNames = combo.ingredients.map(ing => ing.item.itemName).join(' + ');
             const isShadowUnlock = this.isShadowUnlockItem(combo.resultItem);
             
+            // Create unique key for this combination
+            const ruleKey = `${user.discordId}_${Date.now()}_${index}_${Math.random()}`;
+            global.tempRules.set(ruleKey, combo.rule);
+            
             return {
                 label: `${combo.resultQuantity}x ${combo.resultItem.itemName}${isShadowUnlock ? ' 🌙' : ''}`.slice(0, 100),
-                value: `combo_select_${combo.buttonId}`,
+                value: `combo_select_${ruleKey}`,
                 description: `${ingredientNames} (max: ${combo.maxCombinations})${isShadowUnlock ? ' - SHADOW!' : ''}`.slice(0, 100),
                 emoji: combo.resultItem.emojiId ? 
                     { id: combo.resultItem.emojiId, name: combo.resultItem.emojiName } : 
