@@ -1,12 +1,12 @@
-// src/config/gachaEmojis.js - FIXED VERSION with proper connection handling
+// src/config/gachaEmojis.js - CLEAN REWRITE
 import mongoose from 'mongoose';
 import { GachaItem } from '../models/GachaItem.js';
 
-// Cache for emoji data to avoid repeated database calls
+// Cache for emoji data
 let emojiCache = new Map();
 let cacheLastUpdated = 0;
-const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
 let isRefreshing = false;
+const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
 
 // Default fallback emojis by rarity
 const DEFAULT_GACHA_EMOJIS = {
@@ -18,11 +18,15 @@ const DEFAULT_GACHA_EMOJIS = {
     mythic: '🌈'
 };
 
-// DISABLE OLD CACHING MECHANISMS
-export const disableOldEmojiCaching = () => {
-    console.log('🔧 Disabling any old emoji caching mechanisms...');
+// UTILITY: Check if database is connected
+function isDatabaseConnected() {
+    return mongoose.connection.readyState === 1;
+}
+
+// DISABLE OLD CACHING
+function disableOldEmojiCaching() {
+    console.log('🔧 Disabling old emoji caching mechanisms...');
     
-    // Clear any existing intervals that might be calling emoji refresh
     if (global.gachaEmojiInterval) {
         clearInterval(global.gachaEmojiInterval);
         global.gachaEmojiInterval = null;
@@ -35,7 +39,6 @@ export const disableOldEmojiCaching = () => {
         console.log('✅ Cleared old trophy emoji interval');
     }
     
-    // Clear any pending timeouts
     if (global.emojiCacheTimeout) {
         clearTimeout(global.emojiCacheTimeout);
         global.emojiCacheTimeout = null;
@@ -43,83 +46,50 @@ export const disableOldEmojiCaching = () => {
     }
     
     console.log('✅ Old emoji caching mechanisms disabled');
-};
-
-// Helper function to check if database is connected
-function isDatabaseConnected() {
-    return mongoose.connection.readyState === 1;
 }
 
-// Helper function to get gacha emoji - WITH CONNECTION CHECKS
+// MAIN: Get gacha emoji
 async function getGachaEmoji(itemId) {
     try {
-        // Check database connection first
         if (!isDatabaseConnected()) {
-            console.warn('⚠️ Database not connected, using fallback emoji for', itemId);
-            return {
-                emojiId: null,
-                emojiName: '❓'
-            };
+            return { emojiId: null, emojiName: '❓' };
         }
 
-        // Check if we need to refresh cache
+        // Auto-refresh cache if needed (background)
         const now = Date.now();
         if (now - cacheLastUpdated > CACHE_DURATION && !isRefreshing) {
-            // Don't await to avoid blocking
-            refreshGachaEmojiCacheInternal().catch(error => {
-                console.error('Background emoji cache refresh failed:', error.message);
-            });
+            refreshCache().catch(console.error);
         }
 
-        // Try to get emoji from cache first
-        const emoji = emojiCache.get(itemId);
-        
-        if (emoji && emoji.emojiId) {
-            return {
-                emojiId: emoji.emojiId,
-                emojiName: emoji.emojiName
-            };
+        // Try cache first
+        const cached = emojiCache.get(itemId);
+        if (cached?.emojiId) {
+            return { emojiId: cached.emojiId, emojiName: cached.emojiName };
         }
-        
-        // If not in cache, get directly from database (with timeout protection)
+
+        // Try database
         try {
-            const gachaItem = await Promise.race([
+            const item = await Promise.race([
                 GachaItem.findOne({ itemId }).select('emojiId emojiName').lean(),
-                new Promise((_, reject) => setTimeout(() => reject(new Error('Query timeout')), 5000))
+                new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
             ]);
             
-            if (gachaItem && gachaItem.emojiId) {
-                // Cache the result
-                emojiCache.set(itemId, {
-                    emojiId: gachaItem.emojiId,
-                    emojiName: gachaItem.emojiName
-                });
-                
-                return {
-                    emojiId: gachaItem.emojiId,
-                    emojiName: gachaItem.emojiName
-                };
+            if (item?.emojiId) {
+                emojiCache.set(itemId, { emojiId: item.emojiId, emojiName: item.emojiName });
+                return { emojiId: item.emojiId, emojiName: item.emojiName };
             }
         } catch (dbError) {
-            console.warn('Database query failed for emoji, using fallback:', dbError.message);
+            console.warn('DB query failed for gacha emoji:', dbError.message);
         }
-        
-        // Fall back to default emoji
-        return {
-            emojiId: null,
-            emojiName: '❓'
-        };
+
+        return { emojiId: null, emojiName: '❓' };
     } catch (error) {
         console.error('Error getting gacha emoji:', error.message);
-        // Always provide fallback on error
-        return {
-            emojiId: null,
-            emojiName: '❓'
-        };
+        return { emojiId: null, emojiName: '❓' };
     }
 }
 
-// Utility function to format emoji for display
+// UTILITY: Format emoji for display
 function formatGachaEmoji(emojiId, emojiName) {
     if (emojiId && emojiName) {
         return `<:${emojiName}:${emojiId}>`;
@@ -127,15 +97,9 @@ function formatGachaEmoji(emojiId, emojiName) {
     return emojiName || '❓';
 }
 
-// Function to refresh emoji cache from database - WITH SAFETY CHECKS
-async function refreshGachaEmojiCacheInternal() {
-    if (isRefreshing) {
-        console.log('📦 Gacha emoji cache refresh already in progress, skipping...');
-        return;
-    }
-
-    if (!isDatabaseConnected()) {
-        console.warn('⚠️ Database not connected, skipping gacha emoji cache refresh');
+// INTERNAL: Refresh cache
+async function refreshCache() {
+    if (isRefreshing || !isDatabaseConnected()) {
         return;
     }
 
@@ -144,106 +108,95 @@ async function refreshGachaEmojiCacheInternal() {
     try {
         console.log('🔄 Refreshing gacha emoji cache...');
         
-        // Use Promise.race for timeout protection
-        const allItems = await Promise.race([
+        const items = await Promise.race([
             GachaItem.find({ isActive: true }).select('itemId emojiId emojiName').lean(),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('Cache refresh timeout')), 15000))
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 15000))
         ]);
         
-        // Clear existing cache
         emojiCache.clear();
+        let cached = 0;
         
-        // Populate cache
-        let cachedCount = 0;
-        allItems.forEach(item => {
+        items.forEach(item => {
             if (item.emojiId && item.emojiName) {
                 emojiCache.set(item.itemId, {
                     emojiId: item.emojiId,
                     emojiName: item.emojiName
                 });
-                cachedCount++;
+                cached++;
             }
         });
         
         cacheLastUpdated = Date.now();
-        console.log(`✅ Gacha emoji cache refreshed with ${cachedCount} items (${allItems.length} total)`);
+        console.log(`✅ Gacha emoji cache: ${cached} items cached`);
         
     } catch (error) {
-        console.error('❌ Error refreshing gacha emoji cache:', error.message);
-        
-        // If cache is empty and refresh failed, at least we have fallbacks
-        if (emojiCache.size === 0) {
-            console.log('🔄 Cache refresh failed, but fallback emojis available');
-        }
+        console.error('❌ Gacha emoji cache refresh failed:', error.message);
     } finally {
         isRefreshing = false;
     }
 }
 
-// SAFE version for old code compatibility
-export const refreshGachaEmojiCache = async () => {
+// PUBLIC: For old code compatibility
+async function refreshGachaEmojiCache() {
     if (!isDatabaseConnected()) {
-        console.log('⚠️ Old gacha emoji cache function called - database not connected');
+        console.log('⚠️ Cannot refresh gacha emoji cache - database not connected');
         return;
     }
-    console.log('🔄 Old gacha emoji cache function called - delegating to new safe version');
-    return refreshGachaEmojiCacheInternal();
-};
+    return refreshCache();
+}
 
-// Function to manually clear cache (useful after updates)
+// UTILITY: Clear cache
 function clearGachaEmojiCache() {
     emojiCache.clear();
     cacheLastUpdated = 0;
     console.log('🗑️ Gacha emoji cache cleared');
 }
 
-// Function to get cache info for debugging
+// UTILITY: Cache info
 function getGachaEmojiCacheInfo() {
     return {
         size: emojiCache.size,
         lastUpdated: cacheLastUpdated ? new Date(cacheLastUpdated).toISOString() : 'Never',
         isRefreshing,
-        databaseConnected: isDatabaseConnected(),
-        entries: Array.from(emojiCache.entries()).slice(0, 5) // First 5 for debugging
+        databaseConnected: isDatabaseConnected()
     };
 }
 
-// Safe initialization - only if database is connected
-function initializeCache() {
+// INIT: Safe initialization
+function initCache() {
     if (isDatabaseConnected()) {
-        console.log('📦 Database connected, initializing gacha emoji cache...');
-        refreshGachaEmojiCacheInternal().catch(error => {
-            console.error('Initial gacha emoji cache failed:', error.message);
-        });
+        console.log('📦 Initializing gacha emoji cache...');
+        refreshCache().catch(console.error);
     } else {
-        console.log('⏳ Database not ready, gacha emoji cache will initialize later...');
+        console.log('⏳ Waiting for database connection for gacha emoji cache...');
         
-        // Set up a one-time listener for when connection is ready
-        if (mongoose.connection.readyState === 0 || mongoose.connection.readyState === 2) {
-            const connectionHandler = () => {
-                console.log('📦 Database connected, late-initializing gacha emoji cache...');
-                refreshGachaEmojiCacheInternal().catch(error => {
-                    console.error('Late gacha emoji cache init failed:', error.message);
-                });
-                mongoose.connection.off('connected', connectionHandler);
-            };
-            mongoose.connection.on('connected', connectionHandler);
+        const onConnect = () => {
+            console.log('📦 Database ready, initializing gacha emoji cache...');
+            refreshCache().catch(console.error);
+            mongoose.connection.off('connected', onConnect);
+        };
+        
+        if (mongoose.connection.readyState === 2) {
+            mongoose.connection.on('connected', onConnect);
         }
     }
 }
 
-// Call disable function immediately
+// Disable old caching immediately
 disableOldEmojiCaching();
 
-// Initialize cache safely (not on module load)
-setTimeout(initializeCache, 100);
+// Initialize after a short delay
+setTimeout(initCache, 100);
 
-// Export all functions
+// EXPORTS
 export {
     DEFAULT_GACHA_EMOJIS,
     getGachaEmoji,
     formatGachaEmoji,
+    refreshGachaEmojiCache,
     clearGachaEmojiCache,
     getGachaEmojiCacheInfo,
-    refreshGachaEmojiCacheInternal as safeCacheRefresh
+    disableOldEmojiCaching
 };
+
+export const safeCacheRefresh = refreshCache;
