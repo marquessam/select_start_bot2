@@ -14,7 +14,6 @@ import { TrophyEmoji } from './TrophyEmoji.js';              // ← MISSING!
 // CRITICAL: Disable buffering to prevent timeout issues
 mongoose.set('strictQuery', true);
 mongoose.set('bufferCommands', false);  // ← CRITICAL FIX
-mongoose.set('bufferMaxEntries', 0);    // ← CRITICAL FIX
 
 export const connectDB = async () => {
     try {
@@ -24,7 +23,6 @@ export const connectDB = async () => {
         const options = {
             // Disable buffering (critical for timeout prevention)
             bufferCommands: false,
-            bufferMaxEntries: 0,
             
             // Timeout settings
             serverSelectionTimeoutMS: 30000, // 30 seconds to select server
