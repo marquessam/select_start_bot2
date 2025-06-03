@@ -1,4 +1,4 @@
-// src/commands/admin/gacha-admin.js - COMPLETE FIXED VERSION with debug command
+// src/commands/admin/gacha-admin.js - COMPLETE FIXED VERSION with paginated combinations
 import { 
     SlashCommandBuilder, 
     EmbedBuilder, 
@@ -47,7 +47,12 @@ export default {
         .addSubcommand(subcommand =>
             subcommand
                 .setName('list-combinations')
-                .setDescription('List all combination rules'))
+                .setDescription('List all combination rules (paginated)')
+                .addIntegerOption(option =>
+                    option.setName('page')
+                        .setDescription('Page number (default: 1)')
+                        .setMinValue(1)
+                        .setRequired(false)))
 
         .addSubcommand(subcommand =>
             subcommand
@@ -379,12 +384,11 @@ export default {
                 throw new Error(`Rule ID "${ruleId}" already exists.`);
             }
 
-            // UPDATED: All combinations require confirmation now
             const newRule = new CombinationRule({
                 ruleId,
                 ingredients: parsed.ingredients,
                 result: parsed.result,
-                isAutomatic: false, // UPDATED: No more auto-combinations
+                isAutomatic: false,
                 priority,
                 createdBy: interaction.user.username
             });
@@ -414,7 +418,6 @@ export default {
                 value: `${resultEmoji} ${parsed.result.quantity}x **${resultItem?.itemName || parsed.result.itemId}**` 
             });
 
-            // UPDATED: New description for confirmation system
             embed.setDescription('⚗️ This combination will show confirmation prompts when users have the ingredients!');
 
             await interaction.editReply({ embeds: [embed] });
@@ -494,22 +497,32 @@ export default {
         return { ingredients, result };
     },
 
+    // UPDATED: Now with pagination!
     async handleListCombinations(interaction) {
+        const page = interaction.options.getInteger('page') || 1;
+        const rulesPerPage = 8; // Fewer per page since combinations take more space
+
+        const totalRules = await CombinationRule.countDocuments({ isActive: true });
+        const totalPages = Math.ceil(totalRules / rulesPerPage);
+        const skip = (page - 1) * rulesPerPage;
+
         const rules = await CombinationRule.find({ isActive: true })
-            .sort({ priority: -1, ruleId: 1 });
+            .sort({ priority: -1, ruleId: 1 })
+            .skip(skip)
+            .limit(rulesPerPage);
 
         if (rules.length === 0) {
             return interaction.editReply({ content: 'No combination rules found.' });
         }
 
         const embed = new EmbedBuilder()
-            .setTitle('⚗️ Combination Rules')
+            .setTitle(`⚗️ Combination Rules - Page ${page}/${totalPages}`)
             .setColor(COLORS.INFO)
-            .setDescription(`Found ${rules.length} active rules`)
+            .setDescription(`Showing ${rules.length} rules (${totalRules} total)`)
             .setTimestamp();
 
         let rulesText = '';
-        for (const rule of rules.slice(0, 10)) {
+        for (const rule of rules) {
             const resultItem = await GachaItem.findOne({ itemId: rule.result.itemId });
             const resultEmoji = resultItem ? `<:${resultItem.emojiName}:${resultItem.emojiId}>` : '❓';
             
@@ -521,20 +534,64 @@ export default {
             
             rulesText += `${ingredientStrs.join(' + ')} = ${resultEmoji} ${resultItem?.itemName || rule.result.itemId}${rule.result.quantity > 1 ? ` (x${rule.result.quantity})` : ''}\n\n`;
         }
-        
-        if (rules.length > 10) {
-            rulesText += `*...and ${rules.length - 10} more rules*`;
-        }
 
         embed.addFields({ name: 'Rules', value: rulesText });
         embed.setFooter({ text: 'All combinations require user confirmation' });
 
-        await interaction.editReply({ embeds: [embed] });
+        const components = [];
+        
+        // Add pagination buttons if there are multiple pages
+        if (totalPages > 1) {
+            const buttonRow = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId(`gacha_combo_${Math.max(1, page - 1)}`)
+                        .setLabel('◀ Previous')
+                        .setStyle(ButtonStyle.Secondary)
+                        .setDisabled(page === 1),
+                    new ButtonBuilder()
+                        .setCustomId(`combo_page_info`)
+                        .setLabel(`Page ${page}/${totalPages}`)
+                        .setStyle(ButtonStyle.Secondary)
+                        .setDisabled(true),
+                    new ButtonBuilder()
+                        .setCustomId(`gacha_combo_${Math.min(totalPages, page + 1)}`)
+                        .setLabel('Next ▶')
+                        .setStyle(ButtonStyle.Secondary)
+                        .setDisabled(page === totalPages)
+                );
+            components.push(buttonRow);
+        }
+
+        // Add action buttons
+        const actionRow = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId('gacha_add_combination')
+                    .setLabel('➕ Add Combination')
+                    .setStyle(ButtonStyle.Primary),
+                new ButtonBuilder()
+                    .setCustomId('gacha_list_items_from_combo')
+                    .setLabel('📦 List Items')
+                    .setStyle(ButtonStyle.Secondary)
+            );
+        components.push(actionRow);
+
+        await interaction.editReply({ embeds: [embed], components });
     },
 
-    async handleListCombinationsFromButton(interaction) {
+    // UPDATED: Handle pagination for combinations from button clicks
+    async handleListCombinationsFromButton(interaction, page = 1) {
+        const rulesPerPage = 8;
+
+        const totalRules = await CombinationRule.countDocuments({ isActive: true });
+        const totalPages = Math.ceil(totalRules / rulesPerPage);
+        const skip = (page - 1) * rulesPerPage;
+
         const rules = await CombinationRule.find({ isActive: true })
-            .sort({ priority: -1, ruleId: 1 });
+            .sort({ priority: -1, ruleId: 1 })
+            .skip(skip)
+            .limit(rulesPerPage);
 
         if (rules.length === 0) {
             return interaction.editReply({ 
@@ -545,13 +602,13 @@ export default {
         }
 
         const embed = new EmbedBuilder()
-            .setTitle('⚗️ Combination Rules')
+            .setTitle(`⚗️ Combination Rules - Page ${page}/${totalPages}`)
             .setColor(COLORS.INFO)
-            .setDescription(`Found ${rules.length} active rules`)
+            .setDescription(`Showing ${rules.length} rules (${totalRules} total)`)
             .setTimestamp();
 
         let rulesText = '';
-        for (const rule of rules.slice(0, 10)) {
+        for (const rule of rules) {
             const resultItem = await GachaItem.findOne({ itemId: rule.result.itemId });
             const resultEmoji = resultItem ? `<:${resultItem.emojiName}:${resultItem.emojiId}>` : '❓';
             
@@ -563,15 +620,50 @@ export default {
             
             rulesText += `${ingredientStrs.join(' + ')} = ${resultEmoji} ${resultItem?.itemName || rule.result.itemId}${rule.result.quantity > 1 ? ` (x${rule.result.quantity})` : ''}\n\n`;
         }
-        
-        if (rules.length > 10) {
-            rulesText += `*...and ${rules.length - 10} more rules*`;
-        }
 
         embed.addFields({ name: 'Rules', value: rulesText });
         embed.setFooter({ text: 'All combinations require user confirmation' });
 
-        await interaction.editReply({ embeds: [embed], components: [] });
+        const components = [];
+        
+        // Add pagination buttons if there are multiple pages
+        if (totalPages > 1) {
+            const buttonRow = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId(`gacha_combo_${Math.max(1, page - 1)}`)
+                        .setLabel('◀ Previous')
+                        .setStyle(ButtonStyle.Secondary)
+                        .setDisabled(page === 1),
+                    new ButtonBuilder()
+                        .setCustomId(`combo_page_info`)
+                        .setLabel(`Page ${page}/${totalPages}`)
+                        .setStyle(ButtonStyle.Secondary)
+                        .setDisabled(true),
+                    new ButtonBuilder()
+                        .setCustomId(`gacha_combo_${Math.min(totalPages, page + 1)}`)
+                        .setLabel('Next ▶')
+                        .setStyle(ButtonStyle.Secondary)
+                        .setDisabled(page === totalPages)
+                );
+            components.push(buttonRow);
+        }
+
+        // Add action buttons
+        const actionRow = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId('gacha_add_combination')
+                    .setLabel('➕ Add Combination')
+                    .setStyle(ButtonStyle.Primary),
+                new ButtonBuilder()
+                    .setCustomId('gacha_list_items_from_combo')
+                    .setLabel('📦 List Items')
+                    .setStyle(ButtonStyle.Secondary)
+            );
+        components.push(actionRow);
+
+        await interaction.editReply({ embeds: [embed], components });
     },
 
     async handleListItemsPagination(interaction, page, filter) {
@@ -690,7 +782,6 @@ export default {
         });
     },
 
-    // NEW: Debug combination command
     async handleDebugCombination(interaction) {
         const ruleId = interaction.options.getString('rule-id');
         
@@ -768,7 +859,6 @@ export default {
         await interaction.editReply({ embeds: [embed] });
     },
 
-    // UPDATED: Fixed give-item with combination alerts
     async handleGiveItem(interaction) {
         const username = interaction.options.getString('username');
         const itemId = interaction.options.getString('item-id');
@@ -791,7 +881,6 @@ export default {
 
         const emoji = `<:${item.emojiName}:${item.emojiId}>`;
         
-        // UPDATED: Use the new combination alert system
         const combinationResult = await combinationService.triggerCombinationAlertsForAdminGift(user, itemId, interaction);
 
         let message = `✅ Gave ${emoji} ${quantity}x **${item.itemName}** to ${username}`;
@@ -939,13 +1028,21 @@ export default {
         }
 
         if (interaction.customId === 'gacha_list_combinations') {
-            await this.handleListCombinationsFromButton(interaction);
+            await this.handleListCombinationsFromButton(interaction, 1);
+        } else if (interaction.customId.startsWith('gacha_combo_')) {
+            // Handle combination pagination
+            const page = parseInt(interaction.customId.split('_')[2]);
+            await this.handleListCombinationsFromButton(interaction, page);
         } else if (interaction.customId.startsWith('gacha_list_')) {
+            // Handle item pagination
             const parts = interaction.customId.split('_');
             const page = parseInt(parts[2]);
             const filter = parts[3];
             
             await this.handleListItemsPagination(interaction, page, filter);
+        } else if (interaction.customId === 'gacha_list_items_from_combo') {
+            // Navigate to items list from combinations page
+            await this.handleListItemsPagination(interaction, 1, 'all');
         }
     },
 
