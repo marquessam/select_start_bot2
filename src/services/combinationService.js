@@ -73,17 +73,12 @@ class CombinationService {
             if (maxCombinations > 0) {
                 const resultItem = await GachaItem.findOne({ itemId: rule.result.itemId });
                 if (resultItem) {
-                    // Use _id consistently as the identifier since ruleId might not exist
-                    const consistentId = rule._id.toString();
-                    console.log('🔍 Debug - Rule details:', {
-                        originalId: rule._id,
-                        stringId: consistentId,
-                        stringIdLength: consistentId.length,
-                        isValidObjectId: /^[0-9a-fA-F]{24}$/.test(consistentId)
-                    });
+                    // Use the actual ruleId field that exists, or fallback to _id
+                    const buttonId = rule.ruleId || rule._id.toString();
+                    console.log('🔍 Using buttonId:', buttonId, 'from rule:', { ruleId: rule.ruleId, _id: rule._id });
                     
                     const combinationObj = {
-                        ruleId: consistentId, // This is what goes into button custom IDs
+                        buttonId: buttonId, // Simple, consistent ID for buttons
                         rule: rule,
                         resultItem: resultItem,
                         resultQuantity: rule.result.quantity || 1,
@@ -101,7 +96,7 @@ class CombinationService {
             }
 
         } catch (error) {
-            console.error(`Error processing rule ${rule._id}:`, error);
+            console.error(`Error processing rule:`, error);
         }
 
         return combinations;
@@ -127,35 +122,6 @@ class CombinationService {
     async showSingleCombinationConfirmation(interaction, user, combination) {
         const { resultItem, resultQuantity, ingredients, maxCombinations } = combination;
         
-        // Debug logging
-        console.log('✅ Creating buttons for combination:', {
-            id: combination.ruleId,
-            actualValue: `"${combination.ruleId}"`,
-            typeof: typeof combination.ruleId,
-            resultItem: resultItem.itemName,
-            maxCombinations
-        });
-        
-        // Safety check
-        if (!combination.ruleId || combination.ruleId.toString().trim() === '') {
-            console.error('❌ Invalid ruleId detected when creating buttons:', combination.ruleId);
-            console.error('❌ Full combination object:', combination);
-            // Don't create buttons with invalid IDs
-            return interaction.followUp({
-                content: '❌ Error: Invalid combination data. Please try again.',
-                ephemeral: true
-            });
-        }
-        
-        const resultEmoji = formatGachaEmoji(resultItem.emojiId, resultItem.emojiName);
-        const rarityEmoji = this.getRarityEmoji(resultItem.rarity);
-
-        let ingredientsText = '';
-        for (const ingredient of ingredients) {
-            const ingredientEmoji = formatGachaEmoji(ingredient.item.emojiId, ingredient.item.emojiName);
-            ingredientsText += `${ingredientEmoji} ${ingredient.quantity}x ${ingredient.item.itemName}\n`;
-        }
-
         const isShadowUnlock = this.isShadowUnlockItem(resultItem);
 
         const embed = new EmbedBuilder()
@@ -255,7 +221,7 @@ class CombinationService {
             
             return {
                 label: `${combo.resultQuantity}x ${combo.resultItem.itemName}${isShadowUnlock ? ' 🌙' : ''}`.slice(0, 100),
-                value: `combo_select_${combo.ruleId}`, // This uses our consistent _id
+                value: `combo_select_${combo.buttonId}`,
                 description: `${ingredientNames} (max: ${combo.maxCombinations})${isShadowUnlock ? ' - SHADOW!' : ''}`.slice(0, 100),
                 emoji: combo.resultItem.emojiId ? 
                     { id: combo.resultItem.emojiId, name: combo.resultItem.emojiName } : 
@@ -290,13 +256,23 @@ class CombinationService {
         });
     }
 
-    async performCombination(user, combinationId, quantity = 1) {
+    async performCombination(user, buttonId, quantity = 1) {
         try {
-            // Look up by _id since that's what we're using consistently
-            const rule = await CombinationRule.findOne({ _id: combinationId, isActive: true });
+            // Use the same lookup approach that worked for finding combinations
+            let rule = null;
+            
+            // Try ruleId field first, then _id field
+            if (buttonId) {
+                rule = await CombinationRule.findOne({ ruleId: buttonId, isActive: true });
+                
+                if (!rule) {
+                    // Try _id if ruleId didn't work
+                    rule = await CombinationRule.findOne({ _id: buttonId, isActive: true });
+                }
+            }
             
             if (!rule) {
-                throw new Error(`Combination rule with ID "${combinationId}" not found`);
+                throw new Error(`Combination rule not found for ID: ${buttonId}`);
             }
 
             const possibleCombinations = await this.findPossibleCombinationsForRule(user, rule);
@@ -340,7 +316,7 @@ class CombinationService {
 
             const result = {
                 success: true,
-                ruleId: rule._id.toString(), // Use consistent ID
+                ruleId: buttonId, // Use the buttonId we passed in
                 resultItem: resultItem,
                 resultQuantity: totalResultQuantity,
                 addResult: addResult,
@@ -619,32 +595,22 @@ class CombinationService {
             
             if (action === 'confirm') {
                 const parts = interaction.customId.split('_');
-                console.log('🔍 Debug - Full custom ID:', interaction.customId);
-                console.log('🔍 Debug - Split parts:', parts);
                 
-                let combinationId;
+                let buttonId;
                 let quantity;
                 
-                // Handle "all" case
+                // Handle "all" case: combo_confirm_BUTTONID_all
                 if (parts[parts.length - 1] === 'all') {
-                    combinationId = parts.slice(2, -1).join('_');
-                    console.log('🔍 Debug - All case, extracted combinationId:', `"${combinationId}"`);
-                    
-                    if (!combinationId || combinationId.trim() === '') {
-                        console.log('🔍 Debug - Empty combination ID detected in all case');
-                        await interaction.editReply({
-                            content: '❌ Invalid combination ID format.',
-                            embeds: [],
-                            components: []
-                        });
-                        return true;
-                    }
+                    buttonId = parts.slice(2, -1).join('_');
                     
                     const user = await this.getUserForInteraction(interaction);
                     if (!user) return true;
 
-                    // Find max combinations available
-                    const rule = await CombinationRule.findOne({ _id: combinationId });
+                    // Find max combinations available using same lookup as finding combinations
+                    let rule = await CombinationRule.findOne({ ruleId: buttonId, isActive: true });
+                    if (!rule) {
+                        rule = await CombinationRule.findOne({ _id: buttonId, isActive: true });
+                    }
                     
                     if (!rule) {
                         await interaction.editReply({
@@ -668,17 +634,11 @@ class CombinationService {
                     
                     quantity = possibleCombinations[0].maxCombinations;
                 } else {
-                    // Handle numeric quantity case
-                    let quantityIndex = -1;
-                    for (let i = 2; i < parts.length; i++) {
-                        if (!isNaN(parseInt(parts[i])) && parseInt(parts[i]) > 0) {
-                            quantityIndex = i;
-                            break;
-                        }
-                    }
+                    // Handle numeric quantity case: combo_confirm_BUTTONID_5
+                    const quantityPart = parts[parts.length - 1];
+                    const quantityValue = parseInt(quantityPart);
                     
-                    if (quantityIndex === -1) {
-                        console.log('🔍 Debug - No valid quantity found in parts:', parts);
+                    if (isNaN(quantityValue) || quantityValue <= 0) {
                         await interaction.editReply({
                             content: '❌ Invalid combination button format.',
                             embeds: [],
@@ -687,36 +647,14 @@ class CombinationService {
                         return true;
                     }
                     
-                    combinationId = parts.slice(2, quantityIndex).join('_');
-                    quantity = parseInt(parts[quantityIndex]);
-                    console.log('🔍 Debug - Numeric case, extracted combinationId:', `"${combinationId}"`, 'quantity:', quantity);
-                    
-                    if (!combinationId || combinationId.trim() === '') {
-                        console.log('🔍 Debug - Empty combination ID detected in numeric case');
-                        await interaction.editReply({
-                            content: '❌ Invalid combination ID format.',
-                            embeds: [],
-                            components: []
-                        });
-                        return true;
-                    }
-                }
-
-                // Validate ObjectId format before proceeding
-                if (!/^[0-9a-fA-F]{24}$/.test(combinationId)) {
-                    console.log('🔍 Debug - Invalid ObjectId format:', combinationId);
-                    await interaction.editReply({
-                        content: '❌ Invalid combination ID format.',
-                        embeds: [],
-                        components: []
-                    });
-                    return true;
+                    buttonId = parts.slice(2, -1).join('_');
+                    quantity = quantityValue;
                 }
 
                 const user = await this.getUserForInteraction(interaction);
                 if (!user) return true;
 
-                const result = await this.performCombination(user, combinationId, quantity);
+                const result = await this.performCombination(user, buttonId, quantity);
                 
                 if (result.success) {
                     await user.save();
