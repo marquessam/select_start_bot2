@@ -23,12 +23,6 @@ class CombinationService {
             }
 
             const rules = await CombinationRule.find({ isActive: true });
-            console.log('🔍 Debug - Found combination rules:', rules.map(r => ({
-                ruleId: r.ruleId,
-                isActive: r.isActive,
-                priority: r.priority
-            })));
-            
             const possibleCombinations = [];
 
             for (const rule of rules) {
@@ -37,13 +31,6 @@ class CombinationService {
             }
 
             possibleCombinations.sort((a, b) => (b.rule.priority || 0) - (a.rule.priority || 0));
-            
-            console.log('🔍 Debug - Final possible combinations:', possibleCombinations.map(c => ({
-                ruleId: c.ruleId,
-                resultItem: c.resultItem.itemName,
-                maxCombinations: c.maxCombinations
-            })));
-            
             return possibleCombinations;
 
         } catch (error) {
@@ -56,12 +43,6 @@ class CombinationService {
         const combinations = [];
 
         try {
-            console.log('🔍 Debug - findPossibleCombinationsForRule called with rule:', {
-                ruleId: rule.ruleId,
-                isActive: rule.isActive,
-                ingredients: rule.ingredients?.length
-            });
-            
             const userItemMap = new Map();
             user.gachaCollection.forEach(item => {
                 const existing = userItemMap.get(item.itemId) || { quantity: 0, item: item };
@@ -92,12 +73,11 @@ class CombinationService {
             if (maxCombinations > 0) {
                 const resultItem = await GachaItem.findOne({ itemId: rule.result.itemId });
                 if (resultItem) {
-                    // Check if ruleId exists, use _id as fallback
-                    const ruleIdToUse = rule.ruleId || rule._id.toString();
-                    console.log('🔍 Debug - Using ruleId:', ruleIdToUse, '(original:', rule.ruleId, ')');
+                    // Use _id consistently as the identifier since ruleId might not exist
+                    const consistentId = rule._id.toString();
                     
                     const combinationObj = {
-                        ruleId: ruleIdToUse,
+                        ruleId: consistentId, // This is what goes into button custom IDs
                         rule: rule,
                         resultItem: resultItem,
                         resultQuantity: rule.result.quantity || 1,
@@ -110,18 +90,12 @@ class CombinationService {
                         }))
                     };
                     
-                    console.log('🔍 Debug - Created combination object:', {
-                        ruleId: combinationObj.ruleId,
-                        resultItemName: combinationObj.resultItem.itemName,
-                        maxCombinations: combinationObj.maxCombinations
-                    });
-                    
                     combinations.push(combinationObj);
                 }
             }
 
         } catch (error) {
-            console.error(`Error processing rule ${rule.ruleId}:`, error);
+            console.error(`Error processing rule ${rule._id}:`, error);
         }
 
         return combinations;
@@ -148,8 +122,8 @@ class CombinationService {
         const { resultItem, resultQuantity, ingredients, maxCombinations } = combination;
         
         // Debug logging
-        console.log('🔍 Debug - Creating buttons for combination:', {
-            ruleId: combination.ruleId,
+        console.log('✅ Creating buttons for combination:', {
+            id: combination.ruleId,
             resultItem: resultItem.itemName,
             maxCombinations
         });
@@ -187,7 +161,6 @@ class CombinationService {
         // Always add Make 1 button
         if (maxCombinations >= 1) {
             const button1CustomId = `combo_confirm_${combination.ruleId}_1`;
-            console.log('🔍 Debug - Make 1 button custom ID:', button1CustomId);
             
             actionRow.addComponents(
                 new ButtonBuilder()
@@ -201,7 +174,6 @@ class CombinationService {
         // Add Make 5 button only if not shadow unlock and max is at least 5 but not exactly 5
         if (maxCombinations >= 5 && maxCombinations !== 5 && !isShadowUnlock) {
             const button5CustomId = `combo_confirm_${combination.ruleId}_5`;
-            console.log('🔍 Debug - Make 5 button custom ID:', button5CustomId);
             
             actionRow.addComponents(
                 new ButtonBuilder()
@@ -214,7 +186,6 @@ class CombinationService {
         // Add Make All button if more than 1 combination possible and not shadow unlock
         if (maxCombinations > 1 && !isShadowUnlock) {
             const buttonAllCustomId = `combo_confirm_${combination.ruleId}_all`;
-            console.log('🔍 Debug - Make All button custom ID:', buttonAllCustomId);
             
             actionRow.addComponents(
                 new ButtonBuilder()
@@ -265,7 +236,7 @@ class CombinationService {
             
             return {
                 label: `${combo.resultQuantity}x ${combo.resultItem.itemName}${isShadowUnlock ? ' 🌙' : ''}`.slice(0, 100),
-                value: `combo_select_${combo.ruleId}`,
+                value: `combo_select_${combo.ruleId}`, // This uses our consistent _id
                 description: `${ingredientNames} (max: ${combo.maxCombinations})${isShadowUnlock ? ' - SHADOW!' : ''}`.slice(0, 100),
                 emoji: combo.resultItem.emojiId ? 
                     { id: combo.resultItem.emojiId, name: combo.resultItem.emojiName } : 
@@ -300,32 +271,13 @@ class CombinationService {
         });
     }
 
-    async performCombination(user, ruleId, quantity = 1) {
+    async performCombination(user, combinationId, quantity = 1) {
         try {
-            console.log('🔍 Debug - performCombination called with ruleId:', ruleId, 'quantity:', quantity);
-            
-            // Try to find by ruleId first, then by _id as fallback
-            let rule = await CombinationRule.findOne({ ruleId, isActive: true });
-            
-            if (!rule && ruleId) {
-                // Try finding by MongoDB _id if ruleId didn't work
-                try {
-                    rule = await CombinationRule.findOne({ _id: ruleId, isActive: true });
-                    console.log('🔍 Debug - Found rule by _id instead of ruleId');
-                } catch (err) {
-                    console.log('🔍 Debug - _id lookup also failed:', err.message);
-                }
-            }
-            
-            console.log('🔍 Debug - Database lookup result:', rule ? `Found rule: ${rule.ruleId || rule._id}` : 'Rule not found');
+            // Look up by _id since that's what we're using consistently
+            const rule = await CombinationRule.findOne({ _id: combinationId, isActive: true });
             
             if (!rule) {
-                // Show available rules for debugging
-                const allRules = await CombinationRule.find({ isActive: true });
-                console.log('🔍 Debug - Available active rules:');
-                allRules.forEach(r => console.log(`  - ruleId: "${r.ruleId}", _id: "${r._id}", active: ${r.isActive}`));
-                
-                throw new Error(`Combination rule "${ruleId}" not found`);
+                throw new Error(`Combination rule with ID "${combinationId}" not found`);
             }
 
             const possibleCombinations = await this.findPossibleCombinationsForRule(user, rule);
@@ -369,7 +321,7 @@ class CombinationService {
 
             const result = {
                 success: true,
-                ruleId: rule.ruleId,
+                ruleId: rule._id.toString(), // Use consistent ID
                 resultItem: resultItem,
                 resultQuantity: totalResultQuantity,
                 addResult: addResult,
@@ -648,30 +600,23 @@ class CombinationService {
             
             if (action === 'confirm') {
                 const parts = interaction.customId.split('_');
-                console.log('🔍 Debug - Custom ID parts:', parts);
                 
-                let ruleId;
+                let combinationId;
                 let quantity;
                 
                 // Handle "all" case
                 if (parts[parts.length - 1] === 'all') {
-                    ruleId = parts.slice(2, -1).join('_');
-                    console.log('🔍 Debug - All case, extracted ruleId:', ruleId);
+                    combinationId = parts.slice(2, -1).join('_');
                     
                     const user = await this.getUserForInteraction(interaction);
                     if (!user) return true;
 
                     // Find max combinations available
-                    const rule = await CombinationRule.findOne({ ruleId });
-                    console.log('🔍 Debug - Found rule:', rule ? rule.ruleId : 'NOT FOUND');
+                    const rule = await CombinationRule.findOne({ _id: combinationId });
                     
                     if (!rule) {
-                        console.log('🔍 Debug - Available rules:');
-                        const allRules = await CombinationRule.find({ isActive: true });
-                        allRules.forEach(r => console.log('  -', r.ruleId));
-                        
                         await interaction.editReply({
-                            content: `❌ Combination rule "${ruleId}" not found.`,
+                            content: `❌ Combination rule not found.`,
                             embeds: [],
                             components: []
                         });
@@ -701,7 +646,6 @@ class CombinationService {
                     }
                     
                     if (quantityIndex === -1) {
-                        console.log('🔍 Debug - No valid quantity found in parts:', parts);
                         await interaction.editReply({
                             content: '❌ Invalid combination button format.',
                             embeds: [],
@@ -710,23 +654,20 @@ class CombinationService {
                         return true;
                     }
                     
-                    ruleId = parts.slice(2, quantityIndex).join('_');
+                    combinationId = parts.slice(2, quantityIndex).join('_');
                     quantity = parseInt(parts[quantityIndex]);
-                    console.log('🔍 Debug - Numeric case, extracted ruleId:', ruleId, 'quantity:', quantity);
                 }
 
                 const user = await this.getUserForInteraction(interaction);
                 if (!user) return true;
 
-                console.log('🔍 Debug - About to perform combination with ruleId:', ruleId, 'quantity:', quantity);
-                const result = await this.performCombination(user, ruleId, quantity);
+                const result = await this.performCombination(user, combinationId, quantity);
                 
                 if (result.success) {
                     await user.save();
                     await this.showCombinationSuccess(interaction, result, quantity);
                     await this.sendCombinationAlert(user, result);
                 } else {
-                    console.log('🔍 Debug - Combination failed:', result.error);
                     await interaction.editReply({
                         content: `❌ Combination failed: ${result.error}`,
                         embeds: [],
@@ -737,12 +678,12 @@ class CombinationService {
             }
 
             if (action === 'select') {
-                const ruleId = parts.slice(2).join('_');
+                const combinationId = parts.slice(2).join('_');
 
                 const user = await this.getUserForInteraction(interaction);
                 if (!user) return true;
 
-                const rule = await CombinationRule.findOne({ ruleId });
+                const rule = await CombinationRule.findOne({ _id: combinationId });
                 const possibleCombinations = await this.findPossibleCombinationsForRule(user, rule);
                 
                 if (possibleCombinations.length > 0) {
@@ -761,12 +702,12 @@ class CombinationService {
                 if (interaction.isStringSelectMenu()) {
                     const selectedValue = interaction.values[0];
                     const selectedParts = selectedValue.split('_');
-                    const selectedRuleId = selectedParts.slice(2).join('_');
+                    const selectedCombinationId = selectedParts.slice(2).join('_');
                     
                     const user = await this.getUserForInteraction(interaction);
                     if (!user) return true;
 
-                    const rule = await CombinationRule.findOne({ ruleId: selectedRuleId });
+                    const rule = await CombinationRule.findOne({ _id: selectedCombinationId });
                     const possibleCombinations = await this.findPossibleCombinationsForRule(user, rule);
                     
                     if (possibleCombinations.length > 0) {
