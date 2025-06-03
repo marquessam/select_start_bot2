@@ -255,9 +255,18 @@ class CombinationService {
 
     async performCombination(user, ruleId, quantity = 1) {
         try {
+            console.log('🔍 Debug - performCombination called with ruleId:', ruleId, 'quantity:', quantity);
+            
             const rule = await CombinationRule.findOne({ ruleId, isActive: true });
+            console.log('🔍 Debug - Database lookup result:', rule ? `Found rule: ${rule.ruleId}` : 'Rule not found');
+            
             if (!rule) {
-                throw new Error('Combination rule not found');
+                // Show available rules for debugging
+                const allRules = await CombinationRule.find({ isActive: true });
+                console.log('🔍 Debug - Available active rules:');
+                allRules.forEach(r => console.log(`  - "${r.ruleId}" (active: ${r.isActive})`));
+                
+                throw new Error(`Combination rule "${ruleId}" not found`);
             }
 
             const possibleCombinations = await this.findPossibleCombinationsForRule(user, rule);
@@ -314,7 +323,7 @@ class CombinationService {
             return result;
 
         } catch (error) {
-            console.error('Error performing combination:', error);
+            console.error('❌ Error performing combination:', error);
             return {
                 success: false,
                 error: error.message
@@ -580,16 +589,36 @@ class CombinationService {
             
             if (action === 'confirm') {
                 const parts = interaction.customId.split('_');
+                console.log('🔍 Debug - Custom ID parts:', parts);
+                
+                let ruleId;
+                let quantity;
                 
                 // Handle "all" case
                 if (parts[parts.length - 1] === 'all') {
-                    const ruleId = parts.slice(2, -1).join('_');
+                    ruleId = parts.slice(2, -1).join('_');
+                    console.log('🔍 Debug - All case, extracted ruleId:', ruleId);
                     
                     const user = await this.getUserForInteraction(interaction);
                     if (!user) return true;
 
                     // Find max combinations available
                     const rule = await CombinationRule.findOne({ ruleId });
+                    console.log('🔍 Debug - Found rule:', rule ? rule.ruleId : 'NOT FOUND');
+                    
+                    if (!rule) {
+                        console.log('🔍 Debug - Available rules:');
+                        const allRules = await CombinationRule.find({ isActive: true });
+                        allRules.forEach(r => console.log('  -', r.ruleId));
+                        
+                        await interaction.editReply({
+                            content: `❌ Combination rule "${ruleId}" not found.`,
+                            embeds: [],
+                            components: []
+                        });
+                        return true;
+                    }
+                    
                     const possibleCombinations = await this.findPossibleCombinationsForRule(user, rule);
                     
                     if (possibleCombinations.length === 0) {
@@ -601,47 +630,36 @@ class CombinationService {
                         return true;
                     }
                     
-                    const maxQuantity = possibleCombinations[0].maxCombinations;
-                    const result = await this.performCombination(user, ruleId, maxQuantity);
+                    quantity = possibleCombinations[0].maxCombinations;
+                } else {
+                    // Handle numeric quantity case
+                    let quantityIndex = -1;
+                    for (let i = 2; i < parts.length; i++) {
+                        if (!isNaN(parseInt(parts[i])) && parseInt(parts[i]) > 0) {
+                            quantityIndex = i;
+                            break;
+                        }
+                    }
                     
-                    if (result.success) {
-                        await user.save();
-                        await this.showCombinationSuccess(interaction, result, maxQuantity);
-                        await this.sendCombinationAlert(user, result);
-                    } else {
+                    if (quantityIndex === -1) {
+                        console.log('🔍 Debug - No valid quantity found in parts:', parts);
                         await interaction.editReply({
-                            content: `❌ Combination failed: ${result.error}`,
+                            content: '❌ Invalid combination button format.',
                             embeds: [],
                             components: []
                         });
+                        return true;
                     }
-                    return true;
+                    
+                    ruleId = parts.slice(2, quantityIndex).join('_');
+                    quantity = parseInt(parts[quantityIndex]);
+                    console.log('🔍 Debug - Numeric case, extracted ruleId:', ruleId, 'quantity:', quantity);
                 }
-                
-                // Handle numeric quantity case
-                let quantityIndex = -1;
-                for (let i = 2; i < parts.length; i++) {
-                    if (!isNaN(parseInt(parts[i])) && parseInt(parts[i]) > 0) {
-                        quantityIndex = i;
-                        break;
-                    }
-                }
-                
-                if (quantityIndex === -1) {
-                    await interaction.editReply({
-                        content: '❌ Invalid combination button format.',
-                        embeds: [],
-                        components: []
-                    });
-                    return true;
-                }
-                
-                const ruleId = parts.slice(2, quantityIndex).join('_');
-                const quantity = parseInt(parts[quantityIndex]);
 
                 const user = await this.getUserForInteraction(interaction);
                 if (!user) return true;
 
+                console.log('🔍 Debug - About to perform combination with ruleId:', ruleId, 'quantity:', quantity);
                 const result = await this.performCombination(user, ruleId, quantity);
                 
                 if (result.success) {
@@ -649,6 +667,7 @@ class CombinationService {
                     await this.showCombinationSuccess(interaction, result, quantity);
                     await this.sendCombinationAlert(user, result);
                 } else {
+                    console.log('🔍 Debug - Combination failed:', result.error);
                     await interaction.editReply({
                         content: `❌ Combination failed: ${result.error}`,
                         embeds: [],
