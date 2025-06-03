@@ -75,6 +75,12 @@ class CombinationService {
                 if (resultItem) {
                     // Use _id consistently as the identifier since ruleId might not exist
                     const consistentId = rule._id.toString();
+                    console.log('🔍 Debug - Rule details:', {
+                        originalId: rule._id,
+                        stringId: consistentId,
+                        stringIdLength: consistentId.length,
+                        isValidObjectId: /^[0-9a-fA-F]{24}$/.test(consistentId)
+                    });
                     
                     const combinationObj = {
                         ruleId: consistentId, // This is what goes into button custom IDs
@@ -124,9 +130,22 @@ class CombinationService {
         // Debug logging
         console.log('✅ Creating buttons for combination:', {
             id: combination.ruleId,
+            actualValue: `"${combination.ruleId}"`,
+            typeof: typeof combination.ruleId,
             resultItem: resultItem.itemName,
             maxCombinations
         });
+        
+        // Safety check
+        if (!combination.ruleId || combination.ruleId.toString().trim() === '') {
+            console.error('❌ Invalid ruleId detected when creating buttons:', combination.ruleId);
+            console.error('❌ Full combination object:', combination);
+            // Don't create buttons with invalid IDs
+            return interaction.followUp({
+                content: '❌ Error: Invalid combination data. Please try again.',
+                ephemeral: true
+            });
+        }
         
         const resultEmoji = formatGachaEmoji(resultItem.emojiId, resultItem.emojiName);
         const rarityEmoji = this.getRarityEmoji(resultItem.rarity);
@@ -600,6 +619,8 @@ class CombinationService {
             
             if (action === 'confirm') {
                 const parts = interaction.customId.split('_');
+                console.log('🔍 Debug - Full custom ID:', interaction.customId);
+                console.log('🔍 Debug - Split parts:', parts);
                 
                 let combinationId;
                 let quantity;
@@ -607,6 +628,17 @@ class CombinationService {
                 // Handle "all" case
                 if (parts[parts.length - 1] === 'all') {
                     combinationId = parts.slice(2, -1).join('_');
+                    console.log('🔍 Debug - All case, extracted combinationId:', `"${combinationId}"`);
+                    
+                    if (!combinationId || combinationId.trim() === '') {
+                        console.log('🔍 Debug - Empty combination ID detected in all case');
+                        await interaction.editReply({
+                            content: '❌ Invalid combination ID format.',
+                            embeds: [],
+                            components: []
+                        });
+                        return true;
+                    }
                     
                     const user = await this.getUserForInteraction(interaction);
                     if (!user) return true;
@@ -646,6 +678,7 @@ class CombinationService {
                     }
                     
                     if (quantityIndex === -1) {
+                        console.log('🔍 Debug - No valid quantity found in parts:', parts);
                         await interaction.editReply({
                             content: '❌ Invalid combination button format.',
                             embeds: [],
@@ -656,6 +689,28 @@ class CombinationService {
                     
                     combinationId = parts.slice(2, quantityIndex).join('_');
                     quantity = parseInt(parts[quantityIndex]);
+                    console.log('🔍 Debug - Numeric case, extracted combinationId:', `"${combinationId}"`, 'quantity:', quantity);
+                    
+                    if (!combinationId || combinationId.trim() === '') {
+                        console.log('🔍 Debug - Empty combination ID detected in numeric case');
+                        await interaction.editReply({
+                            content: '❌ Invalid combination ID format.',
+                            embeds: [],
+                            components: []
+                        });
+                        return true;
+                    }
+                }
+
+                // Validate ObjectId format before proceeding
+                if (!/^[0-9a-fA-F]{24}$/.test(combinationId)) {
+                    console.log('🔍 Debug - Invalid ObjectId format:', combinationId);
+                    await interaction.editReply({
+                        content: '❌ Invalid combination ID format.',
+                        embeds: [],
+                        components: []
+                    });
+                    return true;
                 }
 
                 const user = await this.getUserForInteraction(interaction);
