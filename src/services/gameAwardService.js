@@ -1,4 +1,4 @@
-// src/services/gameAwardService.js - Complete with GP reward integration
+// src/services/gameAwardService.js - Complete with GP reward integration AND GP display in embeds
 import { User } from '../models/User.js';
 import { Challenge } from '../models/Challenge.js';
 import retroAPI from './retroAPI.js';
@@ -6,7 +6,7 @@ import { config } from '../config/config.js';
 import { EmbedBuilder } from 'discord.js';
 import RetroAPIUtils from '../utils/RetroAPIUtils.js';
 import AlertUtils, { ALERT_TYPES } from '../utils/AlertUtils.js';
-import gpRewardService from './gpRewardService.js';
+import gpRewardService, { GP_REWARDS } from './gpRewardService.js';
 
 const AWARD_EMOJIS = {
     MASTERY: '✨',
@@ -627,19 +627,46 @@ class GameAwardService {
     }
 
     /**
-     * FIXED: Announce regular game award (always goes to mastery channel) + Award GP
+     * UPDATED: Announce regular game award with GP information included in embed
      */
     async announceRegularAward(user, gameInfo, gameId, isMastery, isBeaten) {
         const profileImageUrl = await this.getUserProfileImageUrl(user.raUsername);
         const thumbnailUrl = gameInfo?.imageIcon ? `https://retroachievements.org${gameInfo.imageIcon}` : null;
         
-        // FIXED: Always use MASTERY alert type for regular games
+        // *** AWARD GP FOR REGULAR GAME COMPLETION FIRST ***
+        let gpAwarded = false;
+        try {
+            await gpRewardService.awardRegularGameGP(user, gameInfo.title, isMastery);
+            gpAwarded = true;
+            console.log(`✅ Successfully awarded ${isMastery ? 'mastery' : 'beaten'} GP to ${user.raUsername} for ${gameInfo.title}`);
+        } catch (gpError) {
+            console.error(`Error awarding regular game GP to ${user.raUsername}:`, gpError);
+            // Continue with announcement even if GP fails
+        }
+
+        // Create enhanced description with GP information
+        const userLink = `[${user.raUsername}](https://retroachievements.org/user/${user.raUsername})`;
+        const gameLink = `[${gameInfo.title}](https://retroachievements.org/game/${gameId})`;
+        
+        let description = '';
+        if (isMastery) {
+            description = `${userLink} has mastered ${gameLink}!\n` +
+                         `They've earned every achievement in the game.`;
+        } else {
+            description = `${userLink} has beaten ${gameLink}!\n` +
+                         `They've completed the core achievements.`;
+        }
+
+        // Add GP reward information to description
+        if (gpAwarded) {
+            description += `\n\n💰 **+${GP_REWARDS.REGULAR_MASTERY} GP** awarded for this achievement!`;
+        }
+        
+        // Send alert with enhanced description
         await AlertUtils.sendAchievementAlert({
             username: user.raUsername,
             achievementTitle: isMastery ? `Mastery of ${gameInfo.title}` : `Beaten ${gameInfo.title}`,
-            achievementDescription: isMastery ? 
-                `${user.raUsername} has mastered ${gameInfo.title} by earning all achievements in hardcore mode!` :
-                `${user.raUsername} has beaten ${gameInfo.title} by completing all core achievements!`,
+            achievementDescription: description,
             gameTitle: gameInfo.title,
             gameId: gameId,
             thumbnail: thumbnailUrl,
@@ -648,37 +675,32 @@ class GameAwardService {
             isMastery: isMastery,
             isBeaten: isBeaten
         }, ALERT_TYPES.MASTERY); // Always use MASTERY channel for regular games
-
-        // *** ADD GP REWARD FOR REGULAR GAME COMPLETION ***
-        try {
-            await gpRewardService.awardRegularGameGP(user, gameInfo.title, isMastery);
-            console.log(`✅ Successfully awarded ${isMastery ? 'mastery' : 'beaten'} GP to ${user.raUsername} for ${gameInfo.title}`);
-        } catch (gpError) {
-            console.error(`Error awarding regular game GP to ${user.raUsername}:`, gpError);
-            // Don't fail the announcement because of GP error
-        }
     }
 
     /**
-     * FIXED: Announce monthly/shadow award (goes to appropriate channel) + Award GP
+     * UPDATED: Announce monthly/shadow award with GP information included in embed
      */
     async announceMonthlyAward(user, gameInfo, gameId, awardType, systemType) {
         let awardTitle = '';
         let awardColor = '';
         let awardEmoji = '';
+        let gpAmount = 0;
         
         if (awardType === 'mastery') {
             awardTitle = `${systemType === 'shadow' ? 'Shadow' : 'Monthly'} Challenge Mastery`;
             awardColor = '#FFD700'; // Gold for mastery
             awardEmoji = AWARD_EMOJIS.MASTERY;
+            gpAmount = systemType === 'shadow' ? GP_REWARDS.SHADOW_MASTERY : GP_REWARDS.MONTHLY_MASTERY;
         } else if (awardType === 'beaten') {
             awardTitle = `${systemType === 'shadow' ? 'Shadow' : 'Monthly'} Challenge Beaten`;
             awardColor = '#C0C0C0'; // Silver for beaten
             awardEmoji = AWARD_EMOJIS.BEATEN;
+            gpAmount = systemType === 'shadow' ? GP_REWARDS.SHADOW_BEATEN : GP_REWARDS.MONTHLY_BEATEN;
         } else if (awardType === 'participation') {
             awardTitle = `${systemType === 'shadow' ? 'Shadow' : 'Monthly'} Challenge Participation`;
             awardColor = '#CD7F32'; // Bronze for participation
             awardEmoji = AWARD_EMOJIS.PARTICIPATION;
+            gpAmount = systemType === 'shadow' ? GP_REWARDS.SHADOW_PARTICIPATION : GP_REWARDS.MONTHLY_PARTICIPATION;
         } else {
             console.error(`Unknown award type: ${awardType} for ${systemType} game`);
             return;
@@ -686,6 +708,28 @@ class GameAwardService {
         
         const profileImageUrl = await this.getUserProfileImageUrl(user.raUsername);
         const thumbnailUrl = gameInfo?.imageIcon ? `https://retroachievements.org${gameInfo.imageIcon}` : null;
+        
+        // *** AWARD GP FOR CHALLENGE COMPLETION FIRST ***
+        let gpAwarded = false;
+        try {
+            await gpRewardService.awardChallengeGP(user, gameInfo.title, awardType, systemType);
+            gpAwarded = true;
+            console.log(`✅ Successfully awarded ${awardType} GP to ${user.raUsername} for ${systemType} challenge`);
+        } catch (gpError) {
+            console.error(`Error awarding challenge GP to ${user.raUsername}:`, gpError);
+            // Continue with announcement even if GP fails
+        }
+
+        // Create enhanced description with GP information
+        const userLink = `[${user.raUsername}](https://retroachievements.org/user/${user.raUsername})`;
+        const gameLink = `[${gameInfo.title}](https://retroachievements.org/game/${gameId})`;
+        
+        let description = `${userLink} has earned ${awardTitle.toLowerCase()} for ${gameLink}!`;
+        
+        // Add GP reward information to description
+        if (gpAwarded && gpAmount > 0) {
+            description += `\n\n💰 **+${gpAmount} GP** awarded for this ${systemType} challenge achievement!`;
+        }
         
         // FIXED: Use correct alert type based on system type
         const alertType = systemType === 'shadow' ? ALERT_TYPES.SHADOW : ALERT_TYPES.MONTHLY;
@@ -695,7 +739,7 @@ class GameAwardService {
         await AlertUtils.sendAchievementAlert({
             username: user.raUsername,
             achievementTitle: awardTitle,
-            achievementDescription: `${user.raUsername} has earned ${awardTitle.toLowerCase()} for ${gameInfo.title}!`,
+            achievementDescription: description,
             gameTitle: gameInfo.title,
             gameId: gameId,
             thumbnail: thumbnailUrl,
@@ -703,15 +747,6 @@ class GameAwardService {
             color: awardColor,
             isAward: true
         }, alertType); // Use the correct alert type for proper channel routing
-
-        // *** ADD GP REWARD FOR CHALLENGE COMPLETION ***
-        try {
-            await gpRewardService.awardChallengeGP(user, gameInfo.title, awardType, systemType);
-            console.log(`✅ Successfully awarded ${awardType} GP to ${user.raUsername} for ${systemType} challenge`);
-        } catch (gpError) {
-            console.error(`Error awarding challenge GP to ${user.raUsername}:`, gpError);
-            // Don't fail the announcement because of GP error
-        }
     }
 
     /**
