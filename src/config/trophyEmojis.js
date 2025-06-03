@@ -1,6 +1,12 @@
-// src/config/trophyEmojis.js - FIXED VERSION with proper connection handling
+// src/config/trophyEmojis.js - CLEAN REWRITE
 import mongoose from 'mongoose';
 import { TrophyEmoji } from '../models/TrophyEmoji.js';
+
+// Cache for emoji data
+let emojiCache = new Map();
+let cacheLastUpdated = 0;
+let isRefreshing = false;
+const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
 
 // Default fallback emojis by award level
 const DEFAULT_EMOJIS = {
@@ -10,67 +16,43 @@ const DEFAULT_EMOJIS = {
     special: '🎖️'
 };
 
-// Cache for emoji data to avoid repeated database calls
-let emojiCache = new Map();
-let cacheLastUpdated = 0;
-const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
-let isRefreshing = false;
-
-// Helper function to check if database is connected
+// UTILITY: Check if database is connected
 function isDatabaseConnected() {
     return mongoose.connection.readyState === 1;
 }
 
-// Helper function to get trophy emoji from database - WITH CONNECTION CHECKS
+// MAIN: Get trophy emoji
 async function getTrophyEmoji(challengeType, monthKey, awardLevel) {
     try {
-        // Check database connection first
         if (!isDatabaseConnected()) {
-            console.warn('⚠️ Database not connected, using fallback trophy emoji');
-            return {
-                emojiId: null,
-                emojiName: DEFAULT_EMOJIS[awardLevel] || '🏆'
-            };
+            return { emojiId: null, emojiName: DEFAULT_EMOJIS[awardLevel] || '🏆' };
         }
 
-        // Check if we need to refresh cache
+        // Auto-refresh cache if needed (background)
         const now = Date.now();
         if (now - cacheLastUpdated > CACHE_DURATION && !isRefreshing) {
-            // Don't await to avoid blocking
-            refreshEmojiCacheInternal().catch(error => {
-                console.error('Background trophy emoji cache refresh failed:', error.message);
-            });
+            refreshCache().catch(console.error);
         }
 
-        // Try to get custom emoji from cache first
+        // Try cache for monthly/shadow challenges
         if (challengeType === 'monthly' || challengeType === 'shadow') {
             const cacheKey = `${challengeType}_${monthKey}`;
-            const emoji = emojiCache.get(cacheKey);
+            const cached = emojiCache.get(cacheKey);
             
-            if (emoji && emoji.emojiId) {
-                return {
-                    emojiId: emoji.emojiId,
-                    emojiName: emoji.emojiName
-                };
+            if (cached?.emojiId) {
+                return { emojiId: cached.emojiId, emojiName: cached.emojiName };
             }
         }
         
-        // Fall back to default emoji
-        return {
-            emojiId: null,
-            emojiName: DEFAULT_EMOJIS[awardLevel] || '🏆'
-        };
+        // Fall back to default
+        return { emojiId: null, emojiName: DEFAULT_EMOJIS[awardLevel] || '🏆' };
     } catch (error) {
         console.error('Error getting trophy emoji:', error.message);
-        // Always provide fallback on error
-        return {
-            emojiId: null,
-            emojiName: DEFAULT_EMOJIS[awardLevel] || '🏆'
-        };
+        return { emojiId: null, emojiName: DEFAULT_EMOJIS[awardLevel] || '🏆' };
     }
 }
 
-// Utility function to format emoji for display
+// UTILITY: Format emoji for display
 function formatTrophyEmoji(emojiId, emojiName) {
     if (emojiId && emojiName) {
         return `<:${emojiName}:${emojiId}>`;
@@ -78,15 +60,9 @@ function formatTrophyEmoji(emojiId, emojiName) {
     return emojiName || '🏆';
 }
 
-// Function to refresh emoji cache from database - WITH SAFETY CHECKS
-async function refreshEmojiCacheInternal() {
-    if (isRefreshing) {
-        console.log('🏆 Trophy emoji cache refresh already in progress, skipping...');
-        return;
-    }
-
-    if (!isDatabaseConnected()) {
-        console.warn('⚠️ Database not connected, skipping trophy emoji cache refresh');
+// INTERNAL: Refresh cache
+async function refreshCache() {
+    if (isRefreshing || !isDatabaseConnected()) {
         return;
     }
 
@@ -95,105 +71,92 @@ async function refreshEmojiCacheInternal() {
     try {
         console.log('🔄 Refreshing trophy emoji cache...');
         
-        // Use Promise.race for timeout protection
-        const allEmojis = await Promise.race([
+        const emojis = await Promise.race([
             TrophyEmoji.find({}).select('challengeType monthKey emojiId emojiName').lean(),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('Trophy cache refresh timeout')), 15000))
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 15000))
         ]);
         
-        // Clear existing cache
         emojiCache.clear();
+        let cached = 0;
         
-        // Populate cache
-        let cachedCount = 0;
-        allEmojis.forEach(emoji => {
+        emojis.forEach(emoji => {
             if (emoji.emojiId && emoji.emojiName) {
                 const cacheKey = `${emoji.challengeType}_${emoji.monthKey}`;
                 emojiCache.set(cacheKey, {
                     emojiId: emoji.emojiId,
                     emojiName: emoji.emojiName
                 });
-                cachedCount++;
+                cached++;
             }
         });
         
         cacheLastUpdated = Date.now();
-        console.log(`✅ Trophy emoji cache refreshed with ${cachedCount} emojis (${allEmojis.length} total)`);
+        console.log(`✅ Trophy emoji cache: ${cached} emojis cached`);
         
     } catch (error) {
-        console.error('❌ Error refreshing trophy emoji cache:', error.message);
-        
-        // If cache is empty and refresh failed, at least we have fallbacks
-        if (emojiCache.size === 0) {
-            console.log('🔄 Trophy cache refresh failed, but fallback emojis available');
-        }
+        console.error('❌ Trophy emoji cache refresh failed:', error.message);
     } finally {
         isRefreshing = false;
     }
 }
 
-// SAFE version for old code compatibility
-export const refreshTrophyEmojiCache = async () => {
+// PUBLIC: For old code compatibility
+async function refreshTrophyEmojiCache() {
     if (!isDatabaseConnected()) {
-        console.log('⚠️ Old trophy emoji cache function called - database not connected');
+        console.log('⚠️ Cannot refresh trophy emoji cache - database not connected');
         return;
     }
-    console.log('🔄 Old trophy emoji cache function called - delegating to new safe version');
-    return refreshEmojiCacheInternal();
-};
+    return refreshCache();
+}
 
-// Function to manually clear cache (useful after updates)
+// UTILITY: Clear cache
 function clearEmojiCache() {
     emojiCache.clear();
     cacheLastUpdated = 0;
     console.log('🗑️ Trophy emoji cache cleared');
 }
 
-// Function to get cached emoji count (for debugging)
+// UTILITY: Cache info
 function getEmojiCacheInfo() {
     return {
         size: emojiCache.size,
         lastUpdated: cacheLastUpdated ? new Date(cacheLastUpdated).toISOString() : 'Never',
         isRefreshing,
-        databaseConnected: isDatabaseConnected(),
-        entries: Array.from(emojiCache.entries()).slice(0, 5) // First 5 for debugging
+        databaseConnected: isDatabaseConnected()
     };
 }
 
-// Safe initialization - only if database is connected
-function initializeCache() {
+// INIT: Safe initialization
+function initCache() {
     if (isDatabaseConnected()) {
-        console.log('🏆 Database connected, initializing trophy emoji cache...');
-        refreshEmojiCacheInternal().catch(error => {
-            console.error('Initial trophy emoji cache failed:', error.message);
-        });
+        console.log('🏆 Initializing trophy emoji cache...');
+        refreshCache().catch(console.error);
     } else {
-        console.log('⏳ Database not ready, trophy emoji cache will initialize later...');
+        console.log('⏳ Waiting for database connection for trophy emoji cache...');
         
-        // Set up a one-time listener for when connection is ready
-        if (mongoose.connection.readyState === 0 || mongoose.connection.readyState === 2) {
-            const connectionHandler = () => {
-                console.log('🏆 Database connected, late-initializing trophy emoji cache...');
-                refreshEmojiCacheInternal().catch(error => {
-                    console.error('Late trophy emoji cache init failed:', error.message);
-                });
-                mongoose.connection.off('connected', connectionHandler);
-            };
-            mongoose.connection.on('connected', connectionHandler);
+        const onConnect = () => {
+            console.log('🏆 Database ready, initializing trophy emoji cache...');
+            refreshCache().catch(console.error);
+            mongoose.connection.off('connected', onConnect);
+        };
+        
+        if (mongoose.connection.readyState === 2) {
+            mongoose.connection.on('connected', onConnect);
         }
     }
 }
 
-// Initialize cache safely (not on module load)
-setTimeout(initializeCache, 100);
+// Initialize after a short delay
+setTimeout(initCache, 100);
 
-// Export all functions
+// EXPORTS
 export {
     DEFAULT_EMOJIS,
     getTrophyEmoji,
     formatTrophyEmoji,
+    refreshTrophyEmojiCache,
     clearEmojiCache,
-    getEmojiCacheInfo,
-    refreshEmojiCacheInternal as safeCacheRefresh,
-    refreshTrophyEmojiCache
+    getEmojiCacheInfo
 };
+
+export const safeCacheRefresh = refreshCache;
