@@ -73,9 +73,8 @@ class CombinationService {
             if (maxCombinations > 0) {
                 const resultItem = await GachaItem.findOne({ itemId: rule.result.itemId });
                 if (resultItem) {
-                    // Use the actual ruleId field that exists, or fallback to _id
-                    const buttonId = rule.ruleId || rule._id.toString();
-                    console.log('🔍 Using buttonId:', buttonId, 'from rule:', { ruleId: rule.ruleId, _id: rule._id });
+                    // Use the ruleId field directly - that's what your system uses
+                    const buttonId = rule.ruleId;
                     
                     const combinationObj = {
                         buttonId: buttonId, // Simple, consistent ID for buttons
@@ -258,18 +257,8 @@ class CombinationService {
 
     async performCombination(user, buttonId, quantity = 1) {
         try {
-            // Use the same lookup approach that worked for finding combinations
-            let rule = null;
-            
-            // Try ruleId field first, then _id field
-            if (buttonId) {
-                rule = await CombinationRule.findOne({ ruleId: buttonId, isActive: true });
-                
-                if (!rule) {
-                    // Try _id if ruleId didn't work
-                    rule = await CombinationRule.findOne({ _id: buttonId, isActive: true });
-                }
-            }
+            // Use ruleId field - that's where your custom IDs are stored
+            const rule = await CombinationRule.findOne({ ruleId: buttonId, isActive: true });
             
             if (!rule) {
                 throw new Error(`Combination rule not found for ID: ${buttonId}`);
@@ -606,11 +595,8 @@ class CombinationService {
                     const user = await this.getUserForInteraction(interaction);
                     if (!user) return true;
 
-                    // Find max combinations available using same lookup as finding combinations
-                    let rule = await CombinationRule.findOne({ ruleId: buttonId, isActive: true });
-                    if (!rule) {
-                        rule = await CombinationRule.findOne({ _id: buttonId, isActive: true });
-                    }
+                    // Use ruleId field lookup
+                    const rule = await CombinationRule.findOne({ ruleId: buttonId, isActive: true });
                     
                     if (!rule) {
                         await interaction.editReply({
