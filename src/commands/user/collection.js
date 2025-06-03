@@ -1,4 +1,4 @@
-// src/commands/user/collection.js - COMPLETE UPDATED VERSION with new combination system
+// src/commands/user/collection.js - UPDATED with combination priority system
 import { 
     SlashCommandBuilder, 
     EmbedBuilder,
@@ -36,10 +36,20 @@ export default {
             if (!user.gachaCollection || user.gachaCollection.length === 0) {
                 return interaction.editReply({
                     content: '📦 Your collection is empty! Visit the gacha channel to start collecting items.\n\n' +
-                             '💡 **Tip:** When you get the right ingredients, you\'ll receive combination alerts!'
+                             '💡 **Tip:** When you get the right ingredients, combinations will be available in /collection!'
                 });
             }
 
+            // PRIORITY: Check for combinations first!
+            const possibleCombinations = await combinationService.checkPossibleCombinations(user);
+            
+            if (possibleCombinations.length > 0) {
+                // Show combination alert instead of normal collection
+                await combinationService.showCombinationAlert(interaction, user, possibleCombinations);
+                return;
+            }
+
+            // No combinations available, show normal collection
             await this.showItemsPage(interaction, user, 'all', 0);
         } catch (error) {
             console.error('Error displaying collection:', error);
@@ -119,16 +129,21 @@ export default {
         // Get combination stats
         const combinationStats = combinationService.getCombinationStats(user);
 
-        // Footer
+        // Footer with combination hint
+        let footerText = '';
         if (totalPages > 1) {
-            embed.setFooter({ 
-                text: `Page ${page + 1}/${totalPages} • ${startIndex + 1}-${endIndex} of ${filteredItems.length} items • ${combinationStats.totalCombined} from combinations`
-            });
+            footerText = `Page ${page + 1}/${totalPages} • ${startIndex + 1}-${endIndex} of ${filteredItems.length} items • ${combinationStats.totalCombined} from combinations`;
         } else {
-            embed.setFooter({ 
-                text: `${filteredItems.length} items • ${combinationStats.totalCombined} from combinations • ⁽ⁿ⁾ = quantity`
-            });
+            footerText = `${filteredItems.length} items • ${combinationStats.totalCombined} from combinations • ⁽ⁿ⁾ = quantity`;
         }
+
+        // Check if user has potential combinations (not triggered ones)
+        const possibleCombinations = await combinationService.checkPossibleCombinations(user);
+        if (possibleCombinations.length > 0) {
+            footerText += ` • ⚗️ ${possibleCombinations.length} combination(s) available!`;
+        }
+
+        embed.setFooter({ text: footerText });
 
         // Create components
         const components = [];
@@ -184,6 +199,17 @@ export default {
                 .setLabel('📊 Stats')
                 .setStyle(ButtonStyle.Secondary)
         );
+
+        // Add combination button if available
+        if (possibleCombinations.length > 0) {
+            actionRow.addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`coll_combinations_${user.raUsername}`)
+                    .setLabel(`⚗️ Combinations (${possibleCombinations.length})`)
+                    .setStyle(ButtonStyle.Danger)
+                    .setEmoji('⚗️')
+            );
+        }
 
         components.push(actionRow);
 
@@ -265,11 +291,12 @@ export default {
         description += `🏆 Series Rewards: ${sourceBreakdown.series_completion || 0}\n`;
         description += `🎁 Player Gifts: ${sourceBreakdown.player_transfer || 0}\n`;
 
-        // UPDATED: New combination system info
+        // Combination system info
+        const possibleCombinations = await combinationService.checkPossibleCombinations(user);
         description += `\n**💡 Combination System:**\n`;
-        description += `🔮 Combinations require confirmation\n`;
-        description += `📢 You'll get alerts when ingredients are available\n`;
-        description += `⚗️ Check DMs or collection for combination options`;
+        description += `⚗️ Current combinations available: ${possibleCombinations.length}\n`;
+        description += `🔮 Combinations show automatically in /collection\n`;
+        description += `📢 Public alerts posted when new combinations unlock`;
 
         embed.setDescription(description);
 
@@ -618,10 +645,9 @@ export default {
             await givingUser.save();
             await receivingUser.save();
 
-            // UPDATED: Check for combinations using the new player transfer method
+            // Check for combinations using the new system
             let combinationResult = { hasCombinations: false };
             try {
-                // Use the specific player transfer combination alert method
                 combinationResult = await combinationService.triggerCombinationAlertsForPlayerTransfer(
                     receivingUser, 
                     itemId, 
@@ -652,16 +678,13 @@ export default {
                 )
                 .setTimestamp();
 
-            // UPDATED: Handle new combination alert system responses
+            // Handle combination alerts
             if (combinationResult.hasCombinations) {
                 let alertMessage = `${receivingUser.raUsername} now has ${combinationResult.combinationCount} combination option(s) available!`;
                 
-                if (combinationResult.publicAnnouncementSent && combinationResult.sentViaDM) {
-                    alertMessage += '\n• Public announcement posted in gacha channel\n• Private combination options sent via DM';
-                } else if (combinationResult.sentViaDM) {
-                    alertMessage += '\n• Private combination options sent via DM';
-                } else if (combinationResult.publicAnnouncementSent) {
+                if (combinationResult.publicAnnouncementSent) {
                     alertMessage += '\n• Public announcement posted in gacha channel';
+                    alertMessage += '\n• They will see combinations when using /collection';
                 }
                 
                 if (combinationResult.error) {
@@ -671,12 +694,6 @@ export default {
                 embed.addFields({
                     name: '⚗️ Combination Alerts Sent!',
                     value: alertMessage,
-                    inline: false
-                });
-            } else if (combinationResult.error && combinationResult.error !== 'Could not check for combinations') {
-                embed.addFields({
-                    name: '⚠️ Combination Check',
-                    value: `Item transferred successfully, but combination alert had an issue: ${combinationResult.error}`,
                     inline: false
                 });
             }
@@ -703,7 +720,7 @@ export default {
         return emojiRegex.test(str);
     },
 
-    // FIXED: Main interaction handler with proper modal handling
+    // Main interaction handler
     async handleInteraction(interaction) {
         if (!interaction.customId.startsWith('coll_')) return;
 
@@ -756,7 +773,7 @@ export default {
             }
 
             // Handle give button (shows modal - DON'T defer this)
-            if (interaction.customId.startsWith('coll_give_')) {
+            if (interaction.customId.startsWith('coll_give_') && !interaction.customId.includes('_confirm_') && !interaction.customId.includes('_cancel')) {
                 const parts = interaction.customId.split('_');
                 const username = parts[2];
 
@@ -774,6 +791,37 @@ export default {
 
                 // Show modal immediately without deferring
                 await this.showGiveItemModal(interaction, user);
+                return;
+            }
+
+            // Handle combinations button
+            if (interaction.customId.startsWith('coll_combinations_')) {
+                await interaction.deferUpdate();
+                
+                const parts = interaction.customId.split('_');
+                const username = parts[2];
+
+                const user = await User.findOne({ 
+                    raUsername: { $regex: new RegExp(`^${username}$`, 'i') }
+                });
+
+                if (!user || user.discordId !== interaction.user.id) {
+                    return interaction.followUp({ 
+                        content: '❌ You can only view your own combinations.', 
+                        ephemeral: true 
+                    });
+                }
+
+                const possibleCombinations = await combinationService.checkPossibleCombinations(user);
+                if (possibleCombinations.length > 0) {
+                    await combinationService.showCombinationAlert(interaction, user, possibleCombinations);
+                } else {
+                    await interaction.editReply({
+                        content: '❌ No combinations currently available.',
+                        embeds: [],
+                        components: []
+                    });
+                }
                 return;
             }
 
