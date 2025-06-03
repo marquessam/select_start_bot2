@@ -1,4 +1,4 @@
-// src/commands/user/collection.js - UPDATED with combination priority system
+// src/commands/user/collection.js - SIMPLIFIED USER-FRIENDLY VERSION
 import { 
     SlashCommandBuilder, 
     EmbedBuilder,
@@ -16,6 +16,8 @@ import gachaService from '../../services/gachaService.js';
 import combinationService from '../../services/combinationService.js';
 import { formatGachaEmoji } from '../../config/gachaEmojis.js';
 import { COLORS } from '../../utils/FeedUtils.js';
+
+const GACHA_TRADE_CHANNEL_ID = '1379402075120730185';
 
 export default {
     data: new SlashCommandBuilder()
@@ -114,7 +116,7 @@ export default {
                 for (let i = 0; i < rarityItems.length; i++) {
                     const item = rarityItems[i];
                     const emoji = formatGachaEmoji(item.emojiId, item.emojiName);
-                    const quantity = (item.quantity || 1) > 1 ? `⁽${item.quantity}⁾` : '';
+                    const quantity = (item.quantity || 1) > 1 ? `x${item.quantity}` : '';
                     currentRow += `${emoji}${quantity} `;
                     
                     if ((i + 1) % 5 === 0 || i === rarityItems.length - 1) {
@@ -134,7 +136,7 @@ export default {
         if (totalPages > 1) {
             footerText = `Page ${page + 1}/${totalPages} • ${startIndex + 1}-${endIndex} of ${filteredItems.length} items • ${combinationStats.totalCombined} from combinations`;
         } else {
-            footerText = `${filteredItems.length} items • ${combinationStats.totalCombined} from combinations • ⁽ⁿ⁾ = quantity`;
+            footerText = `${filteredItems.length} items • ${combinationStats.totalCombined} from combinations • xN = quantity`;
         }
 
         // Check if user has potential combinations (not triggered ones)
@@ -145,7 +147,7 @@ export default {
 
         embed.setFooter({ text: footerText });
 
-        // Create components
+        // Create components - SIMPLIFIED VERSION
         const components = [];
 
         // Series dropdown (if multiple series)
@@ -158,60 +160,66 @@ export default {
             components.push(new ActionRowBuilder().addComponents(seriesMenu));
         }
 
-        // Action buttons
-        const actionRow = new ActionRowBuilder();
-        
-        // Pagination buttons (only if more than one page)
+        // Pagination buttons (separate row if needed)
         if (totalPages > 1) {
-            actionRow.addComponents(
-                new ButtonBuilder()
-                    .setCustomId(`coll_prev_${user.raUsername}_${filter}`)
-                    .setLabel('◀')
-                    .setStyle(ButtonStyle.Secondary)
-                    .setDisabled(page === 0),
-                new ButtonBuilder()
-                    .setCustomId('page_indicator')
-                    .setLabel(`${page + 1}/${totalPages}`)
-                    .setStyle(ButtonStyle.Secondary)
-                    .setDisabled(true),
-                new ButtonBuilder()
-                    .setCustomId(`coll_next_${user.raUsername}_${filter}`)
-                    .setLabel('▶')
-                    .setStyle(ButtonStyle.Secondary)
-                    .setDisabled(page === totalPages - 1)
-            );
+            const paginationRow = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId(`coll_prev_${user.raUsername}_${filter}`)
+                        .setLabel('◀')
+                        .setStyle(ButtonStyle.Secondary)
+                        .setDisabled(page === 0),
+                    new ButtonBuilder()
+                        .setCustomId('page_indicator')
+                        .setLabel(`${page + 1}/${totalPages}`)
+                        .setStyle(ButtonStyle.Secondary)
+                        .setDisabled(true),
+                    new ButtonBuilder()
+                        .setCustomId(`coll_next_${user.raUsername}_${filter}`)
+                        .setLabel('▶')
+                        .setStyle(ButtonStyle.Secondary)
+                        .setDisabled(page === totalPages - 1)
+                );
+            components.push(paginationRow);
         }
 
-        // Main action buttons
-        actionRow.addComponents(
-            new ButtonBuilder()
-                .setCustomId(`coll_inspect_${user.raUsername}_${filter}_${page}`)
-                .setLabel('🔍 Inspect')
-                .setStyle(ButtonStyle.Primary)
-                .setDisabled(pageItems.length === 0),
-            new ButtonBuilder()
-                .setCustomId(`coll_give_${user.raUsername}`)
-                .setLabel('🎁 Give Item')
-                .setStyle(ButtonStyle.Success)
-                .setDisabled(pageItems.length === 0),
-            new ButtonBuilder()
-                .setCustomId(`coll_stats_${user.raUsername}`)
-                .setLabel('📊 Stats')
-                .setStyle(ButtonStyle.Secondary)
-        );
+        // Action dropdown menu (SIMPLIFIED)
+        const actionOptions = [
+            {
+                label: '🔍 Inspect Items',
+                value: 'inspect',
+                description: 'View detailed information about your items',
+                emoji: '🔍'
+            },
+            {
+                label: '🎁 Give Item',
+                value: 'give',
+                description: 'Transfer an item to another player',
+                emoji: '🎁'
+            },
+            {
+                label: '📊 Collection Stats',
+                value: 'stats',
+                description: 'View your collection statistics',
+                emoji: '📊'
+            }
+        ];
 
-        // Add combination button if available
         if (possibleCombinations.length > 0) {
-            actionRow.addComponents(
-                new ButtonBuilder()
-                    .setCustomId(`coll_combinations_${user.raUsername}`)
-                    .setLabel(`⚗️ Combinations (${possibleCombinations.length})`)
-                    .setStyle(ButtonStyle.Danger)
-                    .setEmoji('⚗️')
-            );
+            actionOptions.unshift({
+                label: `⚗️ Combinations (${possibleCombinations.length})`,
+                value: 'combinations',
+                description: 'View and perform available combinations',
+                emoji: '⚗️'
+            });
         }
 
-        components.push(actionRow);
+        const actionMenu = new StringSelectMenuBuilder()
+            .setCustomId(`coll_actions_${user.raUsername}_${filter}_${page}`)
+            .setPlaceholder('Choose an action...')
+            .addOptions(actionOptions);
+
+        components.push(new ActionRowBuilder().addComponents(actionMenu));
 
         await interaction.editReply({ embeds: [embed], components: components });
     },
@@ -371,15 +379,116 @@ export default {
             });
         }
 
-        const backButton = new ActionRowBuilder()
+        // Action buttons for inspect view
+        const actionRow = new ActionRowBuilder()
             .addComponents(
                 new ButtonBuilder()
                     .setCustomId(`coll_back_${user.raUsername}_${returnFilter}_${returnPage}`)
                     .setLabel('← Back')
-                    .setStyle(ButtonStyle.Secondary)
+                    .setStyle(ButtonStyle.Secondary),
+                new ButtonBuilder()
+                    .setCustomId(`coll_share_${user.raUsername}_${itemId}`)
+                    .setLabel('📢 Share in Trade Channel')
+                    .setStyle(ButtonStyle.Primary)
+                    .setEmoji('📢')
             );
 
-        await interaction.editReply({ embeds: [embed], components: [backButton] });
+        await interaction.editReply({ embeds: [embed], components: [actionRow] });
+    },
+
+    async shareItemToTradeChannel(interaction, user, itemId) {
+        try {
+            await interaction.deferUpdate();
+
+            const collectionItem = user.gachaCollection.find(item => item.itemId === itemId);
+            if (!collectionItem) {
+                return interaction.followUp({ 
+                    content: '❌ Item not found in your collection.', 
+                    ephemeral: true 
+                });
+            }
+
+            const originalItem = await GachaItem.findOne({ itemId });
+            const rarityColor = gachaService.getRarityColor(collectionItem.rarity);
+            const rarityEmoji = gachaService.getRarityEmoji(collectionItem.rarity);
+            const rarityName = gachaService.getRarityDisplayName(collectionItem.rarity);
+            const itemEmoji = formatGachaEmoji(collectionItem.emojiId, collectionItem.emojiName);
+
+            // Create public embed for trade channel
+            const shareEmbed = new EmbedBuilder()
+                .setTitle(`${itemEmoji} ${collectionItem.itemName}`)
+                .setColor(rarityColor)
+                .setAuthor({ 
+                    name: `${user.raUsername}'s Collection`, 
+                    iconURL: interaction.user.displayAvatarURL() 
+                })
+                .setTimestamp();
+
+            let shareDescription = `${rarityEmoji} **${rarityName}**`;
+            
+            if (collectionItem.quantity && collectionItem.quantity > 1) {
+                shareDescription += `\n**Quantity:** ${collectionItem.quantity}`;
+            }
+            
+            if (collectionItem.seriesId) {
+                shareDescription += `\n**Series:** ${collectionItem.seriesId.charAt(0).toUpperCase() + collectionItem.seriesId.slice(1)}`;
+            }
+
+            const sourceNames = { 
+                gacha: 'Gacha Pull', 
+                combined: 'Combination', 
+                series_completion: 'Series Completion', 
+                admin_grant: 'Admin Grant',
+                player_transfer: 'Player Gift'
+            };
+            const source = collectionItem.source || 'gacha';
+            shareDescription += `\n**Source:** ${sourceNames[source] || 'Unknown'}`;
+
+            shareEmbed.setDescription(shareDescription);
+
+            // Add description and flavor text if available
+            const itemDescription = collectionItem.description || originalItem?.description;
+            if (itemDescription) {
+                shareEmbed.addFields({ name: 'Description', value: `*${itemDescription}*`, inline: false });
+            }
+
+            const flavorText = collectionItem.flavorText || originalItem?.flavorText;
+            if (flavorText) {
+                shareEmbed.addFields({ name: 'Flavor Text', value: `*"${flavorText}"*`, inline: false });
+            }
+
+            shareEmbed.setFooter({ text: `Shared from /collection • Use /collection to view your own items!` });
+
+            // Send to trade channel
+            const tradeChannel = await interaction.client.channels.fetch(GACHA_TRADE_CHANNEL_ID);
+            if (!tradeChannel) {
+                return interaction.followUp({ 
+                    content: '❌ Trade channel not found. Please contact an admin.', 
+                    ephemeral: true 
+                });
+            }
+
+            await tradeChannel.send({ 
+                content: `🎊 **${user.raUsername}** is showing off their item!`,
+                embeds: [shareEmbed] 
+            });
+
+            await interaction.followUp({ 
+                content: `✅ Successfully shared **${collectionItem.itemName}** to <#${GACHA_TRADE_CHANNEL_ID}>!`, 
+                ephemeral: true 
+            });
+
+        } catch (error) {
+            console.error('Error sharing item to trade channel:', error);
+            try {
+                await interaction.followUp({ 
+                    content: '❌ Failed to share item. Please try again later.', 
+                    ephemeral: true 
+                });
+            } catch (followUpError) {
+                console.error('Error sending error follow-up:', followUpError);
+            }
+        }
     },
 
     async showInspectMenu(interaction, user, filter, page) {
@@ -434,7 +543,7 @@ export default {
         });
 
         const inspectMenu = new StringSelectMenuBuilder()
-            .setCustomId(`coll_inspect_${user.raUsername}_${filter}_${page}`)
+            .setCustomId(`coll_inspect_item_${user.raUsername}_${filter}_${page}`)
             .setPlaceholder('Choose an item to inspect...')
             .addOptions(itemOptions);
 
@@ -536,7 +645,7 @@ export default {
             const givingUserItem = givingUser.gachaCollection?.find(item => item.itemId === itemId);
             if (!givingUserItem) {
                 return interaction.editReply({
-                    content: `❌ You don't have the item "${itemId}" in your collection.\nUse the Inspect button to see your items and their IDs.`
+                    content: `❌ You don't have the item "${itemId}" in your collection.\nUse the Inspect option to see your items and their IDs.`
                 });
             }
 
@@ -772,10 +881,11 @@ export default {
                 return;
             }
 
-            // Handle give button (shows modal - DON'T defer this)
-            if (interaction.customId.startsWith('coll_give_') && !interaction.customId.includes('_confirm_') && !interaction.customId.includes('_cancel')) {
+            // Handle share button
+            if (interaction.customId.startsWith('coll_share_')) {
                 const parts = interaction.customId.split('_');
                 const username = parts[2];
+                const itemId = parts[3];
 
                 const user = await User.findOne({ 
                     raUsername: { $regex: new RegExp(`^${username}$`, 'i') }
@@ -783,23 +893,25 @@ export default {
 
                 if (!user || user.discordId !== interaction.user.id) {
                     await interaction.reply({ 
-                        content: '❌ You can only give items from your own collection.', 
+                        content: '❌ You can only share your own items.', 
                         ephemeral: true 
                     });
                     return;
                 }
 
-                // Show modal immediately without deferring
-                await this.showGiveItemModal(interaction, user);
+                await this.shareItemToTradeChannel(interaction, user, itemId);
                 return;
             }
 
-            // Handle combinations button
-            if (interaction.customId.startsWith('coll_combinations_')) {
+            // Handle action dropdown menu
+            if (interaction.customId.startsWith('coll_actions_') && interaction.isStringSelectMenu()) {
                 await interaction.deferUpdate();
                 
                 const parts = interaction.customId.split('_');
                 const username = parts[2];
+                const filter = parts[3];
+                const page = parseInt(parts[4]);
+                const action = interaction.values[0];
 
                 const user = await User.findOne({ 
                     raUsername: { $regex: new RegExp(`^${username}$`, 'i') }
@@ -807,20 +919,33 @@ export default {
 
                 if (!user || user.discordId !== interaction.user.id) {
                     return interaction.followUp({ 
-                        content: '❌ You can only view your own combinations.', 
+                        content: '❌ You can only view your own collection.', 
                         ephemeral: true 
                     });
                 }
 
-                const possibleCombinations = await combinationService.checkPossibleCombinations(user);
-                if (possibleCombinations.length > 0) {
-                    await combinationService.showCombinationAlert(interaction, user, possibleCombinations);
-                } else {
-                    await interaction.editReply({
-                        content: '❌ No combinations currently available.',
-                        embeds: [],
-                        components: []
-                    });
+                switch (action) {
+                    case 'inspect':
+                        await this.showInspectMenu(interaction, user, filter, page);
+                        break;
+                    case 'give':
+                        await this.showGiveItemModal(interaction, user);
+                        break;
+                    case 'stats':
+                        await this.showCollectionStats(interaction, user);
+                        break;
+                    case 'combinations':
+                        const possibleCombinations = await combinationService.checkPossibleCombinations(user);
+                        if (possibleCombinations.length > 0) {
+                            await combinationService.showCombinationAlert(interaction, user, possibleCombinations);
+                        } else {
+                            await interaction.editReply({
+                                content: '❌ No combinations currently available.',
+                                embeds: [],
+                                components: []
+                            });
+                        }
+                        break;
                 }
                 return;
             }
@@ -875,20 +1000,12 @@ export default {
                     break;
 
                 case 'inspect':
-                    if (interaction.isStringSelectMenu()) {
+                    if (interaction.customId.startsWith('coll_inspect_item_') && interaction.isStringSelectMenu()) {
                         const itemId = interaction.values[0];
-                        const returnFilter = parts[3] || 'all';
-                        const returnPage = parseInt(parts[4]) || 0;
+                        const returnFilter = parts[4] || 'all';
+                        const returnPage = parseInt(parts[5]) || 0;
                         await this.showItemDetail(interaction, user, itemId, returnFilter, returnPage);
-                    } else {
-                        const filter = parts[3] || 'all';
-                        const page = parseInt(parts[4]) || 0;
-                        await this.showInspectMenu(interaction, user, filter, page);
                     }
-                    break;
-
-                case 'stats':
-                    await this.showCollectionStats(interaction, user);
                     break;
 
                 case 'back':
