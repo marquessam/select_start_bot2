@@ -30,13 +30,13 @@ async function loadGPService() {
         console.warn('Game awards will still be announced without GP rewards');
         // Define fallback GP_REWARDS to prevent errors
         GP_REWARDS = {
-            REGULAR_MASTERY: 500,
-            MONTHLY_MASTERY: 1000,
-            MONTHLY_BEATEN: 500,
-            MONTHLY_PARTICIPATION: 250,
-            SHADOW_MASTERY: 1000,
-            SHADOW_BEATEN: 500,
-            SHADOW_PARTICIPATION: 250
+            REGULAR_MASTERY: 50,
+            MONTHLY_MASTERY: 100,
+            MONTHLY_BEATEN: 50,
+            MONTHLY_PARTICIPATION: 25,
+            SHADOW_MASTERY: 100,
+            SHADOW_BEATEN: 50,
+            SHADOW_PARTICIPATION: 25
         };
         gpServiceLoaded = true; // Mark as loaded even if failed
     }
