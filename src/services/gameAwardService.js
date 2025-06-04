@@ -1,4 +1,4 @@
-// src/services/gameAwardService.js - FIXED with robust error handling
+// src/services/gameAwardService.js - FIXED to restore announcements with GP rewards
 import { User } from '../models/User.js';
 import { Challenge } from '../models/Challenge.js';
 import retroAPI from './retroAPI.js';
@@ -7,28 +7,41 @@ import { EmbedBuilder } from 'discord.js';
 import RetroAPIUtils from '../utils/RetroAPIUtils.js';
 import AlertUtils, { ALERT_TYPES } from '../utils/AlertUtils.js';
 
-// FIXED: Handle missing gpRewardService gracefully
+// FIXED: Lazy loading of GP service to prevent module loading issues
 let gpRewardService = null;
 let GP_REWARDS = null;
+let gpServiceLoaded = false;
+let gpServiceLoading = false;
 
-try {
-    const gpModule = await import('./gpRewardService.js');
-    gpRewardService = gpModule.default;
-    GP_REWARDS = gpModule.GP_REWARDS;
-    console.log('✅ GP reward service loaded successfully');
-} catch (gpError) {
-    console.warn('⚠️ GP reward service not available:', gpError.message);
-    console.warn('Game awards will still be announced without GP rewards');
-    // Define fallback GP_REWARDS to prevent errors
-    GP_REWARDS = {
-        REGULAR_MASTERY: 500,
-        MONTHLY_MASTERY: 1000,
-        MONTHLY_BEATEN: 500,
-        MONTHLY_PARTICIPATION: 250,
-        SHADOW_MASTERY: 1000,
-        SHADOW_BEATEN: 500,
-        SHADOW_PARTICIPATION: 250
-    };
+// Lazy load GP service
+async function loadGPService() {
+    if (gpServiceLoaded || gpServiceLoading) return;
+    
+    gpServiceLoading = true;
+    
+    try {
+        const gpModule = await import('./gpRewardService.js');
+        gpRewardService = gpModule.default;
+        GP_REWARDS = gpModule.GP_REWARDS;
+        gpServiceLoaded = true;
+        console.log('✅ GP reward service loaded successfully');
+    } catch (gpError) {
+        console.warn('⚠️ GP reward service not available:', gpError.message);
+        console.warn('Game awards will still be announced without GP rewards');
+        // Define fallback GP_REWARDS to prevent errors
+        GP_REWARDS = {
+            REGULAR_MASTERY: 500,
+            MONTHLY_MASTERY: 1000,
+            MONTHLY_BEATEN: 500,
+            MONTHLY_PARTICIPATION: 250,
+            SHADOW_MASTERY: 1000,
+            SHADOW_BEATEN: 500,
+            SHADOW_PARTICIPATION: 250
+        };
+        gpServiceLoaded = true; // Mark as loaded even if failed
+    }
+    
+    gpServiceLoading = false;
 }
 
 const AWARD_EMOJIS = {
@@ -52,12 +65,8 @@ class GameAwardService {
         // Cache refresh interval
         this.cacheRefreshInterval = 30 * 60 * 1000; // 30 minutes
         
-        // FIXED: Increased award announcement cutoff to 30 days (was 7 days)
-        this.maxAwardAge = 30 * 24 * 60 * 60 * 1000; // 30 days in milliseconds
-        
-        // FIXED: Track announcement attempts for debugging
-        this.announcementAttempts = 0;
-        this.successfulAnnouncements = 0;
+        // RESTORED: Award announcement cutoff back to 7 days like original
+        this.maxAwardAge = 7 * 24 * 60 * 60 * 1000; // 7 days in milliseconds
     }
 
     setClient(client) {
@@ -76,6 +85,9 @@ class GameAwardService {
 
         try {
             console.log('Initializing game award service...');
+            
+            // Load GP service during initialization
+            await loadGPService();
             
             // Refresh the game system map
             await this.refreshGameSystemMap();
@@ -176,7 +188,7 @@ class GameAwardService {
     }
     
     /**
-     * ENHANCED: Initialize session history with better cleanup
+     * RESTORED: Initialize session history with original cleanup logic
      */
     async initializeSessionHistory() {
         console.log('Initializing session award history...');
@@ -199,9 +211,9 @@ class GameAwardService {
             
             console.log(`Initialized session award history with ${totalEntries} entries from ${users.length} users`);
             
-            // ENHANCED: Clean up very old entries from session history
+            // RESTORED: Clean up very old entries from session history (back to 30 days)
             const now = Date.now();
-            const maxAge = 90 * 24 * 60 * 60 * 1000; // 90 days
+            const maxAge = 30 * 24 * 60 * 60 * 1000; // 30 days
             let removedOldEntries = 0;
             
             for (const award of this.sessionAwardHistory) {
@@ -319,14 +331,13 @@ class GameAwardService {
     }
 
     /**
-     * FIXED: Check if a user has mastered a game with improved system detection and error handling
+     * RESTORED: Check if a user has mastered a game with original error handling
      */
     async checkForGameMastery(user, gameId, achievement) {
         try {
             if (!user || !gameId) return false;
             
             console.log(`=== Checking game mastery for ${user.raUsername} on game ${gameId} ===`);
-            this.announcementAttempts++;
             
             // ENHANCED: Force refresh of game system map to ensure we have latest data
             await this.refreshGameSystemMap();
@@ -391,13 +402,13 @@ class GameAwardService {
                 return false;
             }
             
-            // FIXED: More lenient award age check
+            // Check award age to prevent announcing old awards
             const awardDate = new Date(highestAward.awardedAt || highestAward.AwardedAt);
             const now = new Date();
             const ageInMs = now - awardDate;
             
             if (ageInMs > this.maxAwardAge) {
-                console.log(`Award for regular game ${gameId} is ${Math.floor(ageInMs / (24 * 60 * 60 * 1000))} days old (max: ${Math.floor(this.maxAwardAge / (24 * 60 * 60 * 1000))} days), skipping`);
+                console.log(`Award for regular game ${gameId} is too old, skipping`);
                 return false;
             }
             
@@ -414,30 +425,24 @@ class GameAwardService {
             // Get game info
             const gameInfo = await RetroAPIUtils.getGameInfo(gameId);
             
-            // Add award to history BEFORE announcement (in case announcement fails)
+            // Add award to history
             await this.addAwardToHistory(awardIdentifier, user);
             
             // FIXED: Always use MASTERY alert type for regular games (mastery and beaten)
             console.log(`Announcing ${awardType} for regular game ${gameId} to MASTERY channel`);
-            const announced = await this.announceRegularAward(user, gameInfo, gameId, isMastery, isBeaten);
+            await this.announceRegularAward(user, gameInfo, gameId, isMastery, isBeaten);
             
-            if (announced) {
-                this.successfulAnnouncements++;
-                console.log(`✅ Successfully announced ${awardType} award for ${user.raUsername} on regular game ${gameInfo.title}`);
-                console.log(`📊 Success rate: ${this.successfulAnnouncements}/${this.announcementAttempts} (${Math.round(this.successfulAnnouncements/this.announcementAttempts*100)}%)`);
-            }
-            
-            return announced;
+            console.log(`✅ Successfully announced ${awardType} award for ${user.raUsername} on regular game ${gameInfo.title}`);
+            return true;
             
         } catch (error) {
-            console.error(`❌ Error checking for game mastery for ${user.raUsername} on game ${gameId}:`, error);
-            // FIXED: Don't let errors stop the announcement system
+            console.error(`Error checking for game mastery for ${user.raUsername} on game ${gameId}:`, error);
             return false;
         }
     }
 
     /**
-     * FIXED: Check for monthly/shadow game awards with proper alert routing and error handling
+     * RESTORED: Check for monthly/shadow game awards with original error handling
      */
     async checkForGameAwards(user, gameId, isShadow) {
         try {
@@ -445,7 +450,6 @@ class GameAwardService {
             
             const systemType = isShadow ? 'shadow' : 'monthly';
             console.log(`=== Checking ${systemType} game awards for ${user.raUsername} on game ${gameId} ===`);
-            this.announcementAttempts++;
             
             // Get user's awards using the proper API endpoint
             const userAwards = await this.getUserAwards(user.raUsername);
@@ -501,13 +505,13 @@ class GameAwardService {
                 return false;
             }
             
-            // FIXED: More lenient award age check
+            // Check award age
             const awardDate = new Date(highestAward.awardedAt || highestAward.AwardedAt);
             const now = new Date();
             const ageInMs = now - awardDate;
             
             if (ageInMs > this.maxAwardAge) {
-                console.log(`Award for ${systemType} game ${gameId} is ${Math.floor(ageInMs / (24 * 60 * 60 * 1000))} days old (max: ${Math.floor(this.maxAwardAge / (24 * 60 * 60 * 1000))} days), skipping`);
+                console.log(`Award for ${systemType} game ${gameId} is too old, skipping`);
                 return false;
             }
             
@@ -520,31 +524,23 @@ class GameAwardService {
             
             // Get game info and announce
             const gameInfo = await RetroAPIUtils.getGameInfo(gameId);
-            
-            // Add award to history BEFORE announcement (in case announcement fails)
             await this.addAwardToHistory(awardIdentifier, user);
             
             // FIXED: Use correct alert type based on system type
             console.log(`Announcing ${awardType} for ${systemType} game ${gameId} to ${systemType.toUpperCase()} channel`);
-            const announced = await this.announceMonthlyAward(user, gameInfo, gameId, awardType, systemType);
+            await this.announceMonthlyAward(user, gameInfo, gameId, awardType, systemType);
             
-            if (announced) {
-                this.successfulAnnouncements++;
-                console.log(`✅ Successfully announced ${awardType} award for ${user.raUsername} on ${systemType} game ${gameInfo.title}`);
-                console.log(`📊 Success rate: ${this.successfulAnnouncements}/${this.announcementAttempts} (${Math.round(this.successfulAnnouncements/this.announcementAttempts*100)}%)`);
-            }
-            
-            return announced;
+            console.log(`✅ Successfully announced ${awardType} award for ${user.raUsername} on ${systemType} game ${gameInfo.title}`);
+            return true;
             
         } catch (error) {
-            console.error(`❌ Error checking for ${isShadow ? 'shadow' : 'monthly'} game awards for ${user.raUsername} on game ${gameId}:`, error);
-            // FIXED: Don't let errors stop the announcement system
+            console.error(`Error checking for ${isShadow ? 'shadow' : 'monthly'} game awards for ${user.raUsername} on game ${gameId}:`, error);
             return false;
         }
     }
 
     /**
-     * FIXED: More lenient duplicate detection
+     * RESTORED: Original duplicate detection logic
      */
     isDuplicateAward(awardIdentifier, user) {
         // Check session history first
@@ -563,39 +559,72 @@ class GameAwardService {
         const [username, systemType, gameId, awardType] = parts;
         const newTimestamp = parts.length >= 5 ? parseInt(parts[4]) : null;
         
-        // FIXED: More lenient checking - only check for exact duplicates
+        // Check user's announced awards with flexible matching
         if (user.announcedAwards && Array.isArray(user.announcedAwards)) {
             for (const existingAward of user.announcedAwards) {
-                // Check for exact match first
-                if (existingAward === awardIdentifier) {
-                    console.log(`Exact duplicate found in user history, skipping`);
-                    return true;
-                }
-                
                 const existingParts = existingAward.split(':');
                 if (existingParts.length >= 4) {
                     const [existingUsername, existingSystem, existingGameId, existingType] = existingParts;
                     const existingTimestamp = existingParts.length >= 5 ? parseInt(existingParts[4]) : null;
                     
-                    // Only treat as duplicate if exact match on all core components AND within 1 hour
+                    // Match if same user, system, game, and award type
                     if (existingUsername === username && 
                         existingSystem === systemType && 
                         existingGameId === gameId && 
                         existingType === awardType) {
                         
+                        console.log(`Found matching award in user's history: ${existingAward}`);
+                        
+                        // For exact duplicates, always skip
+                        if (existingAward === awardIdentifier) {
+                            console.log(`Exact duplicate found, skipping`);
+                            return true;
+                        }
+                        
+                        // RESTORED: More robust timestamp comparison from original
                         if (existingTimestamp && newTimestamp) {
                             const timeDiff = Math.abs(newTimestamp - existingTimestamp);
-                            const oneHour = 60 * 60 * 1000; // 1 hour in milliseconds
+                            const maxTimeDiff = 7 * 24 * 60 * 60 * 1000; // 7 days in milliseconds
                             
-                            if (timeDiff < oneHour) {
-                                console.log(`Award within 1 hour of existing award, treating as duplicate`);
+                            if (timeDiff < maxTimeDiff) {
+                                console.log(`Award within ${Math.floor(timeDiff / (60 * 60 * 1000))} hours of existing award, treating as duplicate`);
                                 return true;
                             }
                         } else {
-                            // If no timestamps, be more lenient - allow it
-                            console.log(`No timestamps available, allowing potential re-announcement`);
-                            return false;
+                            // If no timestamps, treat any matching award as duplicate
+                            console.log(`No timestamps available, treating matching award as duplicate`);
+                            return true;
                         }
+                    }
+                }
+            }
+        }
+        
+        // Check for similar awards in session history (without exact timestamp match)
+        for (const sessionAward of this.sessionAwardHistory) {
+            const sessionParts = sessionAward.split(':');
+            if (sessionParts.length >= 4) {
+                const [sessionUsername, sessionSystem, sessionGameId, sessionType] = sessionParts;
+                const sessionTimestamp = sessionParts.length >= 5 ? parseInt(sessionParts[4]) : null;
+                
+                if (sessionUsername === username && 
+                    sessionSystem === systemType && 
+                    sessionGameId === gameId && 
+                    sessionType === awardType) {
+                    
+                    // If we have timestamps, check if they're within a reasonable timeframe
+                    if (sessionTimestamp && newTimestamp) {
+                        const timeDiff = Math.abs(newTimestamp - sessionTimestamp);
+                        const maxTimeDiff = 24 * 60 * 60 * 1000; // 24 hours
+                        
+                        if (timeDiff < maxTimeDiff) {
+                            console.log(`Similar award found in session history within 24 hours, treating as duplicate`);
+                            return true;
+                        }
+                    } else {
+                        // If no timestamps, be more conservative
+                        console.log(`Similar award found in session history without timestamps, treating as duplicate`);
+                        return true;
                     }
                 }
             }
@@ -619,7 +648,7 @@ class GameAwardService {
             user.announcedAwards = [];
         }
         
-        // ENHANCED: Check if already exists before adding
+        // Check if already exists before adding
         if (!user.announcedAwards.includes(awardIdentifier)) {
             user.announcedAwards.push(awardIdentifier);
             console.log(`Added to user's announced awards: ${awardIdentifier}`);
@@ -634,179 +663,152 @@ class GameAwardService {
             console.log(`Cleaned up ${removedCount} old award entries for ${user.raUsername}`);
         }
         
-        try {
-            await user.save();
-            console.log(`User data saved for ${user.raUsername}`);
-        } catch (saveError) {
-            console.error(`Error saving user data for ${user.raUsername}:`, saveError);
-            // Don't throw error, just log it
-        }
+        await user.save();
+        console.log(`User data saved for ${user.raUsername}`);
     }
 
     /**
-     * FIXED: Announce regular game award with robust GP handling
+     * FIXED: Announce regular game award with GP rewards and original error handling
      */
     async announceRegularAward(user, gameInfo, gameId, isMastery, isBeaten) {
-        try {
-            const profileImageUrl = await this.getUserProfileImageUrl(user.raUsername);
-            const thumbnailUrl = gameInfo?.imageIcon ? `https://retroachievements.org${gameInfo.imageIcon}` : null;
-            
-            // *** AWARD GP FOR REGULAR GAME COMPLETION WITH ROBUST ERROR HANDLING ***
-            let gpAwarded = false;
-            let gpAmount = 0;
-            
-            if (gpRewardService && GP_REWARDS) {
-                try {
-                    gpAmount = GP_REWARDS.REGULAR_MASTERY; // Use the same amount for both mastery and beaten for regular games
-                    await gpRewardService.awardRegularGameGP(user, gameInfo.title, isMastery);
-                    gpAwarded = true;
-                    console.log(`✅ Successfully awarded ${isMastery ? 'mastery' : 'beaten'} GP (${gpAmount}) to ${user.raUsername} for ${gameInfo.title}`);
-                } catch (gpError) {
-                    console.error(`❌ Error awarding regular game GP to ${user.raUsername}:`, gpError);
-                    // FIXED: Continue with announcement even if GP fails
-                    console.log(`📢 Continuing with announcement despite GP error`);
-                }
-            } else {
-                console.log(`⚠️ GP service not available, skipping GP award`);
-            }
-
-            // Create enhanced description with GP information
-            const userLink = `[${user.raUsername}](https://retroachievements.org/user/${user.raUsername})`;
-            const gameLink = `[${gameInfo.title}](https://retroachievements.org/game/${gameId})`;
-            
-            let description = '';
-            if (isMastery) {
-                description = `${userLink} has mastered ${gameLink}!\n` +
-                             `They've earned every achievement in the game.`;
-            } else {
-                description = `${userLink} has beaten ${gameLink}!\n` +
-                             `They've completed the core achievements.`;
-            }
-
-            // Add GP reward information to description
-            if (gpAwarded && gpAmount > 0) {
-                description += `\n\n💰 **+${gpAmount} GP** awarded for this achievement!`;
-            }
-            
-            // FIXED: Wrap AlertUtils call in try-catch
+        // Ensure GP service is loaded
+        await loadGPService();
+        
+        const profileImageUrl = await this.getUserProfileImageUrl(user.raUsername);
+        const thumbnailUrl = gameInfo?.imageIcon ? `https://retroachievements.org${gameInfo.imageIcon}` : null;
+        
+        // *** AWARD GP FOR REGULAR GAME COMPLETION ***
+        let gpAwarded = false;
+        let gpAmount = 0;
+        
+        if (gpRewardService && GP_REWARDS) {
             try {
-                await AlertUtils.sendAchievementAlert({
-                    username: user.raUsername,
-                    achievementTitle: isMastery ? `Mastery of ${gameInfo.title}` : `Beaten ${gameInfo.title}`,
-                    achievementDescription: description,
-                    gameTitle: gameInfo.title,
-                    gameId: gameId,
-                    thumbnail: thumbnailUrl,
-                    badgeUrl: profileImageUrl,
-                    color: isMastery ? '#FFD700' : '#C0C0C0',
-                    isMastery: isMastery,
-                    isBeaten: isBeaten
-                }, ALERT_TYPES.MASTERY); // Always use MASTERY channel for regular games
-                
-                console.log(`📢 Successfully sent regular game award alert for ${user.raUsername}`);
-                return true;
-            } catch (alertError) {
-                console.error(`❌ Error sending regular game award alert:`, alertError);
-                return false;
+                gpAmount = GP_REWARDS.REGULAR_MASTERY; // Use the same amount for both mastery and beaten for regular games
+                await gpRewardService.awardRegularGameGP(user, gameInfo.title, isMastery);
+                gpAwarded = true;
+                console.log(`✅ Successfully awarded ${isMastery ? 'mastery' : 'beaten'} GP (${gpAmount}) to ${user.raUsername} for ${gameInfo.title}`);
+            } catch (gpError) {
+                console.error(`❌ Error awarding regular game GP to ${user.raUsername}:`, gpError);
+                // Continue with announcement even if GP fails
+                console.log(`📢 Continuing with announcement despite GP error`);
             }
-            
-        } catch (error) {
-            console.error(`❌ Error in announceRegularAward:`, error);
-            return false;
+        } else {
+            console.log(`⚠️ GP service not available, skipping GP award`);
         }
+
+        // Create enhanced description with GP information
+        const userLink = `[${user.raUsername}](https://retroachievements.org/user/${user.raUsername})`;
+        const gameLink = `[${gameInfo.title}](https://retroachievements.org/game/${gameId})`;
+        
+        let description = '';
+        if (isMastery) {
+            description = `${userLink} has mastered ${gameLink}!\n` +
+                         `They've earned every achievement in the game.`;
+        } else {
+            description = `${userLink} has beaten ${gameLink}!\n` +
+                         `They've completed the core achievements.`;
+        }
+
+        // Add GP reward information to description
+        if (gpAwarded && gpAmount > 0) {
+            description += `\n\n💰 **+${gpAmount} GP** awarded for this achievement!`;
+        }
+        
+        // RESTORED: Original error handling - let errors bubble up
+        await AlertUtils.sendAchievementAlert({
+            username: user.raUsername,
+            achievementTitle: isMastery ? `Mastery of ${gameInfo.title}` : `Beaten ${gameInfo.title}`,
+            achievementDescription: description,
+            gameTitle: gameInfo.title,
+            gameId: gameId,
+            thumbnail: thumbnailUrl,
+            badgeUrl: profileImageUrl,
+            color: isMastery ? '#FFD700' : '#C0C0C0',
+            isMastery: isMastery,
+            isBeaten: isBeaten
+        }, ALERT_TYPES.MASTERY); // Always use MASTERY channel for regular games
     }
 
     /**
-     * FIXED: Announce monthly/shadow award with robust GP handling
+     * FIXED: Announce monthly/shadow award with GP rewards and original error handling
      */
     async announceMonthlyAward(user, gameInfo, gameId, awardType, systemType) {
-        try {
-            let awardTitle = '';
-            let awardColor = '';
-            let awardEmoji = '';
-            let gpAmount = 0;
-            
-            if (awardType === 'mastery') {
-                awardTitle = `${systemType === 'shadow' ? 'Shadow' : 'Monthly'} Challenge Mastery`;
-                awardColor = '#FFD700'; // Gold for mastery
-                awardEmoji = AWARD_EMOJIS.MASTERY;
-                gpAmount = systemType === 'shadow' ? GP_REWARDS.SHADOW_MASTERY : GP_REWARDS.MONTHLY_MASTERY;
-            } else if (awardType === 'beaten') {
-                awardTitle = `${systemType === 'shadow' ? 'Shadow' : 'Monthly'} Challenge Beaten`;
-                awardColor = '#C0C0C0'; // Silver for beaten
-                awardEmoji = AWARD_EMOJIS.BEATEN;
-                gpAmount = systemType === 'shadow' ? GP_REWARDS.SHADOW_BEATEN : GP_REWARDS.MONTHLY_BEATEN;
-            } else if (awardType === 'participation') {
-                awardTitle = `${systemType === 'shadow' ? 'Shadow' : 'Monthly'} Challenge Participation`;
-                awardColor = '#CD7F32'; // Bronze for participation
-                awardEmoji = AWARD_EMOJIS.PARTICIPATION;
-                gpAmount = systemType === 'shadow' ? GP_REWARDS.SHADOW_PARTICIPATION : GP_REWARDS.MONTHLY_PARTICIPATION;
-            } else {
-                console.error(`Unknown award type: ${awardType} for ${systemType} game`);
-                return false;
-            }
-            
-            const profileImageUrl = await this.getUserProfileImageUrl(user.raUsername);
-            const thumbnailUrl = gameInfo?.imageIcon ? `https://retroachievements.org${gameInfo.imageIcon}` : null;
-            
-            // *** AWARD GP FOR CHALLENGE COMPLETION WITH ROBUST ERROR HANDLING ***
-            let gpAwarded = false;
-            
-            if (gpRewardService) {
-                try {
-                    await gpRewardService.awardChallengeGP(user, gameInfo.title, awardType, systemType);
-                    gpAwarded = true;
-                    console.log(`✅ Successfully awarded ${awardType} GP (${gpAmount}) to ${user.raUsername} for ${systemType} challenge`);
-                } catch (gpError) {
-                    console.error(`❌ Error awarding challenge GP to ${user.raUsername}:`, gpError);
-                    // FIXED: Continue with announcement even if GP fails
-                    console.log(`📢 Continuing with announcement despite GP error`);
-                }
-            } else {
-                console.log(`⚠️ GP service not available, skipping GP award`);
-            }
-
-            // Create enhanced description with GP information
-            const userLink = `[${user.raUsername}](https://retroachievements.org/user/${user.raUsername})`;
-            const gameLink = `[${gameInfo.title}](https://retroachievements.org/game/${gameId})`;
-            
-            let description = `${userLink} has earned ${awardTitle.toLowerCase()} for ${gameLink}!`;
-            
-            // Add GP reward information to description
-            if (gpAwarded && gpAmount > 0) {
-                description += `\n\n💰 **+${gpAmount} GP** awarded for this ${systemType} challenge achievement!`;
-            }
-            
-            // FIXED: Use correct alert type based on system type
-            const alertType = systemType === 'shadow' ? ALERT_TYPES.SHADOW : ALERT_TYPES.MONTHLY;
-            
-            console.log(`Sending ${systemType} award alert with type: ${alertType}`);
-            
-            // FIXED: Wrap AlertUtils call in try-catch
-            try {
-                await AlertUtils.sendAchievementAlert({
-                    username: user.raUsername,
-                    achievementTitle: awardTitle,
-                    achievementDescription: description,
-                    gameTitle: gameInfo.title,
-                    gameId: gameId,
-                    thumbnail: thumbnailUrl,
-                    badgeUrl: profileImageUrl,
-                    color: awardColor,
-                    isAward: true
-                }, alertType); // Use the correct alert type for proper channel routing
-                
-                console.log(`📢 Successfully sent ${systemType} award alert for ${user.raUsername}`);
-                return true;
-            } catch (alertError) {
-                console.error(`❌ Error sending ${systemType} award alert:`, alertError);
-                return false;
-            }
-            
-        } catch (error) {
-            console.error(`❌ Error in announceMonthlyAward:`, error);
-            return false;
+        // Ensure GP service is loaded
+        await loadGPService();
+        
+        let awardTitle = '';
+        let awardColor = '';
+        let awardEmoji = '';
+        let gpAmount = 0;
+        
+        if (awardType === 'mastery') {
+            awardTitle = `${systemType === 'shadow' ? 'Shadow' : 'Monthly'} Challenge Mastery`;
+            awardColor = '#FFD700'; // Gold for mastery
+            awardEmoji = AWARD_EMOJIS.MASTERY;
+            gpAmount = systemType === 'shadow' ? GP_REWARDS.SHADOW_MASTERY : GP_REWARDS.MONTHLY_MASTERY;
+        } else if (awardType === 'beaten') {
+            awardTitle = `${systemType === 'shadow' ? 'Shadow' : 'Monthly'} Challenge Beaten`;
+            awardColor = '#C0C0C0'; // Silver for beaten
+            awardEmoji = AWARD_EMOJIS.BEATEN;
+            gpAmount = systemType === 'shadow' ? GP_REWARDS.SHADOW_BEATEN : GP_REWARDS.MONTHLY_BEATEN;
+        } else if (awardType === 'participation') {
+            awardTitle = `${systemType === 'shadow' ? 'Shadow' : 'Monthly'} Challenge Participation`;
+            awardColor = '#CD7F32'; // Bronze for participation
+            awardEmoji = AWARD_EMOJIS.PARTICIPATION;
+            gpAmount = systemType === 'shadow' ? GP_REWARDS.SHADOW_PARTICIPATION : GP_REWARDS.MONTHLY_PARTICIPATION;
+        } else {
+            console.error(`Unknown award type: ${awardType} for ${systemType} game`);
+            return;
         }
+        
+        const profileImageUrl = await this.getUserProfileImageUrl(user.raUsername);
+        const thumbnailUrl = gameInfo?.imageIcon ? `https://retroachievements.org${gameInfo.imageIcon}` : null;
+        
+        // *** AWARD GP FOR CHALLENGE COMPLETION ***
+        let gpAwarded = false;
+        
+        if (gpRewardService) {
+            try {
+                await gpRewardService.awardChallengeGP(user, gameInfo.title, awardType, systemType);
+                gpAwarded = true;
+                console.log(`✅ Successfully awarded ${awardType} GP (${gpAmount}) to ${user.raUsername} for ${systemType} challenge`);
+            } catch (gpError) {
+                console.error(`❌ Error awarding challenge GP to ${user.raUsername}:`, gpError);
+                // Continue with announcement even if GP fails
+                console.log(`📢 Continuing with announcement despite GP error`);
+            }
+        } else {
+            console.log(`⚠️ GP service not available, skipping GP award`);
+        }
+
+        // Create enhanced description with GP information
+        const userLink = `[${user.raUsername}](https://retroachievements.org/user/${user.raUsername})`;
+        const gameLink = `[${gameInfo.title}](https://retroachievements.org/game/${gameId})`;
+        
+        let description = `${userLink} has earned ${awardTitle.toLowerCase()} for ${gameLink}!`;
+        
+        // Add GP reward information to description
+        if (gpAwarded && gpAmount > 0) {
+            description += `\n\n💰 **+${gpAmount} GP** awarded for this ${systemType} challenge achievement!`;
+        }
+        
+        // Use correct alert type based on system type
+        const alertType = systemType === 'shadow' ? ALERT_TYPES.SHADOW : ALERT_TYPES.MONTHLY;
+        
+        console.log(`Sending ${systemType} award alert with type: ${alertType}`);
+        
+        // RESTORED: Original error handling - let errors bubble up
+        await AlertUtils.sendAchievementAlert({
+            username: user.raUsername,
+            achievementTitle: awardTitle,
+            achievementDescription: description,
+            gameTitle: gameInfo.title,
+            gameId: gameId,
+            thumbnail: thumbnailUrl,
+            badgeUrl: profileImageUrl,
+            color: awardColor,
+            isAward: true
+        }, alertType); // Use the correct alert type for proper channel routing
     }
 
     /**
@@ -820,7 +822,7 @@ class GameAwardService {
     }
 
     /**
-     * FIXED: Debug mastery detection with better error handling
+     * Debug mastery detection with detailed logging
      */
     async debugCheckForGameMastery(user, gameId) {
         try {
@@ -885,11 +887,6 @@ class GameAwardService {
             console.log(`\n=== GP SERVICE STATUS ===`);
             console.log(`GP Service Available: ${gpRewardService ? 'YES' : 'NO'}`);
             console.log(`GP_REWARDS Available: ${GP_REWARDS ? 'YES' : 'NO'}`);
-            
-            console.log(`\n=== ANNOUNCEMENT STATS ===`);
-            console.log(`Total Attempts: ${this.announcementAttempts}`);
-            console.log(`Successful: ${this.successfulAnnouncements}`);
-            console.log(`Success Rate: ${this.announcementAttempts > 0 ? Math.round(this.successfulAnnouncements/this.announcementAttempts*100) : 0}%`);
             
             console.log('=== END DEBUG ===\n');
             return false; // Don't actually announce during debug
