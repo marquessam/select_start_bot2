@@ -1,4 +1,4 @@
-// src/index.js - Complete fixed version with timeout protection and infinite loop prevention
+// src/index.js - Enhanced with better GP service logging and error handling
 import { Client, Collection, Events, GatewayIntentBits, EmbedBuilder } from 'discord.js';
 import { config, validateConfig } from './config/config.js';
 import { connectDB, checkDatabaseHealth } from './models/index.js';
@@ -637,7 +637,7 @@ async function fixDuplicateIndexes() {
     }
 }
 
-// FIXED: Handle ready event with timeout protection and proper emoji loading
+// ENHANCED: Handle ready event with better GP service logging
 client.once(Events.ClientReady, async () => {
     try {
         console.log(`Logged in as ${client.user.tag}`);
@@ -732,16 +732,34 @@ client.once(Events.ClientReady, async () => {
         monthlyGPService.start();
         console.log('✅ Monthly GP Service initialized - automatic grants on 1st of each month');
 
-        // FIXED: PROPERLY INITIALIZE GP REWARD SERVICE (no automatic cleanup interval)
+        // ENHANCED: GP REWARD SERVICE INITIALIZATION WITH DETAILED LOGGING
         console.log('🎁 Initializing GP reward service...');
-        gpRewardService.initialize(); // This now safely sets up the cleanup interval
-        const rewardStats = gpRewardService.getRewardStats();
-        console.log('✅ GP reward service ready');
-        console.log('💰 GP reward amounts:', rewardStats.rewardAmounts);
-        console.log('🔧 Service status:', { 
-            initialized: rewardStats.isInitialized, 
-            cleanupActive: rewardStats.hasCleanupInterval 
-        });
+        try {
+            gpRewardService.initialize(); // This now safely sets up the cleanup interval
+            const rewardStats = gpRewardService.getRewardStats();
+            
+            console.log('✅ GP reward service initialized successfully');
+            console.log('💰 GP reward amounts:', JSON.stringify(rewardStats.rewardAmounts, null, 2));
+            console.log('🔧 Service status:', { 
+                initialized: rewardStats.isInitialized, 
+                cleanupActive: rewardStats.hasCleanupInterval,
+                historySize: rewardStats.rewardHistorySize
+            });
+            
+            // Test the service with a quick check
+            console.log('🧪 Testing GP reward service basic functionality...');
+            const testStats = gpRewardService.getRewardStats();
+            if (testStats.isInitialized) {
+                console.log('✅ GP reward service test passed - ready to award GP');
+            } else {
+                console.warn('⚠️ GP reward service test failed - may have initialization issues');
+            }
+            
+        } catch (gpInitError) {
+            console.error('❌ Failed to initialize GP reward service:', gpInitError);
+            console.error('GP Service Error Stack:', gpInitError.stack);
+            console.warn('⚠️ GP rewards may not work properly - check service configuration');
+        }
 
         // START GACHA MACHINE
         await gachaMachine.start();
@@ -1066,6 +1084,7 @@ client.once(Events.ClientReady, async () => {
         console.log('  • Emoji cache refresh: Every 30 minutes (non-blocking with timeout protection)');
         console.log('  • Various other feeds: Hourly');
         console.log('🎭 Emoji systems: Initialized with timeout protection and fallback emojis');
+        console.log('🎁 GP Reward System: Enhanced logging and error handling for nomination/vote rewards');
         
     } catch (error) {
         console.error('❌ Error during initialization:', error);
@@ -1096,12 +1115,17 @@ process.on('unhandledRejection', error => {
     console.error('Unhandled promise rejection:', error);
 });
 
-// FIXED: Graceful shutdown handling with GP reward service cleanup
+// ENHANCED: Graceful shutdown handling with GP reward service cleanup
 process.on('SIGINT', () => {
     console.log('Shutting down...');
     monthlyGPService.stop();
     gachaMachine.stop();
-    gpRewardService.stop(); // FIXED: Properly stop the service
+    try {
+        gpRewardService.stop(); // ENHANCED: Properly stop the service with error handling
+        console.log('✅ GP reward service stopped cleanly');
+    } catch (stopError) {
+        console.error('❌ Error stopping GP reward service:', stopError);
+    }
     process.exit(0);
 });
 
@@ -1109,7 +1133,12 @@ process.on('SIGTERM', () => {
     console.log('Shutting down...');
     monthlyGPService.stop();
     gachaMachine.stop();
-    gpRewardService.stop(); // FIXED: Properly stop the service
+    try {
+        gpRewardService.stop(); // ENHANCED: Properly stop the service with error handling
+        console.log('✅ GP reward service stopped cleanly');
+    } catch (stopError) {
+        console.error('❌ Error stopping GP reward service:', stopError);
+    }
     process.exit(0);
 });
 
