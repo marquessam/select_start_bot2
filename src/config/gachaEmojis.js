@@ -1,4 +1,4 @@
-// src/config/gachaEmojis.js - CLEAN REWRITE
+// src/config/gachaEmojis.js - COMPLETE FIXED VERSION with timeout protection
 import mongoose from 'mongoose';
 import { GachaItem } from '../models/GachaItem.js';
 
@@ -6,7 +6,10 @@ import { GachaItem } from '../models/GachaItem.js';
 let emojiCache = new Map();
 let cacheLastUpdated = 0;
 let isRefreshing = false;
+let initializationComplete = false;
 const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
+const MAX_DB_WAIT_TIME = 30000; // 30 seconds max wait for database
+const REFRESH_TIMEOUT = 15000; // 15 seconds max for refresh operations
 
 // Default fallback emojis by rarity
 const DEFAULT_GACHA_EMOJIS = {
@@ -23,20 +26,15 @@ function isDatabaseConnected() {
     return mongoose.connection.readyState === 1;
 }
 
-// DISABLE OLD CACHING
+// DISABLE OLD CACHING - Enhanced to prevent conflicts
 function disableOldEmojiCaching() {
-    console.log('🔧 Disabling old emoji caching mechanisms...');
+    console.log('🔧 Disabling old gacha emoji caching mechanisms...');
     
+    // Clear any existing intervals
     if (global.gachaEmojiInterval) {
         clearInterval(global.gachaEmojiInterval);
         global.gachaEmojiInterval = null;
         console.log('✅ Cleared old gacha emoji interval');
-    }
-    
-    if (global.trophyEmojiInterval) {
-        clearInterval(global.trophyEmojiInterval);
-        global.trophyEmojiInterval = null;
-        console.log('✅ Cleared old trophy emoji interval');
     }
     
     if (global.emojiCacheTimeout) {
@@ -45,20 +43,28 @@ function disableOldEmojiCaching() {
         console.log('✅ Cleared emoji cache timeout');
     }
     
-    console.log('✅ Old emoji caching mechanisms disabled');
+    // Clear any global emoji cache variables
+    if (global.gachaEmojiCache) {
+        global.gachaEmojiCache = null;
+        console.log('✅ Cleared global gacha emoji cache');
+    }
+    
+    console.log('✅ Old gacha emoji caching mechanisms disabled');
 }
 
-// MAIN: Get gacha emoji
+// MAIN: Get gacha emoji with timeout protection
 async function getGachaEmoji(itemId) {
     try {
         if (!isDatabaseConnected()) {
             return { emojiId: null, emojiName: '❓' };
         }
 
-        // Auto-refresh cache if needed (background)
+        // Auto-refresh cache if needed (background, non-blocking)
         const now = Date.now();
         if (now - cacheLastUpdated > CACHE_DURATION && !isRefreshing) {
-            refreshCache().catch(console.error);
+            refreshCache().catch(error => {
+                console.warn('Background gacha emoji cache refresh failed:', error.message);
+            });
         }
 
         // Try cache first
@@ -67,11 +73,13 @@ async function getGachaEmoji(itemId) {
             return { emojiId: cached.emojiId, emojiName: cached.emojiName };
         }
 
-        // Try database
+        // Try database with timeout protection
         try {
             const item = await Promise.race([
                 GachaItem.findOne({ itemId }).select('emojiId emojiName').lean(),
-                new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
+                new Promise((_, reject) => 
+                    setTimeout(() => reject(new Error('Database query timeout')), 5000)
+                )
             ]);
             
             if (item?.emojiId) {
@@ -97,7 +105,7 @@ function formatGachaEmoji(emojiId, emojiName) {
     return emojiName || '❓';
 }
 
-// INTERNAL: Refresh cache
+// INTERNAL: Refresh cache with timeout protection
 async function refreshCache() {
     if (isRefreshing || !isDatabaseConnected()) {
         return;
@@ -110,7 +118,9 @@ async function refreshCache() {
         
         const items = await Promise.race([
             GachaItem.find({ isActive: true }).select('itemId emojiId emojiName').lean(),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 15000))
+            new Promise((_, reject) => 
+                setTimeout(() => reject(new Error('Refresh timeout')), REFRESH_TIMEOUT)
+            )
         ]);
         
         emojiCache.clear();
@@ -158,35 +168,93 @@ function getGachaEmojiCacheInfo() {
         size: emojiCache.size,
         lastUpdated: cacheLastUpdated ? new Date(cacheLastUpdated).toISOString() : 'Never',
         isRefreshing,
-        databaseConnected: isDatabaseConnected()
+        databaseConnected: isDatabaseConnected(),
+        initializationComplete
     };
 }
 
-// INIT: Safe initialization
-function initCache() {
+// FIXED: Safe initialization with timeout protection
+async function initCache() {
+    if (initializationComplete) {
+        return; // Prevent multiple initializations
+    }
+
+    console.log('📦 Starting gacha emoji cache initialization...');
+    
     if (isDatabaseConnected()) {
-        console.log('📦 Initializing gacha emoji cache...');
-        refreshCache().catch(console.error);
+        console.log('📦 Database connected, initializing gacha emoji cache...');
+        await refreshCache().catch(error => {
+            console.warn('Initial gacha emoji cache refresh failed:', error.message);
+        });
+        initializationComplete = true;
     } else {
         console.log('⏳ Waiting for database connection for gacha emoji cache...');
         
-        const onConnect = () => {
-            console.log('📦 Database ready, initializing gacha emoji cache...');
-            refreshCache().catch(console.error);
-            mongoose.connection.off('connected', onConnect);
-        };
+        // Wait for database connection with timeout
+        const waitForConnection = new Promise((resolve) => {
+            let elapsedTime = 0;
+            const checkInterval = 1000; // Check every second
+            
+            const checkConnection = () => {
+                if (isDatabaseConnected()) {
+                    console.log('📦 Database connected, initializing gacha emoji cache...');
+                    refreshCache().catch(error => {
+                        console.warn('Initial gacha emoji cache refresh failed:', error.message);
+                    });
+                    initializationComplete = true;
+                    resolve();
+                } else if (elapsedTime >= MAX_DB_WAIT_TIME) {
+                    console.warn('⚠️ Database connection timeout for gacha emoji cache, using fallbacks');
+                    initializationComplete = true;
+                    resolve();
+                } else {
+                    elapsedTime += checkInterval;
+                    setTimeout(checkConnection, checkInterval);
+                }
+            };
+            
+            checkConnection();
+        });
         
-        if (mongoose.connection.readyState === 2) {
-            mongoose.connection.on('connected', onConnect);
+        await waitForConnection;
+    }
+    
+    console.log('✅ Gacha emoji cache initialization complete');
+}
+
+// ENHANCED: Safe cache refresh for external calls
+async function safeCacheRefresh() {
+    try {
+        if (!initializationComplete) {
+            await initCache();
+            return;
         }
+
+        // Only refresh if database is connected
+        if (isDatabaseConnected()) {
+            await refreshCache();
+            console.log('🔄 Gacha emoji cache refreshed');
+        } else {
+            console.log('ℹ️ Database not connected, skipping gacha emoji refresh');
+        }
+    } catch (error) {
+        console.warn('Gacha emoji cache refresh failed:', error.message);
     }
 }
 
 // Disable old caching immediately
 disableOldEmojiCaching();
 
-// Initialize after a short delay
-setTimeout(initCache, 100);
+// FIXED: Initialize with timeout protection (non-blocking)
+(async () => {
+    try {
+        await initCache();
+    } catch (error) {
+        console.error('Failed to initialize gacha emoji cache:', error.message);
+        console.log('   Continuing with fallback emojis...');
+        initializationComplete = true;
+    }
+})();
 
 // EXPORTS
 export {
@@ -196,7 +264,18 @@ export {
     refreshGachaEmojiCache,
     clearGachaEmojiCache,
     getGachaEmojiCacheInfo,
-    disableOldEmojiCaching
+    disableOldEmojiCaching,
+    safeCacheRefresh
 };
 
-export const safeCacheRefresh = refreshCache;
+// Default export for compatibility
+export default {
+    DEFAULT_GACHA_EMOJIS,
+    getGachaEmoji,
+    formatGachaEmoji,
+    refreshGachaEmojiCache,
+    clearGachaEmojiCache,
+    getGachaEmojiCacheInfo,
+    disableOldEmojiCaching,
+    safeCacheRefresh
+};
