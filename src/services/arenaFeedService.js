@@ -415,9 +415,9 @@ class ArenaFeedService extends FeedManagerBase {
             
             // Create the GP overview embed
             const embed = createHeaderEmbed(
-                '💰 GP (Game Points) - How to Earn',
-                `**Complete guide to earning GP in the Arena System**\n\n` +
-                `Game Points (GP) are the currency used to create challenges and place bets. Here's how to earn them:\n\n` +
+                '💰 GP (Game Points) - How to Earn & Spend',
+                `**Complete guide to earning and spending GP**\n\n` +
+                `Game Points (GP) are used for arena challenges, betting, and collecting gacha items.\n\n` +
                 `**Current GP Leader:** ${richestUser ? `👑 **${richestUser.raUsername}** with ${gpUtils.formatGP(richestUser.gpBalance)}` : 'No users with GP yet'}\n\n` +
                 `**Last Updated:** ${timestamp} | **Updates:** Every 30 minutes`,
                 {
@@ -432,15 +432,15 @@ class ArenaFeedService extends FeedManagerBase {
             embed.addFields({
                 name: '⚔️ Arena System',
                 value: 
-                    `• **Win Arena Challenge**: Take all entry wagers + betting pool\n` +
-                    `• **Win Bet**: Share losing bets proportionally with other winners\n` +
-                    `• **Monthly Grant**: ${gpUtils.formatGP(1000)} automatically on the 1st of each month`,
+                    `• **Win Challenge**: Take all entry wagers + betting pool\n` +
+                    `• **Win Bet**: Share losing bets proportionally\n` +
+                    `• **Monthly Grant**: ${gpUtils.formatGP(1000)} on the 1st of each month`,
                 inline: false
             });
             
             // Monthly/Shadow Challenge rewards
             embed.addFields({
-                name: '🏆 Monthly & Shadow Challenges',
+                name: '🏆 Challenge Completions',
                 value: 
                     `• **Monthly Mastery**: ${gpUtils.formatGP(GP_REWARDS.MONTHLY_MASTERY)} GP\n` +
                     `• **Monthly Beaten**: ${gpUtils.formatGP(GP_REWARDS.MONTHLY_BEATEN)} GP\n` +
@@ -457,7 +457,7 @@ class ArenaFeedService extends FeedManagerBase {
                 value: 
                     `• **Game Mastery**: ${gpUtils.formatGP(GP_REWARDS.REGULAR_MASTERY)} GP\n` +
                     `• **Game Beaten**: ${gpUtils.formatGP(GP_REWARDS.REGULAR_BEATEN)} GP\n\n` +
-                    `*Tracked from achievement feed*`,
+                    `*From achievement feed*`,
                 inline: true
             });
             
@@ -467,7 +467,7 @@ class ArenaFeedService extends FeedManagerBase {
                 value: 
                     `• **Nominate Game**: ${gpUtils.formatGP(GP_REWARDS.NOMINATION)} GP\n` +
                     `• **Vote in Poll**: ${gpUtils.formatGP(GP_REWARDS.VOTE)} GP\n\n` +
-                    `*For monthly challenge polls*`,
+                    `*Monthly challenge polls*`,
                 inline: true
             });
             
@@ -475,10 +475,12 @@ class ArenaFeedService extends FeedManagerBase {
             embed.addFields({
                 name: '💸 How to Spend GP',
                 value: 
-                    `• **Create Arena Challenge**: Set your own entry wager amount\n` +
-                    `• **Join Arena Challenge**: Match the creator's entry wager\n` +
-                    `• **Place Bets**: Bet on active challenges you're not in\n\n` +
-                    `*Use </arena:1234567890> to participate in the Arena System*`,
+                    `• **Arena Challenges**: Create or join challenges\n` +
+                    `• **Arena Betting**: Bet on active challenges\n` +
+                    `• **Gacha Machine**: Pull for collectible items in <#1377092881885696022>\n` +
+                    `  - Single Pull: ${gpUtils.formatGP(50)} GP\n` +
+                    `  - Multi Pull: ${gpUtils.formatGP(150)} GP (4 items)\n\n` +
+                    `*Use </arena:1234567890> for arena system*`,
                 inline: false
             });
             
