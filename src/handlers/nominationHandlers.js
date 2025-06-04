@@ -222,7 +222,7 @@ export class NominationInteractionHandler {
         // Create the modal form
         const modal = new ModalBuilder()
             .setCustomId('nomination_form')
-            .setTitle('🎮 Nominate a Game (+20 GP)');
+            .setTitle('🎮 Nominate a Game (+25 GP)');
 
         // Game ID input
         const gameIdInput = new TextInputBuilder()
@@ -239,7 +239,7 @@ export class NominationInteractionHandler {
             .setCustomId('nomination_comment')
             .setLabel('Why this game? (Optional)')
             .setStyle(TextInputStyle.Paragraph)
-            .setPlaceholder('Tell us why you chose this game... (+20 GP for nominating!)')
+            .setPlaceholder('Tell us why you chose this game... (+25 GP for nominating!)')
             .setRequired(false)
             .setMaxLength(500);
 
