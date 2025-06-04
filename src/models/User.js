@@ -1,4 +1,4 @@
-// src/models/User.js - Complete model with FIXED removeGachaItem method and debug logging
+// src/models/User.js - FIXED with GP reward transaction types
 import mongoose from 'mongoose';
 
 const communityAwardSchema = new mongoose.Schema({
@@ -251,11 +251,15 @@ const userSchema = new mongoose.Schema({
         default: null
     },
     
-    // GP transaction history (keep last 100 transactions)
+    // FIXED: GP transaction history with ALL reward types included
     gpTransactions: [{
         type: {
             type: String,
-            enum: ['monthly_grant', 'wager', 'bet', 'win', 'refund', 'admin_adjust', 'gacha_pull'],
+            enum: [
+                'monthly_grant', 'wager', 'bet', 'win', 'refund', 'admin_adjust', 'gacha_pull',
+                // GP REWARD TYPES - THESE WERE MISSING!
+                'nomination', 'vote', 'challenge_award', 'game_completion', 'admin_award', 'admin_mass_distribution'
+            ],
             required: true
         },
         amount: {
@@ -488,11 +492,14 @@ userSchema.methods.addMasteredGame = function(gameId, gameTitle, consoleName, to
 
 // ===== ARENA SYSTEM METHODS =====
 
-// Add GP transaction and update balance
+// FIXED: Add GP transaction and update balance with enhanced logging
 userSchema.methods.addGpTransaction = function(type, amount, description, challengeId = null) {
     if (!this.gpTransactions) {
         this.gpTransactions = [];
     }
+    
+    // Log the transaction for debugging
+    console.log(`💰 Adding GP transaction: ${amount} GP for ${this.raUsername} (${type}: ${description})`);
     
     this.gpTransactions.push({
         type,
@@ -508,12 +515,15 @@ userSchema.methods.addGpTransaction = function(type, amount, description, challe
     }
     
     // Update balance
-    this.gpBalance += amount;
+    const oldBalance = this.gpBalance || 0;
+    this.gpBalance = oldBalance + amount;
     
     // Ensure balance doesn't go below 0
     if (this.gpBalance < 0) {
         this.gpBalance = 0;
     }
+    
+    console.log(`💰 GP Balance updated: ${oldBalance} → ${this.gpBalance} (${amount >= 0 ? '+' : ''}${amount})`);
 };
 
 // Check if user has enough GP
@@ -531,6 +541,15 @@ userSchema.methods.getGpWinRate = function() {
 userSchema.methods.getBetWinRate = function() {
     if (!this.arenaStats || this.arenaStats.betsPlaced === 0) return 0;
     return (this.arenaStats.betsWon / this.arenaStats.betsPlaced * 100).toFixed(1);
+};
+
+// ADDED: Method to reload user from database (for testing)
+userSchema.methods.reload = async function() {
+    const updated = await this.constructor.findById(this._id);
+    if (updated) {
+        Object.assign(this, updated.toObject());
+    }
+    return this;
 };
 
 // ===== TROPHY SYSTEM METHODS =====
