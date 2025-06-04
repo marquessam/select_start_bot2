@@ -1,4 +1,4 @@
-// src/index.js - Complete updated version with MongoDB timeout fixes, combination interaction support, and GP reward integration
+// src/index.js - Complete fixed version with timeout protection and infinite loop prevention
 import { Client, Collection, Events, GatewayIntentBits, EmbedBuilder } from 'discord.js';
 import { config, validateConfig } from './config/config.js';
 import { connectDB, checkDatabaseHealth } from './models/index.js';
@@ -637,7 +637,7 @@ async function fixDuplicateIndexes() {
     }
 }
 
-// Handle ready event - UPDATED with MongoDB timeout fixes and GP reward service
+// FIXED: Handle ready event with timeout protection and proper emoji loading
 client.once(Events.ClientReady, async () => {
     try {
         console.log(`Logged in as ${client.user.tag}`);
@@ -654,26 +654,57 @@ client.once(Events.ClientReady, async () => {
             console.warn('⚠️ Database health check failed:', healthCheck.error);
         }
 
-        // DISABLE: Any old emoji caching that might still be running
+        // FIXED: Non-blocking emoji cache initialization with timeout protection
+        console.log('🎭 Starting emoji cache initialization (non-blocking)...');
+        
+        // Use Promise.allSettled to prevent any single emoji config from blocking startup
+        const emojiLoadingPromises = [
+            import('./config/gachaEmojis.js').catch(error => {
+                console.error('Failed to import gacha emojis config:', error.message);
+                return { error: error.message };
+            }),
+            import('./config/trophyEmojis.js').catch(error => {
+                console.error('Failed to import trophy emojis config:', error.message);
+                return { error: error.message };
+            })
+        ];
+
+        // Set a timeout for emoji loading to prevent indefinite blocking
+        const EMOJI_LOADING_TIMEOUT = 45000; // 45 seconds max
+        
+        const emojiLoadingWithTimeout = Promise.race([
+            Promise.allSettled(emojiLoadingPromises),
+            new Promise((_, reject) => 
+                setTimeout(() => reject(new Error('Emoji loading timeout')), EMOJI_LOADING_TIMEOUT)
+            )
+        ]);
+
         try {
-            const { disableOldEmojiCaching } = await import('./config/gachaEmojis.js');
-            disableOldEmojiCaching();
-            console.log('🔧 Disabled old emoji caching mechanisms');
-        } catch (disableError) {
-            console.log('ℹ️ No old emoji caching to disable:', disableError.message);
+            const emojiResults = await emojiLoadingWithTimeout;
+            
+            let successCount = 0;
+            let errorCount = 0;
+            
+            emojiResults.forEach((result, index) => {
+                const configName = index === 0 ? 'gacha' : 'trophy';
+                if (result.status === 'fulfilled' && !result.value?.error) {
+                    console.log(`✅ ${configName} emoji config loaded successfully`);
+                    successCount++;
+                } else {
+                    console.warn(`⚠️ ${configName} emoji config failed:`, result.reason || result.value?.error);
+                    errorCount++;
+                }
+            });
+            
+            console.log(`🎭 Emoji loading complete: ${successCount} success, ${errorCount} errors`);
+            
+        } catch (timeoutError) {
+            console.warn('⚠️ Emoji loading timed out, continuing with fallback emojis');
+            console.warn('   Bot will function normally with default emojis');
         }
 
-        // INITIALIZE: Fixed emoji cache from config files (replaces problematic emoji caching)
-        console.log('🎭 Using fixed emoji cache from config files...');
-        try {
-            // Import the fixed config files to initialize their safe caching
-            await import('./config/gachaEmojis.js');
-            await import('./config/trophyEmojis.js');
-            console.log('✅ Emoji config files loaded with safe caching');
-        } catch (configError) {
-            console.warn('⚠️ Emoji config loading failed:', configError.message);
-            console.log('   Continuing with fallback emojis...');
-        }
+        // Continue with the rest of initialization regardless of emoji loading status
+        console.log('🔧 Continuing with bot initialization...');
 
         // Fix any duplicate index issues automatically
         await fixDuplicateIndexes();
@@ -701,29 +732,68 @@ client.once(Events.ClientReady, async () => {
         monthlyGPService.start();
         console.log('✅ Monthly GP Service initialized - automatic grants on 1st of each month');
 
-        // INITIALIZE GP REWARD SERVICE
+        // FIXED: PROPERLY INITIALIZE GP REWARD SERVICE (no automatic cleanup interval)
         console.log('🎁 Initializing GP reward service...');
-        // The service is already initialized when imported, but log the configuration
+        gpRewardService.initialize(); // This now safely sets up the cleanup interval
         const rewardStats = gpRewardService.getRewardStats();
         console.log('✅ GP reward service ready');
         console.log('💰 GP reward amounts:', rewardStats.rewardAmounts);
+        console.log('🔧 Service status:', { 
+            initialized: rewardStats.isInitialized, 
+            cleanupActive: rewardStats.hasCleanupInterval 
+        });
 
         // START GACHA MACHINE
         await gachaMachine.start();
         console.log('✅ Gacha Machine initialized and pinned in gacha channel');
 
-        // Schedule emoji cache refresh every 30 minutes (prevent future timeouts)
-        cron.schedule('*/30 * * * *', () => {
-            console.log('🎭 Auto-refreshing emoji caches...');
-            // Import and refresh the config file caches
-            Promise.all([
-                import('./config/gachaEmojis.js').then(module => module.safeCacheRefresh()),
-                import('./config/trophyEmojis.js').then(module => module.safeCacheRefresh())
-            ]).catch(error => {
-                console.error('Emoji cache auto-refresh failed:', error.message);
+        // FIXED: Schedule emoji cache refresh every 30 minutes (non-blocking with timeout protection)
+        let emojiCacheJob = null;
+        try {
+            emojiCacheJob = cron.schedule('*/30 * * * *', async () => {
+                console.log('🎭 Auto-refreshing emoji caches...');
+                
+                // Non-blocking emoji refresh with timeout
+                const refreshPromises = [
+                    Promise.resolve().then(async () => {
+                        const gachaModule = await import('./config/gachaEmojis.js');
+                        if (gachaModule.safeCacheRefresh) {
+                            await gachaModule.safeCacheRefresh();
+                        }
+                    }).catch(error => {
+                        console.warn('Gacha emoji refresh failed:', error.message);
+                    }),
+                    
+                    Promise.resolve().then(async () => {
+                        const trophyModule = await import('./config/trophyEmojis.js');
+                        if (trophyModule.safeCacheRefresh) {
+                            await trophyModule.safeCacheRefresh();
+                        }
+                    }).catch(error => {
+                        console.warn('Trophy emoji refresh failed:', error.message);
+                    })
+                ];
+
+                // Refresh with timeout to prevent hanging
+                const refreshTimeout = Promise.race([
+                    Promise.allSettled(refreshPromises),
+                    new Promise(resolve => setTimeout(() => {
+                        console.warn('Emoji refresh timed out, skipping this cycle');
+                        resolve([]);
+                    }, 10000)) // 10 second timeout for refresh
+                ]);
+
+                await refreshTimeout;
+            }, {
+                scheduled: false // Start manually
             });
-        });
-        console.log('✅ Emoji cache auto-refresh scheduled every 30 minutes');
+            
+            emojiCacheJob.start();
+            console.log('✅ Emoji cache auto-refresh scheduled every 30 minutes (non-blocking)');
+        } catch (cronError) {
+            console.error('Failed to schedule emoji cache refresh:', cronError);
+            console.log('   Bot will continue without automatic emoji refresh');
+        }
 
         // Schedule stats updates every 30 minutes
         cron.schedule('*/30 * * * *', () => {
@@ -982,6 +1052,7 @@ client.once(Events.ClientReady, async () => {
         console.log('  • Arena alerts: Every 15 minutes');
         console.log('  • Monthly GP grants: Automatic on 1st of each month');
         console.log('  • GP Rewards: Automatic for nominations, votes, and game awards');
+        console.log('  • GP Reward cleanup: Every hour (controlled, no infinite loops)');
         console.log('  • Weekly comprehensive yearly sync: Sundays at 3:00 AM');
         console.log('  • Monthly tasks: 1st of each month');
         console.log('  • Tiebreaker expiration: Last 4 days of month at 11:30 PM');
@@ -992,8 +1063,9 @@ client.once(Events.ClientReady, async () => {
         console.log('  • Gacha Machine: Active and pinned');
         console.log('  • Combination System: Confirmation-based with alerts');
         console.log('  • Collection Viewer: Clean interface with player item giving and trade sharing');
-        console.log('  • Emoji cache refresh: Every 30 minutes');
+        console.log('  • Emoji cache refresh: Every 30 minutes (non-blocking with timeout protection)');
         console.log('  • Various other feeds: Hourly');
+        console.log('🎭 Emoji systems: Initialized with timeout protection and fallback emojis');
         
     } catch (error) {
         console.error('❌ Error during initialization:', error);
@@ -1024,12 +1096,12 @@ process.on('unhandledRejection', error => {
     console.error('Unhandled promise rejection:', error);
 });
 
-// Graceful shutdown handling with GP reward service cleanup
+// FIXED: Graceful shutdown handling with GP reward service cleanup
 process.on('SIGINT', () => {
     console.log('Shutting down...');
     monthlyGPService.stop();
     gachaMachine.stop();
-    gpRewardService.cleanupRewardHistory();
+    gpRewardService.stop(); // FIXED: Properly stop the service
     process.exit(0);
 });
 
@@ -1037,7 +1109,7 @@ process.on('SIGTERM', () => {
     console.log('Shutting down...');
     monthlyGPService.stop();
     gachaMachine.stop();
-    gpRewardService.cleanupRewardHistory();
+    gpRewardService.stop(); // FIXED: Properly stop the service
     process.exit(0);
 });
 
