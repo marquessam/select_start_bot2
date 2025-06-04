@@ -1,4 +1,4 @@
-// src/services/gpRewardService.js - New service for handling GP rewards
+// src/services/gpRewardService.js - Fixed version to prevent infinite loops
 import { User } from '../models/User.js';
 import gpUtils from '../utils/gpUtils.js';
 
@@ -19,6 +19,44 @@ export const GP_REWARDS = {
 class GPRewardService {
     constructor() {
         this.rewardHistory = new Set(); // Prevent duplicate rewards in same session
+        this.cleanupInterval = null; // Track the cleanup interval
+        this.isInitialized = false; // Prevent multiple initializations
+    }
+
+    /**
+     * Initialize the service (call this only once)
+     */
+    initialize() {
+        if (this.isInitialized) {
+            console.log('GP reward service already initialized, skipping...');
+            return;
+        }
+
+        console.log('Initializing GP reward service...');
+        
+        // Start cleanup interval (only if not already running)
+        if (!this.cleanupInterval) {
+            this.cleanupInterval = setInterval(() => {
+                this.cleanupRewardHistory();
+            }, 60 * 60 * 1000); // 1 hour
+            
+            console.log('GP reward cleanup interval started (runs every hour)');
+        }
+
+        this.isInitialized = true;
+        console.log('GP reward service initialized successfully');
+    }
+
+    /**
+     * Stop the service and cleanup
+     */
+    stop() {
+        if (this.cleanupInterval) {
+            clearInterval(this.cleanupInterval);
+            this.cleanupInterval = null;
+            console.log('GP reward cleanup interval stopped');
+        }
+        this.isInitialized = false;
     }
 
     /**
@@ -161,13 +199,21 @@ class GPRewardService {
     }
 
     /**
-     * Clean up old reward history to prevent memory bloat
+     * Clean up old reward history to prevent memory bloat (now controlled)
      */
     cleanupRewardHistory() {
+        if (this.rewardHistory.size === 0) {
+            // Don't log if there's nothing to clean
+            return;
+        }
+
+        const sizeBefore = this.rewardHistory.size;
+        
         // Clear the history periodically to prevent memory issues
         // This is safe since we're only preventing duplicates within the same session
         this.rewardHistory.clear();
-        console.log('GP reward history cleaned up');
+        
+        console.log(`GP reward history cleaned up (${sizeBefore} entries removed)`);
     }
 
     /**
@@ -176,7 +222,9 @@ class GPRewardService {
     getRewardStats() {
         return {
             rewardHistorySize: this.rewardHistory.size,
-            rewardAmounts: GP_REWARDS
+            rewardAmounts: GP_REWARDS,
+            isInitialized: this.isInitialized,
+            hasCleanupInterval: !!this.cleanupInterval
         };
     }
 }
@@ -184,9 +232,7 @@ class GPRewardService {
 // Create singleton instance
 const gpRewardService = new GPRewardService();
 
-// Clean up reward history every hour
-setInterval(() => {
-    gpRewardService.cleanupRewardHistory();
-}, 60 * 60 * 1000);
+// REMOVED: The automatic setInterval that was causing the infinite loop
+// The service will now be initialized manually in index.js
 
 export default gpRewardService;
