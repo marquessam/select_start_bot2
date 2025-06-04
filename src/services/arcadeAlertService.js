@@ -1,4 +1,4 @@
-// src/services/arcadeAlertService.js
+// src/services/arcadeAlertService.js - FIXED VERSION
 import { User } from '../models/User.js';
 import { ArcadeBoard } from '../models/ArcadeBoard.js';
 import { config } from '../config/config.js';
@@ -103,12 +103,12 @@ class ArcadeAlertService extends FeedManagerBase {
                     if (sendAlerts && this.previousStandings.has(board.boardId)) {
                         const prevStandings = this.previousStandings.get(board.boardId);
                         
-                        // Check for rank changes (simplified - just use rank)
+                        // FIXED: Check for actual rank changes using consistent data types
                         await this.detectRankChanges(board, currentStandings, prevStandings, registeredUsers, alerts);
                     }
                     
-                    // Update previous standings with current ones
-                    this.previousStandings.set(board.boardId, Object.fromEntries(currentStandings));
+                    // FIXED: Update previous standings with current ones (keep as Map)
+                    this.previousStandings.set(board.boardId, new Map(currentStandings));
                     
                 } catch (boardError) {
                     console.error(`Error processing arcade board ${board.gameTitle}:`, boardError);
@@ -133,7 +133,7 @@ class ArcadeAlertService extends FeedManagerBase {
         }
     }
 
-    // Simplified: Detect rank changes using ApiRank only
+    // FIXED: Detect rank changes using consistent Map comparison
     async detectRankChanges(board, currentStandings, prevStandings, registeredUsers, alerts) {
         try {
             const rankChangeAlerts = [];
@@ -143,7 +143,8 @@ class ArcadeAlertService extends FeedManagerBase {
                 // Only check users currently in top 5
                 if (currentInfo.rank > 5) continue;
                 
-                const prevInfo = prevStandings[username];
+                // FIXED: Use Map.get() instead of object access
+                const prevInfo = prevStandings.get(username);
                 if (!prevInfo) {
                     // User newly entered the top 5
                     const discordId = registeredUsers.get(username.toLowerCase())?.discordId;
@@ -155,7 +156,8 @@ class ArcadeAlertService extends FeedManagerBase {
                             score: currentInfo.score,
                             globalRank: currentInfo.apiRank,
                             boardName: board.gameTitle,
-                            boardId: board.boardId
+                            boardId: board.boardId,
+                            leaderboardId: board.leaderboardId // ADDED: For creating links
                         });
                     }
                 } else if (currentInfo.rank < prevInfo.rank) {
@@ -170,7 +172,8 @@ class ArcadeAlertService extends FeedManagerBase {
                             score: currentInfo.score,
                             globalRank: currentInfo.apiRank,
                             boardName: board.gameTitle,
-                            boardId: board.boardId
+                            boardId: board.boardId,
+                            leaderboardId: board.leaderboardId // ADDED: For creating links
                         });
                     }
                 } else if (currentInfo.rank > prevInfo.rank && prevInfo.rank <= 5) {
@@ -185,14 +188,15 @@ class ArcadeAlertService extends FeedManagerBase {
                             score: currentInfo.score,
                             globalRank: currentInfo.apiRank,
                             boardName: board.gameTitle,
-                            boardId: board.boardId
+                            boardId: board.boardId,
+                            leaderboardId: board.leaderboardId // ADDED: For creating links
                         });
                     }
                 }
             }
             
             // Check for users who fell out of top 5
-            for (const [username, prevInfo] of Object.entries(prevStandings)) {
+            for (const [username, prevInfo] of prevStandings.entries()) {
                 if (prevInfo.rank > 5) continue; // They weren't in top 5 before
                 
                 const currentInfo = currentStandings.get(username);
@@ -207,7 +211,8 @@ class ArcadeAlertService extends FeedManagerBase {
                             newRank: currentInfo?.rank || 999,
                             globalRank: currentInfo?.apiRank || 999,
                             boardName: board.gameTitle,
-                            boardId: board.boardId
+                            boardId: board.boardId,
+                            leaderboardId: board.leaderboardId // ADDED: For creating links
                         });
                     }
                 }
@@ -290,11 +295,12 @@ class ArcadeAlertService extends FeedManagerBase {
         }
     }
 
-    // Send rank change alerts for a specific board
+    // FIXED: Send rank change alerts for a specific board with clickable game links
     async sendBoardRankChangeAlerts(boardAlertsList) {
         try {
             const firstAlert = boardAlertsList[0];
             const boardName = firstAlert.boardName;
+            const leaderboardId = firstAlert.leaderboardId;
             
             // Get board details
             const board = await ArcadeBoard.findOne({ boardId: firstAlert.boardId });
@@ -346,10 +352,14 @@ class ArcadeAlertService extends FeedManagerBase {
                 currentStandings.push(...topFive);
             }
             
+            // FIXED: Create clickable game title link
+            const leaderboardUrl = `https://retroachievements.org/leaderboardinfo.php?i=${leaderboardId}`;
+            const gameLink = `[${boardName}](${leaderboardUrl})`;
+            
             // Use AlertUtils for rank changes with the ARCADE alert type
             await AlertUtils.sendPositionChangeAlert({
                 title: '🕹️ Arcade Alert!',
-                description: `The leaderboard for **${boardName}** has been updated!`,
+                description: `The leaderboard for **${gameLink}** has been updated!`, // FIXED: Clickable game link
                 changes: changes,
                 currentStandings: currentStandings,
                 thumbnail: thumbnailUrl,
