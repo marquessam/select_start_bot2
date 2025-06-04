@@ -4,16 +4,16 @@ import gpUtils from '../utils/gpUtils.js';
 
 // GP reward amounts
 export const GP_REWARDS = {
-    NOMINATION: 20,
-    VOTE: 20,
-    MONTHLY_PARTICIPATION: 20,
+    NOMINATION: 25,
+    VOTE: 25,
+    MONTHLY_PARTICIPATION: 25,
     MONTHLY_BEATEN: 50,
     MONTHLY_MASTERY: 100,
-    SHADOW_PARTICIPATION: 20,
+    SHADOW_PARTICIPATION: 25,
     SHADOW_BEATEN: 50,
     SHADOW_MASTERY: 100,
-    REGULAR_BEATEN: 20,
-    REGULAR_MASTERY: 20
+    REGULAR_BEATEN: 25,
+    REGULAR_MASTERY: 50
 };
 
 class GPRewardService {
