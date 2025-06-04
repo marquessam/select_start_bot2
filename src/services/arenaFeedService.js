@@ -1,4 +1,4 @@
-// src/services/arenaFeedService.js - UPDATED with alphabetical sorting by game title
+// src/services/arenaFeedService.js - UPDATED with alphabetical sorting by game title and GP overview
 import { ArenaChallenge } from '../models/ArenaChallenge.js';
 import { User } from '../models/User.js';
 import { config } from '../config/config.js';
@@ -8,6 +8,7 @@ import { EmbedBuilder } from 'discord.js';
 import arenaUtils from '../utils/arenaUtils.js';
 import gpUtils from '../utils/gpUtils.js';
 import RetroAPIUtils from '../utils/RetroAPIUtils.js';
+import { GP_REWARDS } from './gpRewardService.js';
 
 class ArenaFeedService extends FeedManagerBase {
     constructor() {
@@ -59,11 +60,11 @@ class ArenaFeedService extends FeedManagerBase {
                 await new Promise(resolve => setTimeout(resolve, 500));
             }
             
-            // 5. Update GP summary at the bottom (ALWAYS LAST EMBED IN FEED)
-            console.log('Updating GP leaderboard...');
-            await this.updateGPLeaderboardEmbed();
+            // 5. Update GP overview at the bottom (ALWAYS LAST EMBED IN FEED)
+            console.log('Updating GP overview...');
+            await this.updateGPOverviewEmbed();
             
-            console.log(`Arena feed updated: ${directChallenges.length} direct + ${openChallenges.length} open challenges (sorted alphabetically by game title)`);
+            console.log(`Arena feed updated: ${directChallenges.length} direct + ${openChallenges.length} open challenges (sorted alphabetically by game title) + GP overview`);
             
         } catch (error) {
             console.error('Error updating arena feeds:', error);
@@ -124,7 +125,7 @@ class ArenaFeedService extends FeedManagerBase {
             contentField += `• **Active Challenges:** ${activeChallengeCount} challenges accepting participants/bets\n`;
             contentField += `• **Registered Users:** ${totalUsers} total, ${usersWithGP} with GP\n`;
             contentField += `• **Total GP in System:** ${gpUtils.formatGP(systemStats.totalGP)}\n`;
-            contentField += `• **GP Leaderboard:** See bottom of feed for current standings`;
+            contentField += `• **GP Earning Guide:** See bottom of feed for complete earning methods`;
             
             embed.addFields({ name: 'Current Status', value: contentField });
             
@@ -399,83 +400,97 @@ class ArenaFeedService extends FeedManagerBase {
     }
 
     /**
-     * Update the GP leaderboard embed - FIXED VERSION
+     * Update the GP overview embed (replaces the leaderboard) - NEW VERSION
      */
-    async updateGPLeaderboardEmbed() {
+    async updateGPOverviewEmbed() {
         try {
-            console.log('Updating GP leaderboard embed...');
+            console.log('Updating GP overview embed...');
             
-            // Get GP leaderboard
-            const leaderboard = await gpUtils.getGPLeaderboard(15);
-            
-            if (!leaderboard || leaderboard.length === 0) {
-                console.log('No GP leaderboard data available');
-                return; // No GP data to display
-            }
-            
-            console.log(`Found ${leaderboard.length} users in GP leaderboard`);
+            // Get the #1 richest user
+            const topUser = await gpUtils.getGPLeaderboard(1);
+            const richestUser = topUser && topUser.length > 0 ? topUser[0] : null;
             
             // Current timestamp in Discord format
             const timestamp = getDiscordTimestamp(new Date());
             
-            // Create the GP leaderboard embed - MATCHING ARCADE POINTS SUMMARY STYLE
+            // Create the GP overview embed
             const embed = createHeaderEmbed(
-                '🏆 GP (Game Points) Leaderboard',
-                `**Current GP standings for all arena participants**\n\n` +
-                `Game Points (GP) are earned by winning challenges and used to create new challenges or place bets.\n\n` +
-                `**Last Updated:** ${timestamp} | **Updates:** Every 30 minutes\n\n` +
-                `*Use the </arena:1234567890> command to participate in challenges and earn GP.*`,
+                '💰 GP (Game Points) - How to Earn',
+                `**Complete guide to earning GP in the Arena System**\n\n` +
+                `Game Points (GP) are the currency used to create challenges and place bets. Here's how to earn them:\n\n` +
+                `**Current GP Leader:** ${richestUser ? `👑 **${richestUser.raUsername}** with ${gpUtils.formatGP(richestUser.gpBalance)}` : 'No users with GP yet'}\n\n` +
+                `**Last Updated:** ${timestamp} | **Updates:** Every 30 minutes`,
                 {
-                    color: COLORS.WARNING, // Yellow for leaderboard - matching arcade
+                    color: COLORS.SUCCESS, // Green for earning guide
                     footer: { 
                         text: 'GP balances update in real-time • Monthly 1,000 GP grants are automatic' 
                     }
                 }
             );
             
-            // Create the standings field - EXACT ARCADE FORMAT
-            if (leaderboard.length > 0) {
-                // Break standings into groups of 15 to avoid embed field size limits (matching arcade)
-                const maxUsersPerField = 15;
-                const numFields = Math.ceil(leaderboard.length / maxUsersPerField);
-                
-                for (let fieldIndex = 0; fieldIndex < numFields; fieldIndex++) {
-                    const startIndex = fieldIndex * maxUsersPerField;
-                    const endIndex = Math.min((fieldIndex + 1) * maxUsersPerField, leaderboard.length);
-                    const usersInThisField = leaderboard.slice(startIndex, endIndex);
-                    
-                    let standingsText = '';
-                    
-                    // Add each user with GP balance - EXACT ARCADE FORMAT
-                    usersInThisField.forEach(user => {
-                        standingsText += `**${user.raUsername}**: ${gpUtils.formatGP(user.gpBalance)}\n`;
-                    });
-                    
-                    const fieldTitle = numFields > 1 
-                        ? `Standings (${startIndex + 1}-${endIndex})`
-                        : 'Current Standings';
-                    
-                    embed.addFields({ 
-                        name: fieldTitle, 
-                        value: standingsText || 'No users have GP yet.' 
-                    });
-                }
-            } else {
-                embed.addFields({ 
-                    name: 'No Standings', 
-                    value: 'No users have GP balances yet.' 
-                });
-            }
+            // Arena System rewards
+            embed.addFields({
+                name: '⚔️ Arena System',
+                value: 
+                    `• **Win Arena Challenge**: Take all entry wagers + betting pool\n` +
+                    `• **Win Bet**: Share losing bets proportionally with other winners\n` +
+                    `• **Monthly Grant**: ${gpUtils.formatGP(1000)} automatically on the 1st of each month`,
+                inline: false
+            });
             
-            // Update or create the GP leaderboard message
+            // Monthly/Shadow Challenge rewards
+            embed.addFields({
+                name: '🏆 Monthly & Shadow Challenges',
+                value: 
+                    `• **Monthly Mastery**: ${gpUtils.formatGP(GP_REWARDS.MONTHLY_MASTERY)} GP\n` +
+                    `• **Monthly Beaten**: ${gpUtils.formatGP(GP_REWARDS.MONTHLY_BEATEN)} GP\n` +
+                    `• **Monthly Participation**: ${gpUtils.formatGP(GP_REWARDS.MONTHLY_PARTICIPATION)} GP\n` +
+                    `• **Shadow Mastery**: ${gpUtils.formatGP(GP_REWARDS.SHADOW_MASTERY)} GP\n` +
+                    `• **Shadow Beaten**: ${gpUtils.formatGP(GP_REWARDS.SHADOW_BEATEN)} GP\n` +
+                    `• **Shadow Participation**: ${gpUtils.formatGP(GP_REWARDS.SHADOW_PARTICIPATION)} GP`,
+                inline: true
+            });
+            
+            // Regular game completion rewards
+            embed.addFields({
+                name: '🎮 Regular Games',
+                value: 
+                    `• **Game Mastery**: ${gpUtils.formatGP(GP_REWARDS.REGULAR_MASTERY)} GP\n` +
+                    `• **Game Beaten**: ${gpUtils.formatGP(GP_REWARDS.REGULAR_BEATEN)} GP\n\n` +
+                    `*Tracked from achievement feed*`,
+                inline: true
+            });
+            
+            // Community participation rewards
+            embed.addFields({
+                name: '🗳️ Community Participation',
+                value: 
+                    `• **Nominate Game**: ${gpUtils.formatGP(GP_REWARDS.NOMINATION)} GP\n` +
+                    `• **Vote in Poll**: ${gpUtils.formatGP(GP_REWARDS.VOTE)} GP\n\n` +
+                    `*For monthly challenge polls*`,
+                inline: true
+            });
+            
+            // How to use GP
+            embed.addFields({
+                name: '💸 How to Spend GP',
+                value: 
+                    `• **Create Arena Challenge**: Set your own entry wager amount\n` +
+                    `• **Join Arena Challenge**: Match the creator's entry wager\n` +
+                    `• **Place Bets**: Bet on active challenges you're not in\n\n` +
+                    `*Use </arena:1234567890> to participate in the Arena System*`,
+                inline: false
+            });
+            
+            // Update or create the GP overview message
             await this.updateMessage(
-                'gp_leaderboard',
+                'gp_overview', // Changed from 'gp_leaderboard'
                 { embeds: [embed] }
             );
             
-            console.log('GP leaderboard embed updated successfully');
+            console.log('GP overview embed updated successfully');
         } catch (error) {
-            console.error('Error creating GP leaderboard embed:', error);
+            console.error('Error creating GP overview embed:', error);
         }
     }
 }
