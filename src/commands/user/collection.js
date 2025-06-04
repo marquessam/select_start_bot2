@@ -611,20 +611,23 @@ async handleInteraction(interaction) {
 
         // Handle share button
         if (interaction.customId.startsWith('coll_share_')) {
-            const [, , username, itemId] = interaction.customId.split('_');
-            
-            // Use Discord ID for reliable user lookup
-            const user = await User.findOne({ discordId: interaction.user.id });
-            if (!user) {
-                return interaction.reply({ content: '❌ You are not registered. Please ask an admin to register you first.', ephemeral: true });
-            }
-
-            if (user.raUsername.toLowerCase() !== username.toLowerCase()) {
-                return interaction.reply({ content: '❌ You can only share your own items.', ephemeral: true });
-            }
-            
-            return this.shareItem(interaction, user, itemId);
+        const [, , username, itemId] = interaction.customId.split('_');
+    
+        // Use Discord ID for reliable user lookup
+        const user = await User.findOne({ discordId: interaction.user.id });
+        if (!user) {
+            return interaction.reply({ content: '❌ You are not registered. Please ask an admin to register you first.', ephemeral: true });
         }
+
+        if (user.raUsername.toLowerCase() !== username.toLowerCase()) {
+            return interaction.reply({ content: '❌ You can only share your own items.', ephemeral: true });
+        }
+    
+       // FIXED: Defer the reply before calling shareItem since it uses followUp
+    await interaction.deferReply({ ephemeral: true });
+    
+    return this.shareItem(interaction, user, itemId);
+}
 
         // Handle action dropdown
         if (interaction.customId.startsWith('coll_actions_') && interaction.isStringSelectMenu()) {
