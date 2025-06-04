@@ -1,4 +1,4 @@
-// src/handlers/nominationHandlers.js - Complete with GP reward integration
+// src/handlers/nominationHandlers.js - Enhanced with better GP award handling and logging
 // Handle button interactions, modals, and select menus for the nomination system
 
 import { 
@@ -287,6 +287,8 @@ export class NominationInteractionHandler {
      */
     static async processNomination(interaction, gameId, comment) {
         try {
+            console.log(`🎮 Processing nomination: User ${interaction.user.tag} (${interaction.user.id}) nominating game ${gameId}`);
+
             const settings = await NominationSettings.getSettings();
             const now = new Date();
 
@@ -309,9 +311,13 @@ export class NominationInteractionHandler {
                 );
             }
 
+            console.log(`👤 Found user: ${user.raUsername} (Discord: ${user.discordId})`);
+
             // Check current nominations BEFORE processing
             const currentNominations = user.getCurrentNominations();
             const remainingBefore = MAX_NOMINATIONS - currentNominations.length;
+            
+            console.log(`📊 User has ${currentNominations.length}/${MAX_NOMINATIONS} nominations, ${remainingBefore} remaining`);
             
             if (remainingBefore <= 0) {
                 return interaction.editReply(
@@ -324,10 +330,12 @@ export class NominationInteractionHandler {
             let achievementCount;
             
             try {
+                console.log(`🔍 Fetching game data for game ID: ${gameId}`);
                 gameData = await enhancedRetroAPI.getGameDetails(gameId);
                 achievementCount = await enhancedRetroAPI.getGameAchievementCount(gameId);
+                console.log(`✅ Game data retrieved: ${gameData.title} (${gameData.consoleName}) - ${achievementCount} achievements`);
             } catch (error) {
-                console.error(`Error fetching game info for gameId ${gameId}:`, error);
+                console.error(`❌ Error fetching game info for gameId ${gameId}:`, error);
                 return interaction.editReply(
                     '❌ Game not found or unable to retrieve game information. Please check the Game ID and try again.'
                 );
@@ -335,6 +343,7 @@ export class NominationInteractionHandler {
 
             // Validate game data
             if (!gameData.title || !gameData.consoleName) {
+                console.error('❌ Incomplete game data received:', gameData);
                 return interaction.editReply(
                     '❌ The game information appears to be incomplete. Please try again.'
                 );
@@ -342,6 +351,7 @@ export class NominationInteractionHandler {
 
             // Check eligibility
             if (!settings.isGameAllowed(gameData, now)) {
+                console.log(`❌ Game ${gameData.title} is not allowed under current restrictions`);
                 return interaction.editReply(
                     settings.getRestrictionMessage(gameData, now)
                 );
@@ -350,6 +360,7 @@ export class NominationInteractionHandler {
             // Check for duplicate
             const existingNomination = currentNominations.find(nom => nom.gameId === gameId);
             if (existingNomination) {
+                console.log(`❌ User already nominated this game: ${gameData.title}`);
                 return interaction.editReply(`❌ You've already nominated "${gameData.title}" for next month's challenge.`);
             }
 
@@ -366,21 +377,43 @@ export class NominationInteractionHandler {
                 nominatedAt: new Date()
             };
 
+            console.log(`💾 Saving nomination to database:`, nomination);
+
             // Save nomination to database
             if (!user.nominations) {
                 user.nominations = [];
             }
             user.nominations.push(nomination);
+            
+            // Check user's GP balance before awarding
+            const balanceBefore = user.gpBalance || 0;
+            console.log(`💰 User's GP balance before nomination: ${balanceBefore}`);
+            
             await user.save();
-
             console.log(`✅ Nomination saved to database for ${user.raUsername}: ${gameData.title}`);
             
-            // *** AWARD GP FOR NOMINATION ***
+            // *** AWARD GP FOR NOMINATION WITH ENHANCED LOGGING ***
+            let gpAwarded = false;
+            let gpError = null;
+            
             try {
-                await gpRewardService.awardNominationGP(user, gameData.title);
-                console.log(`✅ Successfully awarded nomination GP to ${user.raUsername} for ${gameData.title}`);
-            } catch (gpError) {
-                console.error(`Error awarding nomination GP to ${user.raUsername}:`, gpError);
+                console.log(`🎁 Attempting to award nomination GP to ${user.raUsername} for ${gameData.title}`);
+                gpAwarded = await gpRewardService.awardNominationGP(user, gameData.title);
+                
+                if (gpAwarded) {
+                    console.log(`✅ Successfully awarded nomination GP to ${user.raUsername} for ${gameData.title}`);
+                    
+                    // Reload user to get updated balance
+                    await user.reload();
+                    const balanceAfter = user.gpBalance || 0;
+                    console.log(`💰 User's GP balance after nomination: ${balanceAfter} (difference: +${balanceAfter - balanceBefore})`);
+                } else {
+                    console.warn(`⚠️ GP reward service returned false for ${user.raUsername} - possibly duplicate or other issue`);
+                }
+            } catch (gpErrorCaught) {
+                gpError = gpErrorCaught;
+                console.error(`❌ Error awarding nomination GP to ${user.raUsername}:`, gpErrorCaught);
+                console.error('GP Error Stack:', gpErrorCaught.stack);
                 // Don't fail the nomination because of GP error - continue with announcement
             }
             
@@ -407,11 +440,25 @@ export class NominationInteractionHandler {
             );
 
             // Add GP reward field to the embed
-            successEmbed.addFields({
-                name: '💰 GP Reward',
-                value: '+20 GP awarded for nomination!',
-                inline: true
-            });
+            if (gpAwarded) {
+                successEmbed.addFields({
+                    name: '💰 GP Reward',
+                    value: '+20 GP awarded for nomination!',
+                    inline: true
+                });
+            } else if (gpError) {
+                successEmbed.addFields({
+                    name: '⚠️ GP Reward',
+                    value: 'GP award failed - contact admin if needed',
+                    inline: true
+                });
+            } else {
+                successEmbed.addFields({
+                    name: '💰 GP Reward',
+                    value: 'GP award processed (may be duplicate)',
+                    inline: true
+                });
+            }
 
             // CRITICAL: Post with NO COMPONENTS = static embed
             await interaction.editReply({
@@ -419,18 +466,33 @@ export class NominationInteractionHandler {
                 components: []  // NO BUTTONS = STATIC EMBED
             });
 
+            console.log(`📢 Public nomination announcement posted for ${gameData.title}`);
+
             // Send private confirmation with GP info
             try {
+                let confirmationMessage = `✅ **Nomination confirmed!** Your nomination for **${gameData.title}** has been posted publicly.`;
+                
+                if (gpAwarded) {
+                    confirmationMessage += `\n\n💰 **+20 GP** has been added to your balance!`;
+                } else if (gpError) {
+                    confirmationMessage += `\n\n⚠️ **GP award failed** - please contact an admin if you should have received GP.`;
+                } else {
+                    confirmationMessage += `\n\n💰 **GP processed** - check your balance with \`/gp balance\` if needed.`;
+                }
+
                 await interaction.followUp({
-                    content: `✅ **Nomination confirmed!** Your nomination for **${gameData.title}** has been posted publicly.\n\n💰 **+20 GP** has been added to your balance!`,
+                    content: confirmationMessage,
                     ephemeral: true
                 });
+                
+                console.log(`📱 Private confirmation sent to ${user.raUsername}`);
             } catch (followUpError) {
-                console.error('Error sending private confirmation:', followUpError);
+                console.error('❌ Error sending private confirmation:', followUpError);
             }
 
         } catch (error) {
-            console.error('Error in processNomination:', error);
+            console.error('❌ Error in processNomination:', error);
+            console.error('Error stack:', error.stack);
             await interaction.editReply('An unexpected error occurred while processing your nomination.');
         }
     }
