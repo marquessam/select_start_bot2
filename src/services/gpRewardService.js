@@ -1,4 +1,4 @@
-// src/services/gpRewardService.js - Fixed version to prevent infinite loops
+// src/services/gpRewardService.js - Complete fixed version preventing infinite loops
 import { User } from '../models/User.js';
 import gpUtils from '../utils/gpUtils.js';
 
