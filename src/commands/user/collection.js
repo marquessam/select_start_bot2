@@ -611,27 +611,26 @@ async handleInteraction(interaction) {
 
         // Handle share button
         if (interaction.customId.startsWith('coll_share_')) {
-        const [, , username, itemId] = interaction.customId.split('_');
-    
-        // Use Discord ID for reliable user lookup
-        const user = await User.findOne({ discordId: interaction.user.id });
-        if (!user) {
-            return interaction.reply({ content: '❌ You are not registered. Please ask an admin to register you first.', ephemeral: true });
+            const [, , username, itemId] = interaction.customId.split('_');
+            
+            // Use Discord ID for reliable user lookup
+            const user = await User.findOne({ discordId: interaction.user.id });
+            if (!user) {
+                return interaction.reply({ content: '❌ You are not registered. Please ask an admin to register you first.', ephemeral: true });
+            }
+
+            if (user.raUsername.toLowerCase() !== username.toLowerCase()) {
+                return interaction.reply({ content: '❌ You can only share your own items.', ephemeral: true });
+            }
+            
+            // FIXED: Defer the reply before calling shareItem since it uses followUp
+            await interaction.deferReply({ ephemeral: true });
+            
+            return this.shareItem(interaction, user, itemId);
         }
 
-        if (user.raUsername.toLowerCase() !== username.toLowerCase()) {
-            return interaction.reply({ content: '❌ You can only share your own items.', ephemeral: true });
-        }
-    
-       // FIXED: Defer the reply before calling shareItem since it uses followUp
-    await interaction.deferReply({ ephemeral: true });
-    
-    return this.shareItem(interaction, user, itemId);
-}
-
-        // Handle action dropdown
+        // Handle action dropdown - FIXED VERSION
         if (interaction.customId.startsWith('coll_actions_') && interaction.isStringSelectMenu()) {
-            await interaction.deferUpdate();
             const [, , username, filter, pageStr] = interaction.customId.split('_');
             const page = parseInt(pageStr);
             const action = interaction.values[0];
@@ -639,17 +638,24 @@ async handleInteraction(interaction) {
             // Use Discord ID for reliable user lookup
             const user = await User.findOne({ discordId: interaction.user.id });
             if (!user) {
-                return interaction.followUp({ content: '❌ You are not registered. Please ask an admin to register you first.', ephemeral: true });
+                return interaction.reply({ content: '❌ You are not registered. Please ask an admin to register you first.', ephemeral: true });
             }
 
             // Verify the username matches (optional safety check)
             if (user.raUsername.toLowerCase() !== username.toLowerCase()) {
-                return interaction.followUp({ content: '❌ You can only view your own collection.', ephemeral: true });
+                return interaction.reply({ content: '❌ You can only view your own collection.', ephemeral: true });
             }
+
+            // FIXED: Handle 'give' action differently - don't defer for modals
+            if (action === 'give') {
+                return this.showGiveModal(interaction, user);
+            }
+
+            // For all other actions, defer the update
+            await interaction.deferUpdate();
 
             switch (action) {
                 case 'inspect': return this.showInspectMenu(interaction, user, filter, page);
-                case 'give': return this.showGiveModal(interaction, user);
                 case 'stats': return this.showStats(interaction, user);
                 case 'combinations':
                     const combinations = await combinationService.checkPossibleCombinations(user);
