@@ -1,4 +1,4 @@
-// src/commands/user/profile.js - STREAMLINED VERSION
+// src/commands/user/profile.js - COMPLETE FIXED VERSION with deduplication
 import { 
     SlashCommandBuilder, 
     EmbedBuilder,
@@ -68,37 +68,55 @@ export default {
         }
     },
     
+    // FIXED: Calculate points with proper deduplication
     calculatePoints(user) {
         let challengePoints = 0;
         let stats = { mastery: 0, beaten: 0, participation: 0, shadowBeaten: 0, shadowParticipation: 0 };
         
-        // Monthly challenges
-        for (const [, data] of user.monthlyChallenges.entries()) {
+        console.log(`=== CALCULATING POINTS FOR ${user.raUsername} ===`);
+        
+        // Process monthly challenges with deduplication
+        const uniqueMonthly = this.deduplicateAndCleanEntries(user.monthlyChallenges, 'monthly');
+        console.log(`Monthly challenges: ${user.monthlyChallenges?.size || 0} raw -> ${uniqueMonthly.length} unique`);
+        
+        for (const [monthKey, data] of uniqueMonthly) {
             if (data.progress === 3) {
                 stats.mastery++;
                 challengePoints += POINTS.MASTERY;
+                console.log(`Monthly mastery: ${monthKey} (+${POINTS.MASTERY} pts)`);
             } else if (data.progress === 2) {
                 stats.beaten++;
                 challengePoints += POINTS.BEATEN;
+                console.log(`Monthly beaten: ${monthKey} (+${POINTS.BEATEN} pts)`);
             } else if (data.progress === 1) {
                 stats.participation++;
                 challengePoints += POINTS.PARTICIPATION;
+                console.log(`Monthly participation: ${monthKey} (+${POINTS.PARTICIPATION} pts)`);
             }
         }
 
-        // Shadow challenges
-        for (const [, data] of user.shadowChallenges.entries()) {
+        // Process shadow challenges with deduplication
+        const uniqueShadow = this.deduplicateAndCleanEntries(user.shadowChallenges, 'shadow');
+        console.log(`Shadow challenges: ${user.shadowChallenges?.size || 0} raw -> ${uniqueShadow.length} unique`);
+        
+        for (const [monthKey, data] of uniqueShadow) {
             if (data.progress === 2) {
                 stats.shadowBeaten++;
                 challengePoints += POINTS.BEATEN;
+                console.log(`Shadow beaten: ${monthKey} (+${POINTS.BEATEN} pts)`);
             } else if (data.progress === 1) {
                 stats.shadowParticipation++;
                 challengePoints += POINTS.PARTICIPATION;
+                console.log(`Shadow participation: ${monthKey} (+${POINTS.PARTICIPATION} pts)`);
             }
         }
 
         const currentYear = new Date().getFullYear();
         const communityPoints = user.getCommunityPointsForYear(currentYear);
+
+        console.log(`Final stats:`, stats);
+        console.log(`Challenge points: ${challengePoints}, Community points: ${communityPoints}`);
+        console.log(`=== END POINTS CALCULATION ===`);
 
         return {
             totalPoints: challengePoints + communityPoints,
@@ -106,6 +124,106 @@ export default {
             communityPoints,
             stats
         };
+    },
+
+    // ENHANCED: Better deduplication that also cleans the data
+    deduplicateAndCleanEntries(challengeMap, challengeType) {
+        if (!challengeMap?.size) return [];
+
+        const entries = Array.from(challengeMap.entries());
+        const normalized = new Map();
+        let duplicatesFound = 0;
+
+        for (const [originalKey, data] of entries) {
+            const normalizedKey = this.normalizeMonthKey(originalKey);
+            
+            if (normalized.has(normalizedKey)) {
+                duplicatesFound++;
+                const existing = normalized.get(normalizedKey);
+                
+                // Merge the data, keeping the best values
+                const mergedData = this.mergeChallengeDatas(existing.data, data);
+                normalized.set(normalizedKey, { key: normalizedKey, data: mergedData });
+            } else {
+                normalized.set(normalizedKey, { key: normalizedKey, data });
+            }
+        }
+
+        if (duplicatesFound > 0) {
+            console.log(`⚠️ Found ${duplicatesFound} duplicate ${challengeType} entries for ${challengeMap.size} raw entries`);
+            console.log(`💡 Run /cleanup-challenge-data to fix this permanently`);
+        }
+
+        return Array.from(normalized.values()).map(({ key, data }) => [key, data]);
+    },
+
+    // ENHANCED: Merge challenge data objects, keeping the best values
+    mergeChallengeDatas(existing, newData) {
+        const merged = { ...existing };
+
+        // Take the higher progress value
+        if ((newData.progress || 0) > (existing.progress || 0)) {
+            merged.progress = newData.progress;
+        }
+
+        // Take the higher achievement count
+        if ((newData.achievements || 0) > (existing.achievements || 0)) {
+            merged.achievements = newData.achievements;
+        }
+
+        // Take the higher completion percentage
+        if ((newData.completionPercent || 0) > (existing.completionPercent || 0)) {
+            merged.completionPercent = newData.completionPercent;
+        }
+
+        // Prefer non-empty game titles
+        if (newData.gameTitle && !existing.gameTitle) {
+            merged.gameTitle = newData.gameTitle;
+        }
+
+        // Take the more recent lastUpdated date
+        if (newData.lastUpdated && (!existing.lastUpdated || 
+            new Date(newData.lastUpdated) > new Date(existing.lastUpdated))) {
+            merged.lastUpdated = newData.lastUpdated;
+        }
+
+        // Keep any other fields that exist in either
+        Object.keys(newData).forEach(key => {
+            if (!(key in merged) && newData[key] !== undefined) {
+                merged[key] = newData[key];
+            }
+        });
+
+        return merged;
+    },
+
+    // ENHANCED: Better month key normalization
+    normalizeMonthKey(dateKey) {
+        if (!dateKey) return dateKey;
+        
+        const keyStr = String(dateKey).trim();
+        
+        // Already in correct format (YYYY-MM)
+        if (/^\d{4}-\d{2}$/.test(keyStr)) return keyStr;
+        
+        // ISO date format (YYYY-MM-DD -> YYYY-MM)
+        if (/^\d{4}-\d{2}-\d{2}$/.test(keyStr)) {
+            return keyStr.substring(0, 7);
+        }
+        
+        // Try parsing various date formats
+        try {
+            const date = new Date(keyStr);
+            if (!isNaN(date.getTime())) {
+                const year = date.getFullYear();
+                const month = (date.getMonth() + 1).toString().padStart(2, '0');
+                return `${year}-${month}`;
+            }
+        } catch (error) {
+            console.warn(`Unable to parse date key: ${keyStr}`);
+        }
+        
+        return keyStr;
     },
     
     createProfileEmbed(user, raUserInfo, pointsData, communityAwards) {
@@ -235,6 +353,7 @@ export default {
         }
     },
 
+    // FIXED: Trophy case with proper deduplication
     async showTrophyCase(interaction, user) {
         const challenges = await Challenge.find({}).sort({ date: 1 });
         const challengeTitleMap = {};
@@ -250,21 +369,28 @@ export default {
         const trophies = [];
         const seenTrophies = new Set();
 
-        // Process monthly challenges
-        const uniqueMonthly = this.deduplicateEntries(user.monthlyChallenges);
-        for (const [userDateKey, data] of uniqueMonthly) {
+        console.log(`=== TROPHY CASE FOR ${user.raUsername} ===`);
+
+        // Process monthly challenges with enhanced deduplication
+        const uniqueMonthly = this.deduplicateAndCleanEntries(user.monthlyChallenges, 'monthly');
+        console.log(`Monthly trophies: ${user.monthlyChallenges?.size || 0} raw -> ${uniqueMonthly.length} unique`);
+        
+        for (const [monthKey, data] of uniqueMonthly) {
             if (data.progress > 0) {
                 const awardLevel = data.progress === 3 ? 'mastery' : data.progress === 2 ? 'beaten' : 'participation';
-                const monthKey = this.normalizeMonthKey(userDateKey);
                 const trophyId = `monthly_${monthKey}_${awardLevel}`;
                 
-                if (seenTrophies.has(trophyId)) continue;
+                if (seenTrophies.has(trophyId)) {
+                    console.log(`Skipping duplicate trophy: ${trophyId}`);
+                    continue;
+                }
                 seenTrophies.add(trophyId);
                 
                 const [year, month] = monthKey.split('-');
                 const trophyDate = new Date(parseInt(year), parseInt(month) - 1, 15);
                 
-                let gameTitle = data.gameTitle || challengeTitleMap[monthKey]?.monthly || `Monthly Challenge - ${this.formatShortDate(monthKey)}`;
+                let gameTitle = data.gameTitle || challengeTitleMap[monthKey]?.monthly || 
+                              `Monthly Challenge - ${this.formatShortDate(monthKey)}`;
                 const emojiData = await getTrophyEmoji('monthly', monthKey, awardLevel);
 
                 trophies.push({
@@ -272,24 +398,30 @@ export default {
                     emojiId: emojiData.emojiId, emojiName: emojiData.emojiName,
                     earnedAt: trophyDate
                 });
+                console.log(`Added monthly trophy: ${monthKey} - ${awardLevel}`);
             }
         }
 
-        // Process shadow challenges
-        const uniqueShadow = this.deduplicateEntries(user.shadowChallenges);
-        for (const [userDateKey, data] of uniqueShadow) {
+        // Process shadow challenges with enhanced deduplication
+        const uniqueShadow = this.deduplicateAndCleanEntries(user.shadowChallenges, 'shadow');
+        console.log(`Shadow trophies: ${user.shadowChallenges?.size || 0} raw -> ${uniqueShadow.length} unique`);
+        
+        for (const [monthKey, data] of uniqueShadow) {
             if (data.progress > 0) {
                 const awardLevel = data.progress === 2 ? 'beaten' : 'participation';
-                const monthKey = this.normalizeMonthKey(userDateKey);
                 const trophyId = `shadow_${monthKey}_${awardLevel}`;
                 
-                if (seenTrophies.has(trophyId)) continue;
+                if (seenTrophies.has(trophyId)) {
+                    console.log(`Skipping duplicate trophy: ${trophyId}`);
+                    continue;
+                }
                 seenTrophies.add(trophyId);
                 
                 const [year, month] = monthKey.split('-');
                 const trophyDate = new Date(parseInt(year), parseInt(month) - 1, 15);
                 
-                let gameTitle = data.gameTitle || challengeTitleMap[monthKey]?.shadow || `Shadow Challenge - ${this.formatShortDate(monthKey)}`;
+                let gameTitle = data.gameTitle || challengeTitleMap[monthKey]?.shadow || 
+                              `Shadow Challenge - ${this.formatShortDate(monthKey)}`;
                 const emojiData = await getTrophyEmoji('shadow', monthKey, awardLevel);
 
                 trophies.push({
@@ -297,6 +429,7 @@ export default {
                     emojiId: emojiData.emojiId, emojiName: emojiData.emojiName,
                     earnedAt: trophyDate
                 });
+                console.log(`Added shadow trophy: ${monthKey} - ${awardLevel}`);
             }
         }
 
@@ -317,6 +450,15 @@ export default {
                 earnedAt: award.awardedAt
             });
         }
+
+        // Log summary for debugging
+        const summary = trophies.reduce((acc, trophy) => {
+            const key = `${trophy.challengeType}_${trophy.awardLevel}`;
+            acc[key] = (acc[key] || 0) + 1;
+            return acc;
+        }, {});
+        console.log('Trophy summary after deduplication:', summary);
+        console.log(`=== END TROPHY CASE ===`);
 
         trophies.sort((a, b) => new Date(b.earnedAt) - new Date(a.earnedAt));
 
@@ -509,52 +651,6 @@ export default {
             await interaction.editReply?.({ content: '❌ An error occurred.' }) ||
                   interaction.followUp?.({ content: '❌ An error occurred.', ephemeral: true });
         }
-    },
-
-    // Helper methods
-    deduplicateEntries(challengeMap) {
-        if (!challengeMap?.size) return [];
-
-        const entries = Array.from(challengeMap.entries());
-        const normalized = new Map();
-
-        for (const [originalKey, data] of entries) {
-            const normalizedKey = this.normalizeMonthKey(originalKey);
-            
-            if (normalized.has(normalizedKey)) {
-                const existing = normalized.get(normalizedKey);
-                if (data.progress > existing.data.progress || 
-                    (data.progress === existing.data.progress && (data.achievements || 0) > (existing.data.achievements || 0))) {
-                    normalized.set(normalizedKey, { key: normalizedKey, data });
-                }
-            } else {
-                normalized.set(normalizedKey, { key: normalizedKey, data });
-            }
-        }
-
-        return Array.from(normalized.values()).map(({ key, data }) => [key, data]);
-    },
-
-    normalizeMonthKey(dateKey) {
-        if (!dateKey) return dateKey;
-        
-        const keyStr = String(dateKey).trim();
-        
-        if (/^\d{4}-\d{2}$/.test(keyStr)) return keyStr;
-        if (/^\d{4}-\d{2}-\d{2}$/.test(keyStr)) return keyStr.substring(0, 7);
-        
-        try {
-            const date = new Date(keyStr);
-            if (!isNaN(date.getTime())) {
-                const year = date.getFullYear();
-                const month = (date.getMonth() + 1).toString().padStart(2, '0');
-                return `${year}-${month}`;
-            }
-        } catch (error) {
-            console.warn(`Unable to parse date key: ${keyStr}`);
-        }
-        
-        return keyStr;
     },
 
     getMonthKey(date) {
