@@ -1,4 +1,4 @@
-// src/services/arenaAlertService.js - UPDATED with gear for creator, crown for #1
+// src/services/arenaAlertService.js - UPDATED with clickable game links
 import { ArenaChallenge } from '../models/ArenaChallenge.js';
 import { User } from '../models/User.js';
 import { config } from '../config/config.js';
@@ -224,7 +224,8 @@ class ArenaAlertService extends FeedManagerBase {
                         prevRank: prevRank,
                         newRank: currentRank,
                         score: currentScore.score,
-                        description: challenge.description
+                        description: challenge.description,
+                        leaderboardId: challenge.leaderboardId // ADDED: For creating links
                     });
                 }
             }
@@ -259,10 +260,12 @@ class ArenaAlertService extends FeedManagerBase {
         }
     }
 
+    // FIXED: Send challenge rank change alerts with clickable game links
     async sendChallengeRankChangeAlerts(challengeAlertsList) {
         try {
             const firstAlert = challengeAlertsList[0];
             const challengeTitle = firstAlert.challengeTitle;
+            const leaderboardId = firstAlert.leaderboardId;
             
             // Get challenge details
             const challenge = await ArenaChallenge.findOne({ challengeId: firstAlert.challengeId });
@@ -330,10 +333,14 @@ class ArenaAlertService extends FeedManagerBase {
                 console.error('Error fetching current standings for alert:', error);
             }
             
+            // FIXED: Create clickable game title link
+            const leaderboardUrl = `https://retroachievements.org/leaderboardinfo.php?i=${leaderboardId}`;
+            const gameLink = `[${challengeTitle}](${leaderboardUrl})`;
+            
             // Use AlertUtils for rank changes with the ARENA alert type
             await AlertUtils.sendPositionChangeAlert({
                 title: '🏟️ Arena Alert!',
-                description: `The leaderboard for **${challengeTitle}** has been updated!\n\n` +
+                description: `The leaderboard for **${gameLink}** has been updated!\n\n` + // FIXED: Clickable game link
                             `**Description:** ${challenge.description || 'No description provided'}\n` +
                             `**Prize Pool:** ${challenge.getTotalWager()} GP`,
                 changes: changes,
