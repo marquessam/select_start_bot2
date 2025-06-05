@@ -300,92 +300,99 @@ export class AlertManager {
                 });
             }
                 
-                // Add footer if provided
-                if (footer) {
-                    embed.setFooter(footer);
-                } else {
-                    embed.setFooter({ 
-                        text: 'Rankings update regularly. Check the feed channel for full standings.' 
-                    });
-                }
-                
-                // Send the alert
-                await channel.send({ embeds: [embed] });
-                console.log(`Successfully sent position change alert to ${channel.name} (${alertType}): "${title}"`);
-            } catch (error) {
-                console.error(`Error sending position change alert (${alertType}):`, error);
+            // Add footer if provided
+            if (footer) {
+                embed.setFooter(footer);
+            } else {
+                embed.setFooter({ 
+                    text: 'Rankings update regularly. Check the feed channel for full standings.' 
+                });
             }
+            
+            // Send the alert
+            await channel.send({ embeds: [embed] });
+            console.log(`Successfully sent position change alert to ${channel.name} (${alertType}): "${title}"`);
+        } catch (error) {
+            console.error(`Error sending position change alert (${alertType}):`, error);
         }
+    }
         
-        /**
-         * Send a standard alert for new achievements/awards
-         * @param {Object} options - Alert options
-         * @param {string} alertType - The type of alert to send (determines channel)
-         * @param {string} overrideChannelId - Optional specific channel ID to override default
-         */
-        async sendAchievementAlert(options, alertType = null, overrideChannelId = null) {
-            try {
-                const {
-                    username,
-                    achievementTitle,
-                    achievementDescription,
-                    gameTitle,
-                    gameId,
-                    points = null,
-                    thumbnail = null,
-                    badgeUrl = null,
-                    color = null, // Will be overridden by alert type color
-                    isAward = false,
-                    isMastery = false,
-                    isBeaten = false
-                } = options;
-                
-                // Determine the correct alert type based on explicit parameter first
-                let targetAlertType = alertType;
-                
-                if (!targetAlertType) {
-                    if (isMastery || isBeaten) {
-                        targetAlertType = ALERT_TYPES.MASTERY;
-                    } else if (isAward) {
-                        targetAlertType = ALERT_TYPES.ACHIEVEMENT;
-                    } else {
-                        targetAlertType = ALERT_TYPES.ACHIEVEMENT;
-                    }
-                }
-                
-                console.log(`Sending achievement alert - Type: ${targetAlertType}, Override: ${overrideChannelId || 'none'}`);
-                
-                const channel = await this.getAlertsChannel(targetAlertType, overrideChannelId);
-                if (!channel) {
-                    console.error(`No alerts channel found for type ${targetAlertType}, skipping notification`);
-                    return;
-                }
-                
-                console.log(`Sending achievement alert to channel: ${channel.name} (${channel.id})`);
-                
-                // Use alert type specific color
-                const alertColor = this.getColorForAlertType(targetAlertType);
-                
-                // Create embed
-                const embed = new EmbedBuilder()
-                    .setColor(alertColor)
-                    .setTimestamp();
-                
-                // UPDATED: Create title based on achievement or award with proper text
-                if (isMastery) {
-                    embed.setTitle(`✨ ${username} mastered a game!`);
-                } else if (isBeaten) {
-                    embed.setTitle(`⭐ ${username} has beaten a game!`); // FIXED: Changed from "Beaten a Game!"
+    /**
+     * FIXED: Send a standard alert for new achievements/awards with proper description handling
+     * @param {Object} options - Alert options
+     * @param {string} alertType - The type of alert to send (determines channel)
+     * @param {string} overrideChannelId - Optional specific channel ID to override default
+     */
+    async sendAchievementAlert(options, alertType = null, overrideChannelId = null) {
+        try {
+            const {
+                username,
+                achievementTitle,
+                achievementDescription, // This contains the GP info from gameAwardService!
+                gameTitle,
+                gameId,
+                points = null,
+                thumbnail = null,
+                badgeUrl = null,
+                color = null, // Will be overridden by alert type color
+                isAward = false,
+                isMastery = false,
+                isBeaten = false
+            } = options;
+            
+            // Determine the correct alert type based on explicit parameter first
+            let targetAlertType = alertType;
+            
+            if (!targetAlertType) {
+                if (isMastery || isBeaten) {
+                    targetAlertType = ALERT_TYPES.MASTERY;
                 } else if (isAward) {
-                    embed.setTitle(`🏆 ${username} earned an award!`);
+                    targetAlertType = ALERT_TYPES.ACHIEVEMENT;
                 } else {
-                    embed.setTitle(`🎮 Achievement Unlocked!`);
+                    targetAlertType = ALERT_TYPES.ACHIEVEMENT;
                 }
-                
-                // UPDATED: Create description with proper links
+            }
+            
+            console.log(`Sending achievement alert - Type: ${targetAlertType}, Override: ${overrideChannelId || 'none'}`);
+            
+            const channel = await this.getAlertsChannel(targetAlertType, overrideChannelId);
+            if (!channel) {
+                console.error(`No alerts channel found for type ${targetAlertType}, skipping notification`);
+                return;
+            }
+            
+            console.log(`Sending achievement alert to channel: ${channel.name} (${channel.id})`);
+            
+            // Use alert type specific color
+            const alertColor = this.getColorForAlertType(targetAlertType);
+            
+            // Create embed
+            const embed = new EmbedBuilder()
+                .setColor(alertColor)
+                .setTimestamp();
+            
+            // Create title based on achievement or award with proper text
+            if (isMastery) {
+                embed.setTitle(`✨ ${username} has mastered a game!`);
+            } else if (isBeaten) {
+                embed.setTitle(`⭐ ${username} has beaten a game!`);
+            } else if (isAward) {
+                embed.setTitle(`🏆 ${username} earned an award!`);
+            } else {
+                embed.setTitle(`🎮 Achievement Unlocked!`);
+            }
+            
+            // FIXED: Use the passed achievementDescription if provided (contains GP info),
+            // otherwise create our own description
+            let description = '';
+            
+            if (achievementDescription) {
+                // Use the description passed from gameAwardService (includes GP info)
+                description = achievementDescription;
+            } else {
+                // Fallback: create our own description for other cases
                 const userLink = createUserProfileLink(username);
                 const gameLink = createGameLink(gameTitle, gameId);
-                let description = '';
                 
                 if (isMastery) {
                     description = `${userLink} has mastered ${gameLink}!\n` +
@@ -400,84 +407,85 @@ export class AlertManager {
                     description = `${userLink} has unlocked **${achievementTitle}**\n` +
                                  `Game: ${gameLink}`;
                 }
-                
-                embed.setDescription(description);
-                
-                // Add achievement description if available
-                if (achievementDescription && !isAward && !isMastery && !isBeaten) {
-                    embed.addFields({ 
-                        name: 'Description', 
-                        value: `*${achievementDescription}*` 
-                    });
-                }
-                
-                // Add points if available
-                if (points) {
-                    embed.addFields({ 
-                        name: 'Points', 
-                        value: `${points}` 
-                    });
-                }
-                
-                // Set thumbnail (game icon) or badge image
-                if (thumbnail) {
-                    embed.setThumbnail(thumbnail);
-                } else if (badgeUrl) {
-                    embed.setThumbnail(badgeUrl);
-                }
-                
-                // Send the alert
-                await channel.send({ embeds: [embed] });
-                console.log(`Successfully sent ${targetAlertType} alert to ${channel.name} for ${username}: "${achievementTitle}"`);
-            } catch (error) {
-                console.error(`Error sending achievement alert (${alertType}):`, error);
             }
-        }
-        
-        /**
-         * Send a mastery alert (convenience method)
-         */
-        async sendMasteryAlert(options, overrideChannelId = null) {
-            return this.sendAchievementAlert(
-                { ...options, isMastery: true },
-                ALERT_TYPES.MASTERY,
-                overrideChannelId
-            );
-        }
-        
-        /**
-         * Send a beaten game alert (convenience method)
-         */
-        async sendBeatenAlert(options, overrideChannelId = null) {
-            return this.sendAchievementAlert(
-                { ...options, isBeaten: true },
-                ALERT_TYPES.MASTERY,
-                overrideChannelId
-            );
-        }
-        
-        /**
-         * Send a monthly challenge award alert (convenience method)
-         */
-        async sendMonthlyAwardAlert(options, overrideChannelId = null) {
-            return this.sendAchievementAlert(
-                { ...options, isAward: true },
-                ALERT_TYPES.MONTHLY,
-                overrideChannelId
-            );
-        }
-        
-        /**
-         * Send a shadow challenge award alert (convenience method)
-         */
-        async sendShadowAwardAlert(options, overrideChannelId = null) {
-            return this.sendAchievementAlert(
-                { ...options, isAward: true },
-                ALERT_TYPES.SHADOW,
-                overrideChannelId
-            );
+            
+            embed.setDescription(description);
+            
+            // Add achievement description if available (and not already used as main description)
+            if (!achievementDescription && achievementTitle && !isAward && !isMastery && !isBeaten) {
+                embed.addFields({ 
+                    name: 'Description', 
+                    value: `*${achievementTitle}*` 
+                });
+            }
+            
+            // Add points if available
+            if (points) {
+                embed.addFields({ 
+                    name: 'Points', 
+                    value: `${points}` 
+                });
+            }
+            
+            // Set thumbnail (game icon) or badge image
+            if (thumbnail) {
+                embed.setThumbnail(thumbnail);
+            } else if (badgeUrl) {
+                embed.setThumbnail(badgeUrl);
+            }
+            
+            // Send the alert
+            await channel.send({ embeds: [embed] });
+            console.log(`Successfully sent ${targetAlertType} alert to ${channel.name} for ${username}: "${achievementTitle}"`);
+        } catch (error) {
+            console.error(`Error sending achievement alert (${alertType}):`, error);
         }
     }
+    
+    /**
+     * Send a mastery alert (convenience method)
+     */
+    async sendMasteryAlert(options, overrideChannelId = null) {
+        return this.sendAchievementAlert(
+            { ...options, isMastery: true },
+            ALERT_TYPES.MASTERY,
+            overrideChannelId
+        );
+    }
+    
+    /**
+     * Send a beaten game alert (convenience method)
+     */
+    async sendBeatenAlert(options, overrideChannelId = null) {
+        return this.sendAchievementAlert(
+            { ...options, isBeaten: true },
+            ALERT_TYPES.MASTERY,
+            overrideChannelId
+        );
+    }
+    
+    /**
+     * Send a monthly challenge award alert (convenience method)
+     */
+    async sendMonthlyAwardAlert(options, overrideChannelId = null) {
+        return this.sendAchievementAlert(
+            { ...options, isAward: true },
+            ALERT_TYPES.MONTHLY,
+            overrideChannelId
+        );
+    }
+    
+    /**
+     * Send a shadow challenge award alert (convenience method)
+     */
+    async sendShadowAwardAlert(options, overrideChannelId = null) {
+        return this.sendAchievementAlert(
+            { ...options, isAward: true },
+            ALERT_TYPES.SHADOW,
+            overrideChannelId
+        );
+    }
+}
 
 // Create singleton instance
 const alertManager = new AlertManager();
