@@ -442,12 +442,12 @@ class ArenaFeedService extends FeedManagerBase {
             embed.addFields({
                 name: '🏆 Challenge Completions',
                 value: 
-                    `• **Monthly Mastery**: ${gpUtils.formatGP(GP_REWARDS.MONTHLY_MASTERY)} GP\n` +
-                    `• **Monthly Beaten**: ${gpUtils.formatGP(GP_REWARDS.MONTHLY_BEATEN)} GP\n` +
-                    `• **Monthly Participation**: ${gpUtils.formatGP(GP_REWARDS.MONTHLY_PARTICIPATION)} GP\n` +
-                    `• **Shadow Mastery**: ${gpUtils.formatGP(GP_REWARDS.SHADOW_MASTERY)} GP\n` +
-                    `• **Shadow Beaten**: ${gpUtils.formatGP(GP_REWARDS.SHADOW_BEATEN)} GP\n` +
-                    `• **Shadow Participation**: ${gpUtils.formatGP(GP_REWARDS.SHADOW_PARTICIPATION)} GP`,
+                    `• **Monthly Mastery**: ${gpUtils.formatGP(GP_REWARDS.MONTHLY_MASTERY)} \n` +
+                    `• **Monthly Beaten**: ${gpUtils.formatGP(GP_REWARDS.MONTHLY_BEATEN)} \n` +
+                    `• **Monthly Participation**: ${gpUtils.formatGP(GP_REWARDS.MONTHLY_PARTICIPATION)} \n` +
+                    `• **Shadow Mastery**: ${gpUtils.formatGP(GP_REWARDS.SHADOW_MASTERY)} \n` +
+                    `• **Shadow Beaten**: ${gpUtils.formatGP(GP_REWARDS.SHADOW_BEATEN)} \n` +
+                    `• **Shadow Participation**: ${gpUtils.formatGP(GP_REWARDS.SHADOW_PARTICIPATION)} `,
                 inline: true
             });
             
@@ -455,8 +455,8 @@ class ArenaFeedService extends FeedManagerBase {
             embed.addFields({
                 name: '🎮 Regular Games',
                 value: 
-                    `• **Game Mastery**: ${gpUtils.formatGP(GP_REWARDS.REGULAR_MASTERY)} GP\n` +
-                    `• **Game Beaten**: ${gpUtils.formatGP(GP_REWARDS.REGULAR_BEATEN)} GP\n\n` +
+                    `• **Game Mastery**: ${gpUtils.formatGP(GP_REWARDS.REGULAR_MASTERY)} \n` +
+                    `• **Game Beaten**: ${gpUtils.formatGP(GP_REWARDS.REGULAR_BEATEN)} \n\n` +
                     `*From achievement feed*`,
                 inline: true
             });
@@ -465,8 +465,8 @@ class ArenaFeedService extends FeedManagerBase {
             embed.addFields({
                 name: '🗳️ Community Participation',
                 value: 
-                    `• **Nominate Game**: ${gpUtils.formatGP(GP_REWARDS.NOMINATION)} GP\n` +
-                    `• **Vote in Poll**: ${gpUtils.formatGP(GP_REWARDS.VOTE)} GP\n\n` +
+                    `• **Nominate Game**: ${gpUtils.formatGP(GP_REWARDS.NOMINATION)} \n` +
+                    `• **Vote in Poll**: ${gpUtils.formatGP(GP_REWARDS.VOTE)} \n\n` +
                     `*Monthly challenge polls*`,
                 inline: true
             });
@@ -478,8 +478,8 @@ class ArenaFeedService extends FeedManagerBase {
                     `• **Arena Challenges**: Create or join challenges\n` +
                     `• **Arena Betting**: Bet on active challenges\n` +
                     `• **Gacha Machine**: Pull for collectible items in <#1377092881885696022>\n` +
-                    `  - Single Pull: ${gpUtils.formatGP(50)} GP\n` +
-                    `  - Multi Pull: ${gpUtils.formatGP(150)} GP (4 items)\n\n` +
+                    `  - Single Pull: ${gpUtils.formatGP(50)} \n` +
+                    `  - Multi Pull: ${gpUtils.formatGP(150)}  (4 items)\n\n` +
                     `*Use </arena:1234567890> for arena system*`,
                 inline: false
             });
