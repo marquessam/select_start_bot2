@@ -1,4 +1,4 @@
-// src/handlers/nominationHandlers.js - Enhanced with better GP award handling and logging
+// src/handlers/nominationHandlers.js - Enhanced with better GP award handling and logging + clickable game links
 // Handle button interactions, modals, and select menus for the nomination system
 
 import { 
@@ -283,7 +283,7 @@ export class NominationInteractionHandler {
     }
 
     /**
-     * Process nomination and create STATIC SUCCESS EMBED (no buttons) + AWARD GP
+     * Process nomination and create STATIC SUCCESS EMBED (no buttons) + AWARD GP + CLICKABLE GAME LINKS
      */
     static async processNomination(interaction, gameId, comment) {
         try {
@@ -417,12 +417,17 @@ export class NominationInteractionHandler {
                 // Don't fail the nomination because of GP error - continue with announcement
             }
             
+            // *** CREATE CLICKABLE GAME LINK ***
+            const gameUrl = `https://retroachievements.org/game/${gameId}`;
+            const clickableGameTitle = `[${gameData.title}](${gameUrl})`;
+            console.log(`🔗 Created clickable game link: ${gameUrl}`);
+            
             // Create STATIC success embed using the nominate command method
             const nominateCommand = interaction.client.commands.get('nominate');
             
-            // Prepare game data object for the embed
+            // Prepare game data object for the embed with clickable title
             const gameDataForEmbed = {
-                Title: gameData.title,
+                Title: clickableGameTitle, // UPDATED: Now includes clickable link
                 ConsoleName: gameData.consoleName,
                 NumAchievements: achievementCount,
                 Publisher: gameData.publisher,
@@ -466,11 +471,11 @@ export class NominationInteractionHandler {
                 components: []  // NO BUTTONS = STATIC EMBED
             });
 
-            console.log(`📢 Public nomination announcement posted for ${gameData.title}`);
+            console.log(`📢 Public nomination announcement posted for ${gameData.title} (clickable link: ${gameUrl})`);
 
             // Send private confirmation with GP info
             try {
-                let confirmationMessage = `✅ **Nomination confirmed!** Your nomination for **${gameData.title}** has been posted publicly.`;
+                let confirmationMessage = `✅ **Nomination confirmed!** Your nomination for **${gameData.title}** has been posted publicly with a clickable link to the game page.`;
                 
                 if (gpAwarded) {
                     confirmationMessage += `\n\n💰 **+20 GP** has been added to your balance!`;
