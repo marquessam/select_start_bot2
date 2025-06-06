@@ -135,16 +135,25 @@ export default {
                     
                     await user.save();
 
-                    // Award monthly GP to new user
+                    // Award monthly GP to new user and set lastMonthlyGpGrant to prevent double award
                     try {
-                        const currentMonth = new Date().toLocaleString('default', { month: 'long', year: 'numeric' });
+                        const currentDate = new Date();
+                        const currentMonth = currentDate.toLocaleString('default', { month: 'long', year: 'numeric' });
+                        
                         await gpUtils.awardGP(
                             user, 
                             1000, 
                             'monthly_grant', 
                             `Monthly GP grant for ${currentMonth} (Registration bonus)`
                         );
+                        
+                        // CRITICAL FIX: Set lastMonthlyGpGrant to prevent monthly service from awarding again
+                        user.lastMonthlyGpGrant = currentDate;
+                        await user.save();
+                        
                         console.log(`✅ Awarded 1000 GP registration bonus to new user: ${raUsername}`);
+                        console.log(`✅ Set lastMonthlyGpGrant to prevent double award: ${currentDate}`);
+                        
                     } catch (gpError) {
                         console.error('Error awarding registration GP bonus:', gpError);
                         // Don't fail registration if GP award fails, just log it
