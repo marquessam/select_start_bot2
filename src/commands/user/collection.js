@@ -1,4 +1,4 @@
-// src/commands/user/collection.js - STREAMLINED VERSION
+// src/commands/user/collection.js - UPDATED with animated emoji support
 import { 
     SlashCommandBuilder, 
     EmbedBuilder,
@@ -102,7 +102,8 @@ export default {
                 // Create emoji grid (5 per row)
                 let currentRow = '';
                 rarityItems.forEach((item, i) => {
-                    const emoji = formatGachaEmoji(item.emojiId, item.emojiName);
+                    // UPDATED: Pass isAnimated parameter
+                    const emoji = formatGachaEmoji(item.emojiId, item.emojiName, item.isAnimated);
                     const quantity = item.quantity > 1 ? `x${item.quantity}` : '';
                     currentRow += `${emoji}${quantity} `;
                     
@@ -235,15 +236,16 @@ export default {
             const quantity = item.quantity > 1 ? ` x${item.quantity}` : '';
             const seriesTag = item.seriesId ? ` [${item.seriesId}]` : '';
             const sourceTag = item.source === 'combined' ? ' ⚗️' : item.source === 'player_transfer' ? ' 🎁' : '';
+            const animatedTag = item.isAnimated ? ' 🎬' : '';
             
             const option = {
                 label: item.itemName.slice(0, 100),
                 value: item.itemId,
-                description: `${gachaService.getRarityDisplayName(item.rarity)}${quantity}${seriesTag}${sourceTag}`.slice(0, 100)
+                description: `${gachaService.getRarityDisplayName(item.rarity)}${quantity}${seriesTag}${sourceTag}${animatedTag}`.slice(0, 100)
             };
             
             if (item.emojiId && item.emojiName) {
-                option.emoji = { id: item.emojiId, name: item.emojiName };
+                option.emoji = { id: item.emojiId, name: item.emojiName, animated: item.isAnimated };
             }
             
             return option;
@@ -251,7 +253,7 @@ export default {
 
         const embed = new EmbedBuilder()
             .setTitle(`🔍 Inspect Item - Page ${page + 1}`)
-            .setDescription('Choose an item to view its details.\n\n**Legend:** ⚗️ = Combined, 🎁 = Player Gift')
+            .setDescription('Choose an item to view its details.\n\n**Legend:** ⚗️ = Combined, 🎁 = Player Gift, 🎬 = Animated')
             .setColor(COLORS.INFO);
 
         const components = [
@@ -284,13 +286,15 @@ export default {
             .setColor(gachaService.getRarityColor(item.rarity))
             .setTimestamp();
 
-        const emoji = formatGachaEmoji(item.emojiId, item.emojiName);
+        // UPDATED: Pass isAnimated parameter
+        const emoji = formatGachaEmoji(item.emojiId, item.emojiName, item.isAnimated);
         const rarityEmoji = gachaService.getRarityEmoji(item.rarity);
         const rarityName = gachaService.getRarityDisplayName(item.rarity);
         
         let description = `${emoji} **${item.itemName}**\n\n${rarityEmoji} **${rarityName}**`;
         if (item.quantity > 1) description += `\n**Quantity:** ${item.quantity}`;
         if (item.seriesId) description += `\n**Series:** ${item.seriesId.charAt(0).toUpperCase() + item.seriesId.slice(1)}`;
+        if (item.isAnimated) description += `\n**Emoji Type:** 🎬 Animated`;
         
         const sourceNames = { gacha: 'Gacha Pull', combined: 'Combination', series_completion: 'Series Completion', admin_grant: 'Admin Grant', player_transfer: 'Player Gift' };
         description += `\n**Source:** ${sourceNames[item.source] || 'Unknown'}`;
@@ -335,7 +339,8 @@ export default {
         }
 
         const originalItem = await GachaItem.findOne({ itemId });
-        const emoji = formatGachaEmoji(item.emojiId, item.emojiName);
+        // UPDATED: Pass isAnimated parameter
+        const emoji = formatGachaEmoji(item.emojiId, item.emojiName, item.isAnimated);
         const rarityEmoji = gachaService.getRarityEmoji(item.rarity);
         const rarityName = gachaService.getRarityDisplayName(item.rarity);
 
@@ -348,6 +353,7 @@ export default {
         let description = `${rarityEmoji} **${rarityName}**`;
         if (item.quantity > 1) description += `\n**Quantity:** ${item.quantity}`;
         if (item.seriesId) description += `\n**Series:** ${item.seriesId.charAt(0).toUpperCase() + item.seriesId.slice(1)}`;
+        if (item.isAnimated) description += `\n**Type:** 🎬 Animated Emoji`;
         
         const sourceNames = { gacha: 'Gacha Pull', combined: 'Combination', series_completion: 'Series Completion', admin_grant: 'Admin Grant', player_transfer: 'Player Gift' };
         description += `\n**Source:** ${sourceNames[item.source] || 'Unknown'}`;
@@ -412,6 +418,12 @@ export default {
         description += `⚗️ Combinations: ${sourceBreakdown.combined || 0}\n`;
         description += `🏆 Series Rewards: ${sourceBreakdown.series_completion || 0}\n`;
         description += `🎁 Player Gifts: ${sourceBreakdown.player_transfer || 0}\n`;
+
+        // Check for animated items
+        const animatedCount = user.gachaCollection?.filter(item => item.isAnimated).length || 0;
+        if (animatedCount > 0) {
+            description += `🎬 Animated Emojis: ${animatedCount}\n`;
+        }
 
         const possibleCombinations = await combinationService.checkPossibleCombinations(user);
         description += `\n**💡 Combination System:**\n`;
@@ -511,7 +523,8 @@ export default {
     },
 
     async showGiveConfirmation(interaction, givingUser, receivingUser, gachaItem, quantity) {
-        const emoji = formatGachaEmoji(gachaItem.emojiId, gachaItem.emojiName);
+        // UPDATED: Pass isAnimated parameter
+        const emoji = formatGachaEmoji(gachaItem.emojiId, gachaItem.emojiName, gachaItem.isAnimated);
         const rarityEmoji = gachaService.getRarityEmoji(gachaItem.rarity);
         
         const embed = new EmbedBuilder()
@@ -519,7 +532,7 @@ export default {
             .setColor(COLORS.WARNING)
             .setDescription(
                 `You are about to give an item to another player.\n\n` +
-                `${emoji} **${quantity}x ${gachaItem.itemName}** ${rarityEmoji}\n\n` +
+                `${emoji} **${quantity}x ${gachaItem.itemName}** ${rarityEmoji}${gachaItem.isAnimated ? ' 🎬' : ''}\n\n` +
                 `**From:** ${givingUser.raUsername}\n**To:** ${receivingUser.raUsername}\n\n` +
                 `⚠️ **IMPORTANT:** This transfer is FINAL and cannot be undone. Admins will NOT intervene in player disputes. Make sure you trust the other player.\n\n` +
                 `Are you absolutely sure you want to proceed?`
@@ -599,7 +612,8 @@ async handleInteraction(interaction) {
 
             try {
                 const result = await this.performTransfer(givingUsername, receivingUsername, itemId, quantity);
-                const emoji = formatGachaEmoji(result.gachaItem.emojiId, result.gachaItem.emojiName);
+                // UPDATED: Pass isAnimated parameter
+                const emoji = formatGachaEmoji(result.gachaItem.emojiId, result.gachaItem.emojiName, result.gachaItem.isAnimated);
                 
                 const embed = new EmbedBuilder()
                     .setTitle('✅ Item Transfer Complete!')
