@@ -1,4 +1,4 @@
-// src/commands/user/profile.js - COMPLETE FIXED VERSION with deduplication
+// src/commands/user/profile.js - UPDATED with animated emoji support
 import { 
     SlashCommandBuilder, 
     EmbedBuilder,
@@ -573,7 +573,8 @@ export default {
             let currentRow = '';
             for (let i = 0; i < items.length; i++) {
                 const item = items[i];
-                const emoji = formatGachaEmoji(item.emojiId, item.emojiName);
+                // UPDATED: Pass isAnimated parameter
+                const emoji = formatGachaEmoji(item.emojiId, item.emojiName, item.isAnimated);
                 const quantity = (item.quantity || 1) > 1 ? `⁽${item.quantity}⁾` : '';
                 currentRow += `${emoji}${quantity} `;
                 
@@ -590,9 +591,14 @@ export default {
             .setDescription(description.trim())
             .setTimestamp();
 
-        // Footer
+        // Footer with animated emoji count
         const combinationStats = combinationService.getCombinationStats(user);
+        const animatedCount = user.gachaCollection?.filter(item => item.isAnimated).length || 0;
+        
         let footerText = `${allItems.length} total items • ${combinationStats.totalCombined} from auto-combinations`;
+        if (animatedCount > 0) {
+            footerText += ` • ${animatedCount} animated emojis`;
+        }
         if (totalPages > 1) {
             footerText += ` • Page ${page + 1}/${totalPages} • ${startIndex + 1}-${endIndex} of ${allItems.length}`;
         }
