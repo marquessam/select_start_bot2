@@ -448,7 +448,7 @@ export class NominationInteractionHandler {
             if (gpAwarded) {
                 successEmbed.addFields({
                     name: '💰 GP Reward',
-                    value: '+20 GP awarded for nomination!',
+                    value: '+25 GP awarded for nomination!',
                     inline: true
                 });
             } else if (gpError) {
@@ -478,7 +478,7 @@ export class NominationInteractionHandler {
                 let confirmationMessage = `✅ **Nomination confirmed!** Your nomination for **${gameData.title}** has been posted publicly with a clickable link to the game page.`;
                 
                 if (gpAwarded) {
-                    confirmationMessage += `\n\n💰 **+20 GP** has been added to your balance!`;
+                    confirmationMessage += `\n\n💰 **+25 GP** has been added to your balance!`;
                 } else if (gpError) {
                     confirmationMessage += `\n\n⚠️ **GP award failed** - please contact an admin if you should have received GP.`;
                 } else {
@@ -559,7 +559,7 @@ export class NominationInteractionHandler {
 
             embed.addFields({
                 name: '💰 GP Rewards',
-                value: '🎮 **+20 GP** for each game nomination\n🗳️ **+20 GP** for voting in polls\n🏆 **Bonus GP** for challenge participation!',
+                value: '🎮 **+25 GP** for each game nomination\n🗳️ **+25 GP** for voting in polls\n🏆 **Bonus GP** for challenge participation!',
                 inline: false
             });
 
