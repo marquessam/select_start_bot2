@@ -57,7 +57,16 @@ export default {
         items.sort((a, b) => {
             const aIndex = rarityOrder.indexOf(a.rarity);
             const bIndex = rarityOrder.indexOf(b.rarity);
-            return aIndex !== bIndex ? aIndex - bIndex : a.itemName.localeCompare(b.itemName);
+            if (aIndex !== bIndex) return aIndex - bIndex;
+            
+            // Sort by series (items without seriesId come last)
+            const aSeriesId = a.seriesId || 'zzz_individual';
+            const bSeriesId = b.seriesId || 'zzz_individual';
+            const seriesCompare = aSeriesId.localeCompare(bSeriesId);
+            if (seriesCompare !== 0) return seriesCompare;
+            
+            // Finally sort alphabetically by name
+            return a.itemName.localeCompare(b.itemName);
         });
 
         // Pagination
@@ -205,7 +214,16 @@ export default {
         items.sort((a, b) => {
             const aIndex = rarityOrder.indexOf(a.rarity);
             const bIndex = rarityOrder.indexOf(b.rarity);
-            return aIndex !== bIndex ? aIndex - bIndex : a.itemName.localeCompare(b.itemName);
+            if (aIndex !== bIndex) return aIndex - bIndex;
+            
+            // Sort by series (items without seriesId come last)
+            const aSeriesId = a.seriesId || 'zzz_individual';
+            const bSeriesId = b.seriesId || 'zzz_individual';
+            const seriesCompare = aSeriesId.localeCompare(bSeriesId);
+            if (seriesCompare !== 0) return seriesCompare;
+            
+            // Finally sort alphabetically by name
+            return a.itemName.localeCompare(b.itemName);
         });
 
         const pageItems = items.slice(page * ITEMS_PER_PAGE, (page + 1) * ITEMS_PER_PAGE);
