@@ -1,4 +1,4 @@
-// src/models/User.js - FIXED with GP reward transaction types
+// src/models/User.js - UPDATED with animated emoji support
 import mongoose from 'mongoose';
 
 const communityAwardSchema = new mongoose.Schema({
@@ -71,7 +71,7 @@ const trophyCaseSchema = new mongoose.Schema({
     monthKey: String        // YYYY-MM format (null for community awards)
 });
 
-// FIXED: Enhanced gacha collection schema with proper emoji support AND player_transfer
+// UPDATED: Enhanced gacha collection schema with animated emoji support
 const gachaCollectionSchema = new mongoose.Schema({
     itemId: {
         type: String,
@@ -92,7 +92,7 @@ const gachaCollectionSchema = new mongoose.Schema({
         enum: ['common', 'uncommon', 'rare', 'epic', 'legendary', 'mythic'],
         required: true
     },
-    // FIXED: Proper emoji support
+    // UPDATED: Enhanced emoji support with animation flag
     emojiId: {
         type: String,
         default: null       // Discord custom emoji ID
@@ -101,6 +101,12 @@ const gachaCollectionSchema = new mongoose.Schema({
         type: String,
         required: true      // Fallback emoji name (Unicode or custom name)
     },
+    isAnimated: {
+        type: Boolean,
+        default: false      // Whether the emoji is animated
+    },
+    description: String,    // Item description for reference
+    flavorText: String,     // Item flavor text for reference
     obtainedAt: {
         type: Date,
         default: Date.now
@@ -110,7 +116,6 @@ const gachaCollectionSchema = new mongoose.Schema({
         default: 1,
         min: 1
     },
-    // FIXED: Added 'player_transfer' to source tracking
     source: {
         type: String,
         enum: ['gacha', 'combined', 'series_completion', 'admin_grant', 'admin_test', 'player_transfer'],
@@ -251,13 +256,13 @@ const userSchema = new mongoose.Schema({
         default: null
     },
     
-    // FIXED: GP transaction history with ALL reward types included
+    // GP transaction history with ALL reward types included
     gpTransactions: [{
         type: {
             type: String,
             enum: [
                 'monthly_grant', 'wager', 'bet', 'win', 'refund', 'admin_adjust', 'gacha_pull',
-                // GP REWARD TYPES - THESE WERE MISSING!
+                // GP REWARD TYPES
                 'nomination', 'vote', 'challenge_award', 'game_completion', 'admin_award', 'admin_mass_distribution'
             ],
             required: true
@@ -323,7 +328,7 @@ const userSchema = new mongoose.Schema({
 
     // ===== GACHA SYSTEM FIELDS =====
     
-    // UPDATED: Gacha collection with enhanced emoji support and player_transfer source
+    // UPDATED: Gacha collection with enhanced emoji support including animation
     gachaCollection: [gachaCollectionSchema]
 
 }, {
@@ -492,7 +497,7 @@ userSchema.methods.addMasteredGame = function(gameId, gameTitle, consoleName, to
 
 // ===== ARENA SYSTEM METHODS =====
 
-// FIXED: Add GP transaction and update balance with enhanced logging
+// Add GP transaction and update balance with enhanced logging
 userSchema.methods.addGpTransaction = function(type, amount, description, challengeId = null) {
     if (!this.gpTransactions) {
         this.gpTransactions = [];
@@ -543,7 +548,7 @@ userSchema.methods.getBetWinRate = function() {
     return (this.arenaStats.betsWon / this.arenaStats.betsPlaced * 100).toFixed(1);
 };
 
-// ADDED: Method to reload user from database (for testing)
+// Method to reload user from database (for testing)
 userSchema.methods.reload = async function() {
     const updated = await this.constructor.findById(this._id);
     if (updated) {
@@ -607,10 +612,11 @@ userSchema.methods.getTrophyCount = function() {
 
 // ===== GACHA SYSTEM METHODS =====
 
-// Format gacha item emoji for display
+// UPDATED: Format gacha item emoji for display with animated support
 userSchema.methods.formatGachaItemEmoji = function(item) {
     if (item.emojiId && item.emojiName) {
-        return `<:${item.emojiName}:${item.emojiId}>`;
+        const prefix = item.isAnimated ? 'a' : '';
+        return `<${prefix}:${item.emojiName}:${item.emojiId}>`;
     } else if (item.emojiName) {
         return item.emojiName; // Fallback to Unicode emoji
     }
@@ -623,13 +629,14 @@ userSchema.methods.getGachaItem = function(itemId) {
     return this.gachaCollection.find(item => item.itemId === itemId);
 };
 
-// FIXED: Add or update gacha item in collection with proper emoji data transfer
+// UPDATED: Add or update gacha item in collection with animated emoji support
 userSchema.methods.addGachaItem = function(gachaItem, quantity = 1, source = 'gacha') {
     console.log('🔧 addGachaItem called with:', {
         itemId: gachaItem.itemId,
         itemName: gachaItem.itemName,
         emojiId: gachaItem.emojiId,
         emojiName: gachaItem.emojiName,
+        isAnimated: gachaItem.isAnimated,
         quantity: quantity,
         source: source
     });
@@ -654,12 +661,16 @@ userSchema.methods.addGachaItem = function(gachaItem, quantity = 1, source = 'ga
         if (gachaItem.emojiName) {
             existingItem.emojiName = gachaItem.emojiName;
         }
+        if (gachaItem.isAnimated !== undefined) {
+            existingItem.isAnimated = gachaItem.isAnimated;
+        }
         
         console.log('📚 Stacked item:', {
             itemName: existingItem.itemName,
             newQuantity: newQuantity,
             emojiId: existingItem.emojiId,
-            emojiName: existingItem.emojiName
+            emojiName: existingItem.emojiName,
+            isAnimated: existingItem.isAnimated
         });
         
         return {
@@ -669,16 +680,19 @@ userSchema.methods.addGachaItem = function(gachaItem, quantity = 1, source = 'ga
             previousQuantity: previousQuantity
         };
     } else if (!existingItem) {
-        // Add new item with COMPLETE emoji data transfer
+        // Add new item with COMPLETE emoji data transfer including animation
         const newItem = {
             itemId: gachaItem.itemId,
             itemName: gachaItem.itemName,
             itemType: gachaItem.itemType,
             seriesId: gachaItem.seriesId,
             rarity: gachaItem.rarity,
-            // CRITICAL: Ensure emoji data is properly copied
-            emojiId: gachaItem.emojiId || null,        // Explicitly copy emojiId
-            emojiName: gachaItem.emojiName || '❓',     // Explicitly copy emojiName with fallback
+            description: gachaItem.description,
+            flavorText: gachaItem.flavorText,
+            // CRITICAL: Ensure ALL emoji data is properly copied
+            emojiId: gachaItem.emojiId || null,
+            emojiName: gachaItem.emojiName || '❓',
+            isAnimated: gachaItem.isAnimated || false,  // NEW: Copy animation flag
             obtainedAt: new Date(),
             quantity: quantity,
             source: source
@@ -689,6 +703,7 @@ userSchema.methods.addGachaItem = function(gachaItem, quantity = 1, source = 'ga
             itemName: newItem.itemName,
             emojiId: newItem.emojiId,
             emojiName: newItem.emojiName,
+            isAnimated: newItem.isAnimated,
             source: newItem.source
         });
 
@@ -698,13 +713,20 @@ userSchema.methods.addGachaItem = function(gachaItem, quantity = 1, source = 'ga
         const savedItem = this.gachaCollection[this.gachaCollection.length - 1];
         console.log('🔍 Verification - saved item emoji data:', {
             emojiId: savedItem.emojiId,
-            emojiName: savedItem.emojiName
+            emojiName: savedItem.emojiName,
+            isAnimated: savedItem.isAnimated
         });
         
         if (gachaItem.emojiId && !savedItem.emojiId) {
             console.error('❌ CRITICAL: emojiId was not saved correctly!');
             console.error('Source emojiId:', gachaItem.emojiId);
             console.error('Saved emojiId:', savedItem.emojiId);
+        }
+        
+        if (gachaItem.isAnimated !== undefined && gachaItem.isAnimated !== savedItem.isAnimated) {
+            console.error('❌ CRITICAL: isAnimated was not saved correctly!');
+            console.error('Source isAnimated:', gachaItem.isAnimated);
+            console.error('Saved isAnimated:', savedItem.isAnimated);
         }
         
         return {
@@ -724,7 +746,7 @@ userSchema.methods.addGachaItem = function(gachaItem, quantity = 1, source = 'ga
     }
 };
 
-// FIXED: Remove gacha item from collection with ENHANCED DEBUG LOGGING
+// Remove gacha item from collection with enhanced debug logging
 userSchema.methods.removeGachaItem = function(itemId, quantity = 1) {
     console.log(`🗑️ removeGachaItem called: itemId=${itemId}, quantity=${quantity}`);
     
@@ -754,7 +776,7 @@ userSchema.methods.removeGachaItem = function(itemId, quantity = 1) {
         console.log(`🗑️ Removing item completely (${currentQuantity} <= ${quantity})`);
         const beforeLength = this.gachaCollection.length;
         
-        // FIXED: More robust filtering to ensure removal
+        // More robust filtering to ensure removal
         this.gachaCollection = this.gachaCollection.filter(collectionItem => {
             const shouldKeep = collectionItem.itemId !== itemId;
             if (!shouldKeep) {
