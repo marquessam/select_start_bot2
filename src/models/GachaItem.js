@@ -1,4 +1,4 @@
-// src/models/GachaItem.js - Simplified version focused on combinations
+// src/models/GachaItem.js - UPDATED with animated emoji support
 import mongoose from 'mongoose';
 
 // Simple combination rule schema
@@ -64,11 +64,15 @@ const gachaItemSchema = new mongoose.Schema({
         maxlength: 500
     },
     
-    // Emoji handling
+    // UPDATED: Enhanced emoji handling with animated support
     emojiId: String,
     emojiName: {
         type: String,
         required: true
+    },
+    isAnimated: {
+        type: Boolean,
+        default: false
     },
     
     itemType: {
@@ -123,15 +127,37 @@ const gachaItemSchema = new mongoose.Schema({
     adminNotes: String
 });
 
-// Virtual for display
+// UPDATED: Virtual for display with animated emoji support
 gachaItemSchema.virtual('displayName').get(function() {
-    const emoji = this.emojiId ? `<:${this.emojiName}:${this.emojiId}>` : this.emojiName;
+    let emoji = this.emojiName || '❓';
+    if (this.emojiId && this.emojiName) {
+        const prefix = this.isAnimated ? 'a' : '';
+        emoji = `<${prefix}:${this.emojiName}:${this.emojiId}>`;
+    }
     return `${emoji} ${this.itemName}`;
 });
 
 // Method to check if item appears in gacha
 gachaItemSchema.methods.isInGacha = function() {
     return this.isActive && this.dropRate > 0;
+};
+
+// UPDATED: Method to format emoji for display
+gachaItemSchema.methods.formatEmoji = function() {
+    if (this.emojiId && this.emojiName) {
+        const prefix = this.isAnimated ? 'a' : '';
+        return `<${prefix}:${this.emojiName}:${this.emojiId}>`;
+    }
+    return this.emojiName || '❓';
+};
+
+// Method to get emoji data object
+gachaItemSchema.methods.getEmojiData = function() {
+    return {
+        emojiId: this.emojiId,
+        emojiName: this.emojiName,
+        isAnimated: this.isAnimated || false
+    };
 };
 
 // Static method to get gacha pool
