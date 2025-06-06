@@ -1,4 +1,4 @@
-// src/services/combinationService.js - FIXED VERSION - consistent ruleId usage
+// src/services/combinationService.js - UPDATED with animated emoji support
 import { GachaItem, CombinationRule } from '../models/GachaItem.js';
 import { Challenge } from '../models/Challenge.js';
 import { config } from '../config/config.js';
@@ -119,13 +119,15 @@ class CombinationService {
         const { resultItem, resultQuantity, ingredients, maxCombinations } = combination;
         
         const isShadowUnlock = this.isShadowUnlockItem(resultItem);
-        const resultEmoji = formatGachaEmoji(resultItem.emojiId, resultItem.emojiName);
+        // UPDATED: Pass isAnimated parameter
+        const resultEmoji = formatGachaEmoji(resultItem.emojiId, resultItem.emojiName, resultItem.isAnimated);
         const rarityEmoji = this.getRarityEmoji(resultItem.rarity);
 
         // Build ingredients text
         let ingredientsText = '';
         for (const ing of ingredients) {
-            const emoji = ing.item ? formatGachaEmoji(ing.item.emojiId, ing.item.emojiName) : '❓';
+            // UPDATED: Pass isAnimated parameter for ingredient emojis
+            const emoji = ing.item ? formatGachaEmoji(ing.item.emojiId, ing.item.emojiName, ing.item.isAnimated) : '❓';
             const name = ing.item ? ing.item.itemName : ing.itemId;
             ingredientsText += `${emoji} ${ing.quantity}x ${name}\n`;
         }
@@ -214,20 +216,31 @@ class CombinationService {
             .setFooter({ text: 'Select a combination from the menu below, or cancel.' })
             .setTimestamp();
 
-        // FIXED: Use ruleId directly instead of temporary keys
+        // Use ruleId directly instead of temporary keys
         const selectOptions = limitedCombinations.map((combo) => {
-            const resultEmoji = formatGachaEmoji(combo.resultItem.emojiId, combo.resultItem.emojiName);
+            // UPDATED: Pass isAnimated parameter
+            const resultEmoji = formatGachaEmoji(combo.resultItem.emojiId, combo.resultItem.emojiName, combo.resultItem.isAnimated);
             const ingredientNames = combo.ingredients.map(ing => ing.item?.itemName || ing.itemId).join(' + ');
             const isShadowUnlock = this.isShadowUnlockItem(combo.resultItem);
             
-            return {
+            const option = {
                 label: `${combo.resultQuantity}x ${combo.resultItem.itemName}${isShadowUnlock ? ' 🌙' : ''}`.slice(0, 100),
                 value: `combo_select_${combo.ruleId}`, // Use ruleId directly
-                description: `${ingredientNames} (max: ${combo.maxCombinations})${isShadowUnlock ? ' - SHADOW!' : ''}`.slice(0, 100),
-                emoji: combo.resultItem.emojiId ? 
-                    { id: combo.resultItem.emojiId, name: combo.resultItem.emojiName } : 
-                    combo.resultItem.emojiName
+                description: `${ingredientNames} (max: ${combo.maxCombinations})${isShadowUnlock ? ' - SHADOW!' : ''}`.slice(0, 100)
             };
+
+            // UPDATED: Handle animated emojis in select menu
+            if (combo.resultItem.emojiId && combo.resultItem.emojiName) {
+                option.emoji = { 
+                    id: combo.resultItem.emojiId, 
+                    name: combo.resultItem.emojiName,
+                    animated: combo.resultItem.isAnimated || false
+                };
+            } else if (combo.resultItem.emojiName) {
+                option.emoji = combo.resultItem.emojiName;
+            }
+            
+            return option;
         });
 
         const selectMenu = new StringSelectMenuBuilder()
@@ -259,7 +272,7 @@ class CombinationService {
 
     async performCombination(user, ruleId, quantity = 1) {
         try {
-            // FIXED: Always use ruleId lookup
+            // Always use ruleId lookup
             const rule = await CombinationRule.findOne({ ruleId: ruleId, isActive: true });
             
             if (!rule) {
@@ -364,7 +377,8 @@ class CombinationService {
                         .addFields({
                             name: '🎯 Available Combinations',
                             value: possibleCombinations.slice(0, 3).map(combo => {
-                                const resultEmoji = formatGachaEmoji(combo.resultItem.emojiId, combo.resultItem.emojiName);
+                                // UPDATED: Pass isAnimated parameter
+                                const resultEmoji = formatGachaEmoji(combo.resultItem.emojiId, combo.resultItem.emojiName, combo.resultItem.isAnimated);
                                 const isShadowUnlock = this.isShadowUnlockItem(combo.resultItem);
                                 return `${resultEmoji} ${combo.resultItem.itemName}${isShadowUnlock ? ' 🌙' : ''}`;
                             }).join('\n') + (possibleCombinations.length > 3 ? '\n*...and more!*' : ''),
@@ -432,7 +446,8 @@ class CombinationService {
                         .addFields({
                             name: '🎯 Available Combinations',
                             value: possibleCombinations.slice(0, 3).map(combo => {
-                                const resultEmoji = formatGachaEmoji(combo.resultItem.emojiId, combo.resultItem.emojiName);
+                                // UPDATED: Pass isAnimated parameter
+                                const resultEmoji = formatGachaEmoji(combo.resultItem.emojiId, combo.resultItem.emojiName, combo.resultItem.isAnimated);
                                 const isShadowUnlock = this.isShadowUnlockItem(combo.resultItem);
                                 return `${resultEmoji} ${combo.resultItem.itemName}${isShadowUnlock ? ' 🌙' : ''}`;
                             }).join('\n') + (possibleCombinations.length > 3 ? '\n*...and more!*' : ''),
@@ -637,7 +652,7 @@ class CombinationService {
                 const user = await this.getUserForInteraction(interaction);
                 if (!user) return true;
 
-                // FIXED: Pass ruleId string directly
+                // Pass ruleId string directly
                 const result = await this.performCombination(user, ruleId, quantity);
                 
                 if (result.success) {
@@ -661,7 +676,7 @@ class CombinationService {
                 const user = await this.getUserForInteraction(interaction);
                 if (!user) return true;
 
-                // FIXED: Use ruleId lookup instead of _id
+                // Use ruleId lookup instead of _id
                 const rule = await CombinationRule.findOne({ ruleId: ruleId, isActive: true });
                 if (!rule) {
                     await interaction.editReply({
@@ -696,7 +711,7 @@ class CombinationService {
                     const user = await this.getUserForInteraction(interaction);
                     if (!user) return true;
 
-                    // FIXED: Use ruleId lookup instead of _id
+                    // Use ruleId lookup instead of _id
                     const rule = await CombinationRule.findOne({ ruleId: selectedRuleId, isActive: true });
                     if (!rule) {
                         await interaction.editReply({
@@ -735,7 +750,8 @@ class CombinationService {
 
     async showCombinationSuccess(interaction, result, quantity) {
         const { resultItem, resultQuantity, addResult } = result;
-        const resultEmoji = formatGachaEmoji(resultItem.emojiId, resultItem.emojiName);
+        // UPDATED: Pass isAnimated parameter
+        const resultEmoji = formatGachaEmoji(resultItem.emojiId, resultItem.emojiName, resultItem.isAnimated);
         const rarityEmoji = this.getRarityEmoji(resultItem.rarity);
         const isShadowUnlock = this.isShadowUnlockItem(resultItem);
 
@@ -792,7 +808,8 @@ class CombinationService {
 
             const { ruleId, resultItem, resultQuantity } = combinationResult;
             
-            const resultEmoji = formatGachaEmoji(resultItem.emojiId, resultItem.emojiName);
+            // UPDATED: Pass isAnimated parameter
+            const resultEmoji = formatGachaEmoji(resultItem.emojiId, resultItem.emojiName, resultItem.isAnimated);
             const rarityEmoji = this.getRarityEmoji(resultItem.rarity);
             const isShadowUnlock = this.isShadowUnlockItem(resultItem);
             
@@ -812,7 +829,8 @@ class CombinationService {
                 for (const ingredient of combinationResult.ingredients) {
                     const ingredientItem = await GachaItem.findOne({ itemId: ingredient.itemId });
                     if (ingredientItem) {
-                        const emoji = formatGachaEmoji(ingredientItem.emojiId, ingredientItem.emojiName);
+                        // UPDATED: Pass isAnimated parameter
+                        const emoji = formatGachaEmoji(ingredientItem.emojiId, ingredientItem.emojiName, ingredientItem.isAnimated);
                         ingredientsText += `${emoji} ${ingredient.quantity}x ${ingredientItem.itemName}\n`;
                     }
                 }
@@ -914,6 +932,7 @@ class CombinationService {
                             itemName: resultItem.itemName,
                             emojiId: resultItem.emojiId,
                             emojiName: resultItem.emojiName,
+                            isAnimated: resultItem.isAnimated, // NEW: Include animation flag
                             rarity: resultItem.rarity,
                             description: resultItem.description,
                             flavorText: resultItem.flavorText
