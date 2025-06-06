@@ -1,4 +1,4 @@
-// src/config/gachaEmojis.js - COMPLETE FIXED VERSION with timeout protection
+// src/config/gachaEmojis.js - UPDATED with animated emoji support
 import mongoose from 'mongoose';
 import { GachaItem } from '../models/GachaItem.js';
 
@@ -56,7 +56,7 @@ function disableOldEmojiCaching() {
 async function getGachaEmoji(itemId) {
     try {
         if (!isDatabaseConnected()) {
-            return { emojiId: null, emojiName: '❓' };
+            return { emojiId: null, emojiName: '❓', isAnimated: false };
         }
 
         // Auto-refresh cache if needed (background, non-blocking)
@@ -70,39 +70,55 @@ async function getGachaEmoji(itemId) {
         // Try cache first
         const cached = emojiCache.get(itemId);
         if (cached?.emojiId) {
-            return { emojiId: cached.emojiId, emojiName: cached.emojiName };
+            return { 
+                emojiId: cached.emojiId, 
+                emojiName: cached.emojiName,
+                isAnimated: cached.isAnimated || false
+            };
         }
 
         // Try database with timeout protection
         try {
             const item = await Promise.race([
-                GachaItem.findOne({ itemId }).select('emojiId emojiName').lean(),
+                GachaItem.findOne({ itemId }).select('emojiId emojiName isAnimated').lean(),
                 new Promise((_, reject) => 
                     setTimeout(() => reject(new Error('Database query timeout')), 5000)
                 )
             ]);
             
             if (item?.emojiId) {
-                emojiCache.set(itemId, { emojiId: item.emojiId, emojiName: item.emojiName });
-                return { emojiId: item.emojiId, emojiName: item.emojiName };
+                const emojiData = {
+                    emojiId: item.emojiId,
+                    emojiName: item.emojiName,
+                    isAnimated: item.isAnimated || false
+                };
+                emojiCache.set(itemId, emojiData);
+                return emojiData;
             }
         } catch (dbError) {
             console.warn('DB query failed for gacha emoji:', dbError.message);
         }
 
-        return { emojiId: null, emojiName: '❓' };
+        return { emojiId: null, emojiName: '❓', isAnimated: false };
     } catch (error) {
         console.error('Error getting gacha emoji:', error.message);
-        return { emojiId: null, emojiName: '❓' };
+        return { emojiId: null, emojiName: '❓', isAnimated: false };
     }
 }
 
-// UTILITY: Format emoji for display
-function formatGachaEmoji(emojiId, emojiName) {
+// UPDATED: Format emoji for display (handles animated emojis)
+function formatGachaEmoji(emojiId, emojiName, isAnimated = false) {
     if (emojiId && emojiName) {
-        return `<:${emojiName}:${emojiId}>`;
+        const prefix = isAnimated ? 'a' : '';
+        return `<${prefix}:${emojiName}:${emojiId}>`;
     }
     return emojiName || '❓';
+}
+
+// NEW: Format emoji from emoji data object
+function formatGachaEmojiFromData(emojiData) {
+    if (!emojiData) return '❓';
+    return formatGachaEmoji(emojiData.emojiId, emojiData.emojiName, emojiData.isAnimated);
 }
 
 // INTERNAL: Refresh cache with timeout protection
@@ -117,7 +133,7 @@ async function refreshCache() {
         console.log('🔄 Refreshing gacha emoji cache...');
         
         const items = await Promise.race([
-            GachaItem.find({ isActive: true }).select('itemId emojiId emojiName').lean(),
+            GachaItem.find({ isActive: true }).select('itemId emojiId emojiName isAnimated').lean(),
             new Promise((_, reject) => 
                 setTimeout(() => reject(new Error('Refresh timeout')), REFRESH_TIMEOUT)
             )
@@ -130,7 +146,8 @@ async function refreshCache() {
             if (item.emojiId && item.emojiName) {
                 emojiCache.set(item.itemId, {
                     emojiId: item.emojiId,
-                    emojiName: item.emojiName
+                    emojiName: item.emojiName,
+                    isAnimated: item.isAnimated || false
                 });
                 cached++;
             }
@@ -261,6 +278,7 @@ export {
     DEFAULT_GACHA_EMOJIS,
     getGachaEmoji,
     formatGachaEmoji,
+    formatGachaEmojiFromData,
     refreshGachaEmojiCache,
     clearGachaEmojiCache,
     getGachaEmojiCacheInfo,
@@ -273,6 +291,7 @@ export default {
     DEFAULT_GACHA_EMOJIS,
     getGachaEmoji,
     formatGachaEmoji,
+    formatGachaEmojiFromData,
     refreshGachaEmojiCache,
     clearGachaEmojiCache,
     getGachaEmojiCacheInfo,
