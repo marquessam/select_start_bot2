@@ -1,4 +1,4 @@
-// src/services/gachaService.js - UPDATED with combination alerts instead of auto-combining
+// src/services/gachaService.js - UPDATED with animated emoji support
 import { User } from '../models/User.js';
 import { GachaItem } from '../models/GachaItem.js';
 import combinationService from './combinationService.js';
@@ -53,7 +53,8 @@ class GachaService {
                     itemId: item.itemId,
                     itemName: item.itemName,
                     emojiId: item.emojiId,
-                    emojiName: item.emojiName
+                    emojiName: item.emojiName,
+                    isAnimated: item.isAnimated
                 });
                 const result = this.addItemToUser(user, item);
                 results.push(result);
@@ -120,7 +121,7 @@ class GachaService {
                 currentWeight += item.dropRate;
                 if (random <= currentWeight) {
                     console.log(`Selected item: ${item.itemName} (${item.dropRate}% chance)`);
-                    console.log(`Item emoji data: emojiId=${item.emojiId}, emojiName=${item.emojiName}`);
+                    console.log(`Item emoji data: emojiId=${item.emojiId}, emojiName=${item.emojiName}, isAnimated=${item.isAnimated}`);
                     return item;
                 }
             }
@@ -142,17 +143,19 @@ class GachaService {
             itemId: gachaItem.itemId,
             itemName: gachaItem.itemName,
             emojiId: gachaItem.emojiId,
-            emojiName: gachaItem.emojiName
+            emojiName: gachaItem.emojiName,
+            isAnimated: gachaItem.isAnimated
         });
 
-        // CRITICAL: Ensure we pass the complete gachaItem with all emoji data
+        // CRITICAL: Ensure we pass the complete gachaItem with all emoji data including isAnimated
         const addResult = user.addGachaItem(gachaItem, 1, 'gacha');
 
         console.log('AFTER addGachaItem - Result item emoji data:', {
             itemId: addResult.item.itemId,
             itemName: addResult.item.itemName,
             emojiId: addResult.item.emojiId,
-            emojiName: addResult.item.emojiName
+            emojiName: addResult.item.emojiName,
+            isAnimated: addResult.item.isAnimated
         });
 
         // Verify emoji data was transferred correctly
@@ -168,6 +171,12 @@ class GachaService {
             console.error('Result emojiName:', addResult.item.emojiName);
         }
 
+        if (gachaItem.isAnimated !== undefined && gachaItem.isAnimated !== addResult.item.isAnimated) {
+            console.error('❌ ANIMATED FLAG LOST! isAnimated was not transferred correctly');
+            console.error('Source isAnimated:', gachaItem.isAnimated);
+            console.error('Result isAnimated:', addResult.item.isAnimated);
+        }
+
         // Format result for the UI
         return {
             itemId: gachaItem.itemId,
@@ -175,6 +184,7 @@ class GachaService {
             rarity: gachaItem.rarity,
             emojiName: addResult.item.emojiName, // Use the actual saved data
             emojiId: addResult.item.emojiId,     // Use the actual saved data
+            isAnimated: addResult.item.isAnimated, // Use the actual saved data
             description: gachaItem.description,
             flavorText: gachaItem.flavorText,
             quantity: addResult.item.quantity,
@@ -246,6 +256,7 @@ class GachaService {
                 rarity: 'legendary',
                 emojiId: completionReward.emojiId,
                 emojiName: completionReward.emojiName,
+                isAnimated: completionReward.isAnimated || false,
                 maxStack: 1
             };
 
@@ -388,19 +399,43 @@ class GachaService {
     }
 
     /**
-     * Format emoji for display
+     * UPDATED: Format emoji for display (handles animated emojis)
      */
-    formatEmoji(emojiId, emojiName) {
+    formatEmoji(emojiId, emojiName, isAnimated = false) {
         if (emojiId && emojiName) {
-            return `<:${emojiName}:${emojiId}>`;
+            const prefix = isAnimated ? 'a' : '';
+            return `<${prefix}:${emojiName}:${emojiId}>`;
         } else if (emojiName) {
             return emojiName;
         }
         return '❓';
     }
 
+    /**
+     * UPDATED: Format collection item emoji (handles animated emojis)
+     */
     formatCollectionItemEmoji(item) {
-        return this.formatEmoji(item.emojiId, item.emojiName);
+        return this.formatEmoji(item.emojiId, item.emojiName, item.isAnimated);
+    }
+
+    /**
+     * NEW: Format emoji from item object (convenience method)
+     */
+    formatItemEmoji(item) {
+        if (!item) return '❓';
+        return this.formatEmoji(item.emojiId, item.emojiName, item.isAnimated);
+    }
+
+    /**
+     * NEW: Get emoji data from item
+     */
+    getEmojiData(item) {
+        if (!item) return { emojiId: null, emojiName: '❓', isAnimated: false };
+        return {
+            emojiId: item.emojiId || null,
+            emojiName: item.emojiName || '❓',
+            isAnimated: item.isAnimated || false
+        };
     }
 }
 
