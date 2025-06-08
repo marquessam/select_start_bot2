@@ -505,7 +505,7 @@ export default {
         try {
             const tradeChannel = await interaction.client.channels.fetch(GACHA_TRADE_CHANNEL_ID);
             await tradeChannel.send({ 
-                content: `🎊 **${user.raUsername}** is showing off their item!`,
+                content: `**${user.raUsername}** is showing off their item!`,
                 embeds: [embed] 
             });
             await interaction.followUp({ content: `✅ Successfully shared **${item.itemName}** to <#${GACHA_TRADE_CHANNEL_ID}>!`, ephemeral: true });
@@ -523,22 +523,22 @@ export default {
             const rarityName = gachaService.getRarityDisplayName(gachaItem.rarity);
             
             const embed = new EmbedBuilder()
-                .setTitle('🤝 ITEM TRADE COMPLETED!')
+                .setTitle('ITEM TRADE COMPLETED!')
                 .setColor(COLORS.SUCCESS)
                 .setDescription(
-                    `**📦 TRADE SUMMARY:**\n\n` +
+                    `**TRADE SUMMARY:**\n\n` +
                     `${emoji} **${quantity}x ${gachaItem.itemName}** ${rarityEmoji}\n` +
                     `**Rarity:** ${rarityName}${gachaItem.isAnimated ? ' 🎬' : ''}\n\n` +
                     `**👤 From:** [${givingUser.raUsername}](https://retroachievements.org/user/${givingUser.raUsername})\n` +
                     `**👤 To:** [${receivingUser.raUsername}](https://retroachievements.org/user/${receivingUser.raUsername})\n\n` +
-                    `✅ **The item has been successfully transferred!**`
+                    `**The item has been successfully transferred!**`
                 )
                 .setTimestamp();
 
             // Add item description if available
             if (gachaItem.description) {
                 embed.addFields({
-                    name: '📝 Item Description',
+                    name: 'Item Description',
                     value: `*${gachaItem.description}*`,
                     inline: false
                 });
@@ -560,7 +560,7 @@ export default {
             if (channel) {
                 // Send a prominent message that mentions both users
                 const message = await channel.send({ 
-                    content: `🚨 **TRADE ALERT** 🚨\n<@${givingUser.discordId}> ➡️ <@${receivingUser.discordId}>`, 
+                    content: `**TRADE ALERT**\n<@${givingUser.discordId}> ➡️ <@${receivingUser.discordId}>`, 
                     embeds: [embed] 
                 });
                 
