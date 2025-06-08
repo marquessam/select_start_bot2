@@ -1,4 +1,4 @@
-// src/index.js - Enhanced with better GP service logging and error handling
+// src/index.js - Enhanced with better collection button handling
 import { Client, Collection, Events, GatewayIntentBits, EmbedBuilder } from 'discord.js';
 import { config, validateConfig } from './config/config.js';
 import { connectDB, checkDatabaseHealth } from './models/index.js';
@@ -114,7 +114,7 @@ client.on(Events.InteractionCreate, async interaction => {
     }
 });
 
-// Handle button interactions - UPDATED VERSION with combination support
+// Handle button interactions - UPDATED VERSION with enhanced collection support
 client.on(Events.InteractionCreate, async interaction => {
     if (!interaction.isButton()) return;
     
@@ -171,7 +171,7 @@ client.on(Events.InteractionCreate, async interaction => {
             return;
         }
 
-        // Check if this is a collection-related button
+        // UPDATED: Enhanced collection-related button handling
         if (interaction.customId.startsWith('coll_')) {
             console.log('Routing to collection handler');
             const collectionCommand = client.commands.get('collection');
@@ -235,7 +235,7 @@ client.on(Events.InteractionCreate, async interaction => {
     }
 });
 
-// Handle select menu interactions - UPDATED VERSION with combination support
+// Handle select menu interactions - UPDATED VERSION with enhanced collection support
 client.on(Events.InteractionCreate, async interaction => {
     if (!interaction.isStringSelectMenu()) return;
     
@@ -247,7 +247,7 @@ client.on(Events.InteractionCreate, async interaction => {
             if (handled) return;
         }
 
-        // Check if this is a collection-related select menu
+        // UPDATED: Enhanced collection-related select menu handling
         if (interaction.customId.startsWith('coll_')) {
             console.log('Routing to collection select menu handler');
             const collectionCommand = client.commands.get('collection');
@@ -303,14 +303,14 @@ client.on(Events.InteractionCreate, async interaction => {
     }
 });
 
-// Handle modal submit interactions - UPDATED VERSION with all features
+// Handle modal submit interactions - UPDATED VERSION with enhanced collection support
 client.on(Events.InteractionCreate, async interaction => {
     if (!interaction.isModalSubmit()) return;
     
     try {
-        // Check if this is a collection give item modal
-        if (interaction.customId.startsWith('coll_give_modal_')) {
-            console.log('Routing to collection give modal handler');
+        // UPDATED: Enhanced collection modal handling
+        if (interaction.customId.startsWith('coll_give_details_')) {
+            console.log('Routing to collection give details modal handler');
             const collectionCommand = client.commands.get('collection');
             if (collectionCommand && typeof collectionCommand.handleModalSubmit === 'function') {
                 await collectionCommand.handleModalSubmit(interaction);
@@ -726,7 +726,7 @@ client.once(Events.ClientReady, async () => {
         arenaFeedService.setClient(client);
         gameAwardService.setClient(client);
         gachaMachine.setClient(client);
-        combinationService.setClient(client); // UPDATED: Set client for combination alerts
+        combinationService.setClient(client); // UPDATED: Set client for combination alerts to trade channel
 
         // START MONTHLY GP SERVICE
         monthlyGPService.start();
@@ -1080,11 +1080,13 @@ client.once(Events.ClientReady, async () => {
         console.log('  • Arena timeouts: Hourly at 45 minutes past');
         console.log('  • Gacha Machine: Active and pinned');
         console.log('  • Combination System: Confirmation-based with alerts');
-        console.log('  • Collection Viewer: Clean interface with player item giving and trade sharing');
+        console.log('  • Collection Viewer: Enhanced trading with dropdown selection and public confirmations');
+        console.log('  • Trade Confirmations: Auto-expire in 5 minutes in trade channel (1379402075120730185)');
         console.log('  • Emoji cache refresh: Every 30 minutes (non-blocking with timeout protection)');
         console.log('  • Various other feeds: Hourly');
         console.log('🎭 Emoji systems: Initialized with timeout protection and fallback emojis');
         console.log('🎁 GP Reward System: Enhanced logging and error handling for nomination/vote rewards');
+        console.log('🛒 Collection Trading: Streamlined with dropdown menus and public confirmations');
         
     } catch (error) {
         console.error('❌ Error during initialization:', error);
