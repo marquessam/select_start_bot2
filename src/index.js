@@ -171,6 +171,21 @@ client.on(Events.InteractionCreate, async interaction => {
             return;
         }
 
+        // NEW: Check if this is a recipes button
+        if (interaction.customId.startsWith('recipes_')) {
+            console.log('Routing to recipes handler');
+            const recipesCommand = client.commands.get('recipes');
+            if (recipesCommand && typeof recipesCommand.handleButtonInteraction === 'function') {
+                await recipesCommand.handleButtonInteraction(interaction);
+            } else {
+                await interaction.reply({
+                    content: '❌ Recipes feature not available.',
+                    ephemeral: true
+                });
+            }
+            return;
+        }
+
         // UPDATED: Enhanced collection-related button handling
         if (interaction.customId.startsWith('coll_')) {
             console.log('Routing to collection handler');
