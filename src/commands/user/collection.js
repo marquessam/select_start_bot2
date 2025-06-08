@@ -882,6 +882,20 @@ export default {
                 return;
             }
 
+            // NEW: Handle give item selection - DON'T defer for modal interactions
+            if (interaction.customId.startsWith('coll_give_item_') && interaction.isStringSelectMenu()) {
+                const [, , , , filter, pageStr] = interaction.customId.split('_');
+                const itemId = interaction.values[0];
+                const page = parseInt(pageStr);
+                
+                const user = await User.findOne({ discordId: interaction.user.id });
+                if (!user) {
+                    return interaction.reply({ content: '❌ You are not registered. Please ask an admin to register you first.', ephemeral: true });
+                }
+                
+                return this.showGiveDetailsModal(interaction, user, itemId, filter, page);
+            }
+
             await interaction.deferUpdate();
             
             const user = await User.findOne({ discordId: interaction.user.id });
@@ -893,14 +907,6 @@ export default {
             if (interaction.customId.startsWith('coll_inspect_item_') && interaction.isStringSelectMenu()) {
                 const [, , , , filter, pageStr] = interaction.customId.split('_');
                 return this.showItemDetail(interaction, user, interaction.values[0], filter, parseInt(pageStr));
-            }
-
-            // NEW: Handle give item selection
-            if (interaction.customId.startsWith('coll_give_item_') && interaction.isStringSelectMenu()) {
-                const [, , , , filter, pageStr] = interaction.customId.split('_');
-                const itemId = interaction.values[0];
-                const page = parseInt(pageStr);
-                return this.showGiveDetailsModal(interaction, user, itemId, filter, page);
             }
 
             // Handle other actions by parsing the custom ID
