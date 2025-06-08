@@ -1,4 +1,4 @@
-// src/services/combinationService.js - UPDATED to use gacha trade channel
+// src/services/combinationService.js - COMPLETE with animated emoji support and recipe book
 import { GachaItem, CombinationRule } from '../models/GachaItem.js';
 import { Challenge } from '../models/Challenge.js';
 import { config } from '../config/config.js';
@@ -268,6 +268,7 @@ class CombinationService {
         });
     }
 
+    // UPDATED: Modified performCombination to mark as discovered
     async performCombination(user, ruleId, quantity = 1) {
         try {
             const rule = await CombinationRule.findOne({ ruleId: ruleId, isActive: true });
@@ -315,6 +316,9 @@ class CombinationService {
             const totalResultQuantity = (rule.result.quantity || 1) * quantity;
             const addResult = user.addGachaItem(resultItem, totalResultQuantity, 'combined');
 
+            // NEW: Mark combination as discovered
+            const wasNewDiscovery = await this.markCombinationDiscovered(ruleId, user.raUsername);
+
             const result = {
                 success: true,
                 ruleId: ruleId,
@@ -323,7 +327,8 @@ class CombinationService {
                 addResult: addResult,
                 rule: rule,
                 ingredients: rule.ingredients,
-                removedIngredients: removedIngredients
+                removedIngredients: removedIngredients,
+                wasNewDiscovery: wasNewDiscovery // NEW: Include discovery status
             };
 
             await this.checkForShadowUnlock(user, result);
@@ -586,7 +591,7 @@ class CombinationService {
                     const user = await this.getUserForInteraction(interaction);
                     if (user) {
                         const { default: collectionCommand } = await import('../commands/user/collection.js');
-                        await collectionCommand.showItemsPage(interaction, user, 'all', 0);
+                        await collectionCommand.showCollection(interaction, user, 'all', 0);
                     } else {
                         await interaction.editReply({
                             content: '❌ Could not load your collection.',
@@ -601,6 +606,13 @@ class CombinationService {
                         components: []
                     });
                 }
+                return true;
+            }
+
+            // NEW: Handle recipe book button
+            if (interaction.customId === 'combo_to_recipes') {
+                await interaction.deferUpdate();
+                await this.showRecipeBook(interaction, 0);
                 return true;
             }
 
@@ -751,21 +763,38 @@ class CombinationService {
         return false;
     }
 
+    // UPDATED: Show combination success with discovery notifications
     async showCombinationSuccess(interaction, result, quantity) {
-        const { resultItem, resultQuantity, addResult } = result;
+        const { resultItem, resultQuantity, addResult, wasNewDiscovery } = result;
         const resultEmoji = formatGachaEmoji(resultItem.emojiId, resultItem.emojiName, resultItem.isAnimated);
         const rarityEmoji = this.getRarityEmoji(resultItem.rarity);
         const isShadowUnlock = this.isShadowUnlockItem(resultItem);
 
+        let title = '✨ Combination Successful!';
+        let color = COLORS.SUCCESS;
+        
+        if (isShadowUnlock) {
+            title = '🌙 SHADOW UNLOCKED!';
+            color = '#9932CC';
+        } else if (wasNewDiscovery) {
+            title = '🎉 NEW RECIPE DISCOVERED!';
+            color = '#FFD700'; // Gold for discoveries
+        }
+
+        let description = `You created ${isShadowUnlock ? '**the Shadow Unlock item**' : 'a new item'}!\n\n` +
+                         `${resultEmoji} ${rarityEmoji} **${resultQuantity}x ${resultItem.itemName}**\n\n` +
+                         `*${resultItem.description}*`;
+        
+        if (isShadowUnlock) {
+            description += '\n\n🔓 **The shadow challenge has been revealed to the server!**';
+        } else if (wasNewDiscovery) {
+            description += '\n\n📖 **This recipe has been added to the community recipe book for everyone to see!**\n💡 Use `/recipes` to view all discovered combinations!';
+        }
+
         const embed = new EmbedBuilder()
-            .setTitle(isShadowUnlock ? '🌙 SHADOW UNLOCKED!' : '✨ Combination Successful!')
-            .setColor(isShadowUnlock ? '#9932CC' : COLORS.SUCCESS)
-            .setDescription(
-                `You created ${isShadowUnlock ? '**the Shadow Unlock item**' : 'a new item'}!\n\n` +
-                `${resultEmoji} ${rarityEmoji} **${resultQuantity}x ${resultItem.itemName}**\n\n` +
-                `*${resultItem.description}*` +
-                (isShadowUnlock ? '\n\n🔓 **The shadow challenge has been revealed to the server!**' : '')
-            )
+            .setTitle(title)
+            .setColor(color)
+            .setDescription(description)
             .setFooter({ text: 'The new item has been added to your collection!' })
             .setTimestamp();
 
@@ -785,16 +814,28 @@ class CombinationService {
             });
         }
 
+        const components = [
+            new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                    .setCustomId('combo_to_collection')
+                    .setLabel('← View Collection')
+                    .setStyle(ButtonStyle.Primary)
+            )
+        ];
+
+        // Add recipe book button if it was a new discovery
+        if (wasNewDiscovery) {
+            components[0].addComponents(
+                new ButtonBuilder()
+                    .setCustomId('combo_to_recipes')
+                    .setLabel('📖 View Recipe Book')
+                    .setStyle(ButtonStyle.Secondary)
+            );
+        }
+
         await interaction.editReply({
             embeds: [embed],
-            components: [
-                new ActionRowBuilder().addComponents(
-                    new ButtonBuilder()
-                        .setCustomId('combo_to_collection')
-                        .setLabel('← View Collection')
-                        .setStyle(ButtonStyle.Primary)
-                )
-            ]
+            components: components
         });
     }
 
@@ -808,20 +849,32 @@ class CombinationService {
             
             if (!channel) return;
 
-            const { ruleId, resultItem, resultQuantity } = combinationResult;
+            const { ruleId, resultItem, resultQuantity, wasNewDiscovery } = combinationResult;
             
             const resultEmoji = formatGachaEmoji(resultItem.emojiId, resultItem.emojiName, resultItem.isAnimated);
             const rarityEmoji = this.getRarityEmoji(resultItem.rarity);
             const isShadowUnlock = this.isShadowUnlockItem(resultItem);
             
+            let title = '⚗️ Combination Created!';
+            let color = COLORS.SUCCESS;
+            
+            if (isShadowUnlock) {
+                title = '🌙 SHADOW UNLOCK COMBINATION!';
+                color = '#9932CC';
+            } else if (wasNewDiscovery) {
+                title = '🎉 NEW RECIPE DISCOVERED!';
+                color = '#FFD700';
+            }
+            
             const embed = new EmbedBuilder()
-                .setTitle(isShadowUnlock ? '🌙 SHADOW UNLOCK COMBINATION!' : '⚗️ Combination Created!')
-                .setColor(isShadowUnlock ? '#9932CC' : COLORS.SUCCESS)
+                .setTitle(title)
+                .setColor(color)
                 .setDescription(
-                    `${user.raUsername} ${isShadowUnlock ? 'unlocked the shadow!' : 'created a combination!'}\n\n` +
+                    `${user.raUsername} ${isShadowUnlock ? 'unlocked the shadow!' : (wasNewDiscovery ? 'discovered a new recipe!' : 'created a combination!')}\n\n` +
                     `${resultEmoji} **${resultQuantity}x ${resultItem.itemName}** ${rarityEmoji}\n\n` +
                     `*${resultItem.description || 'A mysterious creation...'}*` +
-                    (isShadowUnlock ? '\n\n🔓 **The shadow challenge has been revealed!**' : '')
+                    (isShadowUnlock ? '\n\n🔓 **The shadow challenge has been revealed!**' : '') +
+                    (wasNewDiscovery ? '\n\n📖 **This recipe is now in the community recipe book!**' : '')
                 )
                 .setTimestamp();
 
@@ -877,6 +930,350 @@ class CombinationService {
         }
     }
 
+    // NEW: Mark a combination as discovered
+    async markCombinationDiscovered(ruleId, discoveredBy) {
+        try {
+            const rule = await CombinationRule.findOne({ ruleId: ruleId });
+            if (rule && !rule.discovered) {
+                rule.discovered = true;
+                rule.discoveredAt = new Date();
+                rule.discoveredBy = discoveredBy;
+                await rule.save();
+                
+                console.log(`🔍 New combination discovered: ${ruleId} by ${discoveredBy}`);
+                
+                // Announce the discovery to the trade channel
+                await this.announceNewRecipeDiscovery(rule, discoveredBy);
+                
+                return true;
+            }
+            return false;
+        } catch (error) {
+            console.error('Error marking combination as discovered:', error);
+            return false;
+        }
+    }
+
+    // NEW: Announce new recipe discovery
+    async announceNewRecipeDiscovery(rule, discoveredBy) {
+        if (!this.client) return;
+
+        try {
+            const resultItem = await GachaItem.findOne({ itemId: rule.result.itemId });
+            if (!resultItem) return;
+
+            const guild = await this.client.guilds.fetch(config.discord.guildId);
+            const channel = await guild.channels.fetch(GACHA_TRADE_CHANNEL_ID);
+            
+            if (!channel) return;
+
+            // Format the recipe
+            const recipeText = await this.formatSingleRecipe(rule, resultItem);
+            const resultEmoji = formatGachaEmoji(resultItem.emojiId, resultItem.emojiName, resultItem.isAnimated);
+            const rarityEmoji = this.getRarityEmoji(resultItem.rarity);
+
+            const embed = new EmbedBuilder()
+                .setTitle('📖 NEW RECIPE DISCOVERED!')
+                .setColor('#FFD700') // Gold for discoveries
+                .setDescription(
+                    `**${discoveredBy}** has discovered a new combination recipe!\n\n` +
+                    `**New Recipe:**\n${recipeText}\n\n` +
+                    `${resultEmoji} **${resultItem.itemName}** ${rarityEmoji}\n` +
+                    `*${resultItem.description || 'A mysterious creation...'}*\n\n` +
+                    `💡 Use \`/recipes\` to view all discovered combinations!`
+                )
+                .setTimestamp();
+
+            // Schedule message deletion after 10 minutes (longer for discoveries)
+            const message = await channel.send({ embeds: [embed] });
+            setTimeout(async () => {
+                try {
+                    await message.delete();
+                } catch (deleteError) {
+                    console.log('Recipe discovery message already deleted or inaccessible');
+                }
+            }, 10 * 60 * 1000); // 10 minutes
+
+        } catch (error) {
+            console.error('Error announcing new recipe discovery:', error);
+        }
+    }
+
+    // NEW: Get all discovered recipes for the community recipe book
+    async getDiscoveredRecipes() {
+        try {
+            const discoveredRules = await CombinationRule.find({ 
+                isActive: true, 
+                discovered: true 
+            }).sort({ discoveredAt: 1 }); // Oldest discoveries first
+
+            const recipes = [];
+
+            for (const rule of discoveredRules) {
+                const resultItem = await GachaItem.findOne({ itemId: rule.result.itemId });
+                if (!resultItem) continue;
+
+                const ingredientItems = [];
+                for (const ingredient of rule.ingredients) {
+                    const item = await GachaItem.findOne({ itemId: ingredient.itemId });
+                    if (item) {
+                        ingredientItems.push({
+                            ...item.toObject(),
+                            quantity: ingredient.quantity
+                        });
+                    }
+                }
+
+                if (ingredientItems.length === rule.ingredients.length) {
+                    recipes.push({
+                        rule: rule,
+                        resultItem: resultItem,
+                        ingredients: ingredientItems,
+                        discoveredBy: rule.discoveredBy,
+                        discoveredAt: rule.discoveredAt
+                    });
+                }
+            }
+
+            // Sort by rarity > series > alphabetically (like collection)
+            const rarityOrder = ['mythic', 'legendary', 'epic', 'rare', 'uncommon', 'common'];
+            recipes.sort((a, b) => {
+                // First by result rarity
+                const aRarityIndex = rarityOrder.indexOf(a.resultItem.rarity);
+                const bRarityIndex = rarityOrder.indexOf(b.resultItem.rarity);
+                if (aRarityIndex !== bRarityIndex) return aRarityIndex - bRarityIndex;
+                
+                // Then by series
+                const aSeriesId = a.resultItem.seriesId || 'zzz_individual';
+                const bSeriesId = b.resultItem.seriesId || 'zzz_individual';
+                const seriesCompare = aSeriesId.localeCompare(bSeriesId);
+                if (seriesCompare !== 0) return seriesCompare;
+                
+                // Finally alphabetically by result name
+                return a.resultItem.itemName.localeCompare(b.resultItem.itemName);
+            });
+
+            return recipes;
+
+        } catch (error) {
+            console.error('Error getting discovered recipes:', error);
+            return [];
+        }
+    }
+
+    // NEW: Format a single recipe for display
+    async formatSingleRecipe(rule, resultItem) {
+        const ingredients = [];
+        
+        for (const ingredient of rule.ingredients) {
+            const item = await GachaItem.findOne({ itemId: ingredient.itemId });
+            if (item) {
+                const emoji = formatGachaEmoji(item.emojiId, item.emojiName, item.isAnimated);
+                if (ingredient.quantity > 1) {
+                    ingredients.push(`${emoji} x${ingredient.quantity}`);
+                } else {
+                    ingredients.push(emoji);
+                }
+            }
+        }
+
+        const resultEmoji = formatGachaEmoji(resultItem.emojiId, resultItem.emojiName, resultItem.isAnimated);
+        const resultQuantity = rule.result.quantity > 1 ? ` x${rule.result.quantity}` : '';
+        
+        return `${ingredients.join(' + ')} = ${resultEmoji}${resultQuantity}`;
+    }
+
+    // NEW: Show the community recipe book
+    async showRecipeBook(interaction, page = 0) {
+        try {
+            if (!interaction.deferred && !interaction.replied) {
+                await interaction.deferReply({ ephemeral: true });
+            }
+
+            const allRecipes = await this.getDiscoveredRecipes();
+            
+            if (allRecipes.length === 0) {
+                const embed = new EmbedBuilder()
+                    .setTitle('📖 Community Recipe Book')
+                    .setColor(COLORS.INFO)
+                    .setDescription(
+                        '🔍 **No recipes discovered yet!**\n\n' +
+                        'Be the first to discover a combination recipe!\n' +
+                        'When you successfully perform a combination, it will be added to this community recipe book for everyone to see.\n\n' +
+                        '💡 **Tip:** Experiment with different item combinations in `/collection`!'
+                    )
+                    .setFooter({ text: 'The recipe book updates automatically when new combinations are discovered!' })
+                    .setTimestamp();
+
+                return interaction.editReply({ embeds: [embed], components: [] });
+            }
+
+            // Pagination
+            const RECIPES_PER_PAGE = 15; // Conservative to stay under Discord limits
+            const totalPages = Math.ceil(allRecipes.length / RECIPES_PER_PAGE);
+            const startIndex = page * RECIPES_PER_PAGE;
+            const pageRecipes = allRecipes.slice(startIndex, startIndex + RECIPES_PER_PAGE);
+
+            const embed = new EmbedBuilder()
+                .setTitle('📖 Community Recipe Book')
+                .setColor(COLORS.INFO)
+                .setTimestamp();
+
+            // Group recipes by rarity for better organization
+            const rarityGroups = {};
+            const rarityOrder = ['mythic', 'legendary', 'epic', 'rare', 'uncommon', 'common'];
+            
+            for (const recipe of pageRecipes) {
+                const rarity = recipe.resultItem.rarity;
+                if (!rarityGroups[rarity]) rarityGroups[rarity] = [];
+                rarityGroups[rarity].push(recipe);
+            }
+
+            let description = `**Discovered Combinations:** ${allRecipes.length}\n\n`;
+            let totalCharacters = description.length;
+
+            for (const rarity of rarityOrder) {
+                const recipes = rarityGroups[rarity];
+                if (!recipes?.length) continue;
+
+                const rarityEmoji = this.getRarityEmoji(rarity);
+                const rarityName = this.getRarityDisplayName(rarity);
+                const rarityHeader = `${rarityEmoji} **${rarityName}**\n`;
+                
+                // Check if we have space for this rarity section
+                if (totalCharacters + rarityHeader.length > 3800) break; // Leave some buffer
+
+                description += rarityHeader;
+                totalCharacters += rarityHeader.length;
+
+                for (const recipe of recipes) {
+                    const recipeText = await this.formatSingleRecipe(recipe.rule, recipe.resultItem);
+                    const recipeLine = `${recipeText}\n`;
+                    
+                    // Check if we have space for this recipe
+                    if (totalCharacters + recipeLine.length > 3800) {
+                        description += '*...more recipes on next page*\n';
+                        break;
+                    }
+                    
+                    description += recipeLine;
+                    totalCharacters += recipeLine.length;
+                }
+                
+                description += '\n';
+                totalCharacters += 1;
+            }
+
+            embed.setDescription(description.trim());
+
+            // Footer with pagination info
+            let footerText = totalPages > 1 
+                ? `Page ${page + 1}/${totalPages} • ${startIndex + 1}-${Math.min(startIndex + RECIPES_PER_PAGE, allRecipes.length)} of ${allRecipes.length} recipes`
+                : `${allRecipes.length} discovered recipes`;
+            
+            footerText += ' • Recipes update automatically when discovered!';
+            embed.setFooter({ text: footerText });
+
+            // Create components
+            const components = [];
+
+            // Pagination if needed
+            if (totalPages > 1) {
+                const paginationRow = new ActionRowBuilder().addComponents(
+                    new ButtonBuilder()
+                        .setCustomId(`recipes_prev_${page}`)
+                        .setLabel('◀ Previous')
+                        .setStyle(ButtonStyle.Secondary)
+                        .setDisabled(page === 0),
+                    new ButtonBuilder()
+                        .setCustomId('recipes_page_indicator')
+                        .setLabel(`${page + 1}/${totalPages}`)
+                        .setStyle(ButtonStyle.Secondary)
+                        .setDisabled(true),
+                    new ButtonBuilder()
+                        .setCustomId(`recipes_next_${page}`)
+                        .setLabel('Next ▶')
+                        .setStyle(ButtonStyle.Secondary)
+                        .setDisabled(page === totalPages - 1)
+                );
+                components.push(paginationRow);
+            }
+
+            // Action buttons
+            const actionRow = new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                    .setCustomId('recipes_refresh')
+                    .setLabel('🔄 Refresh')
+                    .setStyle(ButtonStyle.Primary),
+                new ButtonBuilder()
+                    .setCustomId('recipes_to_collection')
+                    .setLabel('📦 My Collection')
+                    .setStyle(ButtonStyle.Secondary)
+            );
+            components.push(actionRow);
+
+            await interaction.editReply({ embeds: [embed], components });
+
+        } catch (error) {
+            console.error('Error showing recipe book:', error);
+            await interaction.editReply({ 
+                content: '❌ An error occurred while loading the recipe book. Please try again later.',
+                embeds: [],
+                components: []
+            });
+        }
+    }
+
+    // NEW: Handle recipe book interactions
+    async handleRecipeBookInteraction(interaction) {
+        if (!interaction.customId.startsWith('recipes_')) return false;
+
+        try {
+            await interaction.deferUpdate();
+
+            if (interaction.customId === 'recipes_refresh') {
+                await this.showRecipeBook(interaction, 0);
+                return true;
+            }
+
+            if (interaction.customId === 'recipes_to_collection') {
+                // Redirect to collection command
+                const user = await this.getUserForInteraction(interaction);
+                if (user) {
+                    const { default: collectionCommand } = await import('../commands/user/collection.js');
+                    await collectionCommand.showCollection(interaction, user, 'all', 0);
+                } else {
+                    await interaction.editReply({
+                        content: '❌ Could not load your collection.',
+                        embeds: [],
+                        components: []
+                    });
+                }
+                return true;
+            }
+
+            if (interaction.customId.startsWith('recipes_prev_') || interaction.customId.startsWith('recipes_next_')) {
+                const parts = interaction.customId.split('_');
+                const direction = parts[1]; // prev or next
+                const currentPage = parseInt(parts[2]);
+                
+                const newPage = direction === 'prev' ? currentPage - 1 : currentPage + 1;
+                await this.showRecipeBook(interaction, newPage);
+                return true;
+            }
+
+        } catch (error) {
+            console.error('Error handling recipe book interaction:', error);
+            await interaction.editReply({
+                content: '❌ An error occurred while processing your request.',
+                embeds: [],
+                components: []
+            });
+        }
+
+        return false;
+    }
+
     async getUserForInteraction(interaction) {
         const { User } = await import('../models/User.js');
         
@@ -909,6 +1306,18 @@ class CombinationService {
             mythic: '🌟'
         };
         return emojis[rarity] || emojis.common;
+    }
+
+    getRarityDisplayName(rarity) {
+        const names = {
+            common: 'Common',
+            uncommon: 'Uncommon',
+            rare: 'Rare',
+            epic: 'Epic',
+            legendary: 'Legendary',
+            mythic: 'Mythic'
+        };
+        return names[rarity] || 'Unknown';
     }
 
     getCombinationStats(user) {
