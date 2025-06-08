@@ -1,7 +1,7 @@
-// src/models/GachaItem.js - UPDATED with animated emoji support
+// src/models/GachaItem.js - UPDATED with discovery tracking for combinations
 import mongoose from 'mongoose';
 
-// Simple combination rule schema
+// UPDATED: Enhanced combination rule schema with discovery tracking
 const combinationRuleSchema = new mongoose.Schema({
     ruleId: {
         type: String,
@@ -38,12 +38,31 @@ const combinationRuleSchema = new mongoose.Schema({
         default: true
     },
     
+    // NEW: Discovery tracking fields
+    discovered: {
+        type: Boolean,
+        default: false // Whether this combination has been discovered by the community
+    },
+    
+    discoveredAt: {
+        type: Date,
+        default: null // When this combination was first discovered
+    },
+    
+    discoveredBy: {
+        type: String,
+        default: null // Username of the first person to discover this combination
+    },
+    
     createdBy: String,
     createdAt: {
         type: Date,
         default: Date.now
     }
 });
+
+// Add index for efficient discovery queries
+combinationRuleSchema.index({ discovered: 1, discoveredAt: 1 });
 
 const gachaItemSchema = new mongoose.Schema({
     itemId: {
@@ -168,6 +187,24 @@ gachaItemSchema.statics.getGachaPool = function() {
 // Static method to get all combination items (dropRate: 0)
 gachaItemSchema.statics.getCombinationItems = function() {
     return this.find({ isActive: true, dropRate: 0 });
+};
+
+// NEW: Static method to get discovery statistics
+combinationRuleSchema.statics.getDiscoveryStats = function() {
+    return this.aggregate([
+        {
+            $group: {
+                _id: null,
+                totalRules: { $sum: 1 },
+                discoveredRules: {
+                    $sum: { $cond: [{ $eq: ['$discovered', true] }, 1, 0] }
+                },
+                undiscoveredRules: {
+                    $sum: { $cond: [{ $eq: ['$discovered', false] }, 1, 0] }
+                }
+            }
+        }
+    ]);
 };
 
 export const GachaItem = mongoose.model('GachaItem', gachaItemSchema);
