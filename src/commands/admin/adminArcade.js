@@ -568,7 +568,7 @@ export default {
 
         const dateInput = new TextInputBuilder()
             .setCustomId('month_year')
-            .setLabel('Month & Year (MM-YYYY or leave blank for current)')
+            .setLabel('Month & Year (MM-YYYY or blank for current)')
             .setStyle(TextInputStyle.Short)
             .setRequired(false)
             .setPlaceholder('e.g., 05-2025 (blank for current month)');
