@@ -1,10 +1,13 @@
-// src/services/combinationService.js - UPDATED with animated emoji support
+// src/services/combinationService.js - UPDATED to use gacha trade channel
 import { GachaItem, CombinationRule } from '../models/GachaItem.js';
 import { Challenge } from '../models/Challenge.js';
 import { config } from '../config/config.js';
 import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder } from 'discord.js';
 import { formatGachaEmoji } from '../config/gachaEmojis.js';
 import { COLORS } from '../utils/FeedUtils.js';
+
+// UPDATED: Use gacha trade channel for all combination alerts
+const GACHA_TRADE_CHANNEL_ID = '1379402075120730185';
 
 class CombinationService {
     constructor() {
@@ -74,7 +77,7 @@ class CombinationService {
                 const resultItem = await GachaItem.findOne({ itemId: rule.result.itemId });
                 if (resultItem) {
                     const combinationObj = {
-                        ruleId: rule.ruleId, // Use ruleId consistently
+                        ruleId: rule.ruleId,
                         rule: rule,
                         resultItem: resultItem,
                         resultQuantity: rule.result.quantity || 1,
@@ -119,14 +122,12 @@ class CombinationService {
         const { resultItem, resultQuantity, ingredients, maxCombinations } = combination;
         
         const isShadowUnlock = this.isShadowUnlockItem(resultItem);
-        // UPDATED: Pass isAnimated parameter
         const resultEmoji = formatGachaEmoji(resultItem.emojiId, resultItem.emojiName, resultItem.isAnimated);
         const rarityEmoji = this.getRarityEmoji(resultItem.rarity);
 
         // Build ingredients text
         let ingredientsText = '';
         for (const ing of ingredients) {
-            // UPDATED: Pass isAnimated parameter for ingredient emojis
             const emoji = ing.item ? formatGachaEmoji(ing.item.emojiId, ing.item.emojiName, ing.item.isAnimated) : '❓';
             const name = ing.item ? ing.item.itemName : ing.itemId;
             ingredientsText += `${emoji} ${ing.quantity}x ${name}\n`;
@@ -216,20 +217,17 @@ class CombinationService {
             .setFooter({ text: 'Select a combination from the menu below, or cancel.' })
             .setTimestamp();
 
-        // Use ruleId directly instead of temporary keys
         const selectOptions = limitedCombinations.map((combo) => {
-            // UPDATED: Pass isAnimated parameter
             const resultEmoji = formatGachaEmoji(combo.resultItem.emojiId, combo.resultItem.emojiName, combo.resultItem.isAnimated);
             const ingredientNames = combo.ingredients.map(ing => ing.item?.itemName || ing.itemId).join(' + ');
             const isShadowUnlock = this.isShadowUnlockItem(combo.resultItem);
             
             const option = {
                 label: `${combo.resultQuantity}x ${combo.resultItem.itemName}${isShadowUnlock ? ' 🌙' : ''}`.slice(0, 100),
-                value: `combo_select_${combo.ruleId}`, // Use ruleId directly
+                value: `combo_select_${combo.ruleId}`,
                 description: `${ingredientNames} (max: ${combo.maxCombinations})${isShadowUnlock ? ' - SHADOW!' : ''}`.slice(0, 100)
             };
 
-            // UPDATED: Handle animated emojis in select menu
             if (combo.resultItem.emojiId && combo.resultItem.emojiName) {
                 option.emoji = { 
                     id: combo.resultItem.emojiId, 
@@ -272,7 +270,6 @@ class CombinationService {
 
     async performCombination(user, ruleId, quantity = 1) {
         try {
-            // Always use ruleId lookup
             const rule = await CombinationRule.findOne({ ruleId: ruleId, isActive: true });
             
             if (!rule) {
@@ -341,6 +338,7 @@ class CombinationService {
         }
     }
 
+    // UPDATED: Use gacha trade channel instead of gacha machine channel
     async triggerCombinationAlertsForPlayerTransfer(recipient, giftedItemId, giverUsername) {
         try {
             const possibleCombinations = await this.checkPossibleCombinations(recipient, giftedItemId);
@@ -354,9 +352,8 @@ class CombinationService {
             }
 
             try {
-                const gachaChannelId = '1377092881885696022';
                 const guild = await this.client.guilds.cache.first();
-                const channel = await guild.channels.fetch(gachaChannelId);
+                const channel = await guild.channels.fetch(GACHA_TRADE_CHANNEL_ID);
                 
                 if (channel) {
                     let memberTag = `**${recipient.raUsername}**`;
@@ -377,7 +374,6 @@ class CombinationService {
                         .addFields({
                             name: '🎯 Available Combinations',
                             value: possibleCombinations.slice(0, 3).map(combo => {
-                                // UPDATED: Pass isAnimated parameter
                                 const resultEmoji = formatGachaEmoji(combo.resultItem.emojiId, combo.resultItem.emojiName, combo.resultItem.isAnimated);
                                 const isShadowUnlock = this.isShadowUnlockItem(combo.resultItem);
                                 return `${resultEmoji} ${combo.resultItem.itemName}${isShadowUnlock ? ' 🌙' : ''}`;
@@ -386,7 +382,15 @@ class CombinationService {
                         })
                         .setTimestamp();
 
-                    await channel.send({ embeds: [publicEmbed] });
+                    // NEW: Schedule message deletion after 5 minutes
+                    const message = await channel.send({ embeds: [publicEmbed] });
+                    setTimeout(async () => {
+                        try {
+                            await message.delete();
+                        } catch (deleteError) {
+                            console.log('Combination alert message already deleted or inaccessible');
+                        }
+                    }, 5 * 60 * 1000); // 5 minutes
                 }
 
                 return { 
@@ -396,7 +400,7 @@ class CombinationService {
                 };
 
             } catch (channelError) {
-                console.error('Error sending to gacha channel:', channelError);
+                console.error('Error sending to gacha trade channel:', channelError);
                 return { 
                     hasCombinations: true, 
                     combinationCount: possibleCombinations.length,
@@ -410,6 +414,7 @@ class CombinationService {
         }
     }
 
+    // UPDATED: Use gacha trade channel for admin gifts
     async triggerCombinationAlertsForAdminGift(user, giftedItemId, adminInteraction) {
         try {
             const possibleCombinations = await this.checkPossibleCombinations(user, giftedItemId);
@@ -423,9 +428,8 @@ class CombinationService {
             }
 
             try {
-                const gachaChannelId = '1377092881885696022';
                 const guild = await this.client.guilds.fetch(adminInteraction.guildId);
-                const channel = await guild.channels.fetch(gachaChannelId);
+                const channel = await guild.channels.fetch(GACHA_TRADE_CHANNEL_ID);
                 
                 if (channel) {
                     let memberTag = `**${user.raUsername}**`;
@@ -446,7 +450,6 @@ class CombinationService {
                         .addFields({
                             name: '🎯 Available Combinations',
                             value: possibleCombinations.slice(0, 3).map(combo => {
-                                // UPDATED: Pass isAnimated parameter
                                 const resultEmoji = formatGachaEmoji(combo.resultItem.emojiId, combo.resultItem.emojiName, combo.resultItem.isAnimated);
                                 const isShadowUnlock = this.isShadowUnlockItem(combo.resultItem);
                                 return `${resultEmoji} ${combo.resultItem.itemName}${isShadowUnlock ? ' 🌙' : ''}`;
@@ -455,7 +458,15 @@ class CombinationService {
                         })
                         .setTimestamp();
 
-                    await channel.send({ embeds: [publicEmbed] });
+                    // NEW: Schedule message deletion after 5 minutes
+                    const message = await channel.send({ embeds: [publicEmbed] });
+                    setTimeout(async () => {
+                        try {
+                            await message.delete();
+                        } catch (deleteError) {
+                            console.log('Admin gift combination alert message already deleted or inaccessible');
+                        }
+                    }, 5 * 60 * 1000); // 5 minutes
                 }
 
                 return { 
@@ -465,7 +476,7 @@ class CombinationService {
                 };
 
             } catch (channelError) {
-                console.error('Error sending to gacha channel:', channelError);
+                console.error('Error sending to gacha trade channel:', channelError);
                 return { 
                     hasCombinations: true, 
                     combinationCount: possibleCombinations.length,
@@ -599,12 +610,10 @@ class CombinationService {
             const action = parts[1];
             
             if (action === 'confirm') {
-                // Parse: combo_confirm_RULEID_QUANTITY
                 let ruleId;
                 let quantity;
                 
                 if (parts[parts.length - 1] === 'all') {
-                    // combo_confirm_RULEID_all
                     ruleId = parts.slice(2, -1).join('_');
                     
                     const user = await this.getUserForInteraction(interaction);
@@ -632,7 +641,6 @@ class CombinationService {
                     
                     quantity = possibleCombinations[0].maxCombinations;
                 } else {
-                    // combo_confirm_RULEID_NUMBER
                     const quantityPart = parts[parts.length - 1];
                     const quantityValue = parseInt(quantityPart);
                     
@@ -652,7 +660,6 @@ class CombinationService {
                 const user = await this.getUserForInteraction(interaction);
                 if (!user) return true;
 
-                // Pass ruleId string directly
                 const result = await this.performCombination(user, ruleId, quantity);
                 
                 if (result.success) {
@@ -670,13 +677,11 @@ class CombinationService {
             }
 
             if (action === 'select') {
-                // Parse: combo_select_RULEID
                 const ruleId = parts.slice(2).join('_');
 
                 const user = await this.getUserForInteraction(interaction);
                 if (!user) return true;
 
-                // Use ruleId lookup instead of _id
                 const rule = await CombinationRule.findOne({ ruleId: ruleId, isActive: true });
                 if (!rule) {
                     await interaction.editReply({
@@ -704,14 +709,12 @@ class CombinationService {
             if (action === 'selection') {
                 if (interaction.isStringSelectMenu()) {
                     const selectedValue = interaction.values[0];
-                    // Parse: combo_select_RULEID
                     const selectedParts = selectedValue.split('_');
                     const selectedRuleId = selectedParts.slice(2).join('_');
                     
                     const user = await this.getUserForInteraction(interaction);
                     if (!user) return true;
 
-                    // Use ruleId lookup instead of _id
                     const rule = await CombinationRule.findOne({ ruleId: selectedRuleId, isActive: true });
                     if (!rule) {
                         await interaction.editReply({
@@ -750,7 +753,6 @@ class CombinationService {
 
     async showCombinationSuccess(interaction, result, quantity) {
         const { resultItem, resultQuantity, addResult } = result;
-        // UPDATED: Pass isAnimated parameter
         const resultEmoji = formatGachaEmoji(resultItem.emojiId, resultItem.emojiName, resultItem.isAnimated);
         const rarityEmoji = this.getRarityEmoji(resultItem.rarity);
         const isShadowUnlock = this.isShadowUnlockItem(resultItem);
@@ -796,19 +798,18 @@ class CombinationService {
         });
     }
 
+    // UPDATED: Use gacha trade channel and schedule deletion
     async sendCombinationAlert(user, combinationResult) {
         if (!this.client) return;
 
         try {
-            const gachaChannelId = '1377092881885696022';
             const guild = await this.client.guilds.fetch(config.discord.guildId);
-            const channel = await guild.channels.fetch(gachaChannelId);
+            const channel = await guild.channels.fetch(GACHA_TRADE_CHANNEL_ID);
             
             if (!channel) return;
 
             const { ruleId, resultItem, resultQuantity } = combinationResult;
             
-            // UPDATED: Pass isAnimated parameter
             const resultEmoji = formatGachaEmoji(resultItem.emojiId, resultItem.emojiName, resultItem.isAnimated);
             const rarityEmoji = this.getRarityEmoji(resultItem.rarity);
             const isShadowUnlock = this.isShadowUnlockItem(resultItem);
@@ -829,7 +830,6 @@ class CombinationService {
                 for (const ingredient of combinationResult.ingredients) {
                     const ingredientItem = await GachaItem.findOne({ itemId: ingredient.itemId });
                     if (ingredientItem) {
-                        // UPDATED: Pass isAnimated parameter
                         const emoji = formatGachaEmoji(ingredientItem.emojiId, ingredientItem.emojiName, ingredientItem.isAnimated);
                         ingredientsText += `${emoji} ${ingredient.quantity}x ${ingredientItem.itemName}\n`;
                     }
@@ -859,10 +859,18 @@ class CombinationService {
             }
 
             embed.setFooter({ 
-                text: `Combination ID: ${ruleId} • Player confirmed this combination` 
+                text: `Combination ID: ${ruleId} • Player confirmed this combination • Message expires in 5 minutes` 
             });
 
-            await channel.send({ embeds: [embed] });
+            // NEW: Schedule message deletion after 5 minutes
+            const message = await channel.send({ embeds: [embed] });
+            setTimeout(async () => {
+                try {
+                    await message.delete();
+                } catch (deleteError) {
+                    console.log('Combination alert message already deleted or inaccessible');
+                }
+            }, 5 * 60 * 1000); // 5 minutes
 
         } catch (error) {
             console.error('Error sending combination alert:', error);
@@ -932,7 +940,7 @@ class CombinationService {
                             itemName: resultItem.itemName,
                             emojiId: resultItem.emojiId,
                             emojiName: resultItem.emojiName,
-                            isAnimated: resultItem.isAnimated, // NEW: Include animation flag
+                            isAnimated: resultItem.isAnimated,
                             rarity: resultItem.rarity,
                             description: resultItem.description,
                             flavorText: resultItem.flavorText
