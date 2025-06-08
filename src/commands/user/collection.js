@@ -510,53 +510,87 @@ export default {
             });
             await interaction.followUp({ content: `✅ Successfully shared **${item.itemName}** to <#${GACHA_TRADE_CHANNEL_ID}>!`, ephemeral: true });
         } catch (error) {
+            console.error('❌ Error sharing item to trade channel:', error);
             await interaction.followUp({ content: '❌ Failed to share item. Please try again later.', ephemeral: true });
         }
     },
 
-    // NEW: Send public trade confirmation that expires in 5 minutes
-    async sendPublicTradeConfirmation(givingUser, receivingUser, gachaItem, quantity, combinationResult) {
+    // ENHANCED: Send public trade confirmation that expires in 5 minutes
+    async sendPublicTradeConfirmation(givingUser, receivingUser, gachaItem, quantity, combinationResult, client) {
         try {
             const emoji = formatGachaEmoji(gachaItem.emojiId, gachaItem.emojiName, gachaItem.isAnimated);
             const rarityEmoji = gachaService.getRarityEmoji(gachaItem.rarity);
+            const rarityName = gachaService.getRarityDisplayName(gachaItem.rarity);
             
             const embed = new EmbedBuilder()
-                .setTitle('✅ Item Trade Completed!')
+                .setTitle('🤝 ITEM TRADE COMPLETED!')
                 .setColor(COLORS.SUCCESS)
                 .setDescription(
-                    `**Trade Summary:**\n\n` +
-                    `${emoji} **${quantity}x ${gachaItem.itemName}** ${rarityEmoji}${gachaItem.isAnimated ? ' 🎬' : ''}\n\n` +
-                    `**From:** ${givingUser.raUsername}\n` +
-                    `**To:** ${receivingUser.raUsername}\n\n` +
-                    `*The item has been successfully transferred!*`
+                    `**📦 TRADE SUMMARY:**\n\n` +
+                    `${emoji} **${quantity}x ${gachaItem.itemName}** ${rarityEmoji}\n` +
+                    `**Rarity:** ${rarityName}${gachaItem.isAnimated ? ' 🎬' : ''}\n\n` +
+                    `**👤 From:** [${givingUser.raUsername}](https://retroachievements.org/user/${givingUser.raUsername})\n` +
+                    `**👤 To:** [${receivingUser.raUsername}](https://retroachievements.org/user/${receivingUser.raUsername})\n\n` +
+                    `✅ **The item has been successfully transferred!**`
                 )
                 .setTimestamp();
 
-            if (combinationResult.hasCombinations) {
+            // Add item description if available
+            if (gachaItem.description) {
                 embed.addFields({
-                    name: '⚗️ Bonus: Combinations Available!',
-                    value: `${receivingUser.raUsername} now has ${combinationResult.combinationCount} combination option(s) available!`,
+                    name: '📝 Item Description',
+                    value: `*${gachaItem.description}*`,
                     inline: false
                 });
             }
 
-            embed.setFooter({ text: 'This message will be automatically deleted in 5 minutes.' });
+            if (combinationResult.hasCombinations) {
+                embed.addFields({
+                    name: '⚗️ BONUS: Combinations Available!',
+                    value: `🎉 ${receivingUser.raUsername} now has **${combinationResult.combinationCount}** combination option(s) available!\n💡 Use \`/collection\` to view and perform combinations!`,
+                    inline: false
+                });
+            }
 
-            const channel = await interaction.client.channels.fetch(GACHA_TRADE_CHANNEL_ID);
+            embed.setFooter({ 
+                text: `Trade ID: ${Date.now()} • This message expires in 5 minutes • Both parties can reference this confirmation` 
+            });
+
+            const channel = await client.channels.fetch(GACHA_TRADE_CHANNEL_ID);
             if (channel) {
-                const message = await channel.send({ embeds: [embed] });
+                // Send a prominent message that mentions both users
+                const message = await channel.send({ 
+                    content: `🚨 **TRADE ALERT** 🚨\n<@${givingUser.discordId}> ➡️ <@${receivingUser.discordId}>`, 
+                    embeds: [embed] 
+                });
+                
+                console.log(`📢 Public trade confirmation sent to ${channel.name} for trade: ${givingUser.raUsername} -> ${receivingUser.raUsername} (${quantity}x ${gachaItem.itemName})`);
                 
                 // Schedule deletion in 5 minutes
                 setTimeout(async () => {
                     try {
                         await message.delete();
+                        console.log(`🗑️ Auto-deleted trade confirmation for ${givingUser.raUsername} -> ${receivingUser.raUsername}`);
                     } catch (deleteError) {
                         console.log('Trade confirmation message already deleted or inaccessible');
                     }
                 }, 5 * 60 * 1000); // 5 minutes
+                
+                return true;
+            } else {
+                console.error(`❌ Could not find gacha trade channel: ${GACHA_TRADE_CHANNEL_ID}`);
+                return false;
             }
         } catch (error) {
-            console.error('Error sending public trade confirmation:', error);
+            console.error('❌ Error sending public trade confirmation:', error);
+            console.error('Error details:', {
+                givingUser: givingUser?.raUsername,
+                receivingUser: receivingUser?.raUsername,
+                item: gachaItem?.itemName,
+                quantity: quantity,
+                channelId: GACHA_TRADE_CHANNEL_ID
+            });
+            return false;
         }
     },
 
@@ -774,14 +808,23 @@ export default {
 
                     await interaction.editReply({ embeds: [embed], components: [] });
 
-                    // NEW: Send public trade confirmation that expires in 5 minutes
-                    await this.sendPublicTradeConfirmation(
+                    // ENHANCED: Send public trade confirmation that expires in 5 minutes
+                    const confirmationSent = await this.sendPublicTradeConfirmation(
                         result.givingUser, 
                         result.receivingUser, 
                         result.gachaItem, 
                         quantity, 
-                        result.combinationResult
+                        result.combinationResult,
+                        interaction.client
                     );
+                    
+                    if (!confirmationSent) {
+                        // If public confirmation failed, send a follow-up to let them know
+                        await interaction.followUp({ 
+                            content: '⚠️ Trade completed successfully, but public confirmation could not be sent to the trade channel. Both parties should screenshot this confirmation.', 
+                            ephemeral: true 
+                        });
+                    }
 
                 } catch (error) {
                     await interaction.editReply({ content: `❌ Transfer failed: ${error.message}`, embeds: [], components: [] });
