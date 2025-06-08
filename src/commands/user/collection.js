@@ -1,4 +1,4 @@
-// src/commands/user/collection.js - UPDATED with improved trading system
+// src/commands/user/collection.js - UPDATED with improved trading system and recipes integration
 import { 
     SlashCommandBuilder, 
     EmbedBuilder,
@@ -168,7 +168,8 @@ export default {
         const actionOptions = [
             { label: '🔍 Inspect Items', value: 'inspect', description: 'View detailed item information', emoji: '🔍' },
             { label: '🎁 Give Item', value: 'give', description: 'Transfer item to another player', emoji: '🎁' },
-            { label: '📊 Collection Stats', value: 'stats', description: 'View collection statistics', emoji: '📊' }
+            { label: '📊 Collection Stats', value: 'stats', description: 'View collection statistics', emoji: '📊' },
+            { label: '📖 Recipe Book', value: 'recipes', description: 'View community recipe book of combinations', emoji: '📖' }
         ];
 
         if (possibleCombinations.length > 0) {
@@ -916,6 +917,7 @@ export default {
                 switch (action) {
                     case 'inspect': return this.showInspectMenu(interaction, user, filter, page);
                     case 'stats': return this.showStats(interaction, user);
+                    case 'recipes': return combinationService.showRecipeBook(interaction, 0);
                     case 'combinations':
                         const combinations = await combinationService.checkPossibleCombinations(user);
                         return combinations.length > 0 
