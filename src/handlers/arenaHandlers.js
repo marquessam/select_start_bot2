@@ -1,9 +1,10 @@
-// src/handlers/arenaHandlers.js - FIXED VERSION with proper challenge ID extraction
+// src/handlers/arenaHandlers.js - FIXED VERSION with title truncation support
 import { User } from '../models/User.js';
 import { ArenaChallenge } from '../models/ArenaChallenge.js';
 import arenaService from '../services/arenaService.js';
 import arenaUtils from '../utils/arenaUtils.js';
 import gpUtils from '../utils/gpUtils.js';
+import titleUtils from '../utils/titleUtils.js'; // NEW: Import title utilities
 import { 
     EmbedBuilder, 
     ModalBuilder, 
@@ -318,7 +319,7 @@ async function showCreateChallengeModal(interaction) {
     await interaction.showModal(modal);
 }
 
-// Show betting options
+// UPDATED: Show betting options with title truncation
 async function showBettingOptions(interaction) {
     await interaction.deferReply({ ephemeral: true });
 
@@ -338,12 +339,21 @@ async function showBettingOptions(interaction) {
             .setCustomId('arena_betting_select')
             .setPlaceholder('Choose a challenge to bet on...')
             .addOptions(
-                activeChallenges.map(challenge => ({
-                    label: `${challenge.gameTitle} (${challenge.participants.length} players)`,
-                    description: `${challenge.description || 'No description'} | Pool: ${challenge.getTotalWager()} GP`,
-                    value: challenge.challengeId,
-                    emoji: '🎰'
-                }))
+                activeChallenges.map(challenge => {
+                    // UPDATED: Use title truncation for select options
+                    const truncatedTitle = titleUtils.formatChallengeTitle(challenge, 'select');
+                    const truncatedDescription = titleUtils.formatChallengeDescription(
+                        challenge.description, 
+                        titleUtils.DISCORD_LIMITS.SELECT_OPTION_DESCRIPTION - 20 // Reserve space for pool info
+                    );
+                    
+                    return {
+                        label: truncatedTitle,
+                        description: `${truncatedDescription} | Pool: ${challenge.getTotalWager()} GP`,
+                        value: challenge.challengeId,
+                        emoji: '🎰'
+                    };
+                })
             );
 
         const row = new ActionRowBuilder().addComponents(selectMenu);
@@ -373,7 +383,7 @@ async function showBettingOptions(interaction) {
     }
 }
 
-// Handle betting challenge selection
+// UPDATED: Handle betting challenge selection with title truncation
 async function handleBettingSelect(interaction) {
     const challengeId = interaction.values[0];
     
@@ -400,10 +410,10 @@ async function handleBettingSelect(interaction) {
         });
     }
 
-    // Show betting modal
+    // UPDATED: Show betting modal with title truncation
     const modal = new ModalBuilder()
         .setCustomId(`arena_bet_modal_${challengeId}`)
-        .setTitle(`Bet on: ${challenge.gameTitle}`);
+        .setTitle(titleUtils.truncateText(`Bet on: ${challenge.gameTitle}`, titleUtils.DISCORD_LIMITS.MODAL_TITLE));
 
     const amountInput = new TextInputBuilder()
         .setCustomId('bet_amount')
@@ -420,20 +430,24 @@ async function handleBettingSelect(interaction) {
         .setCustomId('bet_target')
         .setLabel('Bet On (RetroAchievements username)')
         .setStyle(TextInputStyle.Short)
-        .setPlaceholder(`Choose from: ${participantsList}`)
+        .setPlaceholder(`Choose from: ${titleUtils.truncateText(participantsList, 80)}`)
         .setRequired(true);
+
+    // UPDATED: Info field with proper truncation
+    const gameTitle = titleUtils.truncateGameTitleForEmbed(challenge.gameTitle);
+    const description = titleUtils.formatChallengeDescription(challenge.description);
+    const infoText = 
+        `Game: ${gameTitle}\n` +
+        `Description: ${description}\n` +
+        `Participants: ${titleUtils.truncateText(participantsList, 100)}\n` +
+        `Total Wager Pool: ${challenge.getTotalWager()} GP\n` +
+        `Betting closes: ${challenge.bettingClosedAt.toLocaleDateString()}`;
 
     const infoInput = new TextInputBuilder()
         .setCustomId('bet_info')
         .setLabel('Challenge Info (READ ONLY)')
         .setStyle(TextInputStyle.Paragraph)
-        .setValue(
-            `Game: ${challenge.gameTitle}\n` +
-            `Description: ${challenge.description || 'No description provided'}\n` +
-            `Participants: ${participantsList}\n` +
-            `Total Wager Pool: ${challenge.getTotalWager()} GP\n` +
-            `Betting closes: ${challenge.bettingClosedAt.toLocaleDateString()}`
-        )
+        .setValue(titleUtils.truncateText(infoText, 3000)) // Stay well under limit
         .setRequired(false);
 
     const firstRow = new ActionRowBuilder().addComponents(amountInput);
@@ -452,13 +466,17 @@ async function handleAcceptChallenge(interaction, user, challengeId) {
     try {
         const challenge = await arenaService.acceptChallenge(challengeId, user, interaction.user.username);
         
+        // UPDATED: Use title truncation for embed
+        const gameTitle = titleUtils.truncateGameTitleForEmbed(challenge.gameTitle);
+        const description = titleUtils.formatChallengeDescription(challenge.description);
+        
         const embed = new EmbedBuilder()
             .setTitle('✅ Challenge Accepted!')
             .setDescription(
                 `You have accepted the challenge!\n\n` +
                 `**Challenge ID:** ${challenge.challengeId}\n` +
-                `**Game:** ${challenge.gameTitle}\n` +
-                `**Description:** ${challenge.description || 'No description provided'}\n` +
+                `**Game:** ${gameTitle}\n` +
+                `**Description:** ${description}\n` +
                 `**Your Wager:** ${gpUtils.formatGP(challenge.participants.find(p => p.userId === user.discordId).wager)}\n` +
                 `**Duration:** 7 days\n` +
                 `**Betting Closes:** In 3 days\n\n` +
@@ -502,13 +520,17 @@ async function handleJoinChallenge(interaction, user, challengeId) {
         
         const wager = challenge.participants.find(p => p.userId === user.discordId).wager;
         
+        // UPDATED: Use title truncation for embed
+        const gameTitle = titleUtils.truncateGameTitleForEmbed(challenge.gameTitle);
+        const description = titleUtils.formatChallengeDescription(challenge.description);
+        
         const embed = new EmbedBuilder()
             .setTitle('✅ Challenge Joined!')
             .setDescription(
                 `You have joined the open challenge!\n\n` +
                 `**Challenge ID:** ${challenge.challengeId}\n` +
-                `**Game:** ${challenge.gameTitle}\n` +
-                `**Description:** ${challenge.description || 'No description provided'}\n` +
+                `**Game:** ${gameTitle}\n` +
+                `**Description:** ${description}\n` +
                 `**Your Wager:** ${gpUtils.formatGP(wager)}\n` +
                 `**Total Participants:** ${challenge.participants.length}\n` +
                 `**Total Prize Pool:** ${gpUtils.formatGP(challenge.getTotalWager())}\n\n` +
@@ -572,10 +594,10 @@ async function handleChallengeSpecificBet(interaction, user, challengeId) {
         });
     }
 
-    // Show betting modal directly for this challenge
+    // UPDATED: Show betting modal directly for this challenge with title truncation
     const modal = new ModalBuilder()
         .setCustomId(`arena_bet_modal_${challengeId}`)
-        .setTitle(`Bet on: ${challenge.gameTitle}`);
+        .setTitle(titleUtils.truncateText(`Bet on: ${challenge.gameTitle}`, titleUtils.DISCORD_LIMITS.MODAL_TITLE));
 
     const amountInput = new TextInputBuilder()
         .setCustomId('bet_amount')
@@ -592,20 +614,24 @@ async function handleChallengeSpecificBet(interaction, user, challengeId) {
         .setCustomId('bet_target')
         .setLabel('Bet On (RetroAchievements username)')
         .setStyle(TextInputStyle.Short)
-        .setPlaceholder(`Choose from: ${participantsList}`)
+        .setPlaceholder(`Choose from: ${titleUtils.truncateText(participantsList, 80)}`)
         .setRequired(true);
+
+    // UPDATED: Info field with proper truncation
+    const gameTitle = titleUtils.truncateGameTitleForEmbed(challenge.gameTitle);
+    const description = titleUtils.formatChallengeDescription(challenge.description);
+    const infoText = 
+        `Game: ${gameTitle}\n` +
+        `Description: ${description}\n` +
+        `Participants: ${titleUtils.truncateText(participantsList, 100)}\n` +
+        `Total Wager Pool: ${challenge.getTotalWager()} GP\n` +
+        `Betting closes: ${challenge.bettingClosedAt.toLocaleDateString()}`;
 
     const infoInput = new TextInputBuilder()
         .setCustomId('bet_info')
         .setLabel('Challenge Info (READ ONLY)')
         .setStyle(TextInputStyle.Paragraph)
-        .setValue(
-            `Game: ${challenge.gameTitle}\n` +
-            `Description: ${challenge.description || 'No description provided'}\n` +
-            `Participants: ${participantsList}\n` +
-            `Total Wager Pool: ${challenge.getTotalWager()} GP\n` +
-            `Betting closes: ${challenge.bettingClosedAt.toLocaleDateString()}`
-        )
+        .setValue(titleUtils.truncateText(infoText, 3000)) // Stay well under limit
         .setRequired(false);
 
     const firstRow = new ActionRowBuilder().addComponents(amountInput);
@@ -617,7 +643,7 @@ async function handleChallengeSpecificBet(interaction, user, challengeId) {
     await interaction.showModal(modal);
 }
 
-// NEW: Handle showing detailed info about a specific challenge - UPDATED with gear for creator, crown for #1
+// UPDATED: Handle showing detailed info about a specific challenge with title truncation
 async function handleChallengeInfo(interaction, challengeId) {
     await interaction.deferReply({ ephemeral: true });
 
@@ -627,6 +653,11 @@ async function handleChallengeInfo(interaction, challengeId) {
             return interaction.editReply('❌ Challenge not found.');
         }
 
+        // UPDATED: Use title truncation for embed
+        const gameTitle = titleUtils.formatChallengeTitle(challenge, 'embed');
+        const description = titleUtils.formatChallengeDescription(challenge.description);
+        const leaderboardTitle = titleUtils.truncateLeaderboardTitle(challenge.leaderboardTitle);
+
         const embed = new EmbedBuilder()
             .setTitle(`${challenge.type === 'direct' ? '⚔️ Direct' : '🌍 Open'} Challenge Info`)
             .setColor(challenge.type === 'direct' ? '#FF0000' : '#0099FF')
@@ -635,11 +666,11 @@ async function handleChallengeInfo(interaction, challengeId) {
         // Basic challenge info
         embed.addFields([
             { name: 'Challenge ID', value: challenge.challengeId, inline: true },
-            { name: 'Game', value: challenge.gameTitle, inline: true },
+            { name: 'Game', value: gameTitle, inline: true },
             { name: 'Status', value: challenge.status.toUpperCase(), inline: true },
-            { name: 'Leaderboard', value: challenge.leaderboardTitle, inline: false },
-            { name: 'Description', value: challenge.description || 'No description provided', inline: false },
-            { name: 'Created by', value: `⚙️ ${challenge.creatorRaUsername}`, inline: true }, // UPDATED: Changed to gear emoji
+            { name: 'Leaderboard', value: leaderboardTitle, inline: false },
+            { name: 'Description', value: description, inline: false },
+            { name: 'Created by', value: `⚙️ ${challenge.creatorRaUsername}`, inline: true },
             { name: 'Entry Wager', value: gpUtils.formatGP(challenge.participants[0]?.wager || 0), inline: true },
             { name: 'Total Prize Pool', value: gpUtils.formatGP(challenge.getTotalWager()), inline: true }
         ]);
@@ -649,7 +680,7 @@ async function handleChallengeInfo(interaction, challengeId) {
             embed.addFields({ name: 'Target Opponent', value: challenge.targetRaUsername, inline: true });
         }
 
-        // UPDATED: Always show current scores/standings when participants exist
+        // Always show current scores/standings when participants exist
         if (challenge.participants.length > 0) {
             let participantsText = '';
             
@@ -674,10 +705,8 @@ async function handleChallengeInfo(interaction, challengeId) {
                     // Display current standings with scores and global ranks
                     currentScores.forEach((score, index) => {
                         const displayRank = index + 1;
-                        // UPDATED: Only crown for #1, numbers for all others
                         const positionEmoji = displayRank === 1 ? '👑' : `${displayRank}.`;
                         
-                        // UPDATED: Gear for creator, global rank, and score
                         const creatorIndicator = score.raUsername === challenge.creatorRaUsername ? ' ⚙️' : '';
                         const globalRank = score.rank ? ` (Global Rank: #${score.rank})` : '';
                         const scoreText = score.score !== 'No score' ? `: ${score.score}` : ': No score yet';
@@ -704,12 +733,11 @@ async function handleChallengeInfo(interaction, challengeId) {
                 });
             }
             
-            // UPDATED: Simplified field title and removed extra text
             const fieldTitle = challenge.status === 'active' ? 'Current Standings' : `Participants (${challenge.participants.length})`;
             
             embed.addFields({ 
                 name: fieldTitle, 
-                value: participantsText || 'No participants yet',
+                value: titleUtils.createSafeFieldValue(participantsText, titleUtils.DISCORD_LIMITS.EMBED_FIELD_VALUE),
                 inline: false 
             });
         }
@@ -737,16 +765,20 @@ async function handleChallengeInfo(interaction, challengeId) {
             embed.addFields({ name: 'Expires', value: timeoutDate.toLocaleDateString(), inline: true });
         }
 
-        // Add action buttons if applicable
+        // Add action buttons if applicable with safe labels
         const actionButtons = new ActionRowBuilder();
         const user = await User.findOne({ discordId: interaction.user.id });
         const isParticipant = challenge.isParticipant(interaction.user.id);
         
         if (challenge.type === 'open' && challenge.status === 'active' && !isParticipant) {
+            const joinLabel = titleUtils.ensureSafeButtonLabel(
+                `Join Challenge (${gpUtils.formatGP(challenge.participants[0].wager)})`,
+                'Join Challenge'
+            );
             actionButtons.addComponents(
                 new ButtonBuilder()
                     .setCustomId(`arena_challenge_${challengeId}_join`)
-                    .setLabel(`Join Challenge (${gpUtils.formatGP(challenge.participants[0].wager)})`)
+                    .setLabel(joinLabel)
                     .setStyle(ButtonStyle.Success)
                     .setEmoji('⚔️')
             );
@@ -763,6 +795,14 @@ async function handleChallengeInfo(interaction, challengeId) {
         }
 
         const components = actionButtons.components.length > 0 ? [actionButtons] : [];
+
+        // Validate embed length before sending
+        const validation = titleUtils.validateEmbedLength(embed.toJSON());
+        if (!validation.valid) {
+            console.warn(`Embed too long (${validation.totalChars}/${validation.limit}), truncating...`);
+            // If embed is too long, remove some optional fields
+            embed.spliceFields(-1, 1); // Remove last field if needed
+        }
 
         await interaction.editReply({ embeds: [embed], components });
     } catch (error) {
@@ -795,14 +835,14 @@ async function fetchLeaderboardScoresFixed(gameId, leaderboardId, raUsernames) {
     }
 }
 
-// Modal submission handlers - UPDATED to handle description
+// UPDATED: Modal submission handlers with title truncation
 async function handleCreateChallengeModal(interaction) {
     await interaction.deferReply({ ephemeral: true });
 
     try {
         const gameId = interaction.fields.getTextInputValue('game_id');
         const leaderboardId = interaction.fields.getTextInputValue('leaderboard_id');
-        const description = interaction.fields.getTextInputValue('description') || ''; // NEW
+        const description = interaction.fields.getTextInputValue('description') || '';
         const wagerText = interaction.fields.getTextInputValue('wager');
         const targetUser = interaction.fields.getTextInputValue('target_user') || null;
 
@@ -825,17 +865,22 @@ async function handleCreateChallengeModal(interaction) {
             wager,
             targetUser,
             interaction.user.username, // Pass Discord username
-            description // NEW: Pass description
+            description // Pass description
         );
+
+        // UPDATED: Use title truncation for success embed
+        const gameTitle = titleUtils.truncateGameTitleForEmbed(challenge.gameTitle);
+        const leaderboardTitle = titleUtils.truncateLeaderboardTitle(challenge.leaderboardTitle);
+        const challengeDescription = titleUtils.formatChallengeDescription(challenge.description);
 
         const embed = new EmbedBuilder()
             .setTitle('✅ Challenge Created!')
             .setDescription(
                 `Your ${challenge.type} challenge has been created successfully!\n\n` +
                 `**Challenge ID:** ${challenge.challengeId}\n` +
-                `**Game:** ${challenge.gameTitle}\n` +
-                `**Leaderboard:** ${challenge.leaderboardTitle}\n` +
-                `**Description:** ${challenge.description || 'No description provided'}\n` +
+                `**Game:** ${gameTitle}\n` +
+                `**Leaderboard:** ${leaderboardTitle}\n` +
+                `**Description:** ${challengeDescription}\n` +
                 `**Wager:** ${gpUtils.formatGP(wager)}\n` +
                 (targetUser ? `**Target:** ${targetUser}\n` : '') +
                 `**Status:** ${challenge.status}\n\n` +
@@ -882,12 +927,17 @@ async function handlePlaceBetModal(interaction) {
         
         const challenge = await arenaService.placeBet(challengeId, user, betTarget, betAmount, interaction.user.username);
         
+        // UPDATED: Use title truncation for bet success embed
+        const challengeTitle = titleUtils.formatChallengeTitle(challenge, 'short');
+        const description = titleUtils.formatChallengeDescription(challenge.description);
+        
         const embed = new EmbedBuilder()
             .setTitle('✅ Bet Placed!')
             .setDescription(
                 `Your bet has been placed successfully!\n\n` +
                 `**Challenge ID:** ${challenge.challengeId}\n` +
-                `**Challenge:** ${challenge.description || challenge.gameTitle}\n` +
+                `**Challenge:** ${challengeTitle}\n` +
+                `**Description:** ${description}\n` +
                 `**Betting On:** ${betTarget}\n` +
                 `**Bet Amount:** ${gpUtils.formatGP(betAmount)}\n` +
                 `**Total Bets on ${betTarget}:** ${gpUtils.formatGP(challenge.getBetsForUser(betTarget).reduce((sum, bet) => sum + bet.amount, 0))}\n\n` +
