@@ -1,4 +1,4 @@
-// src/commands/user/arena.js - UPDATED with gear for creator, crown for #1
+// src/commands/user/arena.js - UPDATED with title truncation support
 import { 
     SlashCommandBuilder, 
     EmbedBuilder, 
@@ -12,6 +12,7 @@ import { ArenaChallenge } from '../../models/ArenaChallenge.js';
 import arenaService from '../../services/arenaService.js';
 import arenaUtils from '../../utils/arenaUtils.js';
 import gpUtils from '../../utils/gpUtils.js';
+import titleUtils from '../../utils/titleUtils.js'; // NEW: Import title utilities
 
 export default {
     data: new SlashCommandBuilder()
@@ -169,9 +170,10 @@ export default {
                 })
                 .join('\n');
             
+            // UPDATED: Use safe field value with proper truncation
             embed.addFields({
                 name: '📝 Recent Transactions (Last 10)',
-                value: transactionText.length > 1024 ? transactionText.substring(0, 1021) + '...' : transactionText,
+                value: titleUtils.createSafeFieldValue(transactionText),
                 inline: false
             });
         }
@@ -280,18 +282,25 @@ export default {
                     })
                     .join('\n');
 
-                embed.addFields({ name: 'Rankings', value: leaderboardText, inline: false });
+                // UPDATED: Use safe field value with proper truncation
+                embed.addFields({ 
+                    name: 'Rankings', 
+                    value: titleUtils.createSafeFieldValue(leaderboardText), 
+                    inline: false 
+                });
             }
 
             // Add system stats
             const systemStats = await gpUtils.getSystemGPStats();
+            const systemStatsText = 
+                `Total Users: ${systemStats.totalUsers}\n` +
+                `Users with GP: ${systemStats.usersWithGP}\n` +
+                `Total GP in circulation: ${gpUtils.formatGP(systemStats.totalGP)}\n` +
+                `Total challenges created: ${systemStats.totalChallengesCreated}`;
+            
             embed.addFields({
                 name: '📊 System Statistics',
-                value: 
-                    `Total Users: ${systemStats.totalUsers}\n` +
-                    `Users with GP: ${systemStats.usersWithGP}\n` +
-                    `Total GP in circulation: ${gpUtils.formatGP(systemStats.totalGP)}\n` +
-                    `Total challenges created: ${systemStats.totalChallengesCreated}`,
+                value: titleUtils.createSafeFieldValue(systemStatsText),
                 inline: false
             });
 
@@ -305,7 +314,7 @@ export default {
         }
     },
 
-    // UPDATED: Now includes current scores and gear for creator, crown for #1
+    // UPDATED: Now includes current scores with title truncation and gear for creator, crown for #1
     async handleViewActive(interaction) {
         console.log('=== HANDLE VIEW ACTIVE CALLED ===');
         console.log('User:', interaction.user.username);
@@ -339,10 +348,14 @@ export default {
                 const typeEmoji = challenge.type === 'direct' ? '⚔️' : '🌍';
                 const statusEmoji = challenge.status === 'pending' ? '⏳' : '🔥';
                 
-                embedDescription += `**${index + 1}. ${typeEmoji} ${challenge.gameTitle}**\n`;
+                // UPDATED: Use title truncation for challenge display
+                const gameTitle = titleUtils.createShortGameDisplayName(challenge.gameTitle, 50);
+                const challengeDescription = titleUtils.formatChallengeDescription(challenge.description, 100);
+                
+                embedDescription += `**${index + 1}. ${typeEmoji} ${gameTitle}**\n`;
                 embedDescription += `${statusEmoji} ${challenge.status.toUpperCase()} | `;
-                embedDescription += `${challenge.description || 'No description'}\n`;
-                embedDescription += `⚙️ Created by: ${challenge.creatorRaUsername}\n`; // UPDATED: Changed to gear
+                embedDescription += `${challengeDescription}\n`;
+                embedDescription += `⚙️ Created by: ${challenge.creatorRaUsername}\n`;
                 embedDescription += `💰 Wager: ${gpUtils.formatGP(challenge.participants[0]?.wager || 0)} | `;
                 embedDescription += `👥 Players: ${challenge.participants.length}`;
                 
@@ -350,7 +363,7 @@ export default {
                     embedDescription += ` | 🎰 Bets: ${challenge.bets.length}`;
                 }
                 
-                // UPDATED: Add current scores/standings for this challenge
+                // Add current scores/standings for this challenge
                 if (challenge.participants.length > 0) {
                     try {
                         const participantUsernames = challenge.participants.map(p => p.raUsername);
@@ -372,7 +385,6 @@ export default {
                             embedDescription += `\n📊 Current Standings:\n`;
                             currentScores.forEach((score, scoreIndex) => {
                                 const standing = scoreIndex + 1;
-                                // UPDATED: Crown only for #1, gear for creator
                                 const positionEmoji = standing === 1 ? '👑' : `${standing}.`;
                                 const creatorIndicator = score.raUsername === challenge.creatorRaUsername ? ' ⚙️' : '';
                                 const globalRank = score.rank ? ` (#${score.rank})` : '';
@@ -392,9 +404,11 @@ export default {
                 embedDescription += '\n';
             }
 
-            embed.setDescription(embedDescription);
+            // UPDATED: Ensure embed description doesn't exceed Discord limits
+            const safeDescription = titleUtils.createSafeFieldValue(embedDescription, titleUtils.DISCORD_LIMITS.EMBED_DESCRIPTION);
+            embed.setDescription(safeDescription);
 
-            // Create action buttons for each challenge
+            // Create action buttons for each challenge with safe labels
             const actionRows = [];
             
             // Group buttons by 5 per row (Discord limit)
@@ -428,7 +442,8 @@ export default {
                     
                     if (canJoin) {
                         buttonStyle = ButtonStyle.Success;
-                        buttonLabel = `${challengeIndex}. Join (${gpUtils.formatGP(challenge.participants[0].wager)})`;
+                        const wagerText = gpUtils.formatGP(challenge.participants[0].wager);
+                        buttonLabel = `${challengeIndex}. Join (${wagerText})`;
                         buttonEmoji = '⚔️';
                         buttonAction = 'join';
                         console.log('Setting button action to JOIN');
@@ -446,10 +461,13 @@ export default {
                     console.log(`Generated customId: ${customId}`);
                     console.log('=====================================');
                     
+                    // UPDATED: Ensure safe button label
+                    const safeLabel = titleUtils.ensureSafeButtonLabel(buttonLabel);
+                    
                     row.addComponents(
                         new ButtonBuilder()
                             .setCustomId(customId)
-                            .setLabel(buttonLabel)
+                            .setLabel(safeLabel)
                             .setStyle(buttonStyle)
                             .setEmoji(buttonEmoji)
                     );
@@ -517,8 +535,11 @@ export default {
                         }
                     }
 
+                    // UPDATED: Use title truncation for challenge history
+                    const gameTitle = titleUtils.createShortGameDisplayName(challenge.gameTitle, 30);
+                    
                     const value = 
-                        `${statusEmoji[challenge.status]} **${challenge.gameTitle}**${resultText}\n` +
+                        `${statusEmoji[challenge.status]} **${gameTitle}**${resultText}\n` +
                         `Type: ${challenge.type === 'direct' ? 'Direct' : 'Open'} | ` +
                         `Wager: ${challenge.participants.find(p => p.userId === user.discordId)?.wager || 0} GP\n` +
                         `Created: ${challenge.createdAt.toLocaleDateString()}`;
@@ -527,8 +548,8 @@ export default {
                     const fieldName = (challenge.challengeId || `Challenge-${challenge._id || 'Unknown'}`).toString();
 
                     embed.addFields({
-                        name: fieldName,
-                        value: value,
+                        name: titleUtils.truncateText(fieldName, titleUtils.DISCORD_LIMITS.EMBED_FIELD_NAME),
+                        value: titleUtils.createSafeFieldValue(value),
                         inline: true
                     });
                 }
