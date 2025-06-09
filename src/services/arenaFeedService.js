@@ -1,4 +1,4 @@
-// src/services/arenaFeedService.js - UPDATED with alphabetical sorting by game title and GP overview
+// src/services/arenaFeedService.js - UPDATED with title truncation and reliable API
 import { ArenaChallenge } from '../models/ArenaChallenge.js';
 import { User } from '../models/User.js';
 import { config } from '../config/config.js';
@@ -7,6 +7,7 @@ import { COLORS, EMOJIS, createHeaderEmbed, getDiscordTimestamp } from '../utils
 import { EmbedBuilder } from 'discord.js';
 import arenaUtils from '../utils/arenaUtils.js';
 import gpUtils from '../utils/gpUtils.js';
+import titleUtils from '../utils/titleUtils.js'; // NEW: Import title utilities
 import RetroAPIUtils from '../utils/RetroAPIUtils.js';
 import { GP_REWARDS } from './gpRewardService.js';
 
@@ -163,7 +164,7 @@ class ArenaFeedService extends FeedManagerBase {
     }
 
     /**
-     * Create or update a challenge embed - UPDATED with gear for creator, crown for #1
+     * UPDATED: Create or update a challenge embed with title truncation
      */
     async createOrUpdateChallengeEmbed(challenge) {
         try {
@@ -196,16 +197,23 @@ class ArenaFeedService extends FeedManagerBase {
             // Create clickable link to RetroAchievements leaderboard
             const leaderboardUrl = `https://retroachievements.org/leaderboardinfo.php?i=${challenge.leaderboardId}`;
             
-            // Determine title and status info
+            // Determine title and status info with title truncation
             const typeEmoji = challenge.type === 'direct' ? '⚔️' : '🌍';
             const statusEmoji = challenge.status === 'pending' ? '⏳' : '🔥';
             const typeText = challenge.type === 'direct' ? 'Direct Challenge' : 'Open Challenge';
             
-            // Create description with timing info - UPDATED: Gear for creator
+            // UPDATED: Use title truncation for embed title
+            const embedTitle = titleUtils.formatChallengeTitle(challenge, 'embed');
+            
+            // UPDATED: Create description with proper truncation
+            const gameTitle = titleUtils.truncateGameTitleForEmbed(challenge.gameTitle);
+            const leaderboardTitle = titleUtils.truncateLeaderboardTitle(challenge.leaderboardTitle);
+            const challengeDescription = titleUtils.formatChallengeDescription(challenge.description);
+            
             let description = `${statusEmoji} **${challenge.status.toUpperCase()}** ${typeText}\n` +
-                             `${challenge.leaderboardTitle}\n\n` +
-                             `**Description:** ${challenge.description || 'No description provided'}\n` +
-                             `**Created by:** ⚙️ ${challenge.creatorRaUsername}\n`; // UPDATED: Changed to gear emoji
+                             `${leaderboardTitle}\n\n` +
+                             `**Description:** ${challengeDescription}\n` +
+                             `**Created by:** ⚙️ ${challenge.creatorRaUsername}\n`;
             
             if (challenge.type === 'direct' && challenge.targetRaUsername) {
                 description += `**Opponent:** ${challenge.targetRaUsername}\n`;
@@ -229,7 +237,7 @@ class ArenaFeedService extends FeedManagerBase {
             
             // Create embed using standardized utility
             const embed = createHeaderEmbed(
-                `${typeEmoji} ${challenge.gameTitle}`,
+                embedTitle,
                 description,
                 {
                     color: embedColor,
@@ -241,15 +249,15 @@ class ArenaFeedService extends FeedManagerBase {
                 }
             );
             
-            // Add current standings/participants - UPDATED with gear for creator, crown for #1
+            // Add current standings/participants
             if (challenge.participants.length > 0) {
                 let participantsText = '';
                 
-                // If challenge is active, try to get current scores
+                // If challenge is active, try to get current scores using reliable API
                 if (challenge.status === 'active') {
                     try {
                         const participantUsernames = challenge.participants.map(p => p.raUsername);
-                        const currentScores = await this.fetchLeaderboardScoresFixed(
+                        const currentScores = await this.fetchLeaderboardScoresReliable(
                             challenge.gameId,
                             challenge.leaderboardId,
                             participantUsernames
@@ -264,14 +272,14 @@ class ArenaFeedService extends FeedManagerBase {
                                 return a.rank - b.rank;
                             });
                             
-                            // UPDATED: Crown for #1, numbers for others, gear for creator
+                            // Crown for #1, numbers for others, gear for creator
                             currentScores.forEach((score, index) => {
                                 const displayRank = index + 1;
                                 const positionEmoji = displayRank === 1 ? '👑' : `${displayRank}.`;
                                 const globalRank = score.rank ? ` (Global Rank: #${score.rank})` : '';
                                 const scoreText = score.score !== 'No score' ? `: ${score.score}` : ': No score yet';
                                 
-                                // UPDATED: Gear indicator for creator
+                                // Gear indicator for creator
                                 const creatorIndicator = score.raUsername === challenge.creatorRaUsername ? ' ⚙️' : '';
                                 
                                 participantsText += `${positionEmoji} **${score.raUsername}**${creatorIndicator}${scoreText}${globalRank}\n`;
@@ -304,10 +312,9 @@ class ArenaFeedService extends FeedManagerBase {
                     });
                 }
                 
-                // UPDATED: Removed the extra "Challenge Creator" and "registered members" text
                 embed.addFields({ 
                     name: challenge.status === 'active' ? 'Current Standings' : `Participants (${challenge.participants.length})`, 
-                    value: participantsText || 'No participants yet',
+                    value: titleUtils.createSafeFieldValue(participantsText || 'No participants yet'),
                     inline: false 
                 });
             }
@@ -322,6 +329,16 @@ class ArenaFeedService extends FeedManagerBase {
                 });
             }
             
+            // Validate embed length before sending
+            const validation = titleUtils.validateEmbedLength(embed.toJSON());
+            if (!validation.valid) {
+                console.warn(`Challenge embed too long (${validation.totalChars}/${validation.limit}), truncating...`);
+                // Remove or truncate fields to fit
+                if (embed.data.fields && embed.data.fields.length > 1) {
+                    embed.spliceFields(-1, 1); // Remove last field
+                }
+            }
+            
             // Update the message (no action buttons - feed is display only)
             await this.updateMessage(
                 `challenge_${challenge.challengeId}`, 
@@ -333,22 +350,22 @@ class ArenaFeedService extends FeedManagerBase {
     }
 
     /**
-     * FIXED: Use reliable API utilities like arcade system
+     * UPDATED: Use the same reliable API method as the arena service
      */
-    async fetchLeaderboardScoresFixed(gameId, leaderboardId, raUsernames) {
+    async fetchLeaderboardScoresReliable(gameId, leaderboardId, raUsernames) {
         try {
             console.log(`Fetching leaderboard scores for game ${gameId}, leaderboard ${leaderboardId}`);
             console.log('Target users:', raUsernames);
 
-            // Use the same reliable API utilities as arcade system
+            // Use the same reliable API utilities as arena service
             const rawEntries = await RetroAPIUtils.getLeaderboardEntries(leaderboardId, 1000);
             
             if (!rawEntries || rawEntries.length === 0) {
-                console.log('No leaderboard data received');
+                console.log('No leaderboard data received from reliable API');
                 return this.createNoScoreResults(raUsernames);
             }
 
-            console.log(`Processed ${rawEntries.length} leaderboard entries`);
+            console.log(`Processed ${rawEntries.length} leaderboard entries from reliable API`);
 
             // Find entries for our target users
             const userScores = [];
@@ -379,7 +396,7 @@ class ArenaFeedService extends FeedManagerBase {
 
             return userScores;
         } catch (error) {
-            console.error('Error fetching leaderboard scores:', error);
+            console.error('Error fetching reliable leaderboard scores:', error);
             
             // Return no-score results for all users on error
             return this.createNoScoreResults(raUsernames);
@@ -486,7 +503,7 @@ class ArenaFeedService extends FeedManagerBase {
             
             // Update or create the GP overview message
             await this.updateMessage(
-                'gp_overview', // Changed from 'gp_leaderboard'
+                'gp_overview',
                 { embeds: [embed] }
             );
             
