@@ -1,10 +1,11 @@
-// src/services/arenaService.js
+// src/services/arenaService.js - FIXED VERSION with reliable score fetching
 import { ArenaChallenge } from '../models/ArenaChallenge.js';
 import { User } from '../models/User.js';
 import { config } from '../config/config.js';
 import arenaUtils from '../utils/arenaUtils.js';
 import gpUtils from '../utils/gpUtils.js';
 import AlertUtils, { ALERT_TYPES } from '../utils/AlertUtils.js';
+import RetroAPIUtils from '../utils/RetroAPIUtils.js'; // ADDED: Import reliable API utils
 import { EmbedBuilder, ButtonBuilder, ActionRowBuilder, ButtonStyle } from 'discord.js';
 
 class ArenaService {
@@ -448,7 +449,7 @@ class ArenaService {
     }
 
     /**
-     * Process a single completed challenge
+     * FIXED: Process a single completed challenge using reliable API
      * @private
      */
     async processCompletedChallenge(challenge) {
@@ -461,21 +462,27 @@ class ArenaService {
         await challenge.save();
 
         try {
-            // Fetch final scores
-            const finalScores = await arenaUtils.fetchLeaderboardScores(
+            // FIXED: Fetch final scores using the same reliable method as live updates
+            console.log(`Fetching final scores for challenge ${challenge.challengeId} using reliable API...`);
+            const finalScores = await this.fetchLeaderboardScoresReliable(
                 challenge.gameId, 
                 challenge.leaderboardId,
                 challenge.participants.map(p => p.raUsername)
             );
 
+            console.log(`Final scores for ${challenge.challengeId}:`, finalScores);
             challenge.finalScores = finalScores;
             
             // Determine winner
-            const winner = arenaUtils.determineWinner(finalScores);
+            const winner = this.determineWinnerFixed(finalScores);
+            console.log(`Winner determination for ${challenge.challengeId}:`, winner);
             
             if (winner) {
                 challenge.winnerRaUsername = winner.raUsername;
                 challenge.winnerUserId = challenge.participants.find(p => p.raUsername === winner.raUsername)?.userId;
+                console.log(`Winner found: ${winner.raUsername} (rank ${winner.rank})`);
+            } else {
+                console.log(`No winner determined for challenge ${challenge.challengeId}`);
             }
 
             await challenge.save();
@@ -492,6 +499,130 @@ class ArenaService {
             
             // If there's an error in processing, refund everything
             await this.refundChallenge(challenge, 'Processing error occurred');
+        }
+    }
+
+    /**
+     * FIXED: Use the same reliable API method as the feed and alert services
+     * @private
+     */
+    async fetchLeaderboardScoresReliable(gameId, leaderboardId, raUsernames) {
+        try {
+            console.log(`Fetching leaderboard scores for game ${gameId}, leaderboard ${leaderboardId}`);
+            console.log('Target users:', raUsernames);
+
+            // Use the same reliable API utilities as arcade and arena feed services
+            const rawEntries = await RetroAPIUtils.getLeaderboardEntries(leaderboardId, 1000);
+            
+            if (!rawEntries || rawEntries.length === 0) {
+                console.log('No leaderboard data received from reliable API');
+                return this.createNoScoreResults(raUsernames);
+            }
+
+            console.log(`Processed ${rawEntries.length} leaderboard entries from reliable API`);
+
+            // Find entries for our target users
+            const userScores = [];
+            
+            for (const username of raUsernames) {
+                const entry = rawEntries.find(entry => {
+                    return entry.User && entry.User.toLowerCase() === username.toLowerCase();
+                });
+
+                if (entry) {
+                    userScores.push({
+                        raUsername: username,
+                        rank: entry.Rank,
+                        score: entry.FormattedScore || entry.Score?.toString() || 'No score',
+                        fetchedAt: new Date()
+                    });
+                    console.log(`Found score for ${username}: rank ${entry.Rank}, score ${entry.FormattedScore || entry.Score}`);
+                } else {
+                    userScores.push({
+                        raUsername: username,
+                        rank: null,
+                        score: 'No score',
+                        fetchedAt: new Date()
+                    });
+                    console.log(`No score found for ${username}`);
+                }
+            }
+
+            return userScores;
+        } catch (error) {
+            console.error('Error fetching reliable leaderboard scores:', error);
+            
+            // Return no-score results for all users on error
+            return this.createNoScoreResults(raUsernames);
+        }
+    }
+
+    /**
+     * Create no-score results for all users
+     * @private
+     */
+    createNoScoreResults(raUsernames) {
+        return raUsernames.map(username => ({
+            raUsername: username,
+            rank: null,
+            score: 'No score',
+            fetchedAt: new Date()
+        }));
+    }
+
+    /**
+     * FIXED: Improved winner determination with better logging
+     * @private
+     */
+    determineWinnerFixed(finalScores) {
+        try {
+            console.log('=== DETERMINING WINNER ===');
+            console.log('Raw final scores:', finalScores);
+
+            if (!finalScores || finalScores.length === 0) {
+                console.log('No scores to evaluate');
+                return null;
+            }
+
+            // Filter out users with no valid rank
+            const validScores = finalScores.filter(score => {
+                const hasValidRank = score.rank !== null && 
+                                   score.rank !== undefined && 
+                                   !isNaN(score.rank) && 
+                                   score.rank > 0;
+                console.log(`${score.raUsername}: rank=${score.rank}, valid=${hasValidRank}`);
+                return hasValidRank;
+            });
+
+            console.log('Valid scores after filtering:', validScores);
+
+            if (validScores.length === 0) {
+                console.log('No valid scores found - no winner');
+                return null;
+            }
+
+            // Sort by rank (lower is better)
+            validScores.sort((a, b) => a.rank - b.rank);
+            console.log('Scores sorted by rank:', validScores);
+
+            const bestRank = validScores[0].rank;
+            const winners = validScores.filter(score => score.rank === bestRank);
+
+            console.log(`Best rank: ${bestRank}`);
+            console.log(`Winners with this rank:`, winners);
+
+            if (winners.length > 1) {
+                console.log('Tie detected - multiple users with same best rank');
+                return null; // Tie
+            }
+
+            const winner = winners[0];
+            console.log(`Winner determined: ${winner.raUsername} with rank ${winner.rank}`);
+            console.log('=== WINNER DETERMINATION COMPLETE ===');
+            return winner;
+        } catch (error) {
+            console.error('Error determining winner:', error);
+            return null;
         }
     }
 
