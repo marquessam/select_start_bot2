@@ -1,4 +1,4 @@
-// src/commands/admin/gacha-admin.js - ENHANCED VERSION with animated emoji support
+// src/commands/admin/gacha-admin.js - ENHANCED VERSION with non-destructive combination support
 import { 
     SlashCommandBuilder, 
     EmbedBuilder, 
@@ -313,7 +313,7 @@ export default {
         }
     },
 
-    // UPDATED: Parse emoji input to handle both static and animated emojis
+    // Parse emoji input to handle both static and animated emojis
     parseEmojiInput(emojiInput) {
         // Updated regex to handle both <:name:id> and <a:name:id>
         const emojiMatch = emojiInput.match(/<(a?):([^:]+):(\d+)>/);
@@ -332,7 +332,7 @@ export default {
         };
     },
 
-    // UPDATED: Format emoji for display (handles animated emojis)
+    // Format emoji for display (handles animated emojis)
     formatItemEmoji(item) {
         if (item.emojiId && item.emojiName) {
             const prefix = item.isAnimated ? 'a' : '';
@@ -854,7 +854,7 @@ export default {
         const formatInput = new TextInputBuilder()
             .setCustomId('combo_format')
             .setLabel('Combination Rule')
-            .setPlaceholder('025x5 = 107 OR 001 + 003 = 999')
+            .setPlaceholder('025x5 = 107 OR (001 + 003) = 999 for non-destructive')
             .setStyle(TextInputStyle.Paragraph)
             .setRequired(true);
 
@@ -882,6 +882,7 @@ export default {
         await interaction.showModal(modal);
     },
 
+    // UPDATED: Enhanced to handle non-destructive combinations with parentheses syntax
     async handleCombinationModal(interaction) {
         await interaction.deferReply({ ephemeral: true });
 
@@ -916,6 +917,7 @@ export default {
                 ingredients: parsed.ingredients,
                 result: parsed.result,
                 isAutomatic: false,
+                isNonDestructive: parsed.isNonDestructive, // NEW: Set non-destructive flag
                 priority,
                 createdBy: interaction.user.username
             });
@@ -928,6 +930,7 @@ export default {
                 .addFields(
                     { name: 'Rule ID', value: ruleId, inline: true },
                     { name: 'Priority', value: priority.toString(), inline: true },
+                    { name: 'Type', value: parsed.isNonDestructive ? '🔄 Non-Destructive' : '⚗️ Standard', inline: true },
                     { name: 'Format', value: `\`${comboFormat}\``, inline: false }
                 );
 
@@ -945,7 +948,11 @@ export default {
                 value: `${resultEmoji} ${parsed.result.quantity}x **${resultItem?.itemName || parsed.result.itemId}**` 
             });
 
-            embed.setDescription('⚗️ This combination will show confirmation prompts when users have the ingredients!');
+            if (parsed.isNonDestructive) {
+                embed.setDescription('🔄 **Non-Destructive Combination** - Ingredients will be kept after combining!\n\n⚗️ This combination will show confirmation prompts when users have the ingredients!');
+            } else {
+                embed.setDescription('⚗️ This combination will show confirmation prompts when users have the ingredients!');
+            }
 
             await interaction.editReply({ embeds: [embed] });
 
@@ -954,10 +961,15 @@ export default {
             await interaction.editReply({
                 content: `❌ Error creating combination: ${error.message}\n\n**Format Examples:**\n` +
                          `• \`025x5 = 107\` (5 items with ID 025 make 1 item with ID 107)\n` +
+                         `• \`(025x5) = 107\` (5 items with ID 025 make 1 item with ID 107, keeps ingredients)\n` +
                          `• \`001 + 003 = 999\` (item 001 + item 003 make item 999)\n` +
+                         `• \`(001 + 003) = 999\` (item 001 + item 003 make item 999, keeps ingredients)\n` +
                          `• \`010x3 + 020x2 = 030x5\` (3 of item 010 + 2 of item 020 = 5 of item 030)\n` +
+                         `• \`(010x3 + 020x2) = 030x5\` (same as above but keeps ingredients)\n` +
                          `• \`item1 + item2 + item3 = special_item\` (multiple ingredients)\n\n` +
-                         `**Format Rules:**\n` +
+                         `**Non-Destructive Format Rules:**\n` +
+                         `• Wrap ingredients in parentheses: \`(ingredients) = result\`\n` +
+                         `• Perfect for series completion rewards!\n` +
                          `• Use \`itemIDx#\` for quantities (e.g., \`025x5\` = 5 of item 025)\n` +
                          `• Use \`+\` or \`,\` to separate multiple ingredients\n` +
                          `• Use \`=\` to separate ingredients from result (preferred)\n` +
@@ -967,6 +979,7 @@ export default {
         }
     },
 
+    // UPDATED: Enhanced to detect parentheses for non-destructive combinations
     async parseSimpleCombination(format) {
         format = format.trim();
 
@@ -980,16 +993,23 @@ export default {
         } else if (format.includes('->')) {
             separator = '->';
         } else {
-            throw new Error('Format must use = or -> as separator (e.g., "025x5 = 107")');
+            throw new Error('Format must use = or -> as separator (e.g., "025x5 = 107" or "(025+026) = 107")');
         }
 
         const parts = format.split(separator);
         if (parts.length !== 2) {
-            throw new Error('Format must be: ingredients = result (e.g., "025x5 = 107")');
+            throw new Error('Format must be: ingredients = result (e.g., "025x5 = 107" or "(025+026) = 107")');
         }
 
-        const ingredientsPart = parts[0].trim();
+        let ingredientsPart = parts[0].trim();
         const resultPart = parts[1].trim();
+
+        // NEW: Check for non-destructive combination (parentheses)
+        let isNonDestructive = false;
+        if (ingredientsPart.startsWith('(') && ingredientsPart.endsWith(')')) {
+            isNonDestructive = true;
+            ingredientsPart = ingredientsPart.slice(1, -1).trim(); // Remove parentheses
+        }
 
         const ingredients = [];
         const ingredientItems = ingredientsPart.split(/[+,]/).map(s => s.trim());
@@ -1021,10 +1041,10 @@ export default {
             result = { itemId: resultPart.trim(), quantity: 1 };
         }
 
-        return { ingredients, result };
+        return { ingredients, result, isNonDestructive };
     },
 
-    // UPDATED: Now with pagination!
+    // UPDATED: Enhanced to show non-destructive indicators
     async handleListCombinations(interaction) {
         const page = interaction.options.getInteger('page') || 1;
         const rulesPerPage = 8; // Fewer per page since combinations take more space
@@ -1053,17 +1073,22 @@ export default {
             const resultItem = await GachaItem.findOne({ itemId: rule.result.itemId });
             const resultEmoji = resultItem ? this.formatItemEmoji(resultItem) : '❓';
             
-            rulesText += `**${rule.ruleId}** (Priority: ${rule.priority})\n`;
+            rulesText += `**${rule.ruleId}** (Priority: ${rule.priority})${rule.isNonDestructive ? ' 🔄' : ''}\n`;
             
             const ingredientStrs = rule.ingredients.map(ing => 
                 ing.quantity > 1 ? `${ing.itemId}x${ing.quantity}` : ing.itemId
             );
             
-            rulesText += `${ingredientStrs.join(' + ')} = ${resultEmoji} ${resultItem?.itemName || rule.result.itemId}${rule.result.quantity > 1 ? ` (x${rule.result.quantity})` : ''}\n\n`;
+            // NEW: Show non-destructive format with parentheses
+            const ingredientsDisplay = rule.isNonDestructive 
+                ? `(${ingredientStrs.join(' + ')})` 
+                : ingredientStrs.join(' + ');
+            
+            rulesText += `${ingredientsDisplay} = ${resultEmoji} ${resultItem?.itemName || rule.result.itemId}${rule.result.quantity > 1 ? ` (x${rule.result.quantity})` : ''}\n\n`;
         }
 
         embed.addFields({ name: 'Rules', value: rulesText });
-        embed.setFooter({ text: 'All combinations require user confirmation' });
+        embed.setFooter({ text: 'All combinations require user confirmation • 🔄 = Non-Destructive (keeps ingredients)' });
 
         const components = [];
         
@@ -1107,7 +1132,7 @@ export default {
         await interaction.editReply({ embeds: [embed], components });
     },
 
-    // UPDATED: Handle pagination for combinations from button clicks
+    // Handle pagination for combinations from button clicks
     async handleListCombinationsFromButton(interaction, page = 1) {
         const rulesPerPage = 8;
 
@@ -1139,17 +1164,22 @@ export default {
             const resultItem = await GachaItem.findOne({ itemId: rule.result.itemId });
             const resultEmoji = resultItem ? this.formatItemEmoji(resultItem) : '❓';
             
-            rulesText += `**${rule.ruleId}** (Priority: ${rule.priority})\n`;
+            rulesText += `**${rule.ruleId}** (Priority: ${rule.priority})${rule.isNonDestructive ? ' 🔄' : ''}\n`;
             
             const ingredientStrs = rule.ingredients.map(ing => 
                 ing.quantity > 1 ? `${ing.itemId}x${ing.quantity}` : ing.itemId
             );
             
-            rulesText += `${ingredientStrs.join(' + ')} = ${resultEmoji} ${resultItem?.itemName || rule.result.itemId}${rule.result.quantity > 1 ? ` (x${rule.result.quantity})` : ''}\n\n`;
+            // Show non-destructive format with parentheses
+            const ingredientsDisplay = rule.isNonDestructive 
+                ? `(${ingredientStrs.join(' + ')})` 
+                : ingredientStrs.join(' + ');
+            
+            rulesText += `${ingredientsDisplay} = ${resultEmoji} ${resultItem?.itemName || rule.result.itemId}${rule.result.quantity > 1 ? ` (x${rule.result.quantity})` : ''}\n\n`;
         }
 
         embed.addFields({ name: 'Rules', value: rulesText });
-        embed.setFooter({ text: 'All combinations require user confirmation' });
+        embed.setFooter({ text: 'All combinations require user confirmation • 🔄 = Non-Destructive (keeps ingredients)' });
 
         const components = [];
         
@@ -1310,6 +1340,7 @@ export default {
         });
     },
 
+    // UPDATED: Enhanced debug view to show non-destructive status
     async handleDebugCombination(interaction) {
         const ruleId = interaction.options.getString('rule-id');
         
@@ -1328,6 +1359,7 @@ export default {
         embed.addFields(
             { name: 'Rule ID', value: rule.ruleId, inline: true },
             { name: 'Priority', value: rule.priority?.toString() || '0', inline: true },
+            { name: 'Type', value: rule.isNonDestructive ? '🔄 Non-Destructive' : '⚗️ Standard', inline: true },
             { name: 'Requires Confirmation', value: 'Yes', inline: true }
         );
 
@@ -1375,10 +1407,23 @@ export default {
             `${rule.result.itemId}x${rule.result.quantity}` : 
             rule.result.itemId;
         
+        // NEW: Show proper format with parentheses for non-destructive
+        const formatExample = rule.isNonDestructive 
+            ? `\`(${exampleIngredients}) = ${exampleResult}\``
+            : `\`${exampleIngredients} = ${exampleResult}\``;
+        
         embed.addFields({ 
             name: 'Rule Format', 
-            value: `\`${exampleIngredients} = ${exampleResult}\`` 
+            value: formatExample
         });
+
+        if (rule.isNonDestructive) {
+            embed.addFields({
+                name: '🔄 Non-Destructive Behavior',
+                value: 'This combination will keep all ingredients after creating the result. Perfect for series completion rewards!',
+                inline: false
+            });
+        }
 
         if (rule.createdBy) {
             embed.setFooter({ text: `Created by: ${rule.createdBy}` });
@@ -1483,7 +1528,7 @@ export default {
     async handleAddItem(interaction) {
         const emojiInput = interaction.options.getString('emoji-input');
         
-        // UPDATED: Parse emoji input to handle both static and animated emojis
+        // Parse emoji input to handle both static and animated emojis
         const emojiData = this.parseEmojiInput(emojiInput);
         const dropRate = interaction.options.getNumber('drop-rate');
 
@@ -1496,7 +1541,7 @@ export default {
             dropRate,
             emojiName: emojiData.emojiName,
             emojiId: emojiData.emojiId,
-            isAnimated: emojiData.isAnimated, // NEW: Store whether emoji is animated
+            isAnimated: emojiData.isAnimated, // Store whether emoji is animated
             flavorText: interaction.options.getString('flavor-text'),
             maxStack: interaction.options.getInteger('max-stack') || 1,
             seriesId: interaction.options.getString('series-id'),
