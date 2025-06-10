@@ -9,6 +9,7 @@ import {
 } from 'discord.js';
 import { User } from '../../models/User.js';
 import retroAPI from '../../services/retroAPI.js';
+import enhancedRetroAPI from '../../services/enhancedRetroAPI.js';
 import achievementFeedService from '../../services/achievementFeedService.js';
 import { config } from '../../config/config.js';
 
@@ -85,6 +86,23 @@ export default {
                     option.setName('amount')
                     .setDescription('The amount of GP to set')
                     .setRequired(true))
+        )
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('forcenominate')
+                .setDescription('Force a nomination bypassing all restrictions')
+                .addStringOption(option =>
+                    option.setName('ra_username')
+                    .setDescription('The RetroAchievements username')
+                    .setRequired(true))
+                .addStringOption(option =>
+                    option.setName('game_id')
+                    .setDescription('The RetroAchievements game ID')
+                    .setRequired(true))
+                .addStringOption(option =>
+                    option.setName('comment')
+                    .setDescription('Optional comment for the nomination')
+                    .setRequired(false))
         ),
 
     async execute(interaction) {
@@ -116,6 +134,9 @@ export default {
                 break;
             case 'setgp':
                 await this.handleSetGP(interaction);
+                break;
+            case 'forcenominate':
+                await this.handleForceNominate(interaction);
                 break;
             default:
                 await interaction.reply({
@@ -574,6 +595,179 @@ export default {
         } catch (error) {
             console.error('Error setting GP balance:', error);
             return interaction.editReply('An error occurred while setting the GP balance. Please try again.');
+        }
+    },
+
+    /**
+     * Handle force nominating a game for a user (bypasses all restrictions)
+     */
+    async handleForceNominate(interaction) {
+        await interaction.deferReply();
+
+        try {
+            const raUsername = interaction.options.getString('ra_username');
+            const gameId = interaction.options.getString('game_id');
+            const comment = interaction.options.getString('comment');
+
+            // Find the user
+            const user = await User.findOne({
+                raUsername: { $regex: new RegExp(`^${raUsername}$`, 'i') }
+            });
+
+            if (!user) {
+                return interaction.editReply('User not found. Please check the username and try again.');
+            }
+
+            // Validate game ID format
+            if (!/^\d+$/.test(gameId)) {
+                return interaction.editReply('Invalid game ID format. Please provide a numeric game ID.');
+            }
+
+            // Get game information from RetroAchievements API
+            let gameData;
+            try {
+                gameData = await enhancedRetroAPI.getGameInfo(gameId);
+                
+                if (!gameData || !gameData.Title) {
+                    return interaction.editReply(`Game with ID ${gameId} not found. Please check the game ID and try again.`);
+                }
+            } catch (error) {
+                console.error('Error fetching game data:', error);
+                return interaction.editReply(`Failed to fetch game information for ID ${gameId}. Please check the game ID and try again.`);
+            }
+
+            // Check if user has already nominated this game this month
+            const currentNominations = user.getCurrentNominations();
+            const existingNomination = currentNominations.find(nom => nom.gameId === gameId);
+            
+            if (existingNomination) {
+                return interaction.editReply({
+                    content: `❌ **${user.raUsername}** has already nominated **${gameData.Title}** this month.\n\n` +
+                            `Use \`/adminuser clearnominations\` first if you want to replace existing nominations.`
+                });
+            }
+
+            // Check nomination limit (2 max)
+            const MAX_NOMINATIONS = 2;
+            if (currentNominations.length >= MAX_NOMINATIONS) {
+                return interaction.editReply({
+                    content: `❌ **${user.raUsername}** already has ${MAX_NOMINATIONS} nominations this month.\n\n` +
+                            `Current nominations:\n` +
+                            currentNominations.map((nom, i) => `${i + 1}. **${nom.gameTitle}** *(${nom.consoleName})*`).join('\n') +
+                            `\n\nUse \`/adminuser clearnominations\` to clear existing nominations first.`
+                });
+            }
+
+            // Create the nomination object
+            const nomination = {
+                gameId: gameId,
+                gameTitle: gameData.Title,
+                consoleName: gameData.ConsoleName || 'Unknown',
+                nominatedAt: new Date()
+            };
+
+            // Add comment if provided
+            if (comment) {
+                nomination.comment = comment;
+            }
+
+            // Force add the nomination (bypassing all restrictions)
+            if (!user.nominations) {
+                user.nominations = [];
+            }
+            
+            user.nominations.push(nomination);
+            await user.save();
+
+            // Create success embed
+            const embed = new EmbedBuilder()
+                .setTitle('🔧 Admin Force Nomination Successful')
+                .setDescription(`**${user.raUsername}** has been force-nominated for a game, bypassing all restrictions.`)
+                .setColor('#FF6B6B')
+                .setThumbnail(gameData.ImageIcon || 'https://retroachievements.org/Images/icon.png')
+                .addFields(
+                    {
+                        name: '🎮 Game Details',
+                        value: `**Title:** ${gameData.Title}\n` +
+                               `**Console:** ${gameData.ConsoleName || 'Unknown'}\n` +
+                               `**Game ID:** ${gameId}`,
+                        inline: true
+                    },
+                    {
+                        name: '👤 User Details',
+                        value: `**RA Username:** ${user.raUsername}\n` +
+                               `**Nominations Used:** ${currentNominations.length + 1}/${MAX_NOMINATIONS}`,
+                        inline: true
+                    },
+                    {
+                        name: '🔗 Links',
+                        value: `[View Game](https://retroachievements.org/game/${gameId})\n` +
+                               `[User Profile](https://retroachievements.org/user/${user.raUsername})`,
+                        inline: true
+                    }
+                );
+
+            // Add additional game details if available
+            if (gameData.Publisher || gameData.Developer || gameData.Genre) {
+                embed.addFields({
+                    name: '📋 Additional Info',
+                    value: `${gameData.Publisher ? `**Publisher:** ${gameData.Publisher}\n` : ''}` +
+                           `${gameData.Developer ? `**Developer:** ${gameData.Developer}\n` : ''}` +
+                           `${gameData.Genre ? `**Genre:** ${gameData.Genre}\n` : ''}` +
+                           `**Achievements:** ${gameData.NumAchievements || 0}`,
+                    inline: false
+                });
+            }
+
+            // Add comment if provided
+            if (comment) {
+                embed.addFields({
+                    name: '💭 Comment',
+                    value: comment,
+                    inline: false
+                });
+            }
+
+            // Add admin info
+            embed.addFields({
+                name: '⚠️ Admin Override',
+                value: `Forced by: ${interaction.user.tag}\n` +
+                       `⚠️ **This nomination bypassed all restriction checks**`,
+                inline: false
+            });
+
+            embed.setTimestamp();
+
+            // Log this action to admin log
+            try {
+                const adminLogChannel = await interaction.client.channels.fetch(config.discord.adminLogChannelId);
+                if (adminLogChannel) {
+                    const logEmbed = new EmbedBuilder()
+                        .setTitle('🔧 Admin Action: Force Nomination')
+                        .setColor('#FF6B6B')
+                        .setDescription(`An admin has force-nominated a game, bypassing all restrictions.`)
+                        .addFields(
+                            { name: 'Admin', value: interaction.user.tag, inline: true },
+                            { name: 'User', value: user.raUsername, inline: true },
+                            { name: 'Game', value: `${gameData.Title} (ID: ${gameId})`, inline: true },
+                            { name: 'Console', value: gameData.ConsoleName || 'Unknown', inline: true },
+                            { name: 'Comment', value: comment || 'None', inline: true },
+                            { name: 'Warning', value: '⚠️ **ALL RESTRICTIONS BYPASSED**', inline: false }
+                        )
+                        .setTimestamp();
+                    
+                    await adminLogChannel.send({ embeds: [logEmbed] });
+                }
+            } catch (logError) {
+                console.error('Error logging force nomination:', logError);
+                // Continue even if logging fails
+            }
+
+            return interaction.editReply({ embeds: [embed] });
+
+        } catch (error) {
+            console.error('Error in force nomination:', error);
+            return interaction.editReply('An error occurred while processing the force nomination. Please try again.');
         }
     }
 };
