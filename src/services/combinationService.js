@@ -53,6 +53,18 @@ class CombinationService {
                 userItemMap.set(item.itemId, existing);
             });
 
+            // NEW: For non-destructive combinations, check if user already has the result
+            // This prevents UI clutter - once you have the "Street Fighter Master" trophy,
+            // you don't need to see that combination anymore since you already completed it
+            if (rule.isNonDestructive) {
+                const userHasResult = userItemMap.has(rule.result.itemId);
+                if (userHasResult) {
+                    // User already has the result of this non-destructive combination
+                    // Don't show it as available to keep UI clean
+                    return [];
+                }
+            }
+
             const requiredIngredients = rule.ingredients;
             const availableQuantities = [];
 
@@ -1469,6 +1481,16 @@ class CombinationService {
             const possibleCombinations = [];
 
             for (const rule of rules) {
+                // NEW: For non-destructive combinations, check if user already has the result
+                // This keeps the UI clean by hiding completed series rewards
+                if (rule.isNonDestructive) {
+                    const userHasResult = user.gachaCollection?.some(item => item.itemId === rule.result.itemId);
+                    if (userHasResult) {
+                        // Skip this combination - user already has the result
+                        continue;
+                    }
+                }
+
                 const canMake = this.checkIngredients(user, rule.ingredients);
                 const resultItem = await GachaItem.findOne({ itemId: rule.result.itemId });
                 
@@ -1490,7 +1512,7 @@ class CombinationService {
                         result: rule.result,
                         canMake: canMake,
                         isAutomatic: rule.isAutomatic,
-                        isNonDestructive: rule.isNonDestructive, // NEW: Include non-destructive flag
+                        isNonDestructive: rule.isNonDestructive, // Include non-destructive flag
                         priority: rule.priority
                     });
                 }
