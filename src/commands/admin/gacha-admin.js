@@ -970,6 +970,8 @@ export default {
                          `**Non-Destructive Format Rules:**\n` +
                          `• Wrap ingredients in parentheses: \`(ingredients) = result\`\n` +
                          `• Perfect for series completion rewards!\n` +
+                         `• IMPORTANT: Make result items with maxStack: 1 for best UX\n` +
+                         `• Combos automatically hide once user has the result item\n` +
                          `• Use \`itemIDx#\` for quantities (e.g., \`025x5\` = 5 of item 025)\n` +
                          `• Use \`+\` or \`,\` to separate multiple ingredients\n` +
                          `• Use \`=\` to separate ingredients from result (preferred)\n` +
