@@ -1,7 +1,7 @@
-// src/models/GachaItem.js - UPDATED with discovery tracking for combinations
+// src/models/GachaItem.js - UPDATED with non-destructive combination support
 import mongoose from 'mongoose';
 
-// UPDATED: Enhanced combination rule schema with discovery tracking
+// UPDATED: Enhanced combination rule schema with non-destructive support
 const combinationRuleSchema = new mongoose.Schema({
     ruleId: {
         type: String,
@@ -27,6 +27,12 @@ const combinationRuleSchema = new mongoose.Schema({
         default: false // true = combines automatically when you have ingredients
     },
     
+    // NEW: Non-destructive combination flag
+    isNonDestructive: {
+        type: Boolean,
+        default: false // true = keeps ingredients after combination
+    },
+    
     // Priority for auto-combines (higher = combines first)
     priority: {
         type: Number,
@@ -38,7 +44,7 @@ const combinationRuleSchema = new mongoose.Schema({
         default: true
     },
     
-    // NEW: Discovery tracking fields
+    // Discovery tracking fields
     discovered: {
         type: Boolean,
         default: false // Whether this combination has been discovered by the community
@@ -63,6 +69,8 @@ const combinationRuleSchema = new mongoose.Schema({
 
 // Add index for efficient discovery queries
 combinationRuleSchema.index({ discovered: 1, discoveredAt: 1 });
+// Add index for non-destructive combinations
+combinationRuleSchema.index({ isNonDestructive: 1 });
 
 const gachaItemSchema = new mongoose.Schema({
     itemId: {
@@ -83,7 +91,7 @@ const gachaItemSchema = new mongoose.Schema({
         maxlength: 500
     },
     
-    // UPDATED: Enhanced emoji handling with animated support
+    // Enhanced emoji handling with animated support
     emojiId: String,
     emojiName: {
         type: String,
@@ -146,7 +154,7 @@ const gachaItemSchema = new mongoose.Schema({
     adminNotes: String
 });
 
-// UPDATED: Virtual for display with animated emoji support
+// Virtual for display with animated emoji support
 gachaItemSchema.virtual('displayName').get(function() {
     let emoji = this.emojiName || '❓';
     if (this.emojiId && this.emojiName) {
@@ -161,7 +169,7 @@ gachaItemSchema.methods.isInGacha = function() {
     return this.isActive && this.dropRate > 0;
 };
 
-// UPDATED: Method to format emoji for display
+// Method to format emoji for display
 gachaItemSchema.methods.formatEmoji = function() {
     if (this.emojiId && this.emojiName) {
         const prefix = this.isAnimated ? 'a' : '';
@@ -189,7 +197,7 @@ gachaItemSchema.statics.getCombinationItems = function() {
     return this.find({ isActive: true, dropRate: 0 });
 };
 
-// NEW: Static method to get discovery statistics
+// Static method to get discovery statistics
 combinationRuleSchema.statics.getDiscoveryStats = function() {
     return this.aggregate([
         {
@@ -201,6 +209,9 @@ combinationRuleSchema.statics.getDiscoveryStats = function() {
                 },
                 undiscoveredRules: {
                     $sum: { $cond: [{ $eq: ['$discovered', false] }, 1, 0] }
+                },
+                nonDestructiveRules: {
+                    $sum: { $cond: [{ $eq: ['$isNonDestructive', true] }, 1, 0] }
                 }
             }
         }
