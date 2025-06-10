@@ -1,4 +1,4 @@
-// src/services/combinationService.js - COMPLETE with animated emoji support and recipe book
+// src/services/combinationService.js - COMPLETE with non-destructive combination support
 import { GachaItem, CombinationRule } from '../models/GachaItem.js';
 import { Challenge } from '../models/Challenge.js';
 import { config } from '../config/config.js';
@@ -6,7 +6,7 @@ import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelec
 import { formatGachaEmoji } from '../config/gachaEmojis.js';
 import { COLORS } from '../utils/FeedUtils.js';
 
-// UPDATED: Use gacha trade channel for all combination alerts
+// Use gacha trade channel for all combination alerts
 const GACHA_TRADE_CHANNEL_ID = '1379402075120730185';
 
 class CombinationService {
@@ -118,10 +118,12 @@ class CombinationService {
         }
     }
 
+    // UPDATED: Modified to show non-destructive status
     async showSingleCombinationConfirmation(interaction, user, combination) {
-        const { resultItem, resultQuantity, ingredients, maxCombinations } = combination;
+        const { resultItem, resultQuantity, ingredients, maxCombinations, rule } = combination;
         
         const isShadowUnlock = this.isShadowUnlockItem(resultItem);
+        const isNonDestructive = rule.isNonDestructive; // NEW: Check if non-destructive
         const resultEmoji = formatGachaEmoji(resultItem.emojiId, resultItem.emojiName, resultItem.isAnimated);
         const rarityEmoji = this.getRarityEmoji(resultItem.rarity);
 
@@ -133,33 +135,66 @@ class CombinationService {
             ingredientsText += `${emoji} ${ing.quantity}x ${name}\n`;
         }
 
+        let title = '⚗️ Combination Available!';
+        let color = COLORS.WARNING;
+        let warningText = '⚠️ **This will consume the ingredients!**';
+        
+        if (isShadowUnlock) {
+            title = '🌙 SHADOW UNLOCK AVAILABLE!';
+            color = '#9932CC';
+            warningText = isNonDestructive 
+                ? '🔄 **This will keep your ingredients!**\n🔓 **This will reveal this month\'s shadow challenge!**'
+                : '⚠️ **This will consume the ingredients!**\n🔓 **This will reveal this month\'s shadow challenge!**';
+        } else if (isNonDestructive) {
+            title = '🔄 Non-Destructive Combination Available!';
+            color = COLORS.SUCCESS;
+            warningText = '🔄 **This will keep your ingredients - perfect for series completion rewards!**';
+        }
+
         const embed = new EmbedBuilder()
-            .setTitle(isShadowUnlock ? '🌙 SHADOW UNLOCK AVAILABLE!' : '⚗️ Combination Available!')
-            .setColor(isShadowUnlock ? '#9932CC' : COLORS.WARNING)
+            .setTitle(title)
+            .setColor(color)
             .setDescription(
-                `You can create ${isShadowUnlock ? '**the Shadow Unlock item**' : 'a new item'} by combining ingredients!\n\n` +
+                `You can create ${isShadowUnlock ? '**the Shadow Unlock item**' : (isNonDestructive ? '**a collection bonus**' : 'a new item')} by combining ingredients!\n\n` +
                 `**Recipe:**\n${ingredientsText}\n` +
                 `**Creates:**\n${resultEmoji} ${rarityEmoji} **${resultQuantity}x ${resultItem.itemName}**\n\n` +
                 `**Available combinations:** ${maxCombinations}\n\n` +
-                `⚠️ **This will consume the ingredients!**` +
-                (isShadowUnlock ? '\n\n🔓 **This will reveal this month\'s shadow challenge!**' : '')
+                warningText
             )
             .addFields(
                 { name: 'Result Description', value: resultItem.description || 'No description', inline: false }
             )
-            .setFooter({ text: 'Choose how many combinations to perform, or cancel.' })
+            .setFooter({ 
+                text: isNonDestructive 
+                    ? 'Choose how many combinations to perform - your ingredients will be kept!'
+                    : 'Choose how many combinations to perform, or cancel.' 
+            })
             .setTimestamp();
 
         const actionRow = new ActionRowBuilder();
         
         // Always add Make 1 button
         if (maxCombinations >= 1) {
+            let buttonLabel = 'Make 1';
+            let buttonStyle = ButtonStyle.Primary;
+            let buttonEmoji = '⚗️';
+            
+            if (isShadowUnlock) {
+                buttonLabel = 'Unlock Shadow!';
+                buttonStyle = ButtonStyle.Danger;
+                buttonEmoji = '🌙';
+            } else if (isNonDestructive) {
+                buttonLabel = 'Create 1 🔄';
+                buttonStyle = ButtonStyle.Success;
+                buttonEmoji = '🎁';
+            }
+            
             actionRow.addComponents(
                 new ButtonBuilder()
                     .setCustomId(`combo_confirm_${combination.ruleId}_1`)
-                    .setLabel(isShadowUnlock ? 'Unlock Shadow!' : 'Make 1')
-                    .setStyle(isShadowUnlock ? ButtonStyle.Danger : ButtonStyle.Primary)
-                    .setEmoji(isShadowUnlock ? '🌙' : '⚗️')
+                    .setLabel(buttonLabel)
+                    .setStyle(buttonStyle)
+                    .setEmoji(buttonEmoji)
             );
         }
         
@@ -168,8 +203,8 @@ class CombinationService {
             actionRow.addComponents(
                 new ButtonBuilder()
                     .setCustomId(`combo_confirm_${combination.ruleId}_5`)
-                    .setLabel('Make 5')
-                    .setStyle(ButtonStyle.Primary)
+                    .setLabel(isNonDestructive ? 'Create 5 🔄' : 'Make 5')
+                    .setStyle(isNonDestructive ? ButtonStyle.Success : ButtonStyle.Primary)
             );
         }
         
@@ -178,7 +213,7 @@ class CombinationService {
             actionRow.addComponents(
                 new ButtonBuilder()
                     .setCustomId(`combo_confirm_${combination.ruleId}_all`)
-                    .setLabel(`Make All (${maxCombinations})`)
+                    .setLabel(isNonDestructive ? `Create All (${maxCombinations}) 🔄` : `Make All (${maxCombinations})`)
                     .setStyle(ButtonStyle.Success)
             );
         }
@@ -201,18 +236,32 @@ class CombinationService {
         });
     }
 
+    // UPDATED: Modified to show non-destructive indicators
     async showMultipleCombinationSelection(interaction, user, combinations) {
         const limitedCombinations = combinations.slice(0, 25);
         const hasShadowUnlock = limitedCombinations.some(combo => this.isShadowUnlockItem(combo.resultItem));
+        const hasNonDestructive = limitedCombinations.some(combo => combo.rule.isNonDestructive);
+
+        let title = '⚗️ Multiple Combinations Available!';
+        let color = COLORS.INFO;
+        
+        if (hasShadowUnlock) {
+            title = '🌙 SHADOW UNLOCK + MORE AVAILABLE!';
+            color = '#9932CC';
+        } else if (hasNonDestructive) {
+            title = '🔄 Multiple Combinations Available!';
+            color = COLORS.SUCCESS;
+        }
 
         const embed = new EmbedBuilder()
-            .setTitle(hasShadowUnlock ? '🌙 SHADOW UNLOCK + MORE AVAILABLE!' : '⚗️ Multiple Combinations Available!')
-            .setColor(hasShadowUnlock ? '#9932CC' : COLORS.INFO)
+            .setTitle(title)
+            .setColor(color)
             .setDescription(
                 `You have ingredients for multiple combinations!\n` +
                 `Choose which one you'd like to make:\n\n` +
-                `⚠️ **Combinations will consume ingredients!**` +
-                (hasShadowUnlock ? '\n\n🌙 **One option will unlock the shadow challenge!**' : '')
+                `⚠️ **Standard combinations will consume ingredients!**\n` +
+                (hasNonDestructive ? `🔄 **Non-destructive combinations will keep ingredients!**\n` : '') +
+                (hasShadowUnlock ? `🌙 **One option will unlock the shadow challenge!**` : '')
             )
             .setFooter({ text: 'Select a combination from the menu below, or cancel.' })
             .setTimestamp();
@@ -221,11 +270,24 @@ class CombinationService {
             const resultEmoji = formatGachaEmoji(combo.resultItem.emojiId, combo.resultItem.emojiName, combo.resultItem.isAnimated);
             const ingredientNames = combo.ingredients.map(ing => ing.item?.itemName || ing.itemId).join(' + ');
             const isShadowUnlock = this.isShadowUnlockItem(combo.resultItem);
+            const isNonDestructive = combo.rule.isNonDestructive;
+            
+            let label = `${combo.resultQuantity}x ${combo.resultItem.itemName}`;
+            let description = `${ingredientNames} (max: ${combo.maxCombinations})`;
+            
+            // Add special indicators
+            if (isShadowUnlock) {
+                label += ' 🌙';
+                description += ' - SHADOW!';
+            } else if (isNonDestructive) {
+                label += ' 🔄';
+                description += ' - KEEPS INGREDIENTS!';
+            }
             
             const option = {
-                label: `${combo.resultQuantity}x ${combo.resultItem.itemName}${isShadowUnlock ? ' 🌙' : ''}`.slice(0, 100),
+                label: label.slice(0, 100),
                 value: `combo_select_${combo.ruleId}`,
-                description: `${ingredientNames} (max: ${combo.maxCombinations})${isShadowUnlock ? ' - SHADOW!' : ''}`.slice(0, 100)
+                description: description.slice(0, 100)
             };
 
             if (combo.resultItem.emojiId && combo.resultItem.emojiName) {
@@ -268,7 +330,7 @@ class CombinationService {
         });
     }
 
-    // UPDATED: Modified performCombination to mark as discovered
+    // UPDATED: Modified to handle non-destructive combinations
     async performCombination(user, ruleId, quantity = 1) {
         try {
             const rule = await CombinationRule.findOne({ ruleId: ruleId, isActive: true });
@@ -292,31 +354,54 @@ class CombinationService {
                 throw new Error('Result item not found');
             }
 
+            // NEW: Handle non-destructive combinations
             const removedIngredients = [];
-            for (const ingredient of rule.ingredients) {
-                const totalToRemove = ingredient.quantity * quantity;
-                const userItem = user.gachaCollection.find(item => item.itemId === ingredient.itemId);
-                
-                if (!userItem || (userItem.quantity || 1) < totalToRemove) {
-                    throw new Error(`Insufficient quantity of ${ingredient.itemId}`);
-                }
+            
+            if (!rule.isNonDestructive) {
+                // Standard destructive combination - remove ingredients
+                for (const ingredient of rule.ingredients) {
+                    const totalToRemove = ingredient.quantity * quantity;
+                    const userItem = user.gachaCollection.find(item => item.itemId === ingredient.itemId);
+                    
+                    if (!userItem || (userItem.quantity || 1) < totalToRemove) {
+                        throw new Error(`Insufficient quantity of ${ingredient.itemId}`);
+                    }
 
-                const removeSuccess = user.removeGachaItem(ingredient.itemId, totalToRemove);
-                if (!removeSuccess) {
-                    throw new Error(`Failed to remove ingredient: ${ingredient.itemId}`);
+                    const removeSuccess = user.removeGachaItem(ingredient.itemId, totalToRemove);
+                    if (!removeSuccess) {
+                        throw new Error(`Failed to remove ingredient: ${ingredient.itemId}`);
+                    }
+                    
+                    removedIngredients.push({
+                        itemId: ingredient.itemId,
+                        itemName: userItem.itemName,
+                        quantityRemoved: totalToRemove
+                    });
                 }
-                
-                removedIngredients.push({
-                    itemId: ingredient.itemId,
-                    itemName: userItem.itemName,
-                    quantityRemoved: totalToRemove
-                });
+            } else {
+                // Non-destructive combination - just verify ingredients exist
+                for (const ingredient of rule.ingredients) {
+                    const totalRequired = ingredient.quantity * quantity;
+                    const userItem = user.gachaCollection.find(item => item.itemId === ingredient.itemId);
+                    
+                    if (!userItem || (userItem.quantity || 1) < totalRequired) {
+                        throw new Error(`Insufficient quantity of ${ingredient.itemId}`);
+                    }
+                    
+                    // Track what would have been removed for display purposes
+                    removedIngredients.push({
+                        itemId: ingredient.itemId,
+                        itemName: userItem.itemName,
+                        quantityUsed: totalRequired, // Use 'quantityUsed' instead of 'quantityRemoved'
+                        kept: true // Flag to indicate ingredients were kept
+                    });
+                }
             }
 
             const totalResultQuantity = (rule.result.quantity || 1) * quantity;
             const addResult = user.addGachaItem(resultItem, totalResultQuantity, 'combined');
 
-            // NEW: Mark combination as discovered
+            // Mark combination as discovered
             const wasNewDiscovery = await this.markCombinationDiscovered(ruleId, user.raUsername);
 
             const result = {
@@ -328,7 +413,8 @@ class CombinationService {
                 rule: rule,
                 ingredients: rule.ingredients,
                 removedIngredients: removedIngredients,
-                wasNewDiscovery: wasNewDiscovery // NEW: Include discovery status
+                wasNewDiscovery: wasNewDiscovery,
+                isNonDestructive: rule.isNonDestructive // NEW: Include non-destructive flag
             };
 
             await this.checkForShadowUnlock(user, result);
@@ -343,7 +429,7 @@ class CombinationService {
         }
     }
 
-    // UPDATED: Use gacha trade channel instead of gacha machine channel
+    // Use gacha trade channel for player transfers
     async triggerCombinationAlertsForPlayerTransfer(recipient, giftedItemId, giverUsername) {
         try {
             const possibleCombinations = await this.checkPossibleCombinations(recipient, giftedItemId);
@@ -381,13 +467,17 @@ class CombinationService {
                             value: possibleCombinations.slice(0, 3).map(combo => {
                                 const resultEmoji = formatGachaEmoji(combo.resultItem.emojiId, combo.resultItem.emojiName, combo.resultItem.isAnimated);
                                 const isShadowUnlock = this.isShadowUnlockItem(combo.resultItem);
-                                return `${resultEmoji} ${combo.resultItem.itemName}${isShadowUnlock ? ' 🌙' : ''}`;
+                                const isNonDestructive = combo.rule.isNonDestructive;
+                                let suffix = '';
+                                if (isShadowUnlock) suffix = ' 🌙';
+                                else if (isNonDestructive) suffix = ' 🔄';
+                                return `${resultEmoji} ${combo.resultItem.itemName}${suffix}`;
                             }).join('\n') + (possibleCombinations.length > 3 ? '\n*...and more!*' : ''),
                             inline: false
                         })
                         .setTimestamp();
 
-                    // NEW: Schedule message deletion after 5 minutes
+                    // Schedule message deletion after 5 minutes
                     const message = await channel.send({ embeds: [publicEmbed] });
                     setTimeout(async () => {
                         try {
@@ -419,7 +509,7 @@ class CombinationService {
         }
     }
 
-    // UPDATED: Use gacha trade channel for admin gifts
+    // Use gacha trade channel for admin gifts
     async triggerCombinationAlertsForAdminGift(user, giftedItemId, adminInteraction) {
         try {
             const possibleCombinations = await this.checkPossibleCombinations(user, giftedItemId);
@@ -457,13 +547,17 @@ class CombinationService {
                             value: possibleCombinations.slice(0, 3).map(combo => {
                                 const resultEmoji = formatGachaEmoji(combo.resultItem.emojiId, combo.resultItem.emojiName, combo.resultItem.isAnimated);
                                 const isShadowUnlock = this.isShadowUnlockItem(combo.resultItem);
-                                return `${resultEmoji} ${combo.resultItem.itemName}${isShadowUnlock ? ' 🌙' : ''}`;
+                                const isNonDestructive = combo.rule.isNonDestructive;
+                                let suffix = '';
+                                if (isShadowUnlock) suffix = ' 🌙';
+                                else if (isNonDestructive) suffix = ' 🔄';
+                                return `${resultEmoji} ${combo.resultItem.itemName}${suffix}`;
                             }).join('\n') + (possibleCombinations.length > 3 ? '\n*...and more!*' : ''),
                             inline: false
                         })
                         .setTimestamp();
 
-                    // NEW: Schedule message deletion after 5 minutes
+                    // Schedule message deletion after 5 minutes
                     const message = await channel.send({ embeds: [publicEmbed] });
                     setTimeout(async () => {
                         try {
@@ -609,7 +703,7 @@ class CombinationService {
                 return true;
             }
 
-            // NEW: Handle recipe book button
+            // Handle recipe book button
             if (interaction.customId === 'combo_to_recipes') {
                 await interaction.deferUpdate();
                 await this.showRecipeBook(interaction, 0);
@@ -763,9 +857,9 @@ class CombinationService {
         return false;
     }
 
-    // UPDATED: Show combination success with discovery notifications
+    // UPDATED: Show combination success with discovery notifications and non-destructive status
     async showCombinationSuccess(interaction, result, quantity) {
-        const { resultItem, resultQuantity, addResult, wasNewDiscovery } = result;
+        const { resultItem, resultQuantity, addResult, wasNewDiscovery, isNonDestructive } = result;
         const resultEmoji = formatGachaEmoji(resultItem.emojiId, resultItem.emojiName, resultItem.isAnimated);
         const rarityEmoji = this.getRarityEmoji(resultItem.rarity);
         const isShadowUnlock = this.isShadowUnlockItem(resultItem);
@@ -779,9 +873,12 @@ class CombinationService {
         } else if (wasNewDiscovery) {
             title = '🎉 NEW RECIPE DISCOVERED!';
             color = '#FFD700'; // Gold for discoveries
+        } else if (isNonDestructive) {
+            title = '🔄 Non-Destructive Combination Successful!';
+            color = '#00FF00'; // Bright green for non-destructive
         }
 
-        let description = `You created ${isShadowUnlock ? '**the Shadow Unlock item**' : 'a new item'}!\n\n` +
+        let description = `You created ${isShadowUnlock ? '**the Shadow Unlock item**' : (isNonDestructive ? '**a collection bonus**' : 'a new item')}!\n\n` +
                          `${resultEmoji} ${rarityEmoji} **${resultQuantity}x ${resultItem.itemName}**\n\n` +
                          `*${resultItem.description}*`;
         
@@ -790,12 +887,20 @@ class CombinationService {
         } else if (wasNewDiscovery) {
             description += '\n\n📖 **This recipe has been added to the community recipe book for everyone to see!**\n💡 Use `/recipes` to view all discovered combinations!';
         }
+        
+        if (isNonDestructive) {
+            description += '\n\n🔄 **Your ingredients were kept!** Perfect for series completion rewards!';
+        }
 
         const embed = new EmbedBuilder()
             .setTitle(title)
             .setColor(color)
             .setDescription(description)
-            .setFooter({ text: 'The new item has been added to your collection!' })
+            .setFooter({ 
+                text: isNonDestructive 
+                    ? 'The new item has been added to your collection and you kept your ingredients!'
+                    : 'The new item has been added to your collection!' 
+            })
             .setTimestamp();
 
         if (addResult && addResult.wasStacked) {
@@ -810,6 +915,14 @@ class CombinationService {
             embed.addFields({
                 name: '✨ New Item',
                 value: `First time obtaining this item!`,
+                inline: true
+            });
+        }
+        
+        if (isNonDestructive) {
+            embed.addFields({
+                name: '🔄 Ingredients Status',
+                value: `All ingredients kept in your collection!`,
                 inline: true
             });
         }
@@ -839,7 +952,7 @@ class CombinationService {
         });
     }
 
-    // UPDATED: Use gacha trade channel and schedule deletion
+    // UPDATED: Use gacha trade channel and show non-destructive status
     async sendCombinationAlert(user, combinationResult) {
         if (!this.client) return;
 
@@ -849,7 +962,7 @@ class CombinationService {
             
             if (!channel) return;
 
-            const { ruleId, resultItem, resultQuantity, wasNewDiscovery } = combinationResult;
+            const { ruleId, resultItem, resultQuantity, wasNewDiscovery, isNonDestructive } = combinationResult;
             
             const resultEmoji = formatGachaEmoji(resultItem.emojiId, resultItem.emojiName, resultItem.isAnimated);
             const rarityEmoji = this.getRarityEmoji(resultItem.rarity);
@@ -864,17 +977,30 @@ class CombinationService {
             } else if (wasNewDiscovery) {
                 title = '🎉 NEW RECIPE DISCOVERED!';
                 color = '#FFD700';
+            } else if (isNonDestructive) {
+                title = '🔄 Non-Destructive Combination!';
+                color = '#00FF00';
+            }
+            
+            let actionText = 'created a combination!';
+            if (isShadowUnlock) {
+                actionText = 'unlocked the shadow!';
+            } else if (wasNewDiscovery) {
+                actionText = 'discovered a new recipe!';
+            } else if (isNonDestructive) {
+                actionText = 'completed a non-destructive combination!';
             }
             
             const embed = new EmbedBuilder()
                 .setTitle(title)
                 .setColor(color)
                 .setDescription(
-                    `${user.raUsername} ${isShadowUnlock ? 'unlocked the shadow!' : (wasNewDiscovery ? 'discovered a new recipe!' : 'created a combination!')}\n\n` +
+                    `${user.raUsername} ${actionText}\n\n` +
                     `${resultEmoji} **${resultQuantity}x ${resultItem.itemName}** ${rarityEmoji}\n\n` +
                     `*${resultItem.description || 'A mysterious creation...'}*` +
                     (isShadowUnlock ? '\n\n🔓 **The shadow challenge has been revealed!**' : '') +
-                    (wasNewDiscovery ? '\n\n📖 **This recipe is now in the community recipe book!**' : '')
+                    (wasNewDiscovery ? '\n\n📖 **This recipe is now in the community recipe book!**' : '') +
+                    (isNonDestructive ? '\n\n🔄 **Ingredients were kept - perfect for series completion!**' : '')
                 )
                 .setTimestamp();
 
@@ -890,7 +1016,7 @@ class CombinationService {
 
                 if (ingredientsText) {
                     embed.addFields({ 
-                        name: 'Ingredients Used', 
+                        name: isNonDestructive ? 'Ingredients Used (Kept)' : 'Ingredients Used', 
                         value: ingredientsText,
                         inline: true 
                     });
@@ -911,11 +1037,12 @@ class CombinationService {
                 });
             }
 
+            const combinationType = isNonDestructive ? 'Non-Destructive' : 'Standard';
             embed.setFooter({ 
-                text: `Combination ID: ${ruleId} • Player confirmed this combination • Message expires in 5 minutes` 
+                text: `Combination ID: ${ruleId} • ${combinationType} • Player confirmed • Expires in 5 minutes` 
             });
 
-            // NEW: Schedule message deletion after 5 minutes
+            // Schedule message deletion after 5 minutes
             const message = await channel.send({ embeds: [embed] });
             setTimeout(async () => {
                 try {
@@ -930,7 +1057,7 @@ class CombinationService {
         }
     }
 
-    // NEW: Mark a combination as discovered
+    // Mark a combination as discovered
     async markCombinationDiscovered(ruleId, discoveredBy) {
         try {
             const rule = await CombinationRule.findOne({ ruleId: ruleId });
@@ -954,7 +1081,7 @@ class CombinationService {
         }
     }
 
-    // NEW: Announce new recipe discovery
+    // Announce new recipe discovery
     async announceNewRecipeDiscovery(rule, discoveredBy) {
         if (!this.client) return;
 
@@ -999,7 +1126,7 @@ class CombinationService {
         }
     }
 
-    // NEW: Get all discovered recipes for the community recipe book
+    // Get all discovered recipes for the community recipe book
     async getDiscoveredRecipes() {
         try {
             const discoveredRules = await CombinationRule.find({ 
@@ -1061,7 +1188,7 @@ class CombinationService {
         }
     }
 
-    // NEW: Format a single recipe for display
+    // UPDATED: Format a single recipe for display with non-destructive indicators
     async formatSingleRecipe(rule, resultItem) {
         const ingredients = [];
         
@@ -1080,10 +1207,15 @@ class CombinationService {
         const resultEmoji = formatGachaEmoji(resultItem.emojiId, resultItem.emojiName, resultItem.isAnimated);
         const resultQuantity = rule.result.quantity > 1 ? ` x${rule.result.quantity}` : '';
         
-        return `${ingredients.join(' + ')} = ${resultEmoji}${resultQuantity}`;
+        // NEW: Add non-destructive indicator
+        const ingredientsPart = rule.isNonDestructive 
+            ? `(${ingredients.join(' + ')})` 
+            : ingredients.join(' + ');
+        
+        return `${ingredientsPart} = ${resultEmoji}${resultQuantity}${rule.isNonDestructive ? ' 🔄' : ''}`;
     }
 
-    // NEW: Show the community recipe book
+    // Show the community recipe book
     async showRecipeBook(interaction, page = 0) {
         try {
             if (!interaction.deferred && !interaction.replied) {
@@ -1171,7 +1303,7 @@ class CombinationService {
                 ? `Page ${page + 1}/${totalPages} • ${startIndex + 1}-${Math.min(startIndex + RECIPES_PER_PAGE, allRecipes.length)} of ${allRecipes.length} recipes`
                 : `${allRecipes.length} discovered recipes`;
             
-            footerText += ' • Recipes update automatically when discovered!';
+            footerText += ' • 🔄 = Non-Destructive (keeps ingredients) • Recipes update automatically!';
             embed.setFooter({ text: footerText });
 
             // Create components
@@ -1224,7 +1356,7 @@ class CombinationService {
         }
     }
 
-    // NEW: Handle recipe book interactions
+    // Handle recipe book interactions
     async handleRecipeBookInteraction(interaction) {
         if (!interaction.customId.startsWith('recipes_')) return false;
 
@@ -1358,6 +1490,7 @@ class CombinationService {
                         result: rule.result,
                         canMake: canMake,
                         isAutomatic: rule.isAutomatic,
+                        isNonDestructive: rule.isNonDestructive, // NEW: Include non-destructive flag
                         priority: rule.priority
                     });
                 }
