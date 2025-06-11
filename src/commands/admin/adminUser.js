@@ -623,14 +623,18 @@ export default {
                 return interaction.editReply('Invalid game ID format. Please provide a numeric game ID.');
             }
 
-            // Get game information from RetroAchievements API
-            let gameData;
+            // Get game information from RetroAchievements API (same pattern as nominations.js)
+            let gameInfo;
+            let gameAchievementCount;
             try {
-                gameData = await enhancedRetroAPI.getGameInfo(gameId);
+                gameInfo = await retroAPI.getGameInfo(gameId);
                 
-                if (!gameData || !gameData.Title) {
+                if (!gameInfo || !gameInfo.title) {
                     return interaction.editReply(`Game with ID ${gameId} not found. Please check the game ID and try again.`);
                 }
+                
+                // Get achievement count separately
+                gameAchievementCount = await retroAPI.getGameAchievementCount(gameId);
             } catch (error) {
                 console.error('Error fetching game data:', error);
                 return interaction.editReply(`Failed to fetch game information for ID ${gameId}. Please check the game ID and try again.`);
@@ -642,7 +646,7 @@ export default {
             
             if (existingNomination) {
                 return interaction.editReply({
-                    content: `❌ **${user.raUsername}** has already nominated **${gameData.Title}** this month.\n\n` +
+                    content: `❌ **${user.raUsername}** has already nominated **${gameInfo.title}** this month.\n\n` +
                             `Use \`/adminuser clearnominations\` first if you want to replace existing nominations.`
                 });
             }
@@ -661,8 +665,8 @@ export default {
             // Create the nomination object
             const nomination = {
                 gameId: gameId,
-                gameTitle: gameData.Title,
-                consoleName: gameData.ConsoleName || 'Unknown',
+                gameTitle: gameInfo.title,
+                consoleName: gameInfo.consoleName || 'Unknown',
                 nominatedAt: new Date()
             };
 
@@ -684,13 +688,14 @@ export default {
                 .setTitle('🔧 Admin Force Nomination Successful')
                 .setDescription(`**${user.raUsername}** has been force-nominated for a game, bypassing all restrictions.`)
                 .setColor('#FF6B6B')
-                .setThumbnail(gameData.ImageIcon || 'https://retroachievements.org/Images/icon.png')
+                .setThumbnail('https://retroachievements.org/Images/icon.png')
                 .addFields(
                     {
                         name: '🎮 Game Details',
-                        value: `**Title:** ${gameData.Title}\n` +
-                               `**Console:** ${gameData.ConsoleName || 'Unknown'}\n` +
-                               `**Game ID:** ${gameId}`,
+                        value: `**Title:** ${gameInfo.title}\n` +
+                               `**Console:** ${gameInfo.consoleName || 'Unknown'}\n` +
+                               `**Game ID:** ${gameId}\n` +
+                               `**Achievements:** ${gameAchievementCount || 0}`,
                         inline: true
                     },
                     {
@@ -706,18 +711,6 @@ export default {
                         inline: true
                     }
                 );
-
-            // Add additional game details if available
-            if (gameData.Publisher || gameData.Developer || gameData.Genre) {
-                embed.addFields({
-                    name: '📋 Additional Info',
-                    value: `${gameData.Publisher ? `**Publisher:** ${gameData.Publisher}\n` : ''}` +
-                           `${gameData.Developer ? `**Developer:** ${gameData.Developer}\n` : ''}` +
-                           `${gameData.Genre ? `**Genre:** ${gameData.Genre}\n` : ''}` +
-                           `**Achievements:** ${gameData.NumAchievements || 0}`,
-                    inline: false
-                });
-            }
 
             // Add comment if provided
             if (comment) {
@@ -749,8 +742,9 @@ export default {
                         .addFields(
                             { name: 'Admin', value: interaction.user.tag, inline: true },
                             { name: 'User', value: user.raUsername, inline: true },
-                            { name: 'Game', value: `${gameData.Title} (ID: ${gameId})`, inline: true },
-                            { name: 'Console', value: gameData.ConsoleName || 'Unknown', inline: true },
+                            { name: 'Game', value: `${gameInfo.title} (ID: ${gameId})`, inline: true },
+                            { name: 'Console', value: gameInfo.consoleName || 'Unknown', inline: true },
+                            { name: 'Achievements', value: `${gameAchievementCount || 0}`, inline: true },
                             { name: 'Comment', value: comment || 'None', inline: true },
                             { name: 'Warning', value: '⚠️ **ALL RESTRICTIONS BYPASSED**', inline: false }
                         )
