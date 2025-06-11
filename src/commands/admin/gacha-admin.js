@@ -23,6 +23,12 @@ export default {
         .setDescription('Interactive gacha system management interface')
         .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
         
+        // Main menu subcommand
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('menu')
+                .setDescription('Open the interactive gacha management interface'))
+        
         // Keep the comprehensive add-item subcommand (no modals!)
         .addSubcommand(subcommand =>
             subcommand
@@ -97,13 +103,20 @@ export default {
             });
         }
 
-        // Check if it's the add-item subcommand
-        if (interaction.options.getSubcommand(false) === 'add-item') {
+        const subcommand = interaction.options.getSubcommand();
+
+        // Handle subcommands
+        if (subcommand === 'add-item') {
             await this.handleAddItem(interaction);
             return;
         }
 
-        // Otherwise show the modern interactive menu
+        if (subcommand === 'menu') {
+            await this.handleMainMenu(interaction);
+            return;
+        }
+
+        // Fallback (shouldn't happen with proper subcommands)
         await this.handleMainMenu(interaction);
     },
 
@@ -144,7 +157,7 @@ export default {
                     },
                     {
                         name: '⚡ Quick Actions',
-                        value: '• **Use `/gacha-admin add-item`** - All 10 fields\n' +
+                        value: '• **Use `/gacha-admin add-item`** - Direct input, all 10 fields\n' +
                                '• **Browse** - Filtered item lists\n' +
                                '• **Gift Items** - Admin grants\n' +
                                '• **View Stats** - Real-time data',
@@ -289,10 +302,10 @@ export default {
                     },
                     {
                         name: '🎯 Available Actions',
-                        value: '• **Use `/gacha-admin add-item`** - Direct input\n' +
+                        value: '• **Use `/gacha-admin add-item`** - Direct input, no modals\n' +
                                '• **Browse All** - Paginated lists\n' +
                                '• **All 10 fields** - Complete control\n' +
-                               '• **No modals** - Simple command interface',
+                               '• **Simple interface** - One command, done',
                         inline: true
                     }
                 )
@@ -765,7 +778,7 @@ export default {
                 actionRow
             ];
 
-            embed.setFooter({ text: 'Use /gacha-admin add-item to create new items • 🎬 = Animated emoji' });
+            embed.setFooter({ text: 'Use /gacha-admin add-item for direct item creation • 🎬 = Animated emoji' });
 
             await interaction.editReply({
                 embeds: [embed],
