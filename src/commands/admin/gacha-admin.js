@@ -1,4 +1,4 @@
-// src/commands/admin/gacha-admin.js - COMPLETE REDESIGNED VERSION with modern interactive UI
+// src/commands/admin/gacha-admin.js - RESTORED with manual input + modern UI
 import { 
     SlashCommandBuilder, 
     EmbedBuilder, 
@@ -23,11 +23,11 @@ export default {
         .setDescription('Interactive gacha system management interface')
         .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
         
-        // Keep the old add-item subcommand as backup
+        // RESTORED: Full manual add-item subcommand
         .addSubcommand(subcommand =>
             subcommand
                 .setName('add-item')
-                .setDescription('Add a new gacha item (classic method)')
+                .setDescription('Add a new gacha item (manual input)')
                 .addStringOption(option =>
                     option.setName('item-id')
                         .setDescription('Unique item ID')
@@ -47,7 +47,7 @@ export default {
                 .addStringOption(option =>
                     option.setName('type')
                         .setDescription('Item type')
-                        .setRequired(false)
+                        .setRequired(true)
                         .addChoices(
                             { name: 'Trinket', value: 'trinket' },
                             { name: 'Collectible', value: 'collectible' },
@@ -58,6 +58,70 @@ export default {
                 .addStringOption(option =>
                     option.setName('rarity')
                         .setDescription('Item rarity')
+                        .setRequired(true)
+                        .addChoices(
+                            { name: 'Common', value: 'common' },
+                            { name: 'Uncommon', value: 'uncommon' },
+                            { name: 'Rare', value: 'rare' },
+                            { name: 'Epic', value: 'epic' },
+                            { name: 'Legendary', value: 'legendary' },
+                            { name: 'Mythic', value: 'mythic' }
+                        ))
+                .addNumberOption(option =>
+                    option.setName('drop-rate')
+                        .setDescription('Drop rate % (0 = combination-only, >0 = appears in gacha)')
+                        .setRequired(true)
+                        .setMinValue(0)
+                        .setMaxValue(100))
+                .addStringOption(option =>
+                    option.setName('flavor-text')
+                        .setDescription('Flavor text (optional)')
+                        .setRequired(false))
+                .addIntegerOption(option =>
+                    option.setName('max-stack')
+                        .setDescription('Max stack size (default: 1)')
+                        .setRequired(false)
+                        .setMinValue(1)
+                        .setMaxValue(999))
+                .addStringOption(option =>
+                    option.setName('series-id')
+                        .setDescription('Series ID (optional)')
+                        .setRequired(false)))
+
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('edit-item')
+                .setDescription('Edit an existing gacha item')
+                .addStringOption(option =>
+                    option.setName('item-id')
+                        .setDescription('Item ID to edit')
+                        .setRequired(true))
+                .addStringOption(option =>
+                    option.setName('name')
+                        .setDescription('New item name (leave empty to keep current)')
+                        .setRequired(false))
+                .addStringOption(option =>
+                    option.setName('description') 
+                        .setDescription('New item description (leave empty to keep current)')
+                        .setRequired(false))
+                .addStringOption(option =>
+                    option.setName('emoji-input')
+                        .setDescription('New Discord emoji (<:name:id> or <a:name:id>) (leave empty to keep current)')
+                        .setRequired(false))
+                .addStringOption(option =>
+                    option.setName('type')
+                        .setDescription('New item type (leave empty to keep current)')
+                        .setRequired(false)
+                        .addChoices(
+                            { name: 'Trinket', value: 'trinket' },
+                            { name: 'Collectible', value: 'collectible' },
+                            { name: 'Series', value: 'series' },
+                            { name: 'Special', value: 'special' },
+                            { name: 'Combined', value: 'combined' }
+                        ))
+                .addStringOption(option =>
+                    option.setName('rarity')
+                        .setDescription('New item rarity (leave empty to keep current)')
                         .setRequired(false)
                         .addChoices(
                             { name: 'Common', value: 'common' },
@@ -69,24 +133,125 @@ export default {
                         ))
                 .addNumberOption(option =>
                     option.setName('drop-rate')
-                        .setDescription('Drop rate % (0 = combination-only)')
-                        .setRequired(true)
+                        .setDescription('New drop rate % (leave empty to keep current)')
+                        .setRequired(false)
                         .setMinValue(0)
                         .setMaxValue(100))
                 .addStringOption(option =>
                     option.setName('flavor-text')
-                        .setDescription('Flavor text (optional)')
+                        .setDescription('New flavor text (leave empty to keep current)')
                         .setRequired(false))
                 .addIntegerOption(option =>
                     option.setName('max-stack')
-                        .setDescription('Max stack size (optional)')
+                        .setDescription('New max stack size (leave empty to keep current)')
                         .setRequired(false)
                         .setMinValue(1)
                         .setMaxValue(999))
                 .addStringOption(option =>
                     option.setName('series-id')
-                        .setDescription('Series ID (optional)')
-                        .setRequired(false))),
+                        .setDescription('New series ID (leave empty to keep current)')
+                        .setRequired(false)))
+
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('delete-item')
+                .setDescription('Delete a gacha item (checks for dependencies)')
+                .addStringOption(option =>
+                    option.setName('item-id')
+                        .setDescription('Item ID to delete')
+                        .setRequired(true))
+                .addBooleanOption(option =>
+                    option.setName('force')
+                        .setDescription('Force delete even if used in combinations (dangerous!)')
+                        .setRequired(false)))
+
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('view-item')
+                .setDescription('View detailed info about a specific item')
+                .addStringOption(option =>
+                    option.setName('item-id')
+                        .setDescription('Item ID to view')
+                        .setRequired(true)))
+
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('give-item')
+                .setDescription('Give item(s) to a user for testing')
+                .addStringOption(option =>
+                    option.setName('username')
+                        .setDescription('Username')
+                        .setRequired(true))
+                .addStringOption(option =>
+                    option.setName('item-id')
+                        .setDescription('Item ID to give')
+                        .setRequired(true))
+                .addIntegerOption(option =>
+                    option.setName('quantity')
+                        .setDescription('Quantity (default: 1)')
+                        .setRequired(false)
+                        .setMinValue(1)
+                        .setMaxValue(100)))
+
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('clear-collection')
+                .setDescription('Clear a user\'s gacha collection')
+                .addStringOption(option =>
+                    option.setName('username')
+                        .setDescription('Username to clear collection for')
+                        .setRequired(true))
+                .addBooleanOption(option =>
+                    option.setName('confirm')
+                        .setDescription('Confirm you want to clear the collection (required)')
+                        .setRequired(true)))
+
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('list-items')
+                .setDescription('List all gacha items with IDs (paginated)')
+                .addIntegerOption(option =>
+                    option.setName('page')
+                        .setDescription('Page number (default: 1)')
+                        .setMinValue(1)
+                        .setRequired(false))
+                .addStringOption(option =>
+                    option.setName('filter')
+                        .setDescription('Filter items')
+                        .setRequired(false)
+                        .addChoices(
+                            { name: 'All items', value: 'all' },
+                            { name: 'Gacha items (drop rate > 0)', value: 'gacha' },
+                            { name: 'Combination-only (drop rate = 0)', value: 'combo' }
+                        )))
+
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('list-combinations')
+                .setDescription('List all combination rules (paginated)')
+                .addIntegerOption(option =>
+                    option.setName('page')
+                        .setDescription('Page number (default: 1)')
+                        .setMinValue(1)
+                        .setRequired(false)))
+
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('remove-combination')
+                .setDescription('Remove a combination rule')
+                .addStringOption(option =>
+                    option.setName('rule-id')
+                        .setDescription('Rule ID to remove')
+                        .setRequired(true)))
+
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('debug-combination')
+                .setDescription('Debug a specific combination rule')
+                .addStringOption(option =>
+                    option.setName('rule-id')
+                        .setDescription('Rule ID to debug')
+                        .setRequired(true))),
 
     async execute(interaction) {
         // Check if user is admin
@@ -97,9 +262,53 @@ export default {
             });
         }
 
-        // Check if it's the classic add-item subcommand
-        if (interaction.options.getSubcommand(false) === 'add-item') {
-            await this.handleClassicAddItem(interaction);
+        const subcommand = interaction.options.getSubcommand(false);
+        
+        // If a specific subcommand was used, handle it
+        if (subcommand) {
+            await interaction.deferReply({ ephemeral: true });
+            
+            try {
+                switch (subcommand) {
+                    case 'add-item':
+                        await this.handleAddItem(interaction);
+                        break;
+                    case 'edit-item':
+                        await this.handleEditItem(interaction);
+                        break;
+                    case 'delete-item':
+                        await this.handleDeleteItem(interaction);
+                        break;
+                    case 'view-item':
+                        await this.handleViewItem(interaction);
+                        break;
+                    case 'give-item':
+                        await this.handleGiveItem(interaction);
+                        break;
+                    case 'clear-collection':
+                        await this.handleClearCollection(interaction);
+                        break;
+                    case 'list-items':
+                        await this.handleListItems(interaction);
+                        break;
+                    case 'list-combinations':
+                        await this.handleListCombinations(interaction);
+                        break;
+                    case 'remove-combination':
+                        await this.handleRemoveCombination(interaction);
+                        break;
+                    case 'debug-combination':
+                        await this.handleDebugCombination(interaction);
+                        break;
+                    default:
+                        await interaction.editReply('Subcommand not implemented yet.');
+                }
+            } catch (error) {
+                console.error('Error executing gacha admin command:', error);
+                await interaction.editReply({
+                    content: `❌ Error: ${error.message}`
+                });
+            }
             return;
         }
 
@@ -120,6 +329,9 @@ export default {
             const nonDestructiveCombos = await CombinationRule.countDocuments({ isActive: true, isNonDestructive: true });
             const totalUsers = await User.countDocuments({ 'gachaCollection.0': { $exists: true } });
 
+            // Get next available ID for display
+            const nextId = await this.getNextItemId();
+
             const embed = new EmbedBuilder()
                 .setTitle('🎰 Gacha System Management Center')
                 .setDescription('Comprehensive gacha system administration interface')
@@ -131,7 +343,8 @@ export default {
                                `**Gacha Items:** ${gachaItems}\n` +
                                `**Combo-Only:** ${comboOnlyItems}\n` +
                                `**Combinations:** ${totalCombos} (${nonDestructiveCombos} non-destructive)\n` +
-                               `**Active Collectors:** ${totalUsers}`,
+                               `**Active Collectors:** ${totalUsers}\n` +
+                               `**Next Available ID:** ${nextId}`,
                         inline: true
                     },
                     {
@@ -143,11 +356,11 @@ export default {
                         inline: true
                     },
                     {
-                        name: '⚡ Quick Actions',
-                        value: '• **Add Item** - Auto-incremented ID\n' +
-                               '• **Browse** - Filtered item lists\n' +
-                               '• **Gift Items** - Admin grants\n' +
-                               '• **View Stats** - Real-time data',
+                        name: '⚡ Quick Commands',
+                        value: '• `/gacha-admin add-item` - Manual input (fastest)\n' +
+                               '• `/gacha-admin give-item` - Grant items to users\n' +
+                               '• `/gacha-admin list-items` - Browse all items\n' +
+                               '• Use buttons below for interactive menus',
                         inline: false
                     }
                 )
@@ -173,7 +386,7 @@ export default {
             .addOptions([
                 {
                     label: 'Items Management',
-                    description: 'Add, edit, view, and delete gacha items',
+                    description: 'Browse, edit, view, and delete gacha items',
                     value: 'items',
                     emoji: '📦'
                 },
@@ -200,10 +413,10 @@ export default {
         const quickButtons = new ActionRowBuilder()
             .addComponents(
                 new ButtonBuilder()
-                    .setCustomId('gacha_quick_add_item')
-                    .setLabel('Quick Add Item')
+                    .setCustomId('gacha_quick_add_help')
+                    .setLabel('Add Item Help')
                     .setStyle(ButtonStyle.Primary)
-                    .setEmoji('➕'),
+                    .setEmoji('❓'),
                 
                 new ButtonBuilder()
                     .setCustomId('gacha_quick_list_items')
@@ -267,6 +480,69 @@ export default {
     },
 
     /**
+     * Show add item help (replaces modal system)
+     */
+    async showAddItemHelp(interaction) {
+        if (!interaction.deferred) await interaction.deferUpdate();
+
+        const nextId = await this.getNextItemId();
+
+        const embed = new EmbedBuilder()
+            .setTitle('➕ Add Item Help - Manual Input (Fastest Method)')
+            .setDescription('Use the slash command for quick, efficient item creation')
+            .setColor('#2ECC71')
+            .addFields(
+                {
+                    name: '🚀 Quick Command',
+                    value: `\`/gacha-admin add-item\` and fill in the options`,
+                    inline: false
+                },
+                {
+                    name: '📝 Required Fields',
+                    value: `• **item-id**: ${nextId} (suggested next ID)\n` +
+                           `• **name**: Item display name\n` +
+                           `• **description**: Main description text\n` +
+                           `• **emoji-input**: <:name:123456> or <a:name:123456>\n` +
+                           `• **type**: trinket/collectible/series/special/combined\n` +
+                           `• **rarity**: common/uncommon/rare/epic/legendary/mythic\n` +
+                           `• **drop-rate**: 0-100 (0 = combo-only)`,
+                    inline: false
+                },
+                {
+                    name: '📋 Optional Fields',
+                    value: `• **flavor-text**: Additional lore text\n` +
+                           `• **max-stack**: How many can be owned (default: 1)\n` +
+                           `• **series-id**: Group items into series`,
+                    inline: false
+                },
+                {
+                    name: '💡 Pro Tips',
+                    value: `• Copy emoji by right-clicking in Discord and "Copy ID"\n` +
+                           `• Use drop-rate 0 for combination-only items\n` +
+                           `• Series items work great with non-destructive combos\n` +
+                           `• Higher max-stack for common items, 1 for rare items`,
+                    inline: false
+                }
+            )
+            .setFooter({ text: 'This method is much faster once you get used to it!' })
+            .setTimestamp();
+
+        const actionButtons = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId('gacha_back_to_main')
+                    .setLabel('Back to Main')
+                    .setStyle(ButtonStyle.Secondary)
+                    .setEmoji('⬅️')
+            );
+
+        await interaction.editReply({
+            embeds: [embed],
+            components: [actionButtons]
+        });
+    },
+
+    /**
      * Handle items management menu
      */
     async handleItemsMenu(interaction) {
@@ -277,9 +553,6 @@ export default {
             const gachaItems = await GachaItem.countDocuments({ isActive: true, dropRate: { $gt: 0 } });
             const comboOnlyItems = await GachaItem.countDocuments({ isActive: true, dropRate: 0 });
 
-            // Get next available ID for display
-            const nextId = await this.getNextItemId();
-
             const embed = new EmbedBuilder()
                 .setTitle('📦 Items Management')
                 .setDescription('Create, edit, and manage all gacha items')
@@ -289,17 +562,16 @@ export default {
                         name: '📈 Item Statistics',
                         value: `**Total Items:** ${totalItems}\n` +
                                `**Gacha Items:** ${gachaItems}\n` +
-                               `**Combo-Only:** ${comboOnlyItems}\n` +
-                               `**Next Auto-ID:** ${nextId}`,
+                               `**Combo-Only:** ${comboOnlyItems}`,
                         inline: true
                     },
                     {
                         name: '🎯 Available Actions',
-                        value: '• **Add New** - Auto-incremented ID\n' +
-                               '• **Browse All** - Paginated lists\n' +
-                               '• **Two-step process** - All fields supported\n' +
-                               '• **Smart validation** - Type partial matching\n' +
-                               '• **Default stack: 99** - Leave blank for 99',
+                        value: '• **Add New** - Use `/gacha-admin add-item`\n' +
+                               '• **Edit Existing** - Use `/gacha-admin edit-item`\n' +
+                               '• **View Details** - Use `/gacha-admin view-item`\n' +
+                               '• **Delete Item** - Use `/gacha-admin delete-item`\n' +
+                               '• **Browse All** - Paginated lists below',
                         inline: true
                     }
                 )
@@ -308,10 +580,10 @@ export default {
             const actionButtons = new ActionRowBuilder()
                 .addComponents(
                     new ButtonBuilder()
-                        .setCustomId('gacha_add_item_modal')
-                        .setLabel('Add New Item')
+                        .setCustomId('gacha_quick_add_help')
+                        .setLabel('Add Item Help')
                         .setStyle(ButtonStyle.Success)
-                        .setEmoji('➕'),
+                        .setEmoji('❓'),
                     
                     new ButtonBuilder()
                         .setCustomId('gacha_list_items_menu')
@@ -374,10 +646,10 @@ export default {
                     },
                     {
                         name: '🎯 Available Actions',
-                        value: '• **Create Rule** - Build new recipes\n' +
+                        value: '• **Create Rule** - Use combination modal\n' +
                                '• **Browse Rules** - View all combinations\n' +
-                               '• **Test Recipe** - Validate combinations\n' +
-                               '• **Debug Rules** - Troubleshoot issues',
+                               '• **Remove Rule** - Use `/gacha-admin remove-combination`\n' +
+                               '• **Debug Rules** - Use `/gacha-admin debug-combination`',
                         inline: false
                     }
                 )
@@ -447,11 +719,10 @@ export default {
                     },
                     {
                         name: '🎁 Admin Tools',
-                        value: '• **Give Items** - Grant items to users\n' +
-                               '• **View Collections** - Inspect inventories\n' +
-                               '• **Clear Collections** - Reset users\n' +
-                               '• **User Analytics** - Detailed stats\n' +
-                               '• **Bulk Operations** - Mass changes',
+                        value: '• **Give Items** - `/gacha-admin give-item`\n' +
+                               '• **Clear Collections** - `/gacha-admin clear-collection`\n' +
+                               '• **View Item Details** - `/gacha-admin view-item`\n' +
+                               '• **User Analytics** - Coming soon',
                         inline: true
                     }
                 )
@@ -461,7 +732,7 @@ export default {
                 .addComponents(
                     new ButtonBuilder()
                         .setCustomId('gacha_give_item_modal')
-                        .setLabel('Give Item')
+                        .setLabel('Give Item (Modal)')
                         .setStyle(ButtonStyle.Success)
                         .setEmoji('🎁'),
                     
@@ -581,444 +852,669 @@ export default {
         }
     },
 
-    /**
-     * Handle classic add-item subcommand (backup method)
-     */
-    async handleClassicAddItem(interaction) {
-        await interaction.deferReply({ ephemeral: true });
+    // RESTORED: Original manual add item method
+    async handleAddItem(interaction) {
+        const emojiInput = interaction.options.getString('emoji-input');
+        
+        // Parse emoji input to handle both static and animated emojis
+        const emojiData = this.parseEmojiInput(emojiInput);
+        const dropRate = interaction.options.getNumber('drop-rate');
 
-        try {
-            const itemId = interaction.options.getString('item-id');
-            const itemName = interaction.options.getString('name');
-            const description = interaction.options.getString('description');
-            const emojiInput = interaction.options.getString('emoji-input');
-            const itemType = interaction.options.getString('type') || 'trinket';
-            const rarity = interaction.options.getString('rarity') || 'rare';
-            const dropRate = interaction.options.getNumber('drop-rate');
-            const flavorText = interaction.options.getString('flavor-text');
-            const maxStack = interaction.options.getInteger('max-stack') || 99;
-            const seriesId = interaction.options.getString('series-id');
+        const itemData = {
+            itemId: interaction.options.getString('item-id'),
+            itemName: interaction.options.getString('name'),
+            description: interaction.options.getString('description'),
+            itemType: interaction.options.getString('type'),
+            rarity: interaction.options.getString('rarity'),
+            dropRate,
+            emojiName: emojiData.emojiName,
+            emojiId: emojiData.emojiId,
+            isAnimated: emojiData.isAnimated,
+            flavorText: interaction.options.getString('flavor-text'),
+            maxStack: interaction.options.getInteger('max-stack') || 1,
+            seriesId: interaction.options.getString('series-id'),
+            createdBy: interaction.user.username
+        };
 
-            // Check if item already exists
-            const existingItem = await GachaItem.findOne({ itemId });
-            if (existingItem) {
-                throw new Error(`Item "${itemId}" already exists.`);
+        const existingItem = await GachaItem.findOne({ itemId: itemData.itemId });
+        if (existingItem) {
+            throw new Error(`Item "${itemData.itemId}" already exists.`);
+        }
+
+        const newItem = new GachaItem(itemData);
+        await newItem.save();
+
+        const sourceText = dropRate > 0 ? `Gacha (${dropRate}% drop rate)` : 'Combination only';
+        const emojiTypeText = emojiData.isAnimated ? 'Animated' : 'Static';
+        
+        const embed = new EmbedBuilder()
+            .setTitle('✅ Item Added Successfully!')
+            .setColor(this.getRarityColor(itemData.rarity))
+            .addFields(
+                { name: 'Preview', value: `${emojiInput} **${itemData.itemName}**`, inline: false },
+                { name: 'ID', value: itemData.itemId, inline: true },
+                { name: 'Type', value: itemData.itemType, inline: true },
+                { name: 'Rarity', value: itemData.rarity, inline: true },
+                { name: 'Source', value: sourceText, inline: true },
+                { name: 'Max Stack', value: itemData.maxStack.toString(), inline: true },
+                { name: 'Emoji Type', value: emojiTypeText, inline: true }
+            );
+
+        if (itemData.flavorText) {
+            embed.addFields({ name: 'Flavor Text', value: `*${itemData.flavorText}*` });
+        }
+        
+        if (itemData.seriesId) {
+            embed.addFields({ name: 'Series', value: itemData.seriesId, inline: true });
+        }
+
+        embed.setFooter({ text: `Created by ${interaction.user.username}` });
+        embed.setTimestamp();
+
+        await interaction.editReply({ embeds: [embed] });
+    },
+
+    // Include all the original methods from the paste
+    async handleEditItem(interaction) {
+        const itemId = interaction.options.getString('item-id');
+        
+        const item = await GachaItem.findOne({ itemId });
+        if (!item) {
+            throw new Error(`Item "${itemId}" not found.`);
+        }
+
+        const updates = {};
+        const changes = [];
+
+        // Check each field for updates (same logic as original)
+        const newName = interaction.options.getString('name');
+        if (newName && newName !== item.itemName) {
+            updates.itemName = newName;
+            changes.push(`Name: "${item.itemName}" → "${newName}"`);
+        }
+
+        const newDescription = interaction.options.getString('description');
+        if (newDescription && newDescription !== item.description) {
+            updates.description = newDescription;
+            changes.push(`Description: "${item.description}" → "${newDescription}"`);
+        }
+
+        const newType = interaction.options.getString('type');
+        if (newType && newType !== item.itemType) {
+            updates.itemType = newType;
+            changes.push(`Type: "${item.itemType}" → "${newType}"`);
+        }
+
+        const newRarity = interaction.options.getString('rarity');
+        if (newRarity && newRarity !== item.rarity) {
+            updates.rarity = newRarity;
+            changes.push(`Rarity: "${item.rarity}" → "${newRarity}"`);
+        }
+
+        const newDropRate = interaction.options.getNumber('drop-rate');
+        if (newDropRate !== null && newDropRate !== item.dropRate) {
+            updates.dropRate = newDropRate;
+            changes.push(`Drop Rate: ${item.dropRate}% → ${newDropRate}%`);
+        }
+
+        const newFlavorText = interaction.options.getString('flavor-text');
+        if (newFlavorText !== null && newFlavorText !== item.flavorText) {
+            updates.flavorText = newFlavorText;
+            changes.push(`Flavor Text: "${item.flavorText || 'none'}" → "${newFlavorText}"`);
+        }
+
+        const newMaxStack = interaction.options.getInteger('max-stack');
+        if (newMaxStack && newMaxStack !== item.maxStack) {
+            updates.maxStack = newMaxStack;
+            changes.push(`Max Stack: ${item.maxStack || 1} → ${newMaxStack}`);
+        }
+
+        const newSeriesId = interaction.options.getString('series-id');
+        if (newSeriesId !== null && newSeriesId !== item.seriesId) {
+            updates.seriesId = newSeriesId;
+            changes.push(`Series: "${item.seriesId || 'none'}" → "${newSeriesId}"`);
+        }
+
+        const newEmojiInput = interaction.options.getString('emoji-input');
+        if (newEmojiInput) {
+            const emojiData = this.parseEmojiInput(newEmojiInput);
+            
+            if (emojiData.emojiName !== item.emojiName || 
+                emojiData.emojiId !== item.emojiId || 
+                emojiData.isAnimated !== item.isAnimated) {
+                
+                updates.emojiName = emojiData.emojiName;
+                updates.emojiId = emojiData.emojiId;
+                updates.isAnimated = emojiData.isAnimated;
+                
+                const oldEmoji = this.formatItemEmoji(item);
+                changes.push(`Emoji: ${oldEmoji} → ${newEmojiInput}`);
             }
+        }
 
-            // Parse emoji
-            const emojiData = this.parseEmojiInput(emojiInput);
-
-            // Create item
-            const newItem = new GachaItem({
-                itemId,
-                itemName,
-                description,
-                itemType,
-                rarity,
-                dropRate,
-                emojiName: emojiData.emojiName,
-                emojiId: emojiData.emojiId,
-                isAnimated: emojiData.isAnimated,
-                flavorText,
-                maxStack,
-                seriesId,
-                createdBy: interaction.user.username
-            });
-
-            await newItem.save();
-
-            const emoji = this.formatItemEmoji(newItem);
-            const sourceText = dropRate > 0 ? `Gacha (${dropRate}% drop rate)` : 'Combination only';
-
-            const embed = new EmbedBuilder()
-                .setTitle('✅ Item Created (Classic Method)')
-                .setColor(COLORS.SUCCESS)
-                .addFields(
-                    { name: 'Preview', value: `${emoji} **${itemName}**`, inline: false },
-                    { name: 'ID', value: itemId, inline: true },
-                    { name: 'Type', value: itemType, inline: true },
-                    { name: 'Rarity', value: rarity, inline: true },
-                    { name: 'Source', value: sourceText, inline: true },
-                    { name: 'Max Stack', value: maxStack.toString(), inline: true }
-                )
-                .setFooter({ text: `Created by ${interaction.user.username}` })
-                .setTimestamp();
-
-            if (flavorText) {
-                embed.addFields({ name: 'Flavor Text', value: `*${flavorText}*`, inline: false });
-            }
-
-            if (seriesId) {
-                embed.addFields({ name: 'Series', value: seriesId, inline: true });
-            }
-
-            await interaction.editReply({ embeds: [embed] });
-
-        } catch (error) {
-            console.error('Error in classic add item:', error);
-            await interaction.editReply({
-                content: `❌ Error creating item: ${error.message}`
+        if (changes.length === 0) {
+            return interaction.editReply({
+                content: `❌ No changes specified for item "${itemId}". Provide at least one field to update.`
             });
         }
+
+        // Apply updates
+        Object.assign(item, updates);
+        await item.save();
+
+        const emoji = this.formatItemEmoji(item);
+        
+        const embed = new EmbedBuilder()
+            .setTitle('✅ Item Updated')
+            .setColor(COLORS.SUCCESS)
+            .setDescription(`${emoji} **${item.itemName}** (ID: ${itemId})`)
+            .addFields({
+                name: 'Changes Made',
+                value: changes.join('\n')
+            })
+            .setFooter({ text: `Updated by ${interaction.user.username}` })
+            .setTimestamp();
+
+        await interaction.editReply({ embeds: [embed] });
     },
 
-    /**
-     * Calculate rarity based on drop rate
-     */
-    calculateRarityFromDropRate(dropRate) {
-        if (dropRate >= 40) return 'common';
-        if (dropRate >= 21) return 'uncommon';
-        if (dropRate >= 10) return 'rare';
-        if (dropRate >= 4) return 'epic';
-        if (dropRate >= 1) return 'legendary';
-        return 'mythic'; // 0% or special cases
-    },
-
-    /**
-     * Calculate max stack based on rarity
-     */
-    calculateMaxStackFromRarity(rarity) {
-        switch (rarity) {
-            case 'common':
-            case 'uncommon':
-            case 'rare':
-                return 99;
-            case 'epic':
-                return 5;
-            case 'legendary':
-            case 'mythic':
-                return 1;
-            default:
-                return 99;
+    async handleDeleteItem(interaction) {
+        const itemId = interaction.options.getString('item-id');
+        const force = interaction.options.getBoolean('force') || false;
+        
+        const item = await GachaItem.findOne({ itemId });
+        if (!item) {
+            throw new Error(`Item "${itemId}" not found.`);
         }
-    },
 
-    /**
-     * Show simplified single add item modal
-     */
-    async showAddItemModal(interaction) {
-        const nextItemId = await this.getNextItemId();
+        // Check if item is used in combinations
+        const usedInIngredients = await CombinationRule.find({ 
+            'ingredients.itemId': itemId,
+            isActive: true 
+        });
+        
+        const usedInResults = await CombinationRule.find({ 
+            'result.itemId': itemId,
+            isActive: true 
+        });
 
-        const modal = new ModalBuilder()
-            .setCustomId('gacha_add_item_simple')
-            .setTitle('Add New Item - Smart Entry');
+        const totalCombinations = usedInIngredients.length + usedInResults.length;
 
-        const itemIdInput = new TextInputBuilder()
-            .setCustomId('item_id')
-            .setLabel('Item ID')
-            .setStyle(TextInputStyle.Short)
-            .setValue(nextItemId) // Auto-populate next ID
-            .setPlaceholder('e.g., 300')
-            .setRequired(true);
+        // Check how many users have this item
+        const usersWithItem = await User.find({
+            'gachaCollection.itemId': itemId
+        });
 
-        const emojiInput = new TextInputBuilder()
-            .setCustomId('item_emoji')
-            .setLabel('Emoji')
-            .setStyle(TextInputStyle.Short)
-            .setPlaceholder('<:name:123456> or <a:name:123456> for animated')
-            .setRequired(true);
+        const totalUsersAffected = usersWithItem.length;
+        const totalItemsToRemove = usersWithItem.reduce((total, user) => {
+            const userItem = user.gachaCollection.find(ci => ci.itemId === itemId);
+            return total + (userItem?.quantity || 0);
+        }, 0);
 
-        const nameSeriesInput = new TextInputBuilder()
-            .setCustomId('name_series')
-            .setLabel('Name, Series (comma separated)')
-            .setStyle(TextInputStyle.Short)
-            .setPlaceholder('Super Mario, Mario  OR  Just Item Name')
-            .setRequired(true);
-
-        const descFlavorInput = new TextInputBuilder()
-            .setCustomId('desc_flavor')
-            .setLabel('Description + Flavor Text (line break separated)')
-            .setStyle(TextInputStyle.Paragraph)
-            .setPlaceholder('Main description here\nOptional flavor text here')
-            .setRequired(true);
-
-        const dropRateInput = new TextInputBuilder()
-            .setCustomId('drop_rate')
-            .setLabel('Drop Rate % (sets rarity & max stack auto)')
-            .setStyle(TextInputStyle.Short)
-            .setPlaceholder('5 (40+=common, 21-39=uncommon, 10-20=rare, 4-9=epic, 1-3=legendary, 0=mythic)')
-            .setRequired(true);
-
-        modal.addComponents(
-            new ActionRowBuilder().addComponents(itemIdInput),
-            new ActionRowBuilder().addComponents(emojiInput),
-            new ActionRowBuilder().addComponents(nameSeriesInput),
-            new ActionRowBuilder().addComponents(descFlavorInput),
-            new ActionRowBuilder().addComponents(dropRateInput)
-        );
-
-        await interaction.showModal(modal);
-    },
-
-    /**
-     * Handle simplified add item modal submission
-     */
-    async handleAddItemSimple(interaction) {
-        await interaction.deferReply({ ephemeral: true });
-
-        try {
-            const itemId = interaction.fields.getTextInputValue('item_id').trim();
-            const emojiInput = interaction.fields.getTextInputValue('item_emoji').trim();
-            const nameSeriesInput = interaction.fields.getTextInputValue('name_series').trim();
-            const descFlavorInput = interaction.fields.getTextInputValue('desc_flavor').trim();
-            const dropRateStr = interaction.fields.getTextInputValue('drop_rate').trim();
-
-            // Parse name and series
-            const nameSeriesParts = nameSeriesInput.split(',').map(s => s.trim());
-            const itemName = nameSeriesParts[0];
-            const seriesId = nameSeriesParts.length > 1 ? nameSeriesParts[1] : null;
-
-            // Parse description and flavor text
-            const descFlavorParts = descFlavorInput.split('\n');
-            const description = descFlavorParts[0]?.trim();
-            const flavorText = descFlavorParts.length > 1 ? descFlavorParts.slice(1).join('\n').trim() : null;
-
-            // Validate required fields
-            if (!itemId || !itemName || !description || !emojiInput || !dropRateStr) {
-                throw new Error('Item ID, name, description, emoji, and drop rate are required.');
-            }
-
-            // Check if item already exists
-            const existingItem = await GachaItem.findOne({ itemId });
-            if (existingItem) {
-                throw new Error(`Item "${itemId}" already exists.`);
-            }
-
-            // Parse and validate drop rate
-            const dropRate = parseFloat(dropRateStr);
-            if (isNaN(dropRate) || dropRate < 0 || dropRate > 100) {
-                throw new Error('Drop rate must be a number between 0 and 100.');
-            }
-
-            // Auto-calculate rarity and max stack
-            const rarity = this.calculateRarityFromDropRate(dropRate);
-            const maxStack = this.calculateMaxStackFromRarity(rarity);
-
-            // Parse emoji
-            const emojiData = this.parseEmojiInput(emojiInput);
-
-            // Create item
-            const newItem = new GachaItem({
-                itemId,
-                itemName,
-                description,
-                itemType: 'trinket', // Default type for now
-                rarity,
-                dropRate,
-                emojiName: emojiData.emojiName,
-                emojiId: emojiData.emojiId,
-                isAnimated: emojiData.isAnimated,
-                flavorText: flavorText || null,
-                maxStack,
-                seriesId: seriesId || null,
-                createdBy: interaction.user.username
-            });
-
-            await newItem.save();
-
-            const emoji = this.formatItemEmoji(newItem);
-            const sourceText = dropRate > 0 ? `Gacha (${dropRate}% drop rate)` : 'Combination only';
-
+        if (totalCombinations > 0 && !force) {
             const embed = new EmbedBuilder()
-                .setTitle('✅ Item Created Successfully!')
-                .setColor(this.getRarityColor(rarity))
+                .setTitle('⚠️ Cannot Delete Item')
+                .setColor(COLORS.WARNING)
+                .setDescription(`Item "${itemId}" is used in ${totalCombinations} combination rule(s).`)
                 .addFields(
-                    { name: 'Preview', value: `${emoji} **${itemName}**`, inline: false },
-                    { name: 'ID', value: itemId, inline: true },
-                    { name: 'Rarity', value: `${rarity} (auto)`, inline: true },
-                    { name: 'Max Stack', value: `${maxStack} (auto)`, inline: true },
-                    { name: 'Source', value: sourceText, inline: true },
-                    { name: 'Emoji Type', value: emojiData.isAnimated ? 'Animated' : 'Static', inline: true }
+                    { 
+                        name: 'Dependency Details', 
+                        value: `• Used as ingredient in: ${usedInIngredients.length} rules\n• Created by combinations: ${usedInResults.length} rules`,
+                        inline: false 
+                    },
+                    { 
+                        name: 'To delete anyway', 
+                        value: 'Use the `force: true` option, but this will break combination rules!',
+                        inline: false 
+                    }
                 );
 
-            if (seriesId) {
-                embed.addFields({ name: 'Series', value: seriesId, inline: true });
-            }
+            return interaction.editReply({ embeds: [embed] });
+        }
 
-            if (flavorText) {
-                embed.addFields({ name: 'Flavor Text', value: `*${flavorText}*`, inline: false });
-            }
+        // If force deleting, also remove broken combination rules
+        let brokenRules = 0;
+        if (force && totalCombinations > 0) {
+            const rulesToRemove = await CombinationRule.find({
+                $or: [
+                    { 'ingredients.itemId': itemId },
+                    { 'result.itemId': itemId }
+                ],
+                isActive: true
+            });
 
+            brokenRules = rulesToRemove.length;
+            for (const rule of rulesToRemove) {
+                rule.isActive = false;
+                await rule.save();
+            }
+        }
+
+        // Remove from all user collections
+        for (const user of usersWithItem) {
+            const itemIndex = user.gachaCollection.findIndex(ci => ci.itemId === itemId);
+            if (itemIndex !== -1) {
+                user.gachaCollection.splice(itemIndex, 1);
+                await user.save();
+            }
+        }
+
+        // Delete the item
+        await GachaItem.findOneAndDelete({ itemId });
+
+        const emoji = this.formatItemEmoji(item);
+
+        const embed = new EmbedBuilder()
+            .setTitle('✅ Item Deleted')
+            .setColor(COLORS.SUCCESS)
+            .setDescription(`${emoji} **${item.itemName}** has been permanently deleted.`)
+            .addFields(
+                { name: 'Item ID', value: itemId, inline: true },
+                { name: 'Users Affected', value: totalUsersAffected.toString(), inline: true },
+                { name: 'Items Removed', value: totalItemsToRemove.toString(), inline: true }
+            );
+
+        if (brokenRules > 0) {
             embed.addFields({
-                name: 'Auto-Calculations',
-                value: `**Rarity Logic:** ${dropRate}% → ${rarity}\n**Stack Logic:** ${rarity} → ${maxStack} max`,
+                name: 'Combination Rules Disabled',
+                value: `${brokenRules} rules were automatically disabled due to missing items.`,
                 inline: false
             });
-
-            embed.setFooter({ text: `Created by ${interaction.user.username}` });
-            embed.setTimestamp();
-
-            const backButton = new ActionRowBuilder()
-                .addComponents(
-                    new ButtonBuilder()
-                        .setCustomId('gacha_add_another_item')
-                        .setLabel('Add Another')
-                        .setStyle(ButtonStyle.Primary)
-                        .setEmoji('➕'),
-                    new ButtonBuilder()
-                        .setCustomId('gacha_back_to_items')
-                        .setLabel('Back to Items')
-                        .setStyle(ButtonStyle.Secondary)
-                        .setEmoji('⬅️')
-                );
-
-            await interaction.editReply({
-                embeds: [embed],
-                components: [backButton]
-            });
-
-        } catch (error) {
-            console.error('Error creating item (simple):', error);
-            await interaction.editReply({
-                content: `❌ Error creating item: ${error.message}\n\n**Format Examples:**\n` +
-                         `• **Name/Series:** "Super Mario, Mario" or just "Golden Scale"\n` +
-                         `• **Desc/Flavor:** "A shimmering scale\\nWhispers of ancient power"\n` +
-                         `• **Drop Rate:** 5 (sets rarity: 40+=common, 21-39=uncommon, 10-20=rare, 4-9=epic, 1-3=legendary, 0=mythic)\n` +
-                         `• **Emoji:** Paste exactly as <:name:123> or <a:name:123>`
-            });
         }
+
+        embed.setFooter({ text: `Deleted by ${interaction.user.username}` });
+        embed.setTimestamp();
+
+        await interaction.editReply({ embeds: [embed] });
     },
 
-    /**
-     * Enhanced list items with filtering and pagination
-     */
-    async handleItemsList(interaction, page = 1, filter = 'all') {
-        if (!interaction.deferred) await interaction.deferUpdate();
+    async handleViewItem(interaction) {
+        const itemId = interaction.options.getString('item-id');
+        
+        const item = await GachaItem.findOne({ itemId });
+        if (!item) {
+            throw new Error(`Item "${itemId}" not found.`);
+        }
 
-        try {
-            const itemsPerPage = 12;
-            let query = { isActive: true };
-            let title = '📦 All Items';
+        // Check if item is used in combinations
+        const usedInIngredients = await CombinationRule.find({ 
+            'ingredients.itemId': itemId,
+            isActive: true 
+        });
+        
+        const usedInResults = await CombinationRule.find({ 
+            'result.itemId': itemId,
+            isActive: true 
+        });
 
-            switch (filter) {
-                case 'gacha':
-                    query.dropRate = { $gt: 0 };
-                    title = '🎰 Gacha Items';
-                    break;
-                case 'combo':
-                    query.dropRate = 0;
-                    title = '⚗️ Combo-Only Items';
-                    break;
-                case 'recent':
-                    title = '🆕 Recently Added';
-                    break;
+        // Check how many users have this item
+        const usersWithItem = await User.countDocuments({
+            'gachaCollection.itemId': itemId
+        });
+
+        const emoji = this.formatItemEmoji(item);
+        
+        const embed = new EmbedBuilder()
+            .setTitle(`${emoji} ${item.itemName}`)
+            .setColor(this.getRarityColor(item.rarity))
+            .setDescription(item.description)
+            .addFields(
+                { name: 'Item ID', value: item.itemId, inline: true },
+                { name: 'Type', value: item.itemType, inline: true },
+                { name: 'Rarity', value: item.rarity, inline: true },
+                { name: 'Drop Rate', value: `${item.dropRate}%`, inline: true },
+                { name: 'Max Stack', value: item.maxStack?.toString() || '1', inline: true },
+                { name: 'Users Own This', value: usersWithItem.toString(), inline: true }
+            );
+
+        if (item.isAnimated) {
+            embed.addFields({ name: 'Emoji Type', value: '🎬 Animated', inline: true });
+        }
+
+        if (item.flavorText) {
+            embed.addFields({ name: 'Flavor Text', value: `*${item.flavorText}*`, inline: false });
+        }
+
+        if (item.seriesId) {
+            embed.addFields({ name: 'Series', value: item.seriesId, inline: true });
+        }
+
+        // Show combination usage
+        if (usedInIngredients.length > 0) {
+            const ingredientRules = usedInIngredients.slice(0, 3).map(rule => rule.ruleId).join(', ');
+            const extraCount = Math.max(0, usedInIngredients.length - 3);
+            const ingredientText = extraCount > 0 ? 
+                `${ingredientRules}${extraCount > 0 ? ` (+${extraCount} more)` : ''}` : 
+                ingredientRules;
+            embed.addFields({ 
+                name: `Used as Ingredient (${usedInIngredients.length})`, 
+                value: ingredientText, 
+                inline: false 
+            });
+        }
+
+        if (usedInResults.length > 0) {
+            const resultRules = usedInResults.slice(0, 3).map(rule => rule.ruleId).join(', ');
+            const extraCount = Math.max(0, usedInResults.length - 3);
+            const resultText = extraCount > 0 ? 
+                `${resultRules}${extraCount > 0 ? ` (+${extraCount} more)` : ''}` : 
+                resultRules;
+            embed.addFields({ 
+                name: `Created by Combinations (${usedInResults.length})`, 
+                value: resultText, 
+                inline: false 
+            });
+        }
+
+        if (usedInIngredients.length === 0 && usedInResults.length === 0) {
+            embed.addFields({ 
+                name: 'Combination Usage', 
+                value: 'Not used in any combinations', 
+                inline: false 
+            });
+        }
+
+        if (item.createdBy) {
+            embed.setFooter({ text: `Created by: ${item.createdBy}` });
+        }
+
+        embed.setTimestamp();
+
+        await interaction.editReply({ embeds: [embed] });
+    },
+
+    async handleGiveItem(interaction) {
+        const username = interaction.options.getString('username');
+        const itemId = interaction.options.getString('item-id');
+        const quantity = interaction.options.getInteger('quantity') || 1;
+
+        const user = await User.findOne({ 
+            raUsername: { $regex: new RegExp(`^${username}$`, 'i') }
+        });
+        if (!user) {
+            throw new Error(`User "${username}" not found.`);
+        }
+
+        const item = await GachaItem.findOne({ itemId });
+        if (!item) {
+            throw new Error(`Item "${itemId}" not found.`);
+        }
+
+        const addResult = user.addGachaItem(item, quantity, 'admin_grant');
+        await user.save();
+
+        const emoji = this.formatItemEmoji(item);
+        
+        const combinationResult = await combinationService.triggerCombinationAlertsForAdminGift(user, itemId, interaction);
+
+        let message = `✅ Gave ${emoji} ${quantity}x **${item.itemName}** to ${username}`;
+
+        if (combinationResult.hasCombinations) {
+            message += `\n\n⚗️ **Combination Alerts Sent!**\n`;
+            message += `${username} now has ${combinationResult.combinationCount} combination option(s) available!`;
+            
+            if (combinationResult.publicAnnouncementSent && combinationResult.sentViaDM) {
+                message += '\n• Public announcement posted in gacha channel\n• Private combination options sent via DM';
+            } else if (combinationResult.sentViaDM) {
+                message += '\n• Private combination options sent via DM';
+            } else if (combinationResult.publicAnnouncementSent) {
+                message += '\n• Public announcement posted in gacha channel';
             }
-
-            const totalItems = await GachaItem.countDocuments(query);
-            const totalPages = Math.ceil(totalItems / itemsPerPage);
-            const skip = (page - 1) * itemsPerPage;
-
-            let items = await GachaItem.find(query)
-                .skip(skip)
-                .limit(itemsPerPage);
-
-            if (filter === 'recent') {
-                items = items.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-            } else {
-                items.sort((a, b) => {
-                    const aNum = parseInt(a.itemId) || 0;
-                    const bNum = parseInt(b.itemId) || 0;
-                    return aNum - bNum;
-                });
+            
+            if (combinationResult.error) {
+                message += `\n• Note: ${combinationResult.error}`;
             }
+        } else if (combinationResult.error) {
+            message += `\n\n⚠️ Item given successfully, but there was an issue with combination alerts: ${combinationResult.error}`;
+        } else {
+            message += `\n\n💡 No combinations available with this item.`;
+        }
 
-            const embed = new EmbedBuilder()
-                .setTitle(`${title} - Page ${page}/${totalPages}`)
-                .setColor('#4ECDC4')
-                .setDescription(`Showing ${items.length} of ${totalItems} items`)
-                .setTimestamp();
+        await interaction.editReply({ content: message });
+    },
 
-            // Create items display
-            let itemsList = '';
-            items.forEach(item => {
+    async handleClearCollection(interaction) {
+        const username = interaction.options.getString('username');
+        const confirm = interaction.options.getBoolean('confirm');
+
+        if (!confirm) {
+            throw new Error('You must set confirm to true to clear a collection.');
+        }
+
+        const user = await User.findOne({ 
+            raUsername: { $regex: new RegExp(`^${username}$`, 'i') }
+        });
+
+        if (!user) {
+            throw new Error(`User "${username}" not found.`);
+        }
+
+        const collectionSize = user.gachaCollection?.length || 0;
+        const totalItems = user.gachaCollection?.reduce((sum, item) => sum + (item.quantity || 1), 0) || 0;
+
+        if (collectionSize === 0) {
+            return interaction.editReply({
+                content: `❌ User "${username}" already has an empty collection.`
+            });
+        }
+
+        user.gachaCollection = [];
+        await user.save();
+
+        const embed = new EmbedBuilder()
+            .setTitle('🗑️ Collection Cleared')
+            .setColor(COLORS.WARNING)
+            .setDescription(`Cleared collection for **${username}**`)
+            .addFields(
+                { name: 'Unique Items Removed', value: collectionSize.toString(), inline: true },
+                { name: 'Total Items Removed', value: totalItems.toString(), inline: true },
+                { name: 'Collection Size Now', value: '0', inline: true }
+            )
+            .setFooter({ text: `Cleared by ${interaction.user.username}` })
+            .setTimestamp();
+
+        await interaction.editReply({ embeds: [embed] });
+    },
+
+    async handleListItems(interaction) {
+        const page = interaction.options.getInteger('page') || 1;
+        const filter = interaction.options.getString('filter') || 'all';
+        const itemsPerPage = 15;
+
+        let query = { isActive: true };
+        let title = '📦 All Gacha Items';
+        
+        switch (filter) {
+            case 'gacha':
+                query.dropRate = { $gt: 0 };
+                title = '🎰 Gacha Items (Drop Rate > 0)';
+                break;
+            case 'combo':
+                query.dropRate = 0;
+                title = '🔧 Combination-Only Items';
+                break;
+        }
+
+        const totalItems = await GachaItem.countDocuments(query);
+        const totalPages = Math.ceil(totalItems / itemsPerPage);
+        const skip = (page - 1) * itemsPerPage;
+
+        const items = await GachaItem.find(query)
+            .skip(skip)
+            .limit(itemsPerPage);
+
+        items.sort((a, b) => {
+            const aNum = parseInt(a.itemId) || 0;
+            const bNum = parseInt(b.itemId) || 0;
+            return aNum - bNum;
+        });
+
+        if (items.length === 0) {
+            return interaction.editReply({ content: 'No items found.' });
+        }
+
+        const embed = new EmbedBuilder()
+            .setTitle(`${title} - Page ${page}/${totalPages}`)
+            .setColor(COLORS.INFO)
+            .setTimestamp();
+
+        let itemsList = '';
+        
+        items.forEach(item => {
+            const id = item.itemId.length > 15 ? 
+                item.itemId.substring(0, 12) + '...' : 
+                item.itemId;
+            const name = item.itemName.length > 20 ? 
+                item.itemName.substring(0, 17) + '...' : 
+                item.itemName;
+            const rarity = item.rarity.charAt(0).toUpperCase();
+            const animatedFlag = item.isAnimated ? '🎬' : '';
+            
+            itemsList += `**${id}** - ${name} (${rarity}, ${item.dropRate}%) ${animatedFlag}\n`;
+        });
+
+        embed.setDescription(`Showing ${items.length} items (${totalItems} total)\n\n${itemsList}`);
+        embed.setFooter({ 
+            text: 'Copy the Item ID (bolded text) when creating combinations. 🎬 = Animated emoji' 
+        });
+
+        await interaction.editReply({ embeds: [embed] });
+    },
+
+    async handleListCombinations(interaction) {
+        const page = interaction.options.getInteger('page') || 1;
+        const rulesPerPage = 8;
+
+        const totalRules = await CombinationRule.countDocuments({ isActive: true });
+        const totalPages = Math.ceil(totalRules / rulesPerPage);
+        const skip = (page - 1) * rulesPerPage;
+
+        const rules = await CombinationRule.find({ isActive: true })
+            .sort({ priority: -1, ruleId: 1 })
+            .skip(skip)
+            .limit(rulesPerPage);
+
+        if (rules.length === 0) {
+            return interaction.editReply({ content: 'No combination rules found.' });
+        }
+
+        const embed = new EmbedBuilder()
+            .setTitle(`⚗️ Combination Rules - Page ${page}/${totalPages}`)
+            .setColor(COLORS.INFO)
+            .setDescription(`Showing ${rules.length} rules (${totalRules} total)`)
+            .setTimestamp();
+
+        let rulesText = '';
+        for (const rule of rules) {
+            const resultItem = await GachaItem.findOne({ itemId: rule.result.itemId });
+            const resultEmoji = resultItem ? this.formatItemEmoji(resultItem) : '❓';
+            
+            rulesText += `**${rule.ruleId}** (Priority: ${rule.priority})${rule.isNonDestructive ? ' 🔄' : ''}\n`;
+            
+            const ingredientStrs = rule.ingredients.map(ing => 
+                ing.quantity > 1 ? `${ing.itemId}x${ing.quantity}` : ing.itemId
+            );
+            
+            const ingredientsDisplay = rule.isNonDestructive 
+                ? `(${ingredientStrs.join(' + ')})` 
+                : ingredientStrs.join(' + ');
+            
+            rulesText += `${ingredientsDisplay} = ${resultEmoji} ${resultItem?.itemName || rule.result.itemId}${rule.result.quantity > 1 ? ` (x${rule.result.quantity})` : ''}\n\n`;
+        }
+
+        embed.addFields({ name: 'Rules', value: rulesText });
+        embed.setFooter({ text: 'All combinations require user confirmation • 🔄 = Non-Destructive (keeps ingredients)' });
+
+        await interaction.editReply({ embeds: [embed] });
+    },
+
+    async handleRemoveCombination(interaction) {
+        const ruleId = interaction.options.getString('rule-id');
+        const rule = await CombinationRule.findOneAndDelete({ ruleId });
+        
+        if (!rule) {
+            throw new Error(`Combination rule "${ruleId}" not found.`);
+        }
+
+        await interaction.editReply({
+            content: `✅ Removed combination rule: **${ruleId}**`
+        });
+    },
+
+    async handleDebugCombination(interaction) {
+        const ruleId = interaction.options.getString('rule-id');
+        
+        const rule = await CombinationRule.findOne({ ruleId, isActive: true });
+        if (!rule) {
+            return interaction.editReply({
+                content: `❌ Combination rule "${ruleId}" not found.`
+            });
+        }
+
+        const embed = new EmbedBuilder()
+            .setTitle(`🔍 Debug: ${ruleId}`)
+            .setColor(COLORS.INFO)
+            .setTimestamp();
+
+        embed.addFields(
+            { name: 'Rule ID', value: rule.ruleId, inline: true },
+            { name: 'Priority', value: rule.priority?.toString() || '0', inline: true },
+            { name: 'Type', value: rule.isNonDestructive ? '🔄 Non-Destructive' : '⚗️ Standard', inline: true },
+            { name: 'Requires Confirmation', value: 'Yes', inline: true }
+        );
+
+        let ingredientsText = '';
+        let ingredientsValid = true;
+        
+        for (const ingredient of rule.ingredients) {
+            const item = await GachaItem.findOne({ itemId: ingredient.itemId });
+            if (item) {
                 const emoji = this.formatItemEmoji(item);
-                const id = item.itemId.length > 8 ? item.itemId.substring(0, 8) + '...' : item.itemId;
-                const name = item.itemName.length > 18 ? item.itemName.substring(0, 15) + '...' : item.itemName;
-                const rarity = item.rarity.charAt(0).toUpperCase();
-                const animatedFlag = item.isAnimated ? '🎬' : '';
-                
-                itemsList += `${emoji} **${id}** - ${name} (${rarity}, ${item.dropRate}%) ${animatedFlag}\n`;
-            });
-
-            if (itemsList) {
-                embed.addFields({ name: 'Items', value: itemsList });
+                ingredientsText += `${emoji} **${ingredient.quantity}x ${item.itemName}** (ID: ${ingredient.itemId})\n`;
+                ingredientsText += `  └ Rarity: ${item.rarity}, Drop Rate: ${item.dropRate}%\n`;
+            } else {
+                ingredientsText += `❌ **${ingredient.quantity}x MISSING ITEM** (ID: ${ingredient.itemId})\n`;
+                ingredientsValid = false;
             }
+        }
+        
+        embed.addFields({ name: 'Ingredients', value: ingredientsText || 'None' });
 
-            // Filter dropdown
-            const filterMenu = new StringSelectMenuBuilder()
-                .setCustomId(`gacha_filter_items_${page}`)
-                .setPlaceholder('Filter items...')
-                .addOptions([
-                    { label: 'All Items', value: 'all', emoji: '📦' },
-                    { label: 'Gacha Items (Drop Rate > 0)', value: 'gacha', emoji: '🎰' },
-                    { label: 'Combo-Only (Drop Rate = 0)', value: 'combo', emoji: '⚗️' },
-                    { label: 'Recently Added', value: 'recent', emoji: '🆕' }
-                ]);
+        const resultItem = await GachaItem.findOne({ itemId: rule.result.itemId });
+        let resultText = '';
+        if (resultItem) {
+            const emoji = this.formatItemEmoji(resultItem);
+            resultText = `${emoji} **${rule.result.quantity || 1}x ${resultItem.itemName}** (ID: ${rule.result.itemId})\n`;
+            resultText += `└ Rarity: ${resultItem.rarity}, Drop Rate: ${resultItem.dropRate}%`;
+        } else {
+            resultText = `❌ **MISSING RESULT ITEM** (ID: ${rule.result.itemId})`;
+            ingredientsValid = false;
+        }
+        
+        embed.addFields({ name: 'Result', value: resultText });
 
-            // Pagination buttons
-            const paginationRow = new ActionRowBuilder()
-                .addComponents(
-                    new ButtonBuilder()
-                        .setCustomId(`gacha_items_page_${Math.max(1, page - 1)}_${filter}`)
-                        .setLabel('◀ Previous')
-                        .setStyle(ButtonStyle.Secondary)
-                        .setDisabled(page === 1),
-                    
-                    new ButtonBuilder()
-                        .setCustomId('gacha_page_info')
-                        .setLabel(`${page}/${totalPages}`)
-                        .setStyle(ButtonStyle.Secondary)
-                        .setDisabled(true),
-                    
-                    new ButtonBuilder()
-                        .setCustomId(`gacha_items_page_${Math.min(totalPages, page + 1)}_${filter}`)
-                        .setLabel('Next ▶')
-                        .setStyle(ButtonStyle.Secondary)
-                        .setDisabled(page === totalPages)
-                );
+        const validationText = ingredientsValid ? 
+            '✅ All items exist and rule is valid' : 
+            '❌ Some items are missing - rule will not work';
+        
+        embed.addFields({ name: 'Validation', value: validationText });
 
-            // Action buttons
-            const actionRow = new ActionRowBuilder()
-                .addComponents(
-                    new ButtonBuilder()
-                        .setCustomId('gacha_add_item_modal')
-                        .setLabel('Add Item')
-                        .setStyle(ButtonStyle.Success)
-                        .setEmoji('➕'),
-
-                    new ButtonBuilder()
-                        .setCustomId('gacha_back_to_items')
-                        .setLabel('Back')
-                        .setStyle(ButtonStyle.Secondary)
-                        .setEmoji('⬅️')
-                );
-
-            const components = [
-                new ActionRowBuilder().addComponents(filterMenu),
-                paginationRow,
-                actionRow
-            ];
-
-            embed.setFooter({ text: 'Click an item ID to view details • 🎬 = Animated emoji' });
-
-            await interaction.editReply({
-                embeds: [embed],
-                components: components
-            });
-
-        } catch (error) {
-            console.error('Error in items list:', error);
-            await interaction.editReply({
-                content: 'An error occurred while loading the items list.',
-                embeds: [],
-                components: []
+        if (rule.isNonDestructive) {
+            embed.addFields({
+                name: '🔄 Non-Destructive Behavior',
+                value: 'This combination will keep all ingredients after creating the result. Perfect for series completion rewards!',
+                inline: false
             });
         }
+
+        if (rule.createdBy) {
+            embed.setFooter({ text: `Created by: ${rule.createdBy}` });
+        }
+
+        await interaction.editReply({ embeds: [embed] });
     },
 
-    /**
-     * Show add combination modal
-     */
+    // Keep modal functionality for combinations and give-item
     async showAddCombinationModal(interaction) {
         const modal = new ModalBuilder()
             .setCustomId('gacha_add_combo_submit')
@@ -1055,9 +1551,6 @@ export default {
         await interaction.showModal(modal);
     },
 
-    /**
-     * Handle combination modal submission
-     */
     async handleCombinationModalSubmission(interaction) {
         await interaction.deferReply({ ephemeral: true });
 
@@ -1127,24 +1620,7 @@ export default {
                 embed.setDescription('🔄 **Non-Destructive Combination** - Ingredients will be kept after combining!');
             }
 
-            const actionButtons = new ActionRowBuilder()
-                .addComponents(
-                    new ButtonBuilder()
-                        .setCustomId('gacha_add_another_combo')
-                        .setLabel('Add Another')
-                        .setStyle(ButtonStyle.Primary)
-                        .setEmoji('➕'),
-                    new ButtonBuilder()
-                        .setCustomId('gacha_back_to_combinations')
-                        .setLabel('Back to Combinations')
-                        .setStyle(ButtonStyle.Secondary)
-                        .setEmoji('⬅️')
-                );
-
-            await interaction.editReply({ 
-                embeds: [embed],
-                components: [actionButtons]
-            });
+            await interaction.editReply({ embeds: [embed] });
 
         } catch (error) {
             console.error('Error creating combination:', error);
@@ -1153,17 +1629,365 @@ export default {
                          `• \`025x5 = 107\` (5 items with ID 025 make 1 item with ID 107)\n` +
                          `• \`(025x5) = 107\` (5 items with ID 025 make 1 item with ID 107, keeps ingredients)\n` +
                          `• \`001 + 003 = 999\` (item 001 + item 003 make item 999)\n` +
-                         `• \`(001 + 003) = 999\` (item 001 + item 003 make item 999, keeps ingredients)\n\n` +
-                         `**Non-Destructive Format Rules:**\n` +
-                         `• Wrap ingredients in parentheses: \`(ingredients) = result\`\n` +
-                         `• Perfect for series completion rewards!`
+                         `• \`(001 + 003) = 999\` (item 001 + item 003 make item 999, keeps ingredients)`
             });
         }
     },
 
+    async showGiveItemModal(interaction) {
+        const modal = new ModalBuilder()
+            .setCustomId('gacha_give_item_submit')
+            .setTitle('Give Item to User');
+
+        const usernameInput = new TextInputBuilder()
+            .setCustomId('username')
+            .setLabel('Username')
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder('Enter username')
+            .setRequired(true);
+
+        const itemIdInput = new TextInputBuilder()
+            .setCustomId('item_id')
+            .setLabel('Item ID')
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder('e.g., 025')
+            .setRequired(true);
+
+        const quantityInput = new TextInputBuilder()
+            .setCustomId('quantity')
+            .setLabel('Quantity (default: 1)')
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder('1')
+            .setValue('1')
+            .setRequired(false);
+
+        modal.addComponents(
+            new ActionRowBuilder().addComponents(usernameInput),
+            new ActionRowBuilder().addComponents(itemIdInput),
+            new ActionRowBuilder().addComponents(quantityInput)
+        );
+
+        await interaction.showModal(modal);
+    },
+
+    async handleGiveItemModalSubmission(interaction) {
+        await interaction.deferReply({ ephemeral: true });
+
+        try {
+            const username = interaction.fields.getTextInputValue('username').trim();
+            const itemId = interaction.fields.getTextInputValue('item_id').trim();
+            const quantity = parseInt(interaction.fields.getTextInputValue('quantity')) || 1;
+
+            const user = await User.findOne({ 
+                raUsername: { $regex: new RegExp(`^${username}$`, 'i') }
+            });
+            if (!user) {
+                throw new Error(`User "${username}" not found.`);
+            }
+
+            const item = await GachaItem.findOne({ itemId });
+            if (!item) {
+                throw new Error(`Item "${itemId}" not found.`);
+            }
+
+            const addResult = user.addGachaItem(item, quantity, 'admin_grant');
+            await user.save();
+
+            const emoji = this.formatItemEmoji(item);
+            
+            const combinationResult = await combinationService.triggerCombinationAlertsForAdminGift(user, itemId, interaction);
+
+            let message = `✅ Gave ${emoji} ${quantity}x **${item.itemName}** to ${username}`;
+
+            if (combinationResult.hasCombinations) {
+                message += `\n\n⚗️ **Combination Alerts Sent!**\n`;
+                message += `${username} now has ${combinationResult.combinationCount} combination option(s) available!`;
+            }
+
+            await interaction.editReply({ content: message });
+
+        } catch (error) {
+            console.error('Error giving item:', error);
+            await interaction.editReply({
+                content: `❌ Error giving item: ${error.message}`
+            });
+        }
+    },
+
+    async parseSimpleCombination(format) {
+        format = format.trim();
+
+        let separator = '=';
+        if (format.includes(' = ')) {
+            separator = ' = ';
+        } else if (format.includes('=')) {
+            separator = '=';
+        } else if (format.includes(' -> ')) {
+            separator = ' -> ';
+        } else if (format.includes('->')) {
+            separator = '->';
+        } else {
+            throw new Error('Format must use = or -> as separator');
+        }
+
+        const parts = format.split(separator);
+        if (parts.length !== 2) {
+            throw new Error('Format must be: ingredients = result');
+        }
+
+        let ingredientsPart = parts[0].trim();
+        const resultPart = parts[1].trim();
+
+        // Check for non-destructive combination (parentheses)
+        let isNonDestructive = false;
+        if (ingredientsPart.startsWith('(') && ingredientsPart.endsWith(')')) {
+            isNonDestructive = true;
+            ingredientsPart = ingredientsPart.slice(1, -1).trim();
+        }
+
+        const ingredients = [];
+        const ingredientItems = ingredientsPart.split(/[+,]/).map(s => s.trim());
+
+        for (const item of ingredientItems) {
+            if (item.includes('x')) {
+                const [itemId, quantityStr] = item.split('x');
+                const quantity = parseInt(quantityStr) || 1;
+                ingredients.push({ itemId: itemId.trim(), quantity });
+            } else {
+                ingredients.push({ itemId: item.trim(), quantity: 1 });
+            }
+        }
+
+        let result;
+        if (resultPart.includes('x')) {
+            const [itemId, quantityStr] = resultPart.split('x');
+            const quantity = parseInt(quantityStr) || 1;
+            result = { itemId: itemId.trim(), quantity };
+        } else {
+            result = { itemId: resultPart.trim(), quantity: 1 };
+        }
+
+        return { ingredients, result, isNonDestructive };
+    },
+
+    // Include all helper methods
+    parseEmojiInput(emojiInput) {
+        const emojiMatch = emojiInput.match(/<(a?):([^:]+):(\d+)>/);
+        if (!emojiMatch) {
+            throw new Error('Invalid emoji format. Please paste like: <:name:123456> or <a:name:123456> for animated');
+        }
+
+        const [, animatedFlag, emojiName, emojiId] = emojiMatch;
+        const isAnimated = animatedFlag === 'a';
+
+        return {
+            emojiName,
+            emojiId,
+            isAnimated,
+            fullFormat: emojiInput
+        };
+    },
+
+    formatItemEmoji(item) {
+        if (item.emojiId && item.emojiName) {
+            const prefix = item.isAnimated ? 'a' : '';
+            return `<${prefix}:${item.emojiName}:${item.emojiId}>`;
+        }
+        return item.emojiName || '❓';
+    },
+
+    getRarityColor(rarity) {
+        const colors = {
+            common: '#95a5a6',
+            uncommon: '#2ecc71',
+            rare: '#3498db',
+            epic: '#9b59b6',
+            legendary: '#f39c12',
+            mythic: '#e74c3c'
+        };
+        return colors[rarity] || colors.common;
+    },
+
     /**
-     * Enhanced combination list with pagination
+     * Central handler for all interactions
      */
+    async handleInteraction(interaction) {
+        const customId = interaction.customId;
+
+        try {
+            // Main menu navigation
+            if (customId === 'gacha_main_menu') {
+                const value = interaction.values[0];
+                switch (value) {
+                    case 'items':
+                        await this.handleItemsMenu(interaction);
+                        break;
+                    case 'combinations':
+                        await this.handleCombinationsMenu(interaction);
+                        break;
+                    case 'users':
+                        await this.handleUsersMenu(interaction);
+                        break;
+                    case 'analytics':
+                        await this.handleAnalyticsMenu(interaction);
+                        break;
+                }
+                return;
+            }
+
+            // Quick action buttons
+            if (customId === 'gacha_quick_add_help') {
+                await this.showAddItemHelp(interaction);
+                return;
+            }
+
+            if (customId === 'gacha_quick_list_items' || customId === 'gacha_list_items_menu') {
+                await this.handleItemsList(interaction, 1, 'all');
+                return;
+            }
+
+            if (customId === 'gacha_quick_combinations' || customId === 'gacha_list_combinations_menu') {
+                await this.handleCombinationsList(interaction, 1);
+                return;
+            }
+
+            // Navigation buttons
+            if (customId === 'gacha_back_to_main' || customId === 'gacha_refresh_main') {
+                await this.handleMainMenu(interaction);
+                return;
+            }
+
+            // Combination management
+            if (customId === 'gacha_add_combination_modal') {
+                await this.showAddCombinationModal(interaction);
+                return;
+            }
+
+            // User management
+            if (customId === 'gacha_give_item_modal') {
+                await this.showGiveItemModal(interaction);
+                return;
+            }
+
+            // Modal submissions
+            if (customId === 'gacha_add_combo_submit') {
+                await this.handleCombinationModalSubmission(interaction);
+                return;
+            }
+
+            if (customId === 'gacha_give_item_submit') {
+                await this.handleGiveItemModalSubmission(interaction);
+                return;
+            }
+
+        } catch (error) {
+            console.error('Error handling gacha interaction:', error);
+            
+            const errorMessage = `❌ Error: ${error.message}`;
+            
+            if (interaction.deferred || interaction.replied) {
+                await interaction.editReply({ content: errorMessage, embeds: [], components: [] });
+            } else {
+                await interaction.reply({ content: errorMessage, ephemeral: true });
+            }
+        }
+    },
+
+    // Enhanced list handlers with new UI
+    async handleItemsList(interaction, page = 1, filter = 'all') {
+        if (!interaction.deferred) await interaction.deferUpdate();
+
+        try {
+            const itemsPerPage = 12;
+            let query = { isActive: true };
+            let title = '📦 All Items';
+
+            switch (filter) {
+                case 'gacha':
+                    query.dropRate = { $gt: 0 };
+                    title = '🎰 Gacha Items';
+                    break;
+                case 'combo':
+                    query.dropRate = 0;
+                    title = '⚗️ Combo-Only Items';
+                    break;
+                case 'recent':
+                    title = '🆕 Recently Added';
+                    break;
+            }
+
+            const totalItems = await GachaItem.countDocuments(query);
+            const totalPages = Math.ceil(totalItems / itemsPerPage);
+            const skip = (page - 1) * itemsPerPage;
+
+            let items = await GachaItem.find(query)
+                .skip(skip)
+                .limit(itemsPerPage);
+
+            if (filter === 'recent') {
+                items = items.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+            } else {
+                items.sort((a, b) => {
+                    const aNum = parseInt(a.itemId) || 0;
+                    const bNum = parseInt(b.itemId) || 0;
+                    return aNum - bNum;
+                });
+            }
+
+            const embed = new EmbedBuilder()
+                .setTitle(`${title} - Page ${page}/${totalPages}`)
+                .setColor('#4ECDC4')
+                .setDescription(`Showing ${items.length} of ${totalItems} items`)
+                .setTimestamp();
+
+            // Create items display
+            let itemsList = '';
+            items.forEach(item => {
+                const emoji = this.formatItemEmoji(item);
+                const id = item.itemId.length > 8 ? item.itemId.substring(0, 8) + '...' : item.itemId;
+                const name = item.itemName.length > 18 ? item.itemName.substring(0, 15) + '...' : item.itemName;
+                const rarity = item.rarity.charAt(0).toUpperCase();
+                const animatedFlag = item.isAnimated ? '🎬' : '';
+                
+                itemsList += `${emoji} **${id}** - ${name} (${rarity}, ${item.dropRate}%) ${animatedFlag}\n`;
+            });
+
+            if (itemsList) {
+                embed.addFields({ name: 'Items', value: itemsList });
+            }
+
+            embed.setFooter({ text: 'Use /gacha-admin view-item to see details • 🎬 = Animated emoji' });
+
+            const actionButtons = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('gacha_quick_add_help')
+                        .setLabel('Add Item Help')
+                        .setStyle(ButtonStyle.Success)
+                        .setEmoji('❓'),
+
+                    new ButtonBuilder()
+                        .setCustomId('gacha_back_to_items')
+                        .setLabel('Back')
+                        .setStyle(ButtonStyle.Secondary)
+                        .setEmoji('⬅️')
+                );
+
+            await interaction.editReply({
+                embeds: [embed],
+                components: [actionButtons]
+            });
+
+        } catch (error) {
+            console.error('Error in items list:', error);
+            await interaction.editReply({
+                content: 'An error occurred while loading the items list.',
+                embeds: [],
+                components: []
+            });
+        }
+    },
+
     async handleCombinationsList(interaction, page = 1) {
         if (!interaction.deferred) await interaction.deferUpdate();
 
@@ -1229,44 +2053,15 @@ export default {
             }
 
             embed.addFields({ name: 'Rules', value: rulesText });
-            embed.setFooter({ text: '🔄 = Non-Destructive (keeps ingredients) • All combos require user confirmation' });
+            embed.setFooter({ text: '🔄 = Non-Destructive (keeps ingredients) • Use /gacha-admin debug-combination to troubleshoot' });
 
-            // Pagination buttons
-            const paginationRow = new ActionRowBuilder()
-                .addComponents(
-                    new ButtonBuilder()
-                        .setCustomId(`gacha_combo_page_${Math.max(1, page - 1)}`)
-                        .setLabel('◀ Previous')
-                        .setStyle(ButtonStyle.Secondary)
-                        .setDisabled(page === 1),
-                    
-                    new ButtonBuilder()
-                        .setCustomId('gacha_combo_page_info')
-                        .setLabel(`${page}/${totalPages}`)
-                        .setStyle(ButtonStyle.Secondary)
-                        .setDisabled(true),
-                    
-                    new ButtonBuilder()
-                        .setCustomId(`gacha_combo_page_${Math.min(totalPages, page + 1)}`)
-                        .setLabel('Next ▶')
-                        .setStyle(ButtonStyle.Secondary)
-                        .setDisabled(page === totalPages)
-                );
-
-            // Action buttons
-            const actionRow = new ActionRowBuilder()
+            const actionButtons = new ActionRowBuilder()
                 .addComponents(
                     new ButtonBuilder()
                         .setCustomId('gacha_add_combination_modal')
                         .setLabel('Add Rule')
                         .setStyle(ButtonStyle.Success)
                         .setEmoji('➕'),
-                    
-                    new ButtonBuilder()
-                        .setCustomId('gacha_manage_combinations')
-                        .setLabel('Manage Rules')
-                        .setStyle(ButtonStyle.Primary)
-                        .setEmoji('⚙️'),
 
                     new ButtonBuilder()
                         .setCustomId('gacha_back_to_combinations')
@@ -1275,11 +2070,9 @@ export default {
                         .setEmoji('⬅️')
                 );
 
-            const components = totalPages > 1 ? [paginationRow, actionRow] : [actionRow];
-
             await interaction.editReply({
                 embeds: [embed],
-                components: components
+                components: [actionButtons]
             });
 
         } catch (error) {
@@ -1293,222 +2086,6 @@ export default {
     },
 
     /**
-     * Show give item modal
-     */
-    async showGiveItemModal(interaction) {
-        const modal = new ModalBuilder()
-            .setCustomId('gacha_give_item_submit')
-            .setTitle('Give Item to User');
-
-        const usernameInput = new TextInputBuilder()
-            .setCustomId('username')
-            .setLabel('Username')
-            .setStyle(TextInputStyle.Short)
-            .setPlaceholder('Enter username')
-            .setRequired(true);
-
-        const itemIdInput = new TextInputBuilder()
-            .setCustomId('item_id')
-            .setLabel('Item ID')
-            .setStyle(TextInputStyle.Short)
-            .setPlaceholder('e.g., 025')
-            .setRequired(true);
-
-        const quantityInput = new TextInputBuilder()
-            .setCustomId('quantity')
-            .setLabel('Quantity (default: 1)')
-            .setStyle(TextInputStyle.Short)
-            .setPlaceholder('1')
-            .setValue('1')
-            .setRequired(false);
-
-        modal.addComponents(
-            new ActionRowBuilder().addComponents(usernameInput),
-            new ActionRowBuilder().addComponents(itemIdInput),
-            new ActionRowBuilder().addComponents(quantityInput)
-        );
-
-        await interaction.showModal(modal);
-    },
-
-    /**
-     * Handle give item modal submission
-     */
-    async handleGiveItemSubmission(interaction) {
-        await interaction.deferReply({ ephemeral: true });
-
-        try {
-            const username = interaction.fields.getTextInputValue('username').trim();
-            const itemId = interaction.fields.getTextInputValue('item_id').trim();
-            const quantity = parseInt(interaction.fields.getTextInputValue('quantity')) || 1;
-
-            const user = await User.findOne({ 
-                raUsername: { $regex: new RegExp(`^${username}$`, 'i') }
-            });
-            if (!user) {
-                throw new Error(`User "${username}" not found.`);
-            }
-
-            const item = await GachaItem.findOne({ itemId });
-            if (!item) {
-                throw new Error(`Item "${itemId}" not found.`);
-            }
-
-            const addResult = user.addGachaItem(item, quantity, 'admin_grant');
-            await user.save();
-
-            const emoji = this.formatItemEmoji(item);
-            
-            const combinationResult = await combinationService.triggerCombinationAlertsForAdminGift(user, itemId, interaction);
-
-            let message = `✅ Gave ${emoji} ${quantity}x **${item.itemName}** to ${username}`;
-
-            if (combinationResult.hasCombinations) {
-                message += `\n\n⚗️ **Combination Alerts Sent!**\n`;
-                message += `${username} now has ${combinationResult.combinationCount} combination option(s) available!`;
-                
-                if (combinationResult.publicAnnouncementSent && combinationResult.sentViaDM) {
-                    message += '\n• Public announcement posted in gacha channel\n• Private combination options sent via DM';
-                } else if (combinationResult.sentViaDM) {
-                    message += '\n• Private combination options sent via DM';
-                } else if (combinationResult.publicAnnouncementSent) {
-                    message += '\n• Public announcement posted in gacha channel';
-                }
-            }
-
-            const actionButtons = new ActionRowBuilder()
-                .addComponents(
-                    new ButtonBuilder()
-                        .setCustomId('gacha_give_another_item')
-                        .setLabel('Give Another')
-                        .setStyle(ButtonStyle.Primary)
-                        .setEmoji('🎁'),
-                    new ButtonBuilder()
-                        .setCustomId('gacha_back_to_users')
-                        .setLabel('Back to Users')
-                        .setStyle(ButtonStyle.Secondary)
-                        .setEmoji('⬅️')
-                );
-
-            await interaction.editReply({ 
-                content: message,
-                components: [actionButtons]
-            });
-
-        } catch (error) {
-            console.error('Error giving item:', error);
-            await interaction.editReply({
-                content: `❌ Error giving item: ${error.message}`
-            });
-        }
-    },
-
-    /**
-     * Parse combination format (supports both destructive and non-destructive)
-     */
-    async parseSimpleCombination(format) {
-        format = format.trim();
-
-        let separator = '=';
-        if (format.includes(' = ')) {
-            separator = ' = ';
-        } else if (format.includes('=')) {
-            separator = '=';
-        } else if (format.includes(' -> ')) {
-            separator = ' -> ';
-        } else if (format.includes('->')) {
-            separator = '->';
-        } else {
-            throw new Error('Format must use = or -> as separator (e.g., "025x5 = 107" or "(025+026) = 107")');
-        }
-
-        const parts = format.split(separator);
-        if (parts.length !== 2) {
-            throw new Error('Format must be: ingredients = result (e.g., "025x5 = 107" or "(025+026) = 107")');
-        }
-
-        let ingredientsPart = parts[0].trim();
-        const resultPart = parts[1].trim();
-
-        // Check for non-destructive combination (parentheses)
-        let isNonDestructive = false;
-        if (ingredientsPart.startsWith('(') && ingredientsPart.endsWith(')')) {
-            isNonDestructive = true;
-            ingredientsPart = ingredientsPart.slice(1, -1).trim();
-        }
-
-        const ingredients = [];
-        const ingredientItems = ingredientsPart.split(/[+,]/).map(s => s.trim());
-
-        for (const item of ingredientItems) {
-            if (item.includes('x')) {
-                const [itemId, quantityStr] = item.split('x');
-                const quantity = parseInt(quantityStr) || 1;
-                ingredients.push({ itemId: itemId.trim(), quantity });
-            } else if (item.includes(':')) {
-                const [itemId, quantityStr] = item.split(':');
-                const quantity = parseInt(quantityStr) || 1;
-                ingredients.push({ itemId: itemId.trim(), quantity });
-            } else {
-                ingredients.push({ itemId: item.trim(), quantity: 1 });
-            }
-        }
-
-        let result;
-        if (resultPart.includes('x')) {
-            const [itemId, quantityStr] = resultPart.split('x');
-            const quantity = parseInt(quantityStr) || 1;
-            result = { itemId: itemId.trim(), quantity };
-        } else if (resultPart.includes(':')) {
-            const [itemId, quantityStr] = resultPart.split(':');
-            const quantity = parseInt(quantityStr) || 1;
-            result = { itemId: itemId.trim(), quantity };
-        } else {
-            result = { itemId: resultPart.trim(), quantity: 1 };
-        }
-
-        return { ingredients, result, isNonDestructive };
-    },
-
-    // Include all helper methods from original
-    parseEmojiInput(emojiInput) {
-        const emojiMatch = emojiInput.match(/<(a?):([^:]+):(\d+)>/);
-        if (!emojiMatch) {
-            throw new Error('Invalid emoji format. Please paste like: <:name:123456> or <a:name:123456> for animated');
-        }
-
-        const [, animatedFlag, emojiName, emojiId] = emojiMatch;
-        const isAnimated = animatedFlag === 'a';
-
-        return {
-            emojiName,
-            emojiId,
-            isAnimated,
-            fullFormat: emojiInput
-        };
-    },
-
-    formatItemEmoji(item) {
-        if (item.emojiId && item.emojiName) {
-            const prefix = item.isAnimated ? 'a' : '';
-            return `<${prefix}:${item.emojiName}:${item.emojiId}>`;
-        }
-        return item.emojiName || '❓';
-    },
-
-    getRarityColor(rarity) {
-        const colors = {
-            common: '#95a5a6',
-            uncommon: '#2ecc71',
-            rare: '#3498db',
-            epic: '#9b59b6',
-            legendary: '#f39c12',
-            mythic: '#e74c3c'
-        };
-        return colors[rarity] || colors.common;
-    },
-
-    /**
      * Handle button interactions (called by index.js)
      */
     async handleButtonInteraction(interaction) {
@@ -1519,7 +2096,6 @@ export default {
      * Handle select menu interactions (called by index.js)
      */
     async handleSelectMenuInteraction(interaction) {
-        console.log('Gacha admin handling select menu:', interaction.customId);
         return this.handleInteraction(interaction);
     },
 
@@ -1528,153 +2104,5 @@ export default {
      */
     async handleModalSubmit(interaction) {
         return this.handleInteraction(interaction);
-    },
-
-    /**
-     * Central handler for all button and menu interactions
-     */
-    async handleInteraction(interaction) {
-        const customId = interaction.customId;
-
-        try {
-            // Main menu navigation
-            if (customId === 'gacha_main_menu') {
-                console.log('Handling main menu selection:', interaction.values[0]);
-                const value = interaction.values[0];
-                switch (value) {
-                    case 'items':
-                        await this.handleItemsMenu(interaction);
-                        break;
-                    case 'combinations':
-                        await this.handleCombinationsMenu(interaction);
-                        break;
-                    case 'users':
-                        await this.handleUsersMenu(interaction);
-                        break;
-                    case 'analytics':
-                        await this.handleAnalyticsMenu(interaction);
-                        break;
-                }
-                return;
-            }
-
-            // Quick action buttons
-            if (customId === 'gacha_quick_add_item' || customId === 'gacha_add_item_modal') {
-                await this.showAddItemModal(interaction);
-                return;
-            }
-
-            if (customId === 'gacha_quick_list_items' || customId === 'gacha_list_items_menu') {
-                await this.handleItemsList(interaction, 1, 'all');
-                return;
-            }
-
-            if (customId === 'gacha_quick_combinations' || customId === 'gacha_list_combinations_menu') {
-                await this.handleCombinationsList(interaction, 1);
-                return;
-            }
-
-            // Navigation buttons
-            if (customId === 'gacha_back_to_main' || customId === 'gacha_refresh_main') {
-                await this.handleMainMenu(interaction);
-                return;
-            }
-
-            if (customId === 'gacha_back_to_items') {
-                await this.handleItemsMenu(interaction);
-                return;
-            }
-
-            if (customId === 'gacha_back_to_combinations') {
-                await this.handleCombinationsMenu(interaction);
-                return;
-            }
-
-            if (customId === 'gacha_back_to_users') {
-                await this.handleUsersMenu(interaction);
-                return;
-            }
-
-            // Item management
-            if (customId === 'gacha_add_another_item') {
-                await this.showAddItemModal(interaction);
-                return;
-            }
-
-            // Continue to step 2 button
-            if (customId.startsWith('gacha_continue_step2_')) {
-                const encodedData = customId.replace('gacha_continue_step2_', '');
-                const basicData = JSON.parse(Buffer.from(encodedData, 'base64').toString());
-                await this.showAddItemStep2Modal(interaction, basicData);
-                return;
-            }
-
-            // Combination management
-            if (customId === 'gacha_add_combination_modal' || customId === 'gacha_add_another_combo') {
-                await this.showAddCombinationModal(interaction);
-                return;
-            }
-
-            // User management
-            if (customId === 'gacha_give_item_modal' || customId === 'gacha_give_another_item') {
-                await this.showGiveItemModal(interaction);
-                return;
-            }
-
-            // Item pagination
-            if (customId.startsWith('gacha_items_page_')) {
-                const parts = customId.split('_');
-                const page = parseInt(parts[3]);
-                const filter = parts[4] || 'all';
-                await this.handleItemsList(interaction, page, filter);
-                return;
-            }
-
-            // Combination pagination
-            if (customId.startsWith('gacha_combo_page_')) {
-                const page = parseInt(customId.split('_')[3]);
-                await this.handleCombinationsList(interaction, page);
-                return;
-            }
-
-            // Filter handling
-            if (customId.startsWith('gacha_filter_items_')) {
-                console.log('Handling filter selection:', interaction.values[0]);
-                const page = parseInt(customId.split('_')[3]) || 1;
-                const filter = interaction.values[0];
-                await this.handleItemsList(interaction, page, filter);
-                return;
-            }
-
-            // Modal submissions
-            if (customId === 'gacha_add_item_simple') {
-                await this.handleAddItemSimple(interaction);
-                return;
-            }
-
-            if (customId === 'gacha_add_combo_submit') {
-                await this.handleCombinationModalSubmission(interaction);
-                return;
-            }
-
-            if (customId === 'gacha_give_item_submit') {
-                await this.handleGiveItemSubmission(interaction);
-                return;
-            }
-
-            // Default fallback
-            console.log(`Unhandled gacha interaction: ${customId}`);
-
-        } catch (error) {
-            console.error('Error handling gacha interaction:', error);
-            
-            const errorMessage = `❌ Error: ${error.message}`;
-            
-            if (interaction.deferred || interaction.replied) {
-                await interaction.editReply({ content: errorMessage, embeds: [], components: [] });
-            } else {
-                await interaction.reply({ content: errorMessage, ephemeral: true });
-            }
-        }
     }
 };
