@@ -1373,6 +1373,27 @@ export default {
     },
 
     /**
+     * Handle button interactions (called by index.js)
+     */
+    async handleButtonInteraction(interaction) {
+        return this.handleInteraction(interaction);
+    },
+
+    /**
+     * Handle select menu interactions (called by index.js)
+     */
+    async handleSelectMenuInteraction(interaction) {
+        return this.handleInteraction(interaction);
+    },
+
+    /**
+     * Handle modal submissions (called by index.js)
+     */
+    async handleModalSubmit(interaction) {
+        return this.handleInteraction(interaction);
+    },
+
+    /**
      * Central handler for all button and menu interactions
      */
     async handleInteraction(interaction) {
