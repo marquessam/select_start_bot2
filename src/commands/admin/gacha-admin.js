@@ -21,7 +21,72 @@ export default {
     data: new SlashCommandBuilder()
         .setName('gacha-admin')
         .setDescription('Interactive gacha system management interface')
-        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+        
+        // Keep the old add-item subcommand as backup
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('add-item')
+                .setDescription('Add a new gacha item (classic method)')
+                .addStringOption(option =>
+                    option.setName('item-id')
+                        .setDescription('Unique item ID')
+                        .setRequired(true))
+                .addStringOption(option =>
+                    option.setName('name')
+                        .setDescription('Item name')
+                        .setRequired(true))
+                .addStringOption(option =>
+                    option.setName('description') 
+                        .setDescription('Item description')
+                        .setRequired(true))
+                .addStringOption(option =>
+                    option.setName('emoji-input')
+                        .setDescription('Discord emoji (paste: <:name:id> or <a:name:id> for animated)')
+                        .setRequired(true))
+                .addStringOption(option =>
+                    option.setName('type')
+                        .setDescription('Item type')
+                        .setRequired(false)
+                        .addChoices(
+                            { name: 'Trinket', value: 'trinket' },
+                            { name: 'Collectible', value: 'collectible' },
+                            { name: 'Series', value: 'series' },
+                            { name: 'Special', value: 'special' },
+                            { name: 'Combined', value: 'combined' }
+                        ))
+                .addStringOption(option =>
+                    option.setName('rarity')
+                        .setDescription('Item rarity')
+                        .setRequired(false)
+                        .addChoices(
+                            { name: 'Common', value: 'common' },
+                            { name: 'Uncommon', value: 'uncommon' },
+                            { name: 'Rare', value: 'rare' },
+                            { name: 'Epic', value: 'epic' },
+                            { name: 'Legendary', value: 'legendary' },
+                            { name: 'Mythic', value: 'mythic' }
+                        ))
+                .addNumberOption(option =>
+                    option.setName('drop-rate')
+                        .setDescription('Drop rate % (0 = combination-only)')
+                        .setRequired(true)
+                        .setMinValue(0)
+                        .setMaxValue(100))
+                .addStringOption(option =>
+                    option.setName('flavor-text')
+                        .setDescription('Flavor text (optional)')
+                        .setRequired(false))
+                .addIntegerOption(option =>
+                    option.setName('max-stack')
+                        .setDescription('Max stack size (optional)')
+                        .setRequired(false)
+                        .setMinValue(1)
+                        .setMaxValue(999))
+                .addStringOption(option =>
+                    option.setName('series-id')
+                        .setDescription('Series ID (optional)')
+                        .setRequired(false))),
 
     async execute(interaction) {
         // Check if user is admin
@@ -32,6 +97,13 @@ export default {
             });
         }
 
+        // Check if it's the classic add-item subcommand
+        if (interaction.options.getSubcommand(false) === 'add-item') {
+            await this.handleClassicAddItem(interaction);
+            return;
+        }
+
+        // Otherwise show the modern interactive menu
         await this.handleMainMenu(interaction);
     },
 
@@ -510,253 +582,39 @@ export default {
     },
 
     /**
-     * Show first add item modal (basic info)
+     * Handle classic add-item subcommand (backup method)
      */
-    async showAddItemModal(interaction) {
-        const nextItemId = await this.getNextItemId();
-
-        const modal = new ModalBuilder()
-            .setCustomId('gacha_add_item_step1')
-            .setTitle('Add New Item - Basic Info');
-
-        const itemIdInput = new TextInputBuilder()
-            .setCustomId('item_id')
-            .setLabel('Item ID')
-            .setStyle(TextInputStyle.Short)
-            .setValue(nextItemId) // Auto-populate next ID
-            .setPlaceholder('e.g., 274')
-            .setRequired(true);
-
-        const nameInput = new TextInputBuilder()
-            .setCustomId('item_name')
-            .setLabel('Item Name')
-            .setStyle(TextInputStyle.Short)
-            .setPlaceholder('e.g., Golden Dragon Scale')
-            .setRequired(true);
-
-        const descriptionInput = new TextInputBuilder()
-            .setCustomId('item_description')
-            .setLabel('Description')
-            .setStyle(TextInputStyle.Paragraph)
-            .setPlaceholder('A shimmering scale from an ancient dragon...')
-            .setRequired(true);
-
-        const emojiInput = new TextInputBuilder()
-            .setCustomId('item_emoji')
-            .setLabel('Emoji')
-            .setStyle(TextInputStyle.Short)
-            .setPlaceholder('<:name:123456> or <a:name:123456> for animated')
-            .setRequired(true);
-
-        const typeInput = new TextInputBuilder()
-            .setCustomId('item_type')
-            .setLabel('Type')
-            .setStyle(TextInputStyle.Short)
-            .setPlaceholder('trinket | collectible | series | special | combined')
-            .setRequired(true);
-
-        modal.addComponents(
-            new ActionRowBuilder().addComponents(itemIdInput),
-            new ActionRowBuilder().addComponents(nameInput),
-            new ActionRowBuilder().addComponents(descriptionInput),
-            new ActionRowBuilder().addComponents(emojiInput),
-            new ActionRowBuilder().addComponents(typeInput)
-        );
-
-        await interaction.showModal(modal);
-    },
-
-    /**
-     * Show second add item modal (advanced settings)
-     */
-    async showAddItemStep2Modal(interaction, basicData) {
-        const modal = new ModalBuilder()
-            .setCustomId(`gacha_add_item_step2_${Buffer.from(JSON.stringify(basicData)).toString('base64')}`)
-            .setTitle(`Add Item: ${basicData.itemName}`);
-
-        const rarityInput = new TextInputBuilder()
-            .setCustomId('item_rarity')
-            .setLabel('Rarity')
-            .setStyle(TextInputStyle.Short)
-            .setPlaceholder('common | uncommon | rare | epic | legendary | mythic')
-            .setRequired(true);
-
-        const dropRateInput = new TextInputBuilder()
-            .setCustomId('item_drop_rate')
-            .setLabel('Drop Rate % (0 = combo-only)')
-            .setStyle(TextInputStyle.Short)
-            .setPlaceholder('5')
-            .setRequired(true);
-
-        const flavorTextInput = new TextInputBuilder()
-            .setCustomId('item_flavor_text')
-            .setLabel('Flavor Text (optional)')
-            .setStyle(TextInputStyle.Paragraph)
-            .setPlaceholder('Whispers of ancient power emanate from within...')
-            .setRequired(false);
-
-        const maxStackInput = new TextInputBuilder()
-            .setCustomId('item_max_stack')
-            .setLabel('Max Stack (default: 99)')
-            .setStyle(TextInputStyle.Short)
-            .setPlaceholder('99')
-            .setValue('99')
-            .setRequired(false);
-
-        const seriesIdInput = new TextInputBuilder()
-            .setCustomId('item_series_id')
-            .setLabel('Series ID (optional)')
-            .setStyle(TextInputStyle.Short)
-            .setPlaceholder('dragon_series')
-            .setRequired(false);
-
-        modal.addComponents(
-            new ActionRowBuilder().addComponents(rarityInput),
-            new ActionRowBuilder().addComponents(dropRateInput),
-            new ActionRowBuilder().addComponents(flavorTextInput),
-            new ActionRowBuilder().addComponents(maxStackInput),
-            new ActionRowBuilder().addComponents(seriesIdInput)
-        );
-
-        await interaction.showModal(modal);
-    },
-
-    /**
-     * Handle first step of add item modal
-     */
-    async handleAddItemStep1(interaction) {
+    async handleClassicAddItem(interaction) {
         await interaction.deferReply({ ephemeral: true });
 
         try {
-            const basicData = {
-                itemId: interaction.fields.getTextInputValue('item_id').trim(),
-                itemName: interaction.fields.getTextInputValue('item_name').trim(),
-                description: interaction.fields.getTextInputValue('item_description').trim(),
-                emojiInput: interaction.fields.getTextInputValue('item_emoji').trim(),
-                itemType: interaction.fields.getTextInputValue('item_type').trim().toLowerCase()
-            };
-
-            // Validate basic data
-            if (!basicData.itemId || !basicData.itemName || !basicData.description || !basicData.emojiInput || !basicData.itemType) {
-                throw new Error('All fields in the first step are required.');
-            }
+            const itemId = interaction.options.getString('item-id');
+            const itemName = interaction.options.getString('name');
+            const description = interaction.options.getString('description');
+            const emojiInput = interaction.options.getString('emoji-input');
+            const itemType = interaction.options.getString('type') || 'trinket';
+            const rarity = interaction.options.getString('rarity') || 'rare';
+            const dropRate = interaction.options.getNumber('drop-rate');
+            const flavorText = interaction.options.getString('flavor-text');
+            const maxStack = interaction.options.getInteger('max-stack') || 99;
+            const seriesId = interaction.options.getString('series-id');
 
             // Check if item already exists
-            const existingItem = await GachaItem.findOne({ itemId: basicData.itemId });
+            const existingItem = await GachaItem.findOne({ itemId });
             if (existingItem) {
-                throw new Error(`Item "${basicData.itemId}" already exists.`);
-            }
-
-            // Validate type with smart matching
-            const validTypes = ['trinket', 'collectible', 'series', 'special', 'combined'];
-            const normalizedType = basicData.itemType.toLowerCase().trim();
-            
-            // Try exact match first
-            if (!validTypes.includes(normalizedType)) {
-                // Try partial match
-                const partialMatch = validTypes.find(type => type.startsWith(normalizedType) || normalizedType.startsWith(type.slice(0, 3)));
-                if (partialMatch) {
-                    basicData.itemType = partialMatch;
-                } else {
-                    throw new Error(`Invalid type "${basicData.itemType}". Valid types: ${validTypes.join(' | ')}`);
-                }
-            } else {
-                basicData.itemType = normalizedType;
-            }
-
-            // Test emoji parsing
-            this.parseEmojiInput(basicData.emojiInput);
-
-            // Store basic data in button and show continue message
-            const encodedData = Buffer.from(JSON.stringify(basicData)).toString('base64');
-            
-            const embed = new EmbedBuilder()
-                .setTitle('✅ Basic Info Validated')
-                .setColor('#00FF00')
-                .setDescription(`**${basicData.itemName}** (ID: ${basicData.itemId})`)
-                .addFields(
-                    { name: 'Type', value: basicData.itemType, inline: true },
-                    { name: 'Next Step', value: 'Set rarity, drop rate, and other details', inline: true }
-                )
-                .setTimestamp();
-
-            const continueButton = new ActionRowBuilder()
-                .addComponents(
-                    new ButtonBuilder()
-                        .setCustomId(`gacha_continue_step2_${encodedData}`)
-                        .setLabel('Continue to Advanced Settings')
-                        .setStyle(ButtonStyle.Primary)
-                        .setEmoji('➡️')
-                );
-
-            await interaction.editReply({
-                embeds: [embed],
-                components: [continueButton]
-            });
-
-        } catch (error) {
-            console.error('Error in add item step 1:', error);
-            await interaction.editReply({
-                content: `❌ Error in basic info: ${error.message}\n\n**Valid Types:** trinket | collectible | series | special | combined\n**Emoji Format:** Paste exactly as <:name:123> or <a:name:123>`
-            });
-        }
-    },
-
-    /**
-     * Handle final step of add item modal
-     */
-    async handleAddItemStep2(interaction) {
-        await interaction.deferReply({ ephemeral: true });
-
-        try {
-            // Extract basic data from custom ID
-            const encodedData = interaction.customId.split('_').pop();
-            const basicData = JSON.parse(Buffer.from(encodedData, 'base64').toString());
-
-            // Get advanced data
-            const rarity = interaction.fields.getTextInputValue('item_rarity').trim().toLowerCase();
-            const dropRateStr = interaction.fields.getTextInputValue('item_drop_rate').trim();
-            const flavorText = interaction.fields.getTextInputValue('item_flavor_text').trim() || null;
-            const maxStackStr = interaction.fields.getTextInputValue('item_max_stack').trim();
-            const seriesId = interaction.fields.getTextInputValue('item_series_id').trim() || null;
-
-            // Validate rarity with smart matching
-            const validRarities = ['common', 'uncommon', 'rare', 'epic', 'legendary', 'mythic'];
-            const normalizedRarity = rarity.toLowerCase().trim();
-            let finalRarity = normalizedRarity;
-            
-            // Try exact match first
-            if (!validRarities.includes(normalizedRarity)) {
-                // Try partial match
-                const partialMatch = validRarities.find(r => r.startsWith(normalizedRarity) || normalizedRarity.startsWith(r.slice(0, 3)));
-                if (partialMatch) {
-                    finalRarity = partialMatch;
-                } else {
-                    throw new Error(`Invalid rarity "${rarity}". Valid rarities: ${validRarities.join(' | ')}`);
-                }
-            }
-
-            const dropRate = parseFloat(dropRateStr);
-            if (isNaN(dropRate) || dropRate < 0 || dropRate > 100) {
-                throw new Error('Drop rate must be a number between 0 and 100.');
-            }
-
-            // Handle max stack with 99 default
-            const maxStack = maxStackStr.trim() === '' ? 99 : parseInt(maxStackStr) || 99;
-            if (maxStack < 1 || maxStack > 999) {
-                throw new Error('Max stack must be between 1 and 999.');
+                throw new Error(`Item "${itemId}" already exists.`);
             }
 
             // Parse emoji
-            const emojiData = this.parseEmojiInput(basicData.emojiInput);
+            const emojiData = this.parseEmojiInput(emojiInput);
 
             // Create item
             const newItem = new GachaItem({
-                itemId: basicData.itemId,
-                itemName: basicData.itemName,
-                description: basicData.description,
-                itemType: basicData.itemType,
-                rarity: finalRarity,
+                itemId,
+                itemName,
+                description,
+                itemType,
+                rarity,
                 dropRate,
                 emojiName: emojiData.emojiName,
                 emojiId: emojiData.emojiId,
@@ -773,17 +631,18 @@ export default {
             const sourceText = dropRate > 0 ? `Gacha (${dropRate}% drop rate)` : 'Combination only';
 
             const embed = new EmbedBuilder()
-                .setTitle('✅ Item Created Successfully!')
+                .setTitle('✅ Item Created (Classic Method)')
                 .setColor(COLORS.SUCCESS)
                 .addFields(
-                    { name: 'Preview', value: `${emoji} **${basicData.itemName}**`, inline: false },
-                    { name: 'ID', value: basicData.itemId, inline: true },
-                    { name: 'Type', value: basicData.itemType, inline: true },
-                    { name: 'Rarity', value: finalRarity, inline: true },
+                    { name: 'Preview', value: `${emoji} **${itemName}**`, inline: false },
+                    { name: 'ID', value: itemId, inline: true },
+                    { name: 'Type', value: itemType, inline: true },
+                    { name: 'Rarity', value: rarity, inline: true },
                     { name: 'Source', value: sourceText, inline: true },
-                    { name: 'Max Stack', value: maxStack.toString(), inline: true },
-                    { name: 'Emoji Type', value: emojiData.isAnimated ? 'Animated' : 'Static', inline: true }
-                );
+                    { name: 'Max Stack', value: maxStack.toString(), inline: true }
+                )
+                .setFooter({ text: `Created by ${interaction.user.username}` })
+                .setTimestamp();
 
             if (flavorText) {
                 embed.addFields({ name: 'Flavor Text', value: `*${flavorText}*`, inline: false });
@@ -792,6 +651,199 @@ export default {
             if (seriesId) {
                 embed.addFields({ name: 'Series', value: seriesId, inline: true });
             }
+
+            await interaction.editReply({ embeds: [embed] });
+
+        } catch (error) {
+            console.error('Error in classic add item:', error);
+            await interaction.editReply({
+                content: `❌ Error creating item: ${error.message}`
+            });
+        }
+    },
+
+    /**
+     * Calculate rarity based on drop rate
+     */
+    calculateRarityFromDropRate(dropRate) {
+        if (dropRate >= 40) return 'common';
+        if (dropRate >= 21) return 'uncommon';
+        if (dropRate >= 10) return 'rare';
+        if (dropRate >= 4) return 'epic';
+        if (dropRate >= 1) return 'legendary';
+        return 'mythic'; // 0% or special cases
+    },
+
+    /**
+     * Calculate max stack based on rarity
+     */
+    calculateMaxStackFromRarity(rarity) {
+        switch (rarity) {
+            case 'common':
+            case 'uncommon':
+            case 'rare':
+                return 99;
+            case 'epic':
+                return 5;
+            case 'legendary':
+            case 'mythic':
+                return 1;
+            default:
+                return 99;
+        }
+    },
+
+    /**
+     * Show simplified single add item modal
+     */
+    async showAddItemModal(interaction) {
+        const nextItemId = await this.getNextItemId();
+
+        const modal = new ModalBuilder()
+            .setCustomId('gacha_add_item_simple')
+            .setTitle('Add New Item - Smart Entry');
+
+        const itemIdInput = new TextInputBuilder()
+            .setCustomId('item_id')
+            .setLabel('Item ID')
+            .setStyle(TextInputStyle.Short)
+            .setValue(nextItemId) // Auto-populate next ID
+            .setPlaceholder('e.g., 300')
+            .setRequired(true);
+
+        const emojiInput = new TextInputBuilder()
+            .setCustomId('item_emoji')
+            .setLabel('Emoji')
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder('<:name:123456> or <a:name:123456> for animated')
+            .setRequired(true);
+
+        const nameSeriesInput = new TextInputBuilder()
+            .setCustomId('name_series')
+            .setLabel('Name, Series (comma separated)')
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder('Super Mario, Mario  OR  Just Item Name')
+            .setRequired(true);
+
+        const descFlavorInput = new TextInputBuilder()
+            .setCustomId('desc_flavor')
+            .setLabel('Description + Flavor Text (line break separated)')
+            .setStyle(TextInputStyle.Paragraph)
+            .setPlaceholder('Main description here\nOptional flavor text here')
+            .setRequired(true);
+
+        const dropRateInput = new TextInputBuilder()
+            .setCustomId('drop_rate')
+            .setLabel('Drop Rate % (sets rarity & max stack auto)')
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder('5 (40+=common, 21-39=uncommon, 10-20=rare, 4-9=epic, 1-3=legendary, 0=mythic)')
+            .setRequired(true);
+
+        modal.addComponents(
+            new ActionRowBuilder().addComponents(itemIdInput),
+            new ActionRowBuilder().addComponents(emojiInput),
+            new ActionRowBuilder().addComponents(nameSeriesInput),
+            new ActionRowBuilder().addComponents(descFlavorInput),
+            new ActionRowBuilder().addComponents(dropRateInput)
+        );
+
+        await interaction.showModal(modal);
+    },
+
+    /**
+     * Handle simplified add item modal submission
+     */
+    async handleAddItemSimple(interaction) {
+        await interaction.deferReply({ ephemeral: true });
+
+        try {
+            const itemId = interaction.fields.getTextInputValue('item_id').trim();
+            const emojiInput = interaction.fields.getTextInputValue('item_emoji').trim();
+            const nameSeriesInput = interaction.fields.getTextInputValue('name_series').trim();
+            const descFlavorInput = interaction.fields.getTextInputValue('desc_flavor').trim();
+            const dropRateStr = interaction.fields.getTextInputValue('drop_rate').trim();
+
+            // Parse name and series
+            const nameSeriesParts = nameSeriesInput.split(',').map(s => s.trim());
+            const itemName = nameSeriesParts[0];
+            const seriesId = nameSeriesParts.length > 1 ? nameSeriesParts[1] : null;
+
+            // Parse description and flavor text
+            const descFlavorParts = descFlavorInput.split('\n');
+            const description = descFlavorParts[0]?.trim();
+            const flavorText = descFlavorParts.length > 1 ? descFlavorParts.slice(1).join('\n').trim() : null;
+
+            // Validate required fields
+            if (!itemId || !itemName || !description || !emojiInput || !dropRateStr) {
+                throw new Error('Item ID, name, description, emoji, and drop rate are required.');
+            }
+
+            // Check if item already exists
+            const existingItem = await GachaItem.findOne({ itemId });
+            if (existingItem) {
+                throw new Error(`Item "${itemId}" already exists.`);
+            }
+
+            // Parse and validate drop rate
+            const dropRate = parseFloat(dropRateStr);
+            if (isNaN(dropRate) || dropRate < 0 || dropRate > 100) {
+                throw new Error('Drop rate must be a number between 0 and 100.');
+            }
+
+            // Auto-calculate rarity and max stack
+            const rarity = this.calculateRarityFromDropRate(dropRate);
+            const maxStack = this.calculateMaxStackFromRarity(rarity);
+
+            // Parse emoji
+            const emojiData = this.parseEmojiInput(emojiInput);
+
+            // Create item
+            const newItem = new GachaItem({
+                itemId,
+                itemName,
+                description,
+                itemType: 'trinket', // Default type for now
+                rarity,
+                dropRate,
+                emojiName: emojiData.emojiName,
+                emojiId: emojiData.emojiId,
+                isAnimated: emojiData.isAnimated,
+                flavorText: flavorText || null,
+                maxStack,
+                seriesId: seriesId || null,
+                createdBy: interaction.user.username
+            });
+
+            await newItem.save();
+
+            const emoji = this.formatItemEmoji(newItem);
+            const sourceText = dropRate > 0 ? `Gacha (${dropRate}% drop rate)` : 'Combination only';
+
+            const embed = new EmbedBuilder()
+                .setTitle('✅ Item Created Successfully!')
+                .setColor(this.getRarityColor(rarity))
+                .addFields(
+                    { name: 'Preview', value: `${emoji} **${itemName}**`, inline: false },
+                    { name: 'ID', value: itemId, inline: true },
+                    { name: 'Rarity', value: `${rarity} (auto)`, inline: true },
+                    { name: 'Max Stack', value: `${maxStack} (auto)`, inline: true },
+                    { name: 'Source', value: sourceText, inline: true },
+                    { name: 'Emoji Type', value: emojiData.isAnimated ? 'Animated' : 'Static', inline: true }
+                );
+
+            if (seriesId) {
+                embed.addFields({ name: 'Series', value: seriesId, inline: true });
+            }
+
+            if (flavorText) {
+                embed.addFields({ name: 'Flavor Text', value: `*${flavorText}*`, inline: false });
+            }
+
+            embed.addFields({
+                name: 'Auto-Calculations',
+                value: `**Rarity Logic:** ${dropRate}% → ${rarity}\n**Stack Logic:** ${rarity} → ${maxStack} max`,
+                inline: false
+            });
 
             embed.setFooter({ text: `Created by ${interaction.user.username}` });
             embed.setTimestamp();
@@ -816,9 +868,13 @@ export default {
             });
 
         } catch (error) {
-            console.error('Error creating item step 2:', error);
+            console.error('Error creating item (simple):', error);
             await interaction.editReply({
-                content: `❌ Error in advanced settings: ${error.message}\n\n**Valid Rarities:** common | uncommon | rare | epic | legendary | mythic\n**Drop Rate:** 0-100 (0 = combination-only)\n**Max Stack:** 1-999 (default: 99)`
+                content: `❌ Error creating item: ${error.message}\n\n**Format Examples:**\n` +
+                         `• **Name/Series:** "Super Mario, Mario" or just "Golden Scale"\n` +
+                         `• **Desc/Flavor:** "A shimmering scale\\nWhispers of ancient power"\n` +
+                         `• **Drop Rate:** 5 (sets rarity: 40+=common, 21-39=uncommon, 10-20=rare, 4-9=epic, 1-3=legendary, 0=mythic)\n` +
+                         `• **Emoji:** Paste exactly as <:name:123> or <a:name:123>`
             });
         }
     },
@@ -1545,6 +1601,14 @@ export default {
                 return;
             }
 
+            // Continue to step 2 button
+            if (customId.startsWith('gacha_continue_step2_')) {
+                const encodedData = customId.replace('gacha_continue_step2_', '');
+                const basicData = JSON.parse(Buffer.from(encodedData, 'base64').toString());
+                await this.showAddItemStep2Modal(interaction, basicData);
+                return;
+            }
+
             // Combination management
             if (customId === 'gacha_add_combination_modal' || customId === 'gacha_add_another_combo') {
                 await this.showAddCombinationModal(interaction);
@@ -1583,13 +1647,8 @@ export default {
             }
 
             // Modal submissions
-            if (customId === 'gacha_add_item_step1') {
-                await this.handleAddItemStep1(interaction);
-                return;
-            }
-
-            if (customId.startsWith('gacha_add_item_step2_')) {
-                await this.handleAddItemStep2(interaction);
+            if (customId === 'gacha_add_item_simple') {
+                await this.handleAddItemSimple(interaction);
                 return;
             }
 
