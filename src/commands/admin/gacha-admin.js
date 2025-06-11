@@ -181,7 +181,7 @@ export default {
      */
     createMainMenuComponents() {
         const selectMenu = new StringSelectMenuBuilder()
-            .setCustomId('gacha_main_menu')
+            .setCustomId('gacha-admin_main_menu')
             .setPlaceholder('Choose a management category...')
             .addOptions([
                 {
@@ -213,19 +213,19 @@ export default {
         const quickButtons = new ActionRowBuilder()
             .addComponents(
                 new ButtonBuilder()
-                    .setCustomId('gacha_quick_list_items')
+                    .setCustomId('gacha-admin_quick_list_items')
                     .setLabel('Browse Items')
                     .setStyle(ButtonStyle.Primary)
                     .setEmoji('📋'),
 
                 new ButtonBuilder()
-                    .setCustomId('gacha_quick_combinations')
+                    .setCustomId('gacha-admin_quick_combinations')
                     .setLabel('Combinations')
                     .setStyle(ButtonStyle.Secondary)
                     .setEmoji('⚗️'),
 
                 new ButtonBuilder()
-                    .setCustomId('gacha_refresh_main')
+                    .setCustomId('gacha-admin_refresh_main')
                     .setLabel('Refresh')
                     .setStyle(ButtonStyle.Secondary)
                     .setEmoji('🔄')
@@ -314,13 +314,13 @@ export default {
             const actionButtons = new ActionRowBuilder()
                 .addComponents(
                     new ButtonBuilder()
-                        .setCustomId('gacha_list_items_menu')
+                        .setCustomId('gacha-admin_list_items_menu')
                         .setLabel('Browse Items')
                         .setStyle(ButtonStyle.Primary)
                         .setEmoji('📋'),
 
                     new ButtonBuilder()
-                        .setCustomId('gacha_back_to_main')
+                        .setCustomId('gacha-admin_back_to_main')
                         .setLabel('Back to Main')
                         .setStyle(ButtonStyle.Secondary)
                         .setEmoji('⬅️')
@@ -386,19 +386,19 @@ export default {
             const actionButtons = new ActionRowBuilder()
                 .addComponents(
                     new ButtonBuilder()
-                        .setCustomId('gacha_add_combination_modal')
+                        .setCustomId('gacha-admin_add_combination_modal')
                         .setLabel('Create Rule')
                         .setStyle(ButtonStyle.Success)
                         .setEmoji('➕'),
                     
                     new ButtonBuilder()
-                        .setCustomId('gacha_list_combinations_menu')
+                        .setCustomId('gacha-admin_list_combinations_menu')
                         .setLabel('Browse Rules')
                         .setStyle(ButtonStyle.Primary)
                         .setEmoji('📋'),
 
                     new ButtonBuilder()
-                        .setCustomId('gacha_back_to_main')
+                        .setCustomId('gacha-admin_back_to_main')
                         .setLabel('Back to Main')
                         .setStyle(ButtonStyle.Secondary)
                         .setEmoji('⬅️')
@@ -460,13 +460,13 @@ export default {
             const actionButtons = new ActionRowBuilder()
                 .addComponents(
                     new ButtonBuilder()
-                        .setCustomId('gacha_give_item_modal')
+                        .setCustomId('gacha-admin_give_item_modal')
                         .setLabel('Give Item')
                         .setStyle(ButtonStyle.Success)
                         .setEmoji('🎁'),
                     
                     new ButtonBuilder()
-                        .setCustomId('gacha_back_to_main')
+                        .setCustomId('gacha-admin_back_to_main')
                         .setLabel('Back to Main')
                         .setStyle(ButtonStyle.Secondary)
                         .setEmoji('⬅️')
@@ -533,7 +533,7 @@ export default {
             const actionButtons = new ActionRowBuilder()
                 .addComponents(
                     new ButtonBuilder()
-                        .setCustomId('gacha_back_to_main')
+                        .setCustomId('gacha-admin_back_to_main')
                         .setLabel('Back to Main')
                         .setStyle(ButtonStyle.Secondary)
                         .setEmoji('⬅️')
@@ -731,7 +731,7 @@ export default {
 
             // Filter dropdown
             const filterMenu = new StringSelectMenuBuilder()
-                .setCustomId(`gacha_filter_items_${page}`)
+                .setCustomId(`gacha-admin_filter_items_${page}`)
                 .setPlaceholder('Filter items...')
                 .addOptions([
                     { label: 'All Items', value: 'all', emoji: '📦' },
@@ -744,19 +744,19 @@ export default {
             const paginationRow = new ActionRowBuilder()
                 .addComponents(
                     new ButtonBuilder()
-                        .setCustomId(`gacha_items_page_${Math.max(1, page - 1)}_${filter}`)
+                        .setCustomId(`gacha-admin_items_page_${Math.max(1, page - 1)}_${filter}`)
                         .setLabel('◀ Previous')
                         .setStyle(ButtonStyle.Secondary)
                         .setDisabled(page === 1),
                     
                     new ButtonBuilder()
-                        .setCustomId('gacha_page_info')
+                        .setCustomId('gacha-admin_page_info')
                         .setLabel(`${page}/${totalPages}`)
                         .setStyle(ButtonStyle.Secondary)
                         .setDisabled(true),
                     
                     new ButtonBuilder()
-                        .setCustomId(`gacha_items_page_${Math.min(totalPages, page + 1)}_${filter}`)
+                        .setCustomId(`gacha-admin_items_page_${Math.min(totalPages, page + 1)}_${filter}`)
                         .setLabel('Next ▶')
                         .setStyle(ButtonStyle.Secondary)
                         .setDisabled(page === totalPages)
@@ -766,7 +766,7 @@ export default {
             const actionRow = new ActionRowBuilder()
                 .addComponents(
                     new ButtonBuilder()
-                        .setCustomId('gacha_back_to_items')
+                        .setCustomId('gacha-admin_back_to_items')
                         .setLabel('Back')
                         .setStyle(ButtonStyle.Secondary)
                         .setEmoji('⬅️')
@@ -800,7 +800,7 @@ export default {
      */
     async showAddCombinationModal(interaction) {
         const modal = new ModalBuilder()
-            .setCustomId('gacha_add_combo_submit')
+            .setCustomId('gacha-admin_add_combo_submit')
             .setTitle('Create Combination Rule');
 
         const formatInput = new TextInputBuilder()
@@ -909,12 +909,12 @@ export default {
             const actionButtons = new ActionRowBuilder()
                 .addComponents(
                     new ButtonBuilder()
-                        .setCustomId('gacha_add_another_combo')
+                        .setCustomId('gacha-admin_add_another_combo')
                         .setLabel('Add Another')
                         .setStyle(ButtonStyle.Primary)
                         .setEmoji('➕'),
                     new ButtonBuilder()
-                        .setCustomId('gacha_back_to_combinations')
+                        .setCustomId('gacha-admin_back_to_combinations')
                         .setLabel('Back to Combinations')
                         .setStyle(ButtonStyle.Secondary)
                         .setEmoji('⬅️')
@@ -966,12 +966,12 @@ export default {
                 const actionButton = new ActionRowBuilder()
                     .addComponents(
                         new ButtonBuilder()
-                            .setCustomId('gacha_add_combination_modal')
+                            .setCustomId('gacha-admin_add_combination_modal')
                             .setLabel('Create First Rule')
                             .setStyle(ButtonStyle.Primary)
                             .setEmoji('➕'),
                         new ButtonBuilder()
-                            .setCustomId('gacha_back_to_combinations')
+                            .setCustomId('gacha-admin_back_to_combinations')
                             .setLabel('Back')
                             .setStyle(ButtonStyle.Secondary)
                             .setEmoji('⬅️')
@@ -1014,19 +1014,19 @@ export default {
             const paginationRow = new ActionRowBuilder()
                 .addComponents(
                     new ButtonBuilder()
-                        .setCustomId(`gacha_combo_page_${Math.max(1, page - 1)}`)
+                        .setCustomId(`gacha-admin_combo_page_${Math.max(1, page - 1)}`)
                         .setLabel('◀ Previous')
                         .setStyle(ButtonStyle.Secondary)
                         .setDisabled(page === 1),
                     
                     new ButtonBuilder()
-                        .setCustomId('gacha_combo_page_info')
+                        .setCustomId('gacha-admin_combo_page_info')
                         .setLabel(`${page}/${totalPages}`)
                         .setStyle(ButtonStyle.Secondary)
                         .setDisabled(true),
                     
                     new ButtonBuilder()
-                        .setCustomId(`gacha_combo_page_${Math.min(totalPages, page + 1)}`)
+                        .setCustomId(`gacha-admin_combo_page_${Math.min(totalPages, page + 1)}`)
                         .setLabel('Next ▶')
                         .setStyle(ButtonStyle.Secondary)
                         .setDisabled(page === totalPages)
@@ -1036,13 +1036,13 @@ export default {
             const actionRow = new ActionRowBuilder()
                 .addComponents(
                     new ButtonBuilder()
-                        .setCustomId('gacha_add_combination_modal')
+                        .setCustomId('gacha-admin_add_combination_modal')
                         .setLabel('Add Rule')
                         .setStyle(ButtonStyle.Success)
                         .setEmoji('➕'),
                     
                     new ButtonBuilder()
-                        .setCustomId('gacha_back_to_combinations')
+                        .setCustomId('gacha-admin_back_to_combinations')
                         .setLabel('Back')
                         .setStyle(ButtonStyle.Secondary)
                         .setEmoji('⬅️')
@@ -1070,7 +1070,7 @@ export default {
      */
     async showGiveItemModal(interaction) {
         const modal = new ModalBuilder()
-            .setCustomId('gacha_give_item_submit')
+            .setCustomId('gacha-admin_give_item_submit')
             .setTitle('Give Item to User');
 
         const usernameInput = new TextInputBuilder()
@@ -1152,12 +1152,12 @@ export default {
             const actionButtons = new ActionRowBuilder()
                 .addComponents(
                     new ButtonBuilder()
-                        .setCustomId('gacha_give_another_item')
+                        .setCustomId('gacha-admin_give_another_item')
                         .setLabel('Give Another')
                         .setStyle(ButtonStyle.Primary)
                         .setEmoji('🎁'),
                     new ButtonBuilder()
-                        .setCustomId('gacha_back_to_users')
+                        .setCustomId('gacha-admin_back_to_users')
                         .setLabel('Back to Users')
                         .setStyle(ButtonStyle.Secondary)
                         .setEmoji('⬅️')
@@ -1311,7 +1311,7 @@ export default {
 
         try {
             // Main menu navigation
-            if (customId === 'gacha_main_menu') {
+            if (customId === 'gacha-admin_main_menu') {
                 console.log('Handling main menu selection:', interaction.values[0]);
                 const value = interaction.values[0];
                 switch (value) {
@@ -1332,51 +1332,51 @@ export default {
             }
 
             // Quick action buttons
-            if (customId === 'gacha_quick_list_items' || customId === 'gacha_list_items_menu') {
+            if (customId === 'gacha-admin_quick_list_items' || customId === 'gacha-admin_list_items_menu') {
                 await this.handleItemsList(interaction, 1, 'all');
                 return;
             }
 
-            if (customId === 'gacha_quick_combinations' || customId === 'gacha_list_combinations_menu') {
+            if (customId === 'gacha-admin_quick_combinations' || customId === 'gacha-admin_list_combinations_menu') {
                 await this.handleCombinationsList(interaction, 1);
                 return;
             }
 
             // Navigation buttons
-            if (customId === 'gacha_back_to_main' || customId === 'gacha_refresh_main') {
+            if (customId === 'gacha-admin_back_to_main' || customId === 'gacha-admin_refresh_main') {
                 await this.handleMainMenu(interaction);
                 return;
             }
 
-            if (customId === 'gacha_back_to_items') {
+            if (customId === 'gacha-admin_back_to_items') {
                 await this.handleItemsMenu(interaction);
                 return;
             }
 
-            if (customId === 'gacha_back_to_combinations') {
+            if (customId === 'gacha-admin_back_to_combinations') {
                 await this.handleCombinationsMenu(interaction);
                 return;
             }
 
-            if (customId === 'gacha_back_to_users') {
+            if (customId === 'gacha-admin_back_to_users') {
                 await this.handleUsersMenu(interaction);
                 return;
             }
 
             // Combination management
-            if (customId === 'gacha_add_combination_modal' || customId === 'gacha_add_another_combo') {
+            if (customId === 'gacha-admin_add_combination_modal' || customId === 'gacha-admin_add_another_combo') {
                 await this.showAddCombinationModal(interaction);
                 return;
             }
 
             // User management
-            if (customId === 'gacha_give_item_modal' || customId === 'gacha_give_another_item') {
+            if (customId === 'gacha-admin_give_item_modal' || customId === 'gacha-admin_give_another_item') {
                 await this.showGiveItemModal(interaction);
                 return;
             }
 
             // Item pagination
-            if (customId.startsWith('gacha_items_page_')) {
+            if (customId.startsWith('gacha-admin_items_page_')) {
                 const parts = customId.split('_');
                 const page = parseInt(parts[3]);
                 const filter = parts[4] || 'all';
@@ -1385,14 +1385,14 @@ export default {
             }
 
             // Combination pagination
-            if (customId.startsWith('gacha_combo_page_')) {
+            if (customId.startsWith('gacha-admin_combo_page_')) {
                 const page = parseInt(customId.split('_')[3]);
                 await this.handleCombinationsList(interaction, page);
                 return;
             }
 
             // Filter handling
-            if (customId.startsWith('gacha_filter_items_')) {
+            if (customId.startsWith('gacha-admin_filter_items_')) {
                 console.log('Handling filter selection:', interaction.values[0]);
                 const page = parseInt(customId.split('_')[3]) || 1;
                 const filter = interaction.values[0];
@@ -1401,18 +1401,18 @@ export default {
             }
 
             // Modal submissions
-            if (customId === 'gacha_add_combo_submit') {
+            if (customId === 'gacha-admin_add_combo_submit') {
                 await this.handleCombinationModalSubmission(interaction);
                 return;
             }
 
-            if (customId === 'gacha_give_item_submit') {
+            if (customId === 'gacha-admin_give_item_submit') {
                 await this.handleGiveItemSubmission(interaction);
                 return;
             }
 
             // Default fallback
-            console.log(`Unhandled gacha interaction: ${customId}`);
+            console.log(`Unhandled gacha-admin interaction: ${customId}`);
 
         } catch (error) {
             console.error('Error handling gacha interaction:', error);
