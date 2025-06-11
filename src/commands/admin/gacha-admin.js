@@ -625,8 +625,6 @@ export default {
      * Handle first step of add item modal
      */
     async handleAddItemStep1(interaction) {
-        await interaction.deferReply({ ephemeral: true });
-
         try {
             const basicData = {
                 itemId: interaction.fields.getTextInputValue('item_id').trim(),
@@ -667,18 +665,15 @@ export default {
             // Test emoji parsing
             this.parseEmojiInput(basicData.emojiInput);
 
-            // Send step 2 modal
-            await interaction.editReply({
-                content: '✅ Basic info validated! Opening advanced settings...'
-            });
-
-            // Show second modal
+            // Show second modal immediately (don't defer first)
             await this.showAddItemStep2Modal(interaction, basicData);
 
         } catch (error) {
             console.error('Error in add item step 1:', error);
-            await interaction.editReply({
-                content: `❌ Error in basic info: ${error.message}\n\n**Valid Types:** trinket | collectible | series | special | combined\n**Emoji Format:** Paste exactly as <:name:123> or <a:name:123>`
+            // Only defer if there's an error
+            await interaction.reply({
+                content: `❌ Error in basic info: ${error.message}\n\n**Valid Types:** trinket | collectible | series | special | combined\n**Emoji Format:** Paste exactly as <:name:123> or <a:name:123>`,
+                ephemeral: true
             });
         }
     },
