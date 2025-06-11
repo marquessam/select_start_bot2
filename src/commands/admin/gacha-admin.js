@@ -543,16 +543,16 @@ export default {
 
         const emojiInput = new TextInputBuilder()
             .setCustomId('item_emoji')
-            .setLabel('Emoji (paste: <:name:id> or <a:name:id>)')
+            .setLabel('Emoji')
             .setStyle(TextInputStyle.Short)
-            .setPlaceholder('<:dragon_scale:123456789>')
+            .setPlaceholder('<:name:123456> or <a:name:123456> for animated')
             .setRequired(true);
 
         const typeInput = new TextInputBuilder()
             .setCustomId('item_type')
-            .setLabel('Type - Choose: trinket | collectible | series | special | combined')
+            .setLabel('Type')
             .setStyle(TextInputStyle.Short)
-            .setPlaceholder('trinket (most common)')
+            .setPlaceholder('trinket | collectible | series | special | combined')
             .setRequired(true);
 
         modal.addComponents(
@@ -576,14 +576,14 @@ export default {
 
         const rarityInput = new TextInputBuilder()
             .setCustomId('item_rarity')
-            .setLabel('Rarity - Choose: common | uncommon | rare | epic | legendary | mythic')
+            .setLabel('Rarity')
             .setStyle(TextInputStyle.Short)
-            .setPlaceholder('rare (most common for new items)')
+            .setPlaceholder('common | uncommon | rare | epic | legendary | mythic')
             .setRequired(true);
 
         const dropRateInput = new TextInputBuilder()
             .setCustomId('item_drop_rate')
-            .setLabel('Drop Rate % (0 = combination-only)')
+            .setLabel('Drop Rate % (0 = combo-only)')
             .setStyle(TextInputStyle.Short)
             .setPlaceholder('5')
             .setRequired(true);
@@ -597,7 +597,7 @@ export default {
 
         const maxStackInput = new TextInputBuilder()
             .setCustomId('item_max_stack')
-            .setLabel('Max Stack Size (default: 99 if left blank)')
+            .setLabel('Max Stack (default: 99)')
             .setStyle(TextInputStyle.Short)
             .setPlaceholder('99')
             .setValue('99')
