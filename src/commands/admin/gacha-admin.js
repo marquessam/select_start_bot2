@@ -625,6 +625,8 @@ export default {
      * Handle first step of add item modal
      */
     async handleAddItemStep1(interaction) {
+        await interaction.deferReply({ ephemeral: true });
+
         try {
             const basicData = {
                 itemId: interaction.fields.getTextInputValue('item_id').trim(),
@@ -665,15 +667,37 @@ export default {
             // Test emoji parsing
             this.parseEmojiInput(basicData.emojiInput);
 
-            // Show second modal immediately (don't defer first)
-            await this.showAddItemStep2Modal(interaction, basicData);
+            // Store basic data in button and show continue message
+            const encodedData = Buffer.from(JSON.stringify(basicData)).toString('base64');
+            
+            const embed = new EmbedBuilder()
+                .setTitle('✅ Basic Info Validated')
+                .setColor('#00FF00')
+                .setDescription(`**${basicData.itemName}** (ID: ${basicData.itemId})`)
+                .addFields(
+                    { name: 'Type', value: basicData.itemType, inline: true },
+                    { name: 'Next Step', value: 'Set rarity, drop rate, and other details', inline: true }
+                )
+                .setTimestamp();
+
+            const continueButton = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder()
+                        .setCustomId(`gacha_continue_step2_${encodedData}`)
+                        .setLabel('Continue to Advanced Settings')
+                        .setStyle(ButtonStyle.Primary)
+                        .setEmoji('➡️')
+                );
+
+            await interaction.editReply({
+                embeds: [embed],
+                components: [continueButton]
+            });
 
         } catch (error) {
             console.error('Error in add item step 1:', error);
-            // Only defer if there's an error
-            await interaction.reply({
-                content: `❌ Error in basic info: ${error.message}\n\n**Valid Types:** trinket | collectible | series | special | combined\n**Emoji Format:** Paste exactly as <:name:123> or <a:name:123>`,
-                ephemeral: true
+            await interaction.editReply({
+                content: `❌ Error in basic info: ${error.message}\n\n**Valid Types:** trinket | collectible | series | special | combined\n**Emoji Format:** Paste exactly as <:name:123> or <a:name:123>`
             });
         }
     },
