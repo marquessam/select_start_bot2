@@ -1,147 +1,132 @@
-// src/utils/arenaUtils.js - UPDATED with gear for creator
-import { config } from '../config/config.js';
+// src/utils/arenaUtils.js - COMPLETE UPDATED VERSION with rate limiting support
+
+import retroAPI from '../services/retroAPI.js';
+import RetroAPIUtils from './RetroAPIUtils.js';
+import { EmbedBuilder } from 'discord.js';
+import titleUtils from './titleUtils.js';
 
 class ArenaUtils {
-    /**
-     * Get RetroAchievements API credentials using environment variables (like retroAPI)
-     * @private
-     */
-    getRACredentials() {
-        const username = process.env.RA_USERNAME;
-        const apiKey = process.env.RA_API_KEY;
+    constructor() {
+        // Track leaderboard validation status to avoid repeated failures
+        this.invalidLeaderboards = new Set();
+        this.lastValidationCheck = new Map();
         
-        if (!username || !apiKey) {
-            throw new Error('RetroAchievements API credentials not found. Please set RA_USERNAME and RA_API_KEY environment variables.');
-        }
-        
-        return { username, apiKey };
+        // Cache for game info to reduce API calls
+        this.gameInfoCache = new Map();
+        this.gameInfoCacheTTL = 300000; // 5 minutes
     }
 
     /**
-     * Get leaderboard entries using direct API request (following retroAPI pattern)
-     * @param {number} leaderboardId - RetroAchievements leaderboard ID
-     * @param {number} offset - Starting position (0-based)
-     * @param {number} count - Number of entries to retrieve
-     * @returns {Promise<Object>} Leaderboard data object with Results array
-     */
-    async getLeaderboardEntriesDirect(leaderboardId, offset = 0, count = 1000) {
-        try {
-            const { username, apiKey } = this.getRACredentials();
-            
-            // Make direct API request to the RetroAchievements leaderboard endpoint (same as retroAPI)
-            const url = `https://retroachievements.org/API/API_GetLeaderboardEntries.php?i=${leaderboardId}&o=${offset}&c=${count}&z=${username}&y=${apiKey}`;
-            
-            console.log(`Fetching leaderboard entries for leaderboard ${leaderboardId} (offset: ${offset}, count: ${count})`);
-            
-            const response = await fetch(url);
-            if (!response.ok) {
-                throw new Error(`API request failed with status ${response.status}`);
-            }
-            
-            const data = await response.json();
-            console.log(`Successfully fetched ${data?.Results?.length || 0} leaderboard entries`);
-            
-            return data;
-        } catch (error) {
-            console.error(`Error fetching direct leaderboard entries for ${leaderboardId}:`, error);
-            return { Results: [] }; // Return empty Results array for consistent structure
-        }
-    }
-
-    /**
-     * Process leaderboard entries to standardize the format (following retroAPI pattern)
-     * @param {Object|Array} data - Raw API response
-     * @returns {Array} Standardized leaderboard entries
-     */
-    processLeaderboardEntries(data) {
-        // Check if we have a Results array (API sometimes returns different formats)
-        const entries = data.Results || data;
-        
-        if (!entries || !Array.isArray(entries)) {
-            return [];
-        }
-        
-        // Convert entries to a standard format (same as retroAPI)
-        return entries.map(entry => {
-            // Handle different API response formats
-            const user = entry.User || entry.user || '';
-            const apiRank = entry.Rank || entry.rank || '0';
-            
-            // For scores, check all possible properties
-            let score = null;
-            
-            // Check for numeric scores first (points-based leaderboards)
-            if (entry.Score !== undefined) score = entry.Score;
-            else if (entry.score !== undefined) score = entry.score;
-            else if (entry.Value !== undefined) score = entry.Value;
-            else if (entry.value !== undefined) score = entry.value;
-            
-            // Get the formatted version if available
-            let formattedScore = null;
-            if (entry.FormattedScore) formattedScore = entry.FormattedScore;
-            else if (entry.formattedScore) formattedScore = entry.formattedScore;
-            else if (entry.ScoreFormatted) formattedScore = entry.ScoreFormatted;
-            else if (entry.scoreFormatted) formattedScore = entry.scoreFormatted;
-            
-            // Use the appropriate score representation
-            let trackTime;
-            if (formattedScore !== null) {
-                trackTime = formattedScore;
-            } else if (score !== null) {
-                trackTime = score.toString();
-            } else {
-                // Last resort fallback
-                trackTime = "No Score";
-            }
-            
-            return {
-                ApiRank: parseInt(apiRank, 10),
-                User: user.trim(),
-                TrackTime: trackTime.toString().trim(),
-                DateSubmitted: entry.DateSubmitted || entry.dateSubmitted || null,
-                RawScore: score, // Keep raw score for sorting
-                FormattedScore: formattedScore // Keep formatted score
-            };
-        }).filter(entry => entry.User.length > 0);
-    }
-
-    /**
-     * Fetch leaderboard scores for specific users (updated to use 1000 entries like arcade)
+     * IMPROVED: Fetch leaderboard scores with better error handling and validation
+     * @param {number} gameId - Game ID
+     * @param {number} leaderboardId - Leaderboard ID  
+     * @param {Array<string>} raUsernames - Array of RA usernames to get scores for
+     * @returns {Promise<Array>} Array of score objects
      */
     async fetchLeaderboardScores(gameId, leaderboardId, raUsernames) {
         try {
             console.log(`Fetching leaderboard scores for game ${gameId}, leaderboard ${leaderboardId}`);
             console.log('Target users:', raUsernames);
 
-            // Fetch up to 1000 entries like the arcade service does
-            const data = await this.getLeaderboardEntriesDirect(leaderboardId, 0, 1000);
-            
-            // Process entries to standardized format
-            const processedEntries = this.processLeaderboardEntries(data);
-            
-            if (!processedEntries || processedEntries.length === 0) {
-                console.log('No leaderboard data received or invalid format');
+            // Check if this leaderboard was previously marked as invalid
+            if (this.invalidLeaderboards.has(leaderboardId)) {
+                console.log(`Leaderboard ${leaderboardId} was previously marked as invalid, returning no-score results`);
                 return this.createNoScoreResults(raUsernames);
             }
 
-            console.log(`Processed ${processedEntries.length} leaderboard entries`);
+            // Validate leaderboard before attempting to fetch (with caching)
+            const lastCheck = this.lastValidationCheck.get(leaderboardId);
+            const shouldValidate = !lastCheck || (Date.now() - lastCheck) > 300000; // 5 minutes
 
-            // Find entries for our target users (same logic as before)
+            if (shouldValidate) {
+                console.log(`Validating leaderboard ${leaderboardId}...`);
+                const isValid = await retroAPI.validateLeaderboard(leaderboardId);
+                this.lastValidationCheck.set(leaderboardId, Date.now());
+                
+                if (!isValid) {
+                    console.log(`Leaderboard ${leaderboardId} validation failed, marking as invalid`);
+                    this.invalidLeaderboards.add(leaderboardId);
+                    return this.createNoScoreResults(raUsernames);
+                }
+                console.log(`Leaderboard ${leaderboardId} validation passed`);
+            }
+
+            // Try multiple methods with fallbacks
+            let rawEntries = null;
+            
+            // Method 1: Use RetroAPIUtils (most reliable)
+            try {
+                console.log('Attempting to fetch via RetroAPIUtils...');
+                rawEntries = await RetroAPIUtils.getLeaderboardEntries(leaderboardId, 1000);
+                if (rawEntries && rawEntries.length > 0) {
+                    console.log(`RetroAPIUtils succeeded: ${rawEntries.length} entries`);
+                }
+            } catch (apiError) {
+                console.warn('RetroAPIUtils failed:', apiError.message);
+            }
+
+            // Method 2: Fallback to retroAPI service
+            if (!rawEntries || rawEntries.length === 0) {
+                console.log('Attempting to fetch via retroAPI service...');
+                try {
+                    const response = await retroAPI.getLeaderboardEntries(leaderboardId, 0, 1000);
+                    if (response && response.length > 0) {
+                        // Convert format to match RetroAPIUtils format
+                        rawEntries = response.map(entry => ({
+                            User: entry.User,
+                            Rank: entry.ApiRank,
+                            FormattedScore: entry.TrackTime,
+                            Score: entry.TrackTime,
+                            DateSubmitted: entry.DateSubmitted
+                        }));
+                        console.log(`retroAPI service succeeded: ${rawEntries.length} entries`);
+                    }
+                } catch (apiError) {
+                    console.warn('retroAPI service failed:', apiError.message);
+                    
+                    // If this was a rate limiting error, mark for temporary avoidance
+                    if (apiError.message.includes('422') || apiError.message.includes('429')) {
+                        console.log(`Rate limiting detected for leaderboard ${leaderboardId}, temporary avoidance`);
+                        this.invalidLeaderboards.add(leaderboardId);
+                        setTimeout(() => {
+                            this.invalidLeaderboards.delete(leaderboardId);
+                        }, 300000); // 5 minutes
+                    }
+                }
+            }
+
+            // If both methods failed, mark leaderboard as problematic
+            if (!rawEntries || rawEntries.length === 0) {
+                console.log(`No leaderboard data received for ${leaderboardId} from any method`);
+                
+                // Mark as invalid for a shorter period (don't permanently cache failures)
+                this.invalidLeaderboards.add(leaderboardId);
+                setTimeout(() => {
+                    this.invalidLeaderboards.delete(leaderboardId);
+                    this.lastValidationCheck.delete(leaderboardId);
+                }, 600000); // 10 minutes
+                
+                return this.createNoScoreResults(raUsernames);
+            }
+
+            console.log(`Successfully retrieved ${rawEntries.length} leaderboard entries`);
+
+            // Find scores for target users
             const userScores = [];
             
             for (const username of raUsernames) {
-                const entry = processedEntries.find(entry => {
+                const entry = rawEntries.find(entry => {
                     return entry.User && entry.User.toLowerCase() === username.toLowerCase();
                 });
 
                 if (entry) {
                     userScores.push({
                         raUsername: username,
-                        rank: entry.ApiRank,
-                        score: entry.TrackTime,
+                        rank: entry.Rank,
+                        score: entry.FormattedScore || entry.Score?.toString() || 'No score',
                         fetchedAt: new Date()
                     });
-                    console.log(`Found score for ${username}: rank ${entry.ApiRank}, score ${entry.TrackTime}`);
+                    console.log(`Found score for ${username}: rank ${entry.Rank}, score ${entry.FormattedScore || entry.Score}`);
                 } else {
                     userScores.push({
                         raUsername: username,
@@ -155,16 +140,25 @@ class ArenaUtils {
 
             return userScores;
         } catch (error) {
-            console.error('Error fetching leaderboard scores:', error);
+            console.error('Error in fetchLeaderboardScores:', error);
             
-            // Return no-score results for all users on error
+            // If this was a rate limiting error, mark for temporary avoidance
+            if (error.message.includes('422') || error.message.includes('429')) {
+                console.log(`Rate limiting detected for leaderboard ${leaderboardId}, temporary avoidance`);
+                this.invalidLeaderboards.add(leaderboardId);
+                setTimeout(() => {
+                    this.invalidLeaderboards.delete(leaderboardId);
+                }, 300000); // 5 minutes
+            }
+            
             return this.createNoScoreResults(raUsernames);
         }
     }
 
     /**
      * Create no-score results for all users
-     * @private
+     * @param {Array<string>} raUsernames - Array of usernames
+     * @returns {Array} Array of no-score results
      */
     createNoScoreResults(raUsernames) {
         return raUsernames.map(username => ({
@@ -176,253 +170,125 @@ class ArenaUtils {
     }
 
     /**
-     * Parse rank value to ensure it's a number
-     * @private
+     * ADDED: Batch validate leaderboards for multiple challenges
+     * @param {Array<Object>} challenges - Array of challenge objects with leaderboardId
+     * @returns {Promise<Object>} Map of leaderboardId -> isValid
      */
-    parseRank(rank) {
-        if (rank === null || rank === undefined || rank === '') {
-            return null;
-        }
+    async validateChallengeLeaderboards(challenges) {
+        const leaderboardIds = [...new Set(challenges.map(c => c.leaderboardId))];
+        console.log(`Validating ${leaderboardIds.length} unique leaderboards...`);
         
-        const parsed = parseInt(rank, 10);
-        return isNaN(parsed) ? null : parsed;
+        const results = await retroAPI.validateLeaderboardsBatch(leaderboardIds);
+        
+        // Update our invalid leaderboards set
+        Object.entries(results).forEach(([id, isValid]) => {
+            if (!isValid) {
+                this.invalidLeaderboards.add(parseInt(id));
+            } else {
+                this.invalidLeaderboards.delete(parseInt(id));
+            }
+        });
+        
+        return results;
     }
 
     /**
-     * Format score for display
-     * @private
-     */
-    formatScore(score) {
-        if (score === null || score === undefined || score === '') {
-            return 'No score';
-        }
-        
-        // If it's a number, format it nicely
-        if (typeof score === 'number') {
-            return score.toLocaleString();
-        }
-        
-        // If it's a string that looks like a number, parse and format
-        const parsed = parseFloat(score);
-        if (!isNaN(parsed)) {
-            return parsed.toLocaleString();
-        }
-        
-        // Otherwise return as string
-        return String(score);
-    }
-
-    /**
-     * Determine the winner from final scores
-     * Lower rank wins (rank 1 is better than rank 2)
-     */
-    determineWinner(finalScores) {
-        try {
-            console.log('Determining winner from scores:', finalScores);
-
-            if (!finalScores || finalScores.length === 0) {
-                console.log('No scores to evaluate');
-                return null;
-            }
-
-            // Filter out users with no valid rank
-            const validScores = finalScores.filter(score => 
-                score.rank !== null && 
-                score.rank !== undefined && 
-                !isNaN(score.rank) && 
-                score.rank > 0
-            );
-
-            console.log('Valid scores:', validScores);
-
-            if (validScores.length === 0) {
-                console.log('No valid scores found');
-                return null;
-            }
-
-            // Sort by rank (lower is better)
-            validScores.sort((a, b) => a.rank - b.rank);
-
-            const bestRank = validScores[0].rank;
-            const winners = validScores.filter(score => score.rank === bestRank);
-
-            console.log(`Best rank: ${bestRank}, Winners with this rank:`, winners);
-
-            if (winners.length > 1) {
-                console.log('Tie detected - multiple users with same best rank');
-                return null; // Tie
-            }
-
-            console.log(`Winner determined: ${winners[0].raUsername} with rank ${winners[0].rank}`);
-            return winners[0];
-        } catch (error) {
-            console.error('Error determining winner:', error);
-            return null;
-        }
-    }
-
-    /**
-     * Validate game and leaderboard info from RetroAchievements API
+     * IMPROVED: Validate game and leaderboard with better error handling
+     * @param {string} gameId - Game ID
+     * @param {string} leaderboardId - Leaderboard ID
+     * @returns {Promise<Object>} Validation result with game and leaderboard info
      */
     async validateGameAndLeaderboard(gameId, leaderboardId) {
         try {
-            // First, validate the game exists
+            console.log(`Validating game ${gameId} and leaderboard ${leaderboardId}`);
+            
+            // Get game info first with caching
             const gameInfo = await this.getGameInfo(gameId);
-            if (!gameInfo) {
-                throw new Error(`Game with ID ${gameId} not found`);
+            if (!gameInfo || !gameInfo.title) {
+                throw new Error(`Game ${gameId} not found or inaccessible`);
             }
-
-            // Then validate the leaderboard exists for this game
-            const leaderboardInfo = await this.getLeaderboardInfo(gameId, leaderboardId);
-            if (!leaderboardInfo) {
-                throw new Error(`Leaderboard with ID ${leaderboardId} not found for game ${gameId}`);
+            
+            // Validate leaderboard exists and is accessible
+            const isValidLeaderboard = await retroAPI.validateLeaderboard(leaderboardId);
+            if (!isValidLeaderboard) {
+                throw new Error(`Leaderboard ${leaderboardId} not found or inaccessible`);
             }
-
+            
+            // Get leaderboard info by trying to fetch one entry
+            const leaderboardData = await retroAPI.getLeaderboardEntries(leaderboardId, 0, 1);
+            
             return {
-                game: gameInfo,
-                leaderboard: leaderboardInfo
+                game: {
+                    id: gameId,
+                    title: gameInfo.title || `Game ${gameId}`,
+                    consoleName: gameInfo.consoleName || 'Unknown Console',
+                    imageIcon: gameInfo.imageIcon || '',
+                    ID: gameId,
+                    Title: gameInfo.title || `Game ${gameId}`
+                },
+                leaderboard: {
+                    id: leaderboardId,
+                    title: `Leaderboard ${leaderboardId}`,
+                    entryCount: leaderboardData.length,
+                    ID: leaderboardId,
+                    Title: `Leaderboard ${leaderboardId}`
+                }
             };
         } catch (error) {
-            console.error('Error validating game and leaderboard:', error);
+            console.error('Validation error:', error);
             throw error;
         }
     }
 
     /**
-     * Get game information from RetroAchievements API (following retroAPI pattern)
+     * ENHANCED: Get game information with caching to reduce API calls
+     * @param {string} gameId - Game ID
+     * @returns {Promise<Object>} Game information
      */
     async getGameInfo(gameId) {
+        const cacheKey = `game_${gameId}`;
+        
+        // Check cache first
+        if (this.gameInfoCache.has(cacheKey)) {
+            const cached = this.gameInfoCache.get(cacheKey);
+            if (Date.now() - cached.timestamp < this.gameInfoCacheTTL) {
+                return cached.data;
+            } else {
+                this.gameInfoCache.delete(cacheKey);
+            }
+        }
+        
         try {
-            const { username, apiKey } = this.getRACredentials();
-
-            const url = `https://retroachievements.org/API/API_GetGame.php`;
-            const params = new URLSearchParams({
-                z: username,
-                y: apiKey,
-                i: gameId
+            const gameInfo = await retroAPI.getGameInfo(gameId);
+            
+            // Cache the result
+            this.gameInfoCache.set(cacheKey, {
+                data: gameInfo,
+                timestamp: Date.now()
             });
-
-            console.log(`Fetching game info for ID ${gameId}...`);
-            const response = await fetch(`${url}?${params}`);
             
-            if (!response.ok) {
-                console.error(`HTTP error fetching game ${gameId}! status: ${response.status}`);
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-
-            const data = await response.json();
-            
-            // Check if we got valid game data
-            if (!data || !data.Title) {
-                console.error(`No valid game data received for ID ${gameId}:`, data);
-                return null;
-            }
-
-            console.log(`✅ Successfully fetched game: ${data.Title} (ID: ${gameId})`);
-            return {
-                id: data.ID || gameId,
-                title: data.Title,
-                consoleName: data.ConsoleName,
-                imageIcon: data.ImageIcon,
-                description: data.Description || ''
-            };
+            return gameInfo;
         } catch (error) {
             console.error(`Error fetching game info for ${gameId}:`, error);
-            return null;
-        }
-    }
-
-    /**
-     * Get leaderboard information for a specific game (following retroAPI pattern)
-     */
-    async getLeaderboardInfo(gameId, leaderboardId) {
-        try {
-            const { username, apiKey } = this.getRACredentials();
-
-            const url = `https://retroachievements.org/API/API_GetGameLeaderboards.php`;
-            const params = new URLSearchParams({
-                z: username,
-                y: apiKey,
-                i: gameId
-            });
-
-            console.log(`Fetching leaderboards for game ID ${gameId}...`);
-            const response = await fetch(`${url}?${params}`);
             
-            if (!response.ok) {
-                console.error(`HTTP error fetching leaderboards for game ${gameId}! status: ${response.status}`);
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-
-            const data = await response.json();
-            
-            // Handle different API response formats - check for Results array first
-            let leaderboards = [];
-            if (data && data.Results && Array.isArray(data.Results)) {
-                leaderboards = data.Results;
-                console.log(`Fetched ${leaderboards.length} leaderboards for game ${gameId} (from Results array)`);
-            } else if (Array.isArray(data)) {
-                leaderboards = data;
-                console.log(`Fetched ${leaderboards.length} leaderboards for game ${gameId} (direct array)`);
-            } else {
-                console.error(`No valid leaderboard data received for game ${gameId}:`, data);
-                return null;
-            }
-
-            if (leaderboards.length === 0) {
-                console.error(`No leaderboards found for game ${gameId}`);
-                return null;
-            }
-
-            // Find the specific leaderboard
-            const leaderboard = leaderboards.find(lb => 
-                String(lb.ID) === String(leaderboardId) || 
-                String(lb.id) === String(leaderboardId)
-            );
-
-            if (!leaderboard) {
-                console.error(`Leaderboard ${leaderboardId} not found in game ${gameId} leaderboards`);
-                console.log(`Available leaderboards:`, leaderboards.map(lb => ({
-                    ID: lb.ID || lb.id,
-                    Title: lb.Title || lb.title
-                })));
-                return null;
-            }
-
-            console.log(`✅ Found leaderboard: ${leaderboard.Title || leaderboard.title} (ID: ${leaderboardId})`);
+            // Return minimal game info to prevent cascading failures
             return {
-                id: leaderboard.ID || leaderboard.id,
-                title: leaderboard.Title || leaderboard.title,
-                description: leaderboard.Description || leaderboard.description || '',
-                format: leaderboard.Format || leaderboard.format || 'score',
-                lowerIsBetter: leaderboard.LowerIsBetter || leaderboard.lowerIsBetter || false
+                id: gameId,
+                title: `Game ${gameId}`,
+                consoleName: 'Unknown Console',
+                imageIcon: ''
             };
-        } catch (error) {
-            console.error(`Error fetching leaderboard info for game ${gameId}, leaderboard ${leaderboardId}:`, error);
-            return null;
         }
     }
 
     /**
-     * Search for games by title (helper for UI)
+     * IMPROVED: Create challenge embed with title truncation support
+     * @param {Object} challenge - Challenge object
+     * @param {string} color - Embed color
+     * @returns {EmbedBuilder} Discord embed
      */
-    async searchGames(query) {
-        try {
-            // Note: RetroAchievements doesn't have a direct search API
-            // This would need to be implemented based on available API endpoints
-            // For now, we'll return an empty array
-            console.log(`Game search not yet implemented for query: ${query}`);
-            return [];
-        } catch (error) {
-            console.error('Error searching games:', error);
-            return [];
-        }
-    }
-
-    /**
-     * Format a challenge for display - UPDATED to include gear for creator
-     */
-    formatChallengeDisplay(challenge) {
+    createChallengeEmbed(challenge, color = '#00FF00') {
+        const typeEmoji = challenge.type === 'direct' ? '⚔️' : '🌍';
         const statusEmoji = {
             'pending': '⏳',
             'active': '🔥',
@@ -430,75 +296,237 @@ class ArenaUtils {
             'cancelled': '❌'
         };
 
-        const typeEmoji = challenge.type === 'direct' ? '⚔️' : '🌍';
-        
-        let description = `${statusEmoji[challenge.status]} ${typeEmoji} **${challenge.gameTitle}**\n`;
-        description += `📊 ${challenge.leaderboardTitle}\n`;
-        
-        // ADD CHALLENGE DESCRIPTION IF PROVIDED
-        if (challenge.description && challenge.description.trim()) {
-            description += `📝 ${challenge.description}\n`;
-        }
-        
-        // UPDATED: Gear for creator
-        description += `⚙️ Created by: ${challenge.creatorRaUsername}\n`;
-        description += `💰 Wager: ${challenge.participants[0]?.wager || 0} GP\n`;
-        description += `👥 Participants: ${challenge.participants.length}`;
-        
-        if (challenge.bets.length > 0) {
-            description += `\n🎰 Bets: ${challenge.bets.length} (${challenge.getTotalBets()} GP)`;
+        // Use title truncation utilities
+        const gameTitle = titleUtils.truncateGameTitleForEmbed(challenge.gameTitle);
+        const leaderboardTitle = titleUtils.truncateLeaderboardTitle(challenge.leaderboardTitle);
+        const description = titleUtils.formatChallengeDescription(challenge.description);
+
+        const embed = new EmbedBuilder()
+            .setTitle(`${typeEmoji} ${challenge.type.charAt(0).toUpperCase() + challenge.type.slice(1)} Challenge`)
+            .setColor(color)
+            .addFields([
+                { name: 'Challenge ID', value: challenge.challengeId, inline: true },
+                { name: 'Status', value: `${statusEmoji[challenge.status]} ${challenge.status.toUpperCase()}`, inline: true },
+                { name: 'Game', value: gameTitle, inline: true },
+                { name: 'Leaderboard', value: leaderboardTitle, inline: false }
+            ]);
+
+        if (description) {
+            embed.addFields({ name: 'Description', value: description, inline: false });
         }
 
-        if (challenge.status === 'active' && challenge.endedAt) {
-            const timeLeft = Math.max(0, challenge.endedAt.getTime() - Date.now());
-            const hoursLeft = Math.floor(timeLeft / (1000 * 60 * 60));
-            const daysLeft = Math.floor(hoursLeft / 24);
-            
-            if (daysLeft > 0) {
-                description += `\n⏰ ${daysLeft} day(s) remaining`;
-            } else if (hoursLeft > 0) {
-                description += `\n⏰ ${hoursLeft} hour(s) remaining`;
-            } else {
-                description += `\n⏰ Ending soon`;
-            }
+        // Add creator info
+        embed.addFields({ name: 'Created by', value: `⚙️ ${challenge.creatorRaUsername}`, inline: true });
+
+        // Add wager info
+        const totalWager = challenge.getTotalWager ? challenge.getTotalWager() : 
+                          challenge.participants.reduce((sum, p) => sum + p.wager, 0);
+        embed.addFields({ name: 'Prize Pool', value: `${totalWager} GP`, inline: true });
+
+        // Add participant count
+        embed.addFields({ name: 'Participants', value: challenge.participants.length.toString(), inline: true });
+
+        // Add target for direct challenges
+        if (challenge.type === 'direct' && challenge.targetRaUsername) {
+            embed.addFields({ name: 'Target', value: challenge.targetRaUsername, inline: true });
         }
 
-        return description;
+        // Add timing info
+        if (challenge.status === 'active') {
+            const endTime = new Date(challenge.endedAt).toLocaleDateString();
+            embed.addFields({ name: 'Ends', value: endTime, inline: true });
+        }
+
+        // Add betting info if there are bets
+        if (challenge.bets && challenge.bets.length > 0) {
+            const totalBets = challenge.getTotalBets ? challenge.getTotalBets() : 
+                             challenge.bets.reduce((sum, bet) => sum + bet.amount, 0);
+            embed.addFields({ name: '🎰 Bets', value: `${totalBets} GP`, inline: true });
+        }
+
+        embed.setTimestamp();
+
+        return embed;
     }
 
     /**
-     * Create challenge embed for Discord - UPDATED to include gear for creator
+     * ADDED: Create safe embed description with proper length limits
+     * @param {Array<Object>} challenges - Array of challenges
+     * @param {boolean} includeScores - Whether to include current scores
+     * @returns {Promise<string>} Safe embed description
      */
-    createChallengeEmbed(challenge, color = '#0099ff') {
-        const { EmbedBuilder } = require('discord.js');
+    async createChallengeListDescription(challenges, includeScores = false) {
+        let description = '';
         
-        const embed = new EmbedBuilder()
-            .setTitle(`${challenge.type === 'direct' ? '⚔️ Direct Challenge' : '🌍 Open Challenge'}`)
-            .setDescription(this.formatChallengeDisplay(challenge))
-            .setColor(color)
-            .addFields(
-                { name: 'Challenge ID', value: challenge.challengeId, inline: true },
-                { name: 'Created by', value: `⚙️ ${challenge.creatorRaUsername}`, inline: true }, // UPDATED: Changed to gear
-                { name: 'Status', value: challenge.status.charAt(0).toUpperCase() + challenge.status.slice(1), inline: true }
-            );
-
-        // ADD DESCRIPTION AS SEPARATE FIELD IF PROVIDED
-        if (challenge.description && challenge.description.trim()) {
-            embed.addFields({
-                name: '📝 Challenge Description',
-                value: challenge.description,
-                inline: false
-            });
+        for (let index = 0; index < challenges.length && index < 5; index++) {
+            const challenge = challenges[index];
+            
+            const typeEmoji = challenge.type === 'direct' ? '⚔️' : '🌍';
+            const statusEmoji = challenge.status === 'pending' ? '⏳' : '🔥';
+            
+            // Use title truncation for challenge display
+            const gameTitle = titleUtils.createShortGameDisplayName(challenge.gameTitle, 50);
+            const challengeDescription = titleUtils.formatChallengeDescription(challenge.description, 100);
+            
+            description += `**${index + 1}. ${typeEmoji} ${gameTitle}**\n`;
+            description += `${statusEmoji} ${challenge.status.toUpperCase()} | `;
+            description += `${challengeDescription}\n`;
+            description += `⚙️ Created by: ${challenge.creatorRaUsername}\n`;
+            description += `💰 Wager: ${challenge.participants[0]?.wager || 0} GP | `;
+            description += `👥 Players: ${challenge.participants.length}`;
+            
+            if (challenge.bets && challenge.bets.length > 0) {
+                description += ` | 🎰 Bets: ${challenge.bets.length}`;
+            }
+            
+            // Add current scores if requested and available
+            if (includeScores && challenge.participants.length > 0) {
+                try {
+                    const participantUsernames = challenge.participants.map(p => p.raUsername);
+                    const currentScores = await this.fetchLeaderboardScores(
+                        challenge.gameId,
+                        challenge.leaderboardId,
+                        participantUsernames
+                    );
+                    
+                    if (currentScores && currentScores.length > 0) {
+                        // Sort by rank and show current standings
+                        currentScores.sort((a, b) => {
+                            if (a.rank === null && b.rank === null) return 0;
+                            if (a.rank === null) return 1;
+                            if (b.rank === null) return -1;
+                            return a.rank - b.rank;
+                        });
+                        
+                        description += `\n📊 Current Standings:\n`;
+                        currentScores.forEach((score, scoreIndex) => {
+                            const standing = scoreIndex + 1;
+                            const positionEmoji = standing === 1 ? '👑' : `${standing}.`;
+                            const creatorIndicator = score.raUsername === challenge.creatorRaUsername ? ' ⚙️' : '';
+                            const globalRank = score.rank ? ` (#${score.rank})` : '';
+                            const scoreText = score.score !== 'No score' ? ` - ${score.score}` : ' - No score yet';
+                            
+                            description += `  ${positionEmoji} ${score.raUsername}${creatorIndicator}${scoreText}${globalRank}\n`;
+                        });
+                    } else {
+                        description += `\n📊 Current Standings: Scores not available yet\n`;
+                    }
+                } catch (error) {
+                    console.error(`Error fetching scores for challenge ${challenge.challengeId}:`, error);
+                    description += `\n📊 Current Standings: Unable to fetch scores\n`;
+                }
+            }
+            
+            description += '\n';
         }
 
-        embed.setTimestamp(challenge.createdAt);
+        // Ensure description doesn't exceed Discord limits
+        return titleUtils.createSafeFieldValue(description, titleUtils.DISCORD_LIMITS.EMBED_DESCRIPTION);
+    }
 
-        // Add game thumbnail if available
-        if (challenge.gameId) {
-            embed.setThumbnail(`https://retroachievements.org/Images/${challenge.gameId}.png`);
+    /**
+     * ADDED: Clean up expired cache entries
+     */
+    cleanupCache() {
+        const now = Date.now();
+        
+        // Clean up game info cache
+        for (const [key, value] of this.gameInfoCache.entries()) {
+            if (now - value.timestamp > this.gameInfoCacheTTL) {
+                this.gameInfoCache.delete(key);
+            }
         }
+        
+        // Clean up old validation checks (older than 1 hour)
+        for (const [key, timestamp] of this.lastValidationCheck.entries()) {
+            if (now - timestamp > 3600000) { // 1 hour
+                this.lastValidationCheck.delete(key);
+            }
+        }
+        
+        console.log('Arena utils cache cleanup completed');
+    }
 
-        return embed;
+    /**
+     * Clear invalid leaderboards cache (useful for testing/debugging)
+     */
+    clearInvalidLeaderboardsCache() {
+        this.invalidLeaderboards.clear();
+        this.lastValidationCheck.clear();
+        this.gameInfoCache.clear();
+        console.log('Cleared all arena utils caches');
+    }
+
+    /**
+     * Get statistics about leaderboard validation and caching
+     */
+    getValidationStats() {
+        return {
+            invalidLeaderboards: Array.from(this.invalidLeaderboards),
+            validatedCount: this.lastValidationCheck.size,
+            invalidCount: this.invalidLeaderboards.size,
+            gameInfoCacheSize: this.gameInfoCache.size
+        };
+    }
+
+    /**
+     * ADDED: Check if a leaderboard is known to be invalid
+     * @param {number} leaderboardId - Leaderboard ID to check
+     * @returns {boolean} Whether the leaderboard is known to be invalid
+     */
+    isLeaderboardInvalid(leaderboardId) {
+        return this.invalidLeaderboards.has(leaderboardId);
+    }
+
+    /**
+     * ADDED: Force refresh validation for a specific leaderboard
+     * @param {number} leaderboardId - Leaderboard ID to refresh
+     */
+    refreshLeaderboardValidation(leaderboardId) {
+        this.invalidLeaderboards.delete(leaderboardId);
+        this.lastValidationCheck.delete(leaderboardId);
+        console.log(`Refreshed validation for leaderboard ${leaderboardId}`);
+    }
+
+    /**
+     * ADDED: Get challenge summary text for notifications
+     * @param {Object} challenge - Challenge object
+     * @returns {string} Summary text
+     */
+    getChallengeSignature(challenge) {
+        const gameTitle = titleUtils.createShortGameDisplayName(challenge.gameTitle, 30);
+        const description = challenge.description ? 
+            ` - ${titleUtils.formatChallengeDescription(challenge.description, 50)}` : '';
+        
+        return `${gameTitle}${description}`;
+    }
+
+    /**
+     * ADDED: Format challenge participants list
+     * @param {Object} challenge - Challenge object
+     * @param {number} maxLength - Maximum length for the list
+     * @returns {string} Formatted participants list
+     */
+    formatParticipantsList(challenge, maxLength = 100) {
+        if (!challenge.participants || challenge.participants.length === 0) {
+            return 'No participants';
+        }
+        
+        const participantNames = challenge.participants.map(p => p.raUsername);
+        let result = participantNames.join(', ');
+        
+        if (result.length > maxLength) {
+            // Truncate and add count
+            const truncated = titleUtils.truncateText(result, maxLength - 10);
+            const remaining = challenge.participants.length - truncated.split(', ').length;
+            if (remaining > 0) {
+                result = `${truncated} (+${remaining} more)`;
+            } else {
+                result = truncated;
+            }
+        }
+        
+        return result;
     }
 }
 
