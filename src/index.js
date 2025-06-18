@@ -1,4 +1,4 @@
-// src/index.js - Enhanced with better collection button handling
+// src/index.js - Enhanced with better collection button handling and nominations pagination
 import { Client, Collection, Events, GatewayIntentBits, EmbedBuilder } from 'discord.js';
 import { config, validateConfig } from './config/config.js';
 import { connectDB, checkDatabaseHealth } from './models/index.js';
@@ -101,20 +101,31 @@ client.on(Events.InteractionCreate, async interaction => {
         await command.execute(interaction);
     } catch (error) {
         console.error('Error executing command:', error);
+        
+        // Better error handling for expired interactions
+        if (error.code === 10062) {
+            console.log('Command interaction expired - user will need to run command again');
+            return;
+        }
+        
         const errorMessage = {
             content: 'There was an error executing this command.',
             ephemeral: true
         };
         
-        if (interaction.replied || interaction.deferred) {
-            await interaction.followUp(errorMessage);
-        } else {
-            await interaction.reply(errorMessage);
+        try {
+            if (interaction.replied || interaction.deferred) {
+                await interaction.followUp(errorMessage);
+            } else {
+                await interaction.reply(errorMessage);
+            }
+        } catch (replyError) {
+            console.error('Error sending command error response:', replyError);
         }
     }
 });
 
-// Handle button interactions - UPDATED VERSION with enhanced collection support
+// Handle button interactions - UPDATED VERSION with nominations pagination and enhanced collection support
 client.on(Events.InteractionCreate, async interaction => {
     if (!interaction.isButton()) return;
     
@@ -124,6 +135,21 @@ client.on(Events.InteractionCreate, async interaction => {
     console.log('Channel:', interaction.channel?.name);
     
     try {
+        // NEW: Handle nominations pagination buttons
+        if (interaction.customId === 'nominations_prev' || interaction.customId === 'nominations_next') {
+            console.log('Routing to nominations pagination handler');
+            const nominationsCommand = interaction.client.commands.get('nominations');
+            if (nominationsCommand && typeof nominationsCommand.handlePaginationInteraction === 'function') {
+                await nominationsCommand.handlePaginationInteraction(interaction);
+            } else {
+                await interaction.reply({
+                    content: 'Pagination data not found. Please run the command again.',
+                    ephemeral: true
+                });
+            }
+            return;
+        }
+
         // NEW: Check if this is a combination-related button FIRST
         if (interaction.customId.startsWith('combo_')) {
             console.log('Routing to combination handler');
@@ -239,6 +265,12 @@ client.on(Events.InteractionCreate, async interaction => {
         console.error('Error handling button interaction:', error);
         console.error('Error stack:', error.stack);
         try {
+            // Better error handling for expired interactions
+            if (error.code === 10062) {
+                console.log('Button interaction expired - user will need to run command again');
+                return; // Don't try to respond to expired interactions
+            }
+            
             if (interaction.replied || interaction.deferred) {
                 await interaction.followUp({ content: 'There was an error processing this button.', ephemeral: true });
             } else {
@@ -307,6 +339,12 @@ client.on(Events.InteractionCreate, async interaction => {
     } catch (error) {
         console.error('Error handling select menu interaction:', error);
         try {
+            // Better error handling for expired interactions
+            if (error.code === 10062) {
+                console.log('Select menu interaction expired - user will need to run command again');
+                return;
+            }
+            
             if (interaction.replied || interaction.deferred) {
                 await interaction.followUp({ content: 'There was an error processing this selection.', ephemeral: true });
             } else {
@@ -383,6 +421,12 @@ client.on(Events.InteractionCreate, async interaction => {
     } catch (error) {
         console.error('Error handling modal submission:', error);
         try {
+            // Better error handling for expired interactions
+            if (error.code === 10062) {
+                console.log('Modal interaction expired - user will need to run command again');
+                return;
+            }
+            
             if (interaction.replied || interaction.deferred) {
                 await interaction.followUp({ content: 'There was an error processing your submission.', ephemeral: true });
             } else {
@@ -1098,10 +1142,12 @@ client.once(Events.ClientReady, async () => {
         console.log('  • Collection Viewer: Enhanced trading with dropdown selection and public confirmations');
         console.log('  • Trade Confirmations: Auto-expire in 5 minutes in trade channel (1379402075120730185)');
         console.log('  • Emoji cache refresh: Every 30 minutes (non-blocking with timeout protection)');
+        console.log('  • Nominations: Enhanced with pagination and field splitting for large datasets');
         console.log('  • Various other feeds: Hourly');
         console.log('🎭 Emoji systems: Initialized with timeout protection and fallback emojis');
         console.log('🎁 GP Reward System: Enhanced logging and error handling for nomination/vote rewards');
         console.log('🛒 Collection Trading: Streamlined with dropdown menus and public confirmations');
+        console.log('🗳️ Nominations System: Pagination support and expired interaction handling');
         
     } catch (error) {
         console.error('❌ Error during initialization:', error);
