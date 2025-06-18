@@ -1,17 +1,21 @@
-// src/services/arenaService.js - FIXED VERSION with reliable score fetching
+// src/services/arenaService.js - COMPLETE UPDATED VERSION with reliable score fetching and rate limiting
 import { ArenaChallenge } from '../models/ArenaChallenge.js';
 import { User } from '../models/User.js';
 import { config } from '../config/config.js';
 import arenaUtils from '../utils/arenaUtils.js';
 import gpUtils from '../utils/gpUtils.js';
 import AlertUtils, { ALERT_TYPES } from '../utils/AlertUtils.js';
-import RetroAPIUtils from '../utils/RetroAPIUtils.js'; // ADDED: Import reliable API utils
+import RetroAPIUtils from '../utils/RetroAPIUtils.js';
+import retroAPI from '../services/retroAPI.js';
 import { EmbedBuilder, ButtonBuilder, ActionRowBuilder, ButtonStyle } from 'discord.js';
 
 class ArenaService {
     constructor() {
         this.client = null;
         this.isProcessing = false;
+        this.processingChallenges = new Set(); // Track individual challenges being processed
+        this.lastProcessingTime = 0;
+        this.processingDelay = 5000; // 5 seconds minimum between processing cycles
     }
 
     setClient(client) {
@@ -23,7 +27,7 @@ class ArenaService {
             console.error('Arena service: Client not set');
             return;
         }
-        console.log('Arena service started');
+        console.log('Arena service started with rate limiting support');
     }
 
     /**
@@ -34,14 +38,27 @@ class ArenaService {
     }
 
     /**
-     * Create a new arena challenge - UPDATED to accept description and send immediate alerts
+     * ENHANCED: Create a new arena challenge with leaderboard validation
      */
     async createChallenge(creatorUser, gameInfo, leaderboardInfo, wager, targetRaUsername = null, discordUsername = null, description = '') {
         try {
+            console.log(`Creating challenge for user ${creatorUser.raUsername}...`);
+            
             // Validate creator has enough GP
             if (!creatorUser.hasEnoughGp(wager)) {
                 throw new Error(`Insufficient GP. You have ${creatorUser.gpBalance} GP but need ${wager} GP.`);
             }
+
+            // VALIDATE LEADERBOARD BEFORE CREATING CHALLENGE
+            const leaderboardId = leaderboardInfo.id || leaderboardInfo.ID;
+            console.log(`Validating leaderboard ${leaderboardId} before creating challenge...`);
+            
+            const isValidLeaderboard = await retroAPI.validateLeaderboard(leaderboardId);
+            if (!isValidLeaderboard) {
+                throw new Error(`Leaderboard ${leaderboardId} is not accessible or does not exist. Please verify the leaderboard ID.`);
+            }
+            console.log(`Leaderboard ${leaderboardId} validation passed`);
+
             // Validate target user exists if specified (direct challenge)
             let targetUser = null;
             if (targetRaUsername) {
@@ -67,7 +84,7 @@ class ArenaService {
                 gameTitle: gameInfo.title || gameInfo.Title,
                 leaderboardId: leaderboardInfo.id || leaderboardInfo.ID,
                 leaderboardTitle: leaderboardInfo.title || leaderboardInfo.Title,
-                description: description || '', // NEW: Set description field
+                description: description || '',
                 creatorId: creatorUser.discordId,
                 creatorUsername: discordUsername || creatorUser.username || 'Unknown',
                 creatorRaUsername: creatorUser.raUsername,
@@ -145,6 +162,7 @@ class ArenaService {
             creatorUser.arenaStats.totalGpWagered = (creatorUser.arenaStats.totalGpWagered || 0) + wager;
             await creatorUser.save();
             
+            console.log(`Successfully created challenge ${challengeId}`);
             return challenge;
         } catch (error) {
             console.error('Error creating challenge:', error);
@@ -153,7 +171,7 @@ class ArenaService {
     }
 
     /**
-     * Accept a direct challenge - UPDATED to send immediate alerts
+     * ENHANCED: Accept a direct challenge with improved alerts
      */
     async acceptChallenge(challengeId, acceptingUser) {
         try {
@@ -256,7 +274,7 @@ class ArenaService {
     }
 
     /**
-     * Join an open challenge - UPDATED to send immediate alerts
+     * ENHANCED: Join an open challenge with improved alerts
      */
     async joinChallenge(challengeId, joiningUser) {
         try {
@@ -406,16 +424,24 @@ class ArenaService {
     }
 
     /**
-     * Check for completed challenges and process them
-     * This is the single point of truth for challenge completion
+     * ENHANCED: Check for completed challenges with improved rate limiting
      */
     async checkCompletedChallenges() {
+        const now = Date.now();
+        
+        // Enforce minimum delay between processing cycles
+        if (now - this.lastProcessingTime < this.processingDelay) {
+            console.log('Arena service: Skipping check - too soon since last processing cycle');
+            return;
+        }
+
         if (this.isProcessing) {
             console.log('Arena service: Challenge completion check already in progress, skipping');
             return;
         }
 
         this.isProcessing = true;
+        this.lastProcessingTime = now;
         
         try {
             console.log('Arena service: Checking for completed challenges...');
@@ -429,9 +455,20 @@ class ArenaService {
 
             console.log(`Arena service: Found ${completedChallenges.length} challenges to process`);
 
+            // Process challenges one at a time with delays to avoid rate limiting
             for (const challenge of completedChallenges) {
+                // Skip if this challenge is already being processed
+                if (this.processingChallenges.has(challenge.challengeId)) {
+                    console.log(`Skipping ${challenge.challengeId} - already being processed`);
+                    continue;
+                }
+
                 try {
+                    this.processingChallenges.add(challenge.challengeId);
                     await this.processCompletedChallenge(challenge);
+                    
+                    // Add delay between challenges to avoid overwhelming the API
+                    await new Promise(resolve => setTimeout(resolve, 3000));
                 } catch (error) {
                     console.error(`Error processing challenge ${challenge.challengeId}:`, error);
                     
@@ -439,6 +476,8 @@ class ArenaService {
                     challenge.processed = true;
                     challenge.processedAt = new Date();
                     await challenge.save();
+                } finally {
+                    this.processingChallenges.delete(challenge.challengeId);
                 }
             }
         } catch (error) {
@@ -449,7 +488,7 @@ class ArenaService {
     }
 
     /**
-     * FIXED: Process a single completed challenge using reliable API
+     * ENHANCED: Process a single completed challenge using reliable API methods
      * @private
      */
     async processCompletedChallenge(challenge) {
@@ -462,7 +501,14 @@ class ArenaService {
         await challenge.save();
 
         try {
-            // FIXED: Fetch final scores using the same reliable method as live updates
+            // Check if leaderboard is valid before processing
+            if (arenaUtils.isLeaderboardInvalid(challenge.leaderboardId)) {
+                console.log(`Challenge ${challenge.challengeId} has invalid leaderboard, refunding`);
+                await this.refundChallenge(challenge, 'Leaderboard is no longer accessible');
+                return;
+            }
+
+            // Fetch final scores using the reliable method
             console.log(`Fetching final scores for challenge ${challenge.challengeId} using reliable API...`);
             const finalScores = await this.fetchLeaderboardScoresReliable(
                 challenge.gameId, 
@@ -503,7 +549,7 @@ class ArenaService {
     }
 
     /**
-     * FIXED: Use the same reliable API method as the feed and alert services
+     * ENHANCED: Use the same reliable API method as the feed and alert services
      * @private
      */
     async fetchLeaderboardScoresReliable(gameId, leaderboardId, raUsernames) {
@@ -511,43 +557,10 @@ class ArenaService {
             console.log(`Fetching leaderboard scores for game ${gameId}, leaderboard ${leaderboardId}`);
             console.log('Target users:', raUsernames);
 
-            // Use the same reliable API utilities as arcade and arena feed services
-            const rawEntries = await RetroAPIUtils.getLeaderboardEntries(leaderboardId, 1000);
+            // Use arenaUtils which has the improved API implementation with fallbacks
+            const userScores = await arenaUtils.fetchLeaderboardScores(gameId, leaderboardId, raUsernames);
             
-            if (!rawEntries || rawEntries.length === 0) {
-                console.log('No leaderboard data received from reliable API');
-                return this.createNoScoreResults(raUsernames);
-            }
-
-            console.log(`Processed ${rawEntries.length} leaderboard entries from reliable API`);
-
-            // Find entries for our target users
-            const userScores = [];
-            
-            for (const username of raUsernames) {
-                const entry = rawEntries.find(entry => {
-                    return entry.User && entry.User.toLowerCase() === username.toLowerCase();
-                });
-
-                if (entry) {
-                    userScores.push({
-                        raUsername: username,
-                        rank: entry.Rank,
-                        score: entry.FormattedScore || entry.Score?.toString() || 'No score',
-                        fetchedAt: new Date()
-                    });
-                    console.log(`Found score for ${username}: rank ${entry.Rank}, score ${entry.FormattedScore || entry.Score}`);
-                } else {
-                    userScores.push({
-                        raUsername: username,
-                        rank: null,
-                        score: 'No score',
-                        fetchedAt: new Date()
-                    });
-                    console.log(`No score found for ${username}`);
-                }
-            }
-
+            console.log(`Successfully fetched scores using arenaUtils: ${userScores.length} users`);
             return userScores;
         } catch (error) {
             console.error('Error fetching reliable leaderboard scores:', error);
@@ -571,7 +584,7 @@ class ArenaService {
     }
 
     /**
-     * FIXED: Improved winner determination with better logging
+     * ENHANCED: Improved winner determination with better logging
      * @private
      */
     determineWinnerFixed(finalScores) {
@@ -832,7 +845,7 @@ class ArenaService {
     }
 
     /**
-     * Check for and process challenge timeouts (pending challenges that were never accepted)
+     * ENHANCED: Check for and process challenge timeouts with rate limiting
      */
     async checkAndProcessTimeouts() {
         try {
@@ -846,10 +859,14 @@ class ArenaService {
 
             console.log(`Arena service: Found ${timedOutChallenges.length} timed out challenges`);
 
+            // Process timeouts one at a time with delays
             for (const challenge of timedOutChallenges) {
                 try {
                     await this.refundChallenge(challenge, 'Challenge timed out (not accepted within 24 hours)');
                     console.log(`Timed out challenge ${challenge.challengeId} refunded`);
+                    
+                    // Add delay between timeout processing
+                    await new Promise(resolve => setTimeout(resolve, 1000));
                 } catch (error) {
                     console.error(`Error processing timeout for challenge ${challenge.challengeId}:`, error);
                 }
@@ -901,6 +918,28 @@ class ArenaService {
      */
     async getChallengeById(challengeId) {
         return await ArenaChallenge.findOne({ challengeId });
+    }
+
+    /**
+     * ADDED: Get processing statistics
+     */
+    getProcessingStats() {
+        return {
+            isProcessing: this.isProcessing,
+            processingChallenges: Array.from(this.processingChallenges),
+            lastProcessingTime: this.lastProcessingTime,
+            processingDelay: this.processingDelay
+        };
+    }
+
+    /**
+     * ADDED: Force refresh processing (for debugging)
+     */
+    forceRefreshProcessing() {
+        this.isProcessing = false;
+        this.processingChallenges.clear();
+        this.lastProcessingTime = 0;
+        console.log('Arena service processing state reset');
     }
 }
 
