@@ -1,4 +1,4 @@
-// services/retroAPI.js
+// services/retroAPI.js - COMPLETE FIXED VERSION with proper rate limiting
 import { buildAuthorization, getGame, getGameExtended, getUserProfile, getUserRecentAchievements, 
     getUserSummary, getGameInfoAndUserProgress, getGameRankAndScore, getUserCompletedGames,
     getUserAwards, getGameList, getConsoleIds, getAchievementCount } from '@retroachievements/api';
@@ -12,12 +12,12 @@ class RetroAchievementsService {
             webApiKey: config.retroAchievements.apiKey
         });
         
-        // Create an enhanced rate limiter
+        // Create an enhanced rate limiter - REDUCED rate to be more conservative
         this.rateLimiter = new EnhancedRateLimiter({
             requestsPerInterval: 1,     // 1 request per interval
-            interval: 1200,             // 1.2 seconds (slightly more than 1 second for safety margin)
-            maxRetries: 3,              // Retry up to 3 times for rate limit errors
-            retryDelay: 3000            // Start with a 3-second delay between retries
+            interval: 2000,             // 2 seconds (more conservative than 1.2s)
+            maxRetries: 5,              // Increased retries for 422 errors
+            retryDelay: 5000            // Longer initial delay
         });
         
         // Cache for responses to reduce API calls
@@ -56,6 +56,19 @@ class RetroAchievementsService {
             data,
             timestamp: Date.now()
         });
+    }
+
+    /**
+     * Check if an error is a rate limiting error
+     * @param {Error} error - The error to check
+     * @returns {boolean} Whether this is a rate limiting error
+     */
+    isRateLimitError(error) {
+        // Check for various rate limiting indicators
+        return error.message.includes('422') || 
+               error.message.includes('429') || 
+               error.message.includes('rate limit') ||
+               error.message.includes('Too Many Requests');
     }
 
     /**
@@ -156,11 +169,16 @@ class RetroAchievementsService {
         }
         
         try {
-            // Make direct API request to get award metadata
-            const url = `https://retroachievements.org/API/API_GetGameInfoAndUserProgress.php?g=${gameId}&u=${username}&a=1&z=${process.env.RA_USERNAME}&y=${process.env.RA_API_KEY}`;
-            
+            // Make direct API request to get award metadata with rate limiting
             const response = await this.rateLimiter.add(async () => {
-                const res = await fetch(url);
+                const url = `https://retroachievements.org/API/API_GetGameInfoAndUserProgress.php?g=${gameId}&u=${username}&a=1&z=${process.env.RA_USERNAME}&y=${process.env.RA_API_KEY}`;
+                
+                const res = await fetch(url, {
+                    headers: {
+                        'User-Agent': 'Select-Start-Bot/1.0',
+                    }
+                });
+                
                 if (!res.ok) {
                     throw new Error(`API request failed with status ${res.status}`);
                 }
@@ -656,7 +674,7 @@ class RetroAchievementsService {
     }
 
     /**
-     * Get leaderboard entries using direct API request
+     * FIXED: Get leaderboard entries using direct API request with proper rate limiting
      * @param {number} leaderboardId - RetroAchievements leaderboard ID
      * @param {number} offset - Starting position (0-based)
      * @param {number} count - Number of entries to retrieve
@@ -668,18 +686,38 @@ class RetroAchievementsService {
             const cachedData = this.getCachedItem(cacheKey);
             
             if (cachedData) {
+                console.log(`Cache hit for leaderboard ${leaderboardId}`);
                 return cachedData;
             }
             
-            // Make direct API request to the RetroAchievements leaderboard endpoint
-            const url = `https://retroachievements.org/API/API_GetLeaderboardEntries.php?i=${leaderboardId}&o=${offset}&c=${count}&z=${process.env.RA_USERNAME}&y=${process.env.RA_API_KEY}`;
+            console.log(`Making rate-limited API call for leaderboard ${leaderboardId}`);
             
-            const response = await fetch(url);
-            if (!response.ok) {
-                throw new Error(`API request failed with status ${response.status}`);
-            }
+            // FIXED: Wrap the API call in the rate limiter with retry logic
+            const data = await this.rateLimiter.add(async () => {
+                const url = `https://retroachievements.org/API/API_GetLeaderboardEntries.php?i=${leaderboardId}&o=${offset}&c=${count}&z=${process.env.RA_USERNAME}&y=${process.env.RA_API_KEY}`;
+                
+                const response = await fetch(url, {
+                    headers: {
+                        'User-Agent': 'Select-Start-Bot/1.0',
+                    }
+                });
+                
+                if (!response.ok) {
+                    const errorText = await response.text().catch(() => 'Unknown error');
+                    console.error(`API error for leaderboard ${leaderboardId}: ${response.status} - ${errorText}`);
+                    
+                    // For 422 errors, throw a specific error that can be caught and handled
+                    if (response.status === 422) {
+                        throw new Error(`Leaderboard ${leaderboardId} returned 422 - possibly invalid or inaccessible`);
+                    }
+                    
+                    throw new Error(`API request failed with status ${response.status}: ${errorText}`);
+                }
+                
+                return response.json();
+            });
             
-            const data = await response.json();
+            console.log(`Successfully fetched leaderboard ${leaderboardId} with ${data?.Results?.length || 0} entries`);
             
             // Cache the result
             this.setCachedItem(cacheKey, data);
@@ -687,12 +725,23 @@ class RetroAchievementsService {
             return data;
         } catch (error) {
             console.error(`Error fetching direct leaderboard entries for ${leaderboardId}:`, error);
-            return { Results: [] }; // Return empty Results array for consistent structure
+            
+            // Check if this is a known invalid leaderboard
+            if (error.message.includes('422')) {
+                console.warn(`Leaderboard ${leaderboardId} appears to be invalid or inaccessible (422 error)`);
+                // Cache the failure to avoid repeated attempts
+                const emptyResult = { Results: [], invalid: true };
+                this.setCachedItem(`direct_leaderboard_${leaderboardId}_${offset}_${count}`, emptyResult);
+                return emptyResult;
+            }
+            
+            // For other errors, return empty results without caching the failure
+            return { Results: [] };
         }
     }
 
     /**
-     * Get leaderboard entries for a specific leaderboard
+     * ENHANCED: Get leaderboard entries with better error handling and validation
      * @param {number} leaderboardId - RetroAchievements leaderboard ID
      * @param {number} offset - Starting position (0-based)
      * @param {number} count - Number of entries to retrieve
@@ -700,17 +749,33 @@ class RetroAchievementsService {
      */
     async getLeaderboardEntries(leaderboardId, offset = 0, count = 100) {
         try {
-            // For leaderboards, use a shorter cache TTL
+            // For leaderboards, use a shorter cache TTL but check for invalid flag
             const cacheKey = `leaderboard_entries_${leaderboardId}_${offset}_${count}`;
             const cachedData = this.getCachedItem(cacheKey);
             
             // Use a shorter TTL for leaderboard data (2 minutes)
             if (cachedData && (Date.now() - this.cache.get(cacheKey).timestamp) < 120000) {
-                return cachedData;
+                // If this leaderboard was marked as invalid, return empty results
+                if (cachedData.invalid) {
+                    console.log(`Leaderboard ${leaderboardId} was previously marked as invalid, returning empty results`);
+                    return [];
+                }
+                return this.processLeaderboardEntries(cachedData);
             }
             
-            // Use direct API method and pass offset and count parameters
+            // Validate leaderboard ID
+            if (!leaderboardId || leaderboardId <= 0) {
+                console.warn(`Invalid leaderboard ID: ${leaderboardId}`);
+                return [];
+            }
+            
+            // Use direct API method with proper rate limiting
             const entries = await this.getLeaderboardEntriesDirect(leaderboardId, offset, count);
+
+            // Check if leaderboard was marked as invalid
+            if (entries.invalid) {
+                return [];
+            }
 
             // Process and standardize the entries
             const processedEntries = this.processLeaderboardEntries(entries);
@@ -720,26 +785,34 @@ class RetroAchievementsService {
             
             return processedEntries;
         } catch (error) {
-            console.error(`Error fetching leaderboard entries for leaderboard ${leaderboardId}:`, error);
+            console.error(`Error in getLeaderboardEntries for leaderboard ${leaderboardId}:`, error);
             return [];
         }
     }
 
     /**
-     * Process leaderboard entries to standardize the format
+     * ENHANCED: Process leaderboard entries with better validation
      * @param {Object|Array} data - Raw API response
      * @returns {Array} Standardized leaderboard entries
      */
     processLeaderboardEntries(data) {
+        // Check if this is marked as invalid
+        if (data.invalid) {
+            return [];
+        }
+        
         // Check if we have a Results array (API sometimes returns different formats)
         const entries = data.Results || data;
         
         if (!entries || !Array.isArray(entries)) {
+            console.warn('Leaderboard data is not in expected format:', typeof entries);
             return [];
         }
         
+        console.log(`Processing ${entries.length} leaderboard entries`);
+        
         // Convert entries to a standard format
-        return entries.map(entry => {
+        const processed = entries.map(entry => {
             // Handle different API response formats
             const user = entry.User || entry.user || '';
             const apiRank = entry.Rank || entry.rank || '0';
@@ -767,7 +840,6 @@ class RetroAchievementsService {
             } else if (score !== null) {
                 trackTime = score.toString();
             } else {
-                // Last resort fallback
                 trackTime = "No Score";
             }
             
@@ -778,10 +850,80 @@ class RetroAchievementsService {
                 DateSubmitted: entry.DateSubmitted || entry.dateSubmitted || null,
             };
         }).filter(entry => entry.User.length > 0);
+        
+        console.log(`Successfully processed ${processed.length} valid entries`);
+        return processed;
     }
 
     /**
-     * Make a direct API request to the RetroAchievements API
+     * ADDED: Validate that a leaderboard exists and is accessible
+     * @param {number} leaderboardId - RetroAchievements leaderboard ID
+     * @returns {Promise<boolean>} Whether the leaderboard is valid and accessible
+     */
+    async validateLeaderboard(leaderboardId) {
+        try {
+            const cacheKey = `leaderboard_valid_${leaderboardId}`;
+            const cachedResult = this.getCachedItem(cacheKey);
+            
+            if (cachedResult !== undefined) {
+                return cachedResult;
+            }
+            
+            // Try to fetch just 1 entry to validate the leaderboard
+            const result = await this.getLeaderboardEntriesDirect(leaderboardId, 0, 1);
+            
+            const isValid = !result.invalid && (result.Results || []).length >= 0;
+            
+            // Cache the validation result
+            this.setCachedItem(cacheKey, isValid);
+            
+            return isValid;
+        } catch (error) {
+            console.error(`Error validating leaderboard ${leaderboardId}:`, error);
+            // Cache negative result to avoid repeated attempts
+            this.setCachedItem(`leaderboard_valid_${leaderboardId}`, false);
+            return false;
+        }
+    }
+
+    /**
+     * ADDED: Batch validate multiple leaderboards to reduce API calls
+     * @param {Array<number>} leaderboardIds - Array of leaderboard IDs to validate
+     * @returns {Promise<Object>} Map of leaderboardId -> isValid
+     */
+    async validateLeaderboardsBatch(leaderboardIds) {
+        const results = {};
+        
+        // Process in smaller batches to avoid overwhelming the API
+        const batchSize = 3;
+        for (let i = 0; i < leaderboardIds.length; i += batchSize) {
+            const batch = leaderboardIds.slice(i, i + batchSize);
+            
+            // Validate each leaderboard in the batch with proper delays
+            const batchPromises = batch.map(async (id, index) => {
+                // Add a small delay between calls in the same batch
+                if (index > 0) {
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                }
+                return [id, await this.validateLeaderboard(id)];
+            });
+            
+            const batchResults = await Promise.all(batchPromises);
+            batchResults.forEach(([id, isValid]) => {
+                results[id] = isValid;
+            });
+            
+            // Delay between batches
+            if (i + batchSize < leaderboardIds.length) {
+                await new Promise(resolve => setTimeout(resolve, 2000));
+            }
+        }
+        
+        return results;
+    }
+
+    /**
+     * Make a direct API request to the RetroAchievements API with rate limiting
      * @param {string} endpoint - API endpoint
      * @returns {Promise<Object>} API response
      */
@@ -790,15 +932,20 @@ class RetroAchievementsService {
         const url = `${baseUrl}${endpoint}&z=${this.authorization.userName}&y=${this.authorization.webApiKey}`;
         
         try {
-            const response = await fetch(url, {
-                headers: {
-                    'User-Agent': 'Select-Start-Bot/1.0',
+            // FIXED: Use rate limiter for direct API requests
+            const response = await this.rateLimiter.add(async () => {
+                const res = await fetch(url, {
+                    headers: {
+                        'User-Agent': 'Select-Start-Bot/1.0',
+                    }
+                });
+                
+                if (!res.ok) {
+                    throw new Error(`API request failed with status ${res.status}`);
                 }
+                
+                return res;
             });
-            
-            if (!response.ok) {
-                throw new Error(`API request failed with status ${response.status}`);
-            }
             
             return await response.json();
         } catch (error) {
@@ -864,7 +1011,22 @@ class RetroAchievementsService {
      */
     clearCache() {
         this.cache.clear();
-        console.log('Cache cleared');
+        console.log('RetroAPI cache cleared');
+    }
+
+    /**
+     * Get cache statistics
+     */
+    getCacheStats() {
+        const entries = Array.from(this.cache.entries());
+        const now = Date.now();
+        const valid = entries.filter(([_, { timestamp }]) => now - timestamp <= this.cacheTTL);
+        
+        return {
+            total: this.cache.size,
+            valid: valid.length,
+            expired: this.cache.size - valid.length
+        };
     }
 }
 
