@@ -1,13 +1,11 @@
-// src/services/combinationService.js - COMPLETE with non-destructive combination support
+// src/services/combinationService.js - COMPLETE with AlertService integration
 import { GachaItem, CombinationRule } from '../models/GachaItem.js';
 import { Challenge } from '../models/Challenge.js';
 import { config } from '../config/config.js';
 import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder } from 'discord.js';
 import { formatGachaEmoji } from '../config/gachaEmojis.js';
 import { COLORS } from '../utils/FeedUtils.js';
-
-// Use gacha trade channel for all combination alerts
-const GACHA_TRADE_CHANNEL_ID = '1379402075120730185';
+import alertService, { ALERT_TYPES } from '../utils/AlertService.js';
 
 class CombinationService {
     constructor() {
@@ -17,6 +15,7 @@ class CombinationService {
 
     setClient(client) {
         this.client = client;
+        alertService.setClient(client);
     }
 
     async checkPossibleCombinations(user, triggerItemId = null) {
@@ -53,7 +52,7 @@ class CombinationService {
                 userItemMap.set(item.itemId, existing);
             });
 
-            // NEW: For non-destructive combinations, check if user already has the result
+            // For non-destructive combinations, check if user already has the result
             // This prevents UI clutter - once you have the "Street Fighter Master" trophy,
             // you don't need to see that combination anymore since you already completed it
             if (rule.isNonDestructive) {
@@ -130,12 +129,12 @@ class CombinationService {
         }
     }
 
-    // UPDATED: Modified to show non-destructive status
+    // Modified to show non-destructive status
     async showSingleCombinationConfirmation(interaction, user, combination) {
         const { resultItem, resultQuantity, ingredients, maxCombinations, rule } = combination;
         
         const isShadowUnlock = this.isShadowUnlockItem(resultItem);
-        const isNonDestructive = rule.isNonDestructive; // NEW: Check if non-destructive
+        const isNonDestructive = rule.isNonDestructive;
         const resultEmoji = formatGachaEmoji(resultItem.emojiId, resultItem.emojiName, resultItem.isAnimated);
         const rarityEmoji = this.getRarityEmoji(resultItem.rarity);
 
@@ -248,7 +247,7 @@ class CombinationService {
         });
     }
 
-    // UPDATED: Modified to show non-destructive indicators
+    // Modified to show non-destructive indicators
     async showMultipleCombinationSelection(interaction, user, combinations) {
         const limitedCombinations = combinations.slice(0, 25);
         const hasShadowUnlock = limitedCombinations.some(combo => this.isShadowUnlockItem(combo.resultItem));
@@ -342,7 +341,7 @@ class CombinationService {
         });
     }
 
-    // UPDATED: Modified to handle non-destructive combinations
+    // Modified to handle non-destructive combinations
     async performCombination(user, ruleId, quantity = 1) {
         try {
             const rule = await CombinationRule.findOne({ ruleId: ruleId, isActive: true });
@@ -366,7 +365,7 @@ class CombinationService {
                 throw new Error('Result item not found');
             }
 
-            // NEW: Handle non-destructive combinations
+            // Handle non-destructive combinations
             const removedIngredients = [];
             
             if (!rule.isNonDestructive) {
@@ -426,7 +425,7 @@ class CombinationService {
                 ingredients: rule.ingredients,
                 removedIngredients: removedIngredients,
                 wasNewDiscovery: wasNewDiscovery,
-                isNonDestructive: rule.isNonDestructive // NEW: Include non-destructive flag
+                isNonDestructive: rule.isNonDestructive
             };
 
             await this.checkForShadowUnlock(user, result);
@@ -441,7 +440,7 @@ class CombinationService {
         }
     }
 
-    // Use gacha trade channel for player transfers
+    // UPDATED: Use AlertService for player transfers
     async triggerCombinationAlertsForPlayerTransfer(recipient, giftedItemId, giverUsername) {
         try {
             const possibleCombinations = await this.checkPossibleCombinations(recipient, giftedItemId);
@@ -450,70 +449,63 @@ class CombinationService {
                 return { hasCombinations: false };
             }
 
-            if (!this.client) {
-                return { hasCombinations: false, error: 'No Discord client available' };
-            }
-
+            // Get recipient username 
+            let memberTag = `**${recipient.raUsername}**`;
             try {
-                const guild = await this.client.guilds.cache.first();
-                const channel = await guild.channels.fetch(GACHA_TRADE_CHANNEL_ID);
-                
-                if (channel) {
-                    let memberTag = `**${recipient.raUsername}**`;
-                    try {
-                        const member = await guild.members.fetch(recipient.discordId);
-                        memberTag = `<@${recipient.discordId}>`;
-                    } catch (error) {
-                        // Use username fallback
-                    }
-
-                    const publicEmbed = new EmbedBuilder()
-                        .setTitle('🎁⚗️ Player Gift + Combinations Available!')
-                        .setColor(COLORS.SUCCESS)
-                        .setDescription(
-                            `${memberTag} received an item from **${giverUsername}** and now has **${possibleCombinations.length}** combination option(s) available!\n\n` +
-                            `💡 **${recipient.raUsername}**, use \`/collection\` to confirm your combinations!`
-                        )
-                        .addFields({
-                            name: '🎯 Available Combinations',
-                            value: possibleCombinations.slice(0, 3).map(combo => {
-                                const resultEmoji = formatGachaEmoji(combo.resultItem.emojiId, combo.resultItem.emojiName, combo.resultItem.isAnimated);
-                                const isShadowUnlock = this.isShadowUnlockItem(combo.resultItem);
-                                const isNonDestructive = combo.rule.isNonDestructive;
-                                let suffix = '';
-                                if (isShadowUnlock) suffix = ' 🌙';
-                                else if (isNonDestructive) suffix = ' 🔄';
-                                return `${resultEmoji} ${combo.resultItem.itemName}${suffix}`;
-                            }).join('\n') + (possibleCombinations.length > 3 ? '\n*...and more!*' : ''),
-                            inline: false
-                        })
-                        .setTimestamp();
-
-                    // Schedule message deletion after 5 minutes
-                    const message = await channel.send({ embeds: [publicEmbed] });
-                    setTimeout(async () => {
-                        try {
-                            await message.delete();
-                        } catch (deleteError) {
-                            console.log('Combination alert message already deleted or inaccessible');
-                        }
-                    }, 5 * 60 * 1000); // 5 minutes
+                if (this.client) {
+                    const guild = await this.client.guilds.cache.first();
+                    const member = await guild.members.fetch(recipient.discordId);
+                    memberTag = `<@${recipient.discordId}>`;
                 }
-
-                return { 
-                    hasCombinations: true, 
-                    combinationCount: possibleCombinations.length,
-                    publicAnnouncementSent: true
-                };
-
-            } catch (channelError) {
-                console.error('Error sending to gacha trade channel:', channelError);
-                return { 
-                    hasCombinations: true, 
-                    combinationCount: possibleCombinations.length,
-                    error: 'Could not send public announcement'
-                };
+            } catch (error) {
+                // Use username fallback
             }
+
+            // Get character names for the alert
+            const characterNames = [];
+            let resultCharacterName = 'Multiple Options';
+            let thumbnail = null;
+
+            if (possibleCombinations.length === 1) {
+                const combo = possibleCombinations[0];
+                characterNames.push(...combo.ingredients.map(ing => ing.item?.itemName || ing.itemId));
+                resultCharacterName = combo.resultItem.itemName;
+                thumbnail = combo.resultItem.imageUrl;
+            }
+
+            // Send alert via AlertService
+            await alertService.sendCombinationTransferAlert({
+                combinationType: 'Player Transfer',
+                ruleId: possibleCombinations[0]?.ruleId || 'multiple',
+                username: recipient.raUsername,
+                characterNames: characterNames,
+                resultCharacterName: resultCharacterName,
+                thumbnail: thumbnail,
+                isSuccess: true,
+                isPlayerConfirmed: false,
+                description: `${memberTag} received an item from **${giverUsername}** and now has **${possibleCombinations.length}** combination option(s) available!\n\n💡 **${recipient.raUsername}**, use \`/collection\` to confirm your combinations!`,
+                fields: [
+                    {
+                        name: '🎯 Available Combinations',
+                        value: possibleCombinations.slice(0, 3).map(combo => {
+                            const resultEmoji = formatGachaEmoji(combo.resultItem.emojiId, combo.resultItem.emojiName, combo.resultItem.isAnimated);
+                            const isShadowUnlock = this.isShadowUnlockItem(combo.resultItem);
+                            const isNonDestructive = combo.rule.isNonDestructive;
+                            let suffix = '';
+                            if (isShadowUnlock) suffix = ' 🌙';
+                            else if (isNonDestructive) suffix = ' 🔄';
+                            return `${resultEmoji} ${combo.resultItem.itemName}${suffix}`;
+                        }).join('\n') + (possibleCombinations.length > 3 ? '\n*...and more!*' : ''),
+                        inline: false
+                    }
+                ]
+            });
+
+            return { 
+                hasCombinations: true, 
+                combinationCount: possibleCombinations.length,
+                publicAnnouncementSent: true
+            };
 
         } catch (error) {
             console.error('Error triggering combination alerts for player transfer:', error);
@@ -521,7 +513,7 @@ class CombinationService {
         }
     }
 
-    // Use gacha trade channel for admin gifts
+    // UPDATED: Use AlertService for admin gifts
     async triggerCombinationAlertsForAdminGift(user, giftedItemId, adminInteraction) {
         try {
             const possibleCombinations = await this.checkPossibleCombinations(user, giftedItemId);
@@ -530,70 +522,63 @@ class CombinationService {
                 return { hasCombinations: false };
             }
 
-            if (!this.client) {
-                return { hasCombinations: false, error: 'No Discord client available' };
-            }
-
+            // Get user tag
+            let memberTag = `**${user.raUsername}**`;
             try {
-                const guild = await this.client.guilds.fetch(adminInteraction.guildId);
-                const channel = await guild.channels.fetch(GACHA_TRADE_CHANNEL_ID);
-                
-                if (channel) {
-                    let memberTag = `**${user.raUsername}**`;
-                    try {
-                        const member = await guild.members.fetch(user.discordId);
-                        memberTag = `<@${user.discordId}>`;
-                    } catch (error) {
-                        // Use username fallback
-                    }
-
-                    const publicEmbed = new EmbedBuilder()
-                        .setTitle('🎁⚗️ Admin Gift + Combinations Available!')
-                        .setColor(COLORS.SUCCESS)
-                        .setDescription(
-                            `${memberTag} received an admin gift and now has **${possibleCombinations.length}** combination option(s) available!\n\n` +
-                            `💡 **${user.raUsername}**, use \`/collection\` to confirm your combinations!`
-                        )
-                        .addFields({
-                            name: '🎯 Available Combinations',
-                            value: possibleCombinations.slice(0, 3).map(combo => {
-                                const resultEmoji = formatGachaEmoji(combo.resultItem.emojiId, combo.resultItem.emojiName, combo.resultItem.isAnimated);
-                                const isShadowUnlock = this.isShadowUnlockItem(combo.resultItem);
-                                const isNonDestructive = combo.rule.isNonDestructive;
-                                let suffix = '';
-                                if (isShadowUnlock) suffix = ' 🌙';
-                                else if (isNonDestructive) suffix = ' 🔄';
-                                return `${resultEmoji} ${combo.resultItem.itemName}${suffix}`;
-                            }).join('\n') + (possibleCombinations.length > 3 ? '\n*...and more!*' : ''),
-                            inline: false
-                        })
-                        .setTimestamp();
-
-                    // Schedule message deletion after 5 minutes
-                    const message = await channel.send({ embeds: [publicEmbed] });
-                    setTimeout(async () => {
-                        try {
-                            await message.delete();
-                        } catch (deleteError) {
-                            console.log('Admin gift combination alert message already deleted or inaccessible');
-                        }
-                    }, 5 * 60 * 1000); // 5 minutes
+                if (this.client && adminInteraction.guildId) {
+                    const guild = await this.client.guilds.fetch(adminInteraction.guildId);
+                    const member = await guild.members.fetch(user.discordId);
+                    memberTag = `<@${user.discordId}>`;
                 }
-
-                return { 
-                    hasCombinations: true, 
-                    combinationCount: possibleCombinations.length,
-                    publicAnnouncementSent: true
-                };
-
-            } catch (channelError) {
-                console.error('Error sending to gacha trade channel:', channelError);
-                return { 
-                    hasCombinations: true, 
-                    combinationCount: possibleCombinations.length,
-                    error: 'Could not send public announcement'
-                };
+            } catch (error) {
+                // Use username fallback
             }
+
+            // Get character names for the alert
+            const characterNames = [];
+            let resultCharacterName = 'Multiple Options';
+            let thumbnail = null;
+
+            if (possibleCombinations.length === 1) {
+                const combo = possibleCombinations[0];
+                characterNames.push(...combo.ingredients.map(ing => ing.item?.itemName || ing.itemId));
+                resultCharacterName = combo.resultItem.itemName;
+                thumbnail = combo.resultItem.imageUrl;
+            }
+
+            // Send alert via AlertService
+            await alertService.sendCombinationAdminGiftAlert({
+                combinationType: 'Admin Gift',
+                ruleId: possibleCombinations[0]?.ruleId || 'multiple',
+                username: user.raUsername,
+                characterNames: characterNames,
+                resultCharacterName: resultCharacterName,
+                thumbnail: thumbnail,
+                isSuccess: true,
+                isPlayerConfirmed: false,
+                description: `${memberTag} received an admin gift and now has **${possibleCombinations.length}** combination option(s) available!\n\n💡 **${user.raUsername}**, use \`/collection\` to confirm your combinations!`,
+                fields: [
+                    {
+                        name: '🎯 Available Combinations',
+                        value: possibleCombinations.slice(0, 3).map(combo => {
+                            const resultEmoji = formatGachaEmoji(combo.resultItem.emojiId, combo.resultItem.emojiName, combo.resultItem.isAnimated);
+                            const isShadowUnlock = this.isShadowUnlockItem(combo.resultItem);
+                            const isNonDestructive = combo.rule.isNonDestructive;
+                            let suffix = '';
+                            if (isShadowUnlock) suffix = ' 🌙';
+                            else if (isNonDestructive) suffix = ' 🔄';
+                            return `${resultEmoji} ${combo.resultItem.itemName}${suffix}`;
+                        }).join('\n') + (possibleCombinations.length > 3 ? '\n*...and more!*' : ''),
+                        inline: false
+                    }
+                ]
+            });
+
+            return { 
+                hasCombinations: true, 
+                combinationCount: possibleCombinations.length,
+                publicAnnouncementSent: true
+            };
 
         } catch (error) {
             console.error('Error triggering combination alerts for admin gift:', error);
@@ -869,7 +854,7 @@ class CombinationService {
         return false;
     }
 
-    // UPDATED: Show combination success with discovery notifications and non-destructive status
+    // Show combination success with discovery notifications and non-destructive status
     async showCombinationSuccess(interaction, result, quantity) {
         const { resultItem, resultQuantity, addResult, wasNewDiscovery, isNonDestructive } = result;
         const resultEmoji = formatGachaEmoji(resultItem.emojiId, resultItem.emojiName, resultItem.isAnimated);
@@ -964,108 +949,60 @@ class CombinationService {
         });
     }
 
-    // UPDATED: Use gacha trade channel and show non-destructive status
+    // UPDATED: Use AlertService instead of manual embeds
     async sendCombinationAlert(user, combinationResult) {
-        if (!this.client) return;
-
         try {
-            const guild = await this.client.guilds.fetch(config.discord.guildId);
-            const channel = await guild.channels.fetch(GACHA_TRADE_CHANNEL_ID);
-            
-            if (!channel) return;
-
-            const { ruleId, resultItem, resultQuantity, wasNewDiscovery, isNonDestructive } = combinationResult;
-            
-            const resultEmoji = formatGachaEmoji(resultItem.emojiId, resultItem.emojiName, resultItem.isAnimated);
-            const rarityEmoji = this.getRarityEmoji(resultItem.rarity);
+            const { ruleId, resultItem, resultQuantity, wasNewDiscovery, isNonDestructive, ingredients } = combinationResult;
             const isShadowUnlock = this.isShadowUnlockItem(resultItem);
             
-            let title = '⚗️ Combination Created!';
-            let color = COLORS.SUCCESS;
-            
-            if (isShadowUnlock) {
-                title = '🌙 SHADOW UNLOCK COMBINATION!';
-                color = '#9932CC';
-            } else if (wasNewDiscovery) {
-                title = '🎉 NEW RECIPE DISCOVERED!';
-                color = '#FFD700';
-            } else if (isNonDestructive) {
-                title = '🔄 Non-Destructive Combination!';
-                color = '#00FF00';
-            }
-            
-            let actionText = 'created a combination!';
-            if (isShadowUnlock) {
-                actionText = 'unlocked the shadow!';
-            } else if (wasNewDiscovery) {
-                actionText = 'discovered a new recipe!';
-            } else if (isNonDestructive) {
-                actionText = 'completed a non-destructive combination!';
-            }
-            
-            const embed = new EmbedBuilder()
-                .setTitle(title)
-                .setColor(color)
-                .setDescription(
-                    `${user.raUsername} ${actionText}\n\n` +
-                    `${resultEmoji} **${resultQuantity}x ${resultItem.itemName}** ${rarityEmoji}\n\n` +
-                    `*${resultItem.description || 'A mysterious creation...'}*` +
-                    (isShadowUnlock ? '\n\n🔓 **The shadow challenge has been revealed!**' : '') +
-                    (wasNewDiscovery ? '\n\n📖 **This recipe is now in the community recipe book!**' : '') +
-                    (isNonDestructive ? '\n\n🔄 **Ingredients were kept - perfect for series completion!**' : '')
-                )
-                .setTimestamp();
-
-            if (combinationResult.ingredients) {
-                let ingredientsText = '';
-                for (const ingredient of combinationResult.ingredients) {
-                    const ingredientItem = await GachaItem.findOne({ itemId: ingredient.itemId });
-                    if (ingredientItem) {
-                        const emoji = formatGachaEmoji(ingredientItem.emojiId, ingredientItem.emojiName, ingredientItem.isAnimated);
-                        ingredientsText += `${emoji} ${ingredient.quantity}x ${ingredientItem.itemName}\n`;
-                    }
-                }
-
-                if (ingredientsText) {
-                    embed.addFields({ 
-                        name: isNonDestructive ? 'Ingredients Used (Kept)' : 'Ingredients Used', 
-                        value: ingredientsText,
-                        inline: true 
-                    });
+            // Get character names from ingredients
+            const characterNames = [];
+            for (const ingredient of ingredients) {
+                const ingredientItem = await GachaItem.findOne({ itemId: ingredient.itemId });
+                if (ingredientItem) {
+                    characterNames.push(ingredientItem.itemName);
                 }
             }
 
-            embed.addFields({ 
-                name: 'Result', 
-                value: `${resultEmoji} ${resultQuantity}x **${resultItem.itemName}**`,
-                inline: true 
+            // Determine alert type based on combination characteristics
+            let alertType = ALERT_TYPES.COMBINATION_COMPLETE;
+            if (wasNewDiscovery) {
+                alertType = ALERT_TYPES.RECIPE_DISCOVERY;
+            }
+
+            // Get thumbnail URL
+            const thumbnail = resultItem.imageUrl || null;
+
+            // Send via AlertService
+            await alertService.sendCombinationAlert({
+                alertType: alertType,
+                combinationType: isNonDestructive ? 'Non-Destructive' : 'Standard',
+                ruleId: ruleId,
+                username: user.raUsername,
+                characterNames: characterNames,
+                resultCharacterName: resultItem.itemName,
+                thumbnail: thumbnail,
+                isSuccess: true,
+                isPlayerConfirmed: true,
+                description: wasNewDiscovery 
+                    ? `${user.raUsername} discovered a new recipe!\n\n📖 **This recipe is now in the community recipe book!**\n💡 Use \`/recipes\` to view all discovered combinations!`
+                    : `${user.raUsername} ${isShadowUnlock ? 'unlocked the shadow!' : (isNonDestructive ? 'completed a non-destructive combination!' : 'created a combination!')}`,
+                fields: [
+                    {
+                        name: 'Result',
+                        value: `${formatGachaEmoji(resultItem.emojiId, resultItem.emojiName, resultItem.isAnimated)} ${resultQuantity}x **${resultItem.itemName}**`,
+                        inline: true
+                    },
+                    ...(resultItem.flavorText ? [{
+                        name: 'Flavor Text',
+                        value: `*"${resultItem.flavorText}"*`,
+                        inline: false
+                    }] : [])
+                ]
             });
-
-            if (resultItem.flavorText) {
-                embed.addFields({
-                    name: 'Flavor Text',
-                    value: `*"${resultItem.flavorText}"*`,
-                    inline: false
-                });
-            }
-
-            const combinationType = isNonDestructive ? 'Non-Destructive' : 'Standard';
-            embed.setFooter({ 
-                text: `Combination ID: ${ruleId} • ${combinationType} • Player confirmed • Expires in 5 minutes` 
-            });
-
-            // Schedule message deletion after 5 minutes
-            const message = await channel.send({ embeds: [embed] });
-            setTimeout(async () => {
-                try {
-                    await message.delete();
-                } catch (deleteError) {
-                    console.log('Combination alert message already deleted or inaccessible');
-                }
-            }, 5 * 60 * 1000); // 5 minutes
 
         } catch (error) {
-            console.error('Error sending combination alert:', error);
+            console.error('Error sending combination alert via AlertService:', error);
         }
     }
 
@@ -1081,7 +1018,7 @@ class CombinationService {
                 
                 console.log(`🔍 New combination discovered: ${ruleId} by ${discoveredBy}`);
                 
-                // Announce the discovery to the trade channel
+                // Announce the discovery via AlertService
                 await this.announceNewRecipeDiscovery(rule, discoveredBy);
                 
                 return true;
@@ -1093,48 +1030,51 @@ class CombinationService {
         }
     }
 
-    // Announce new recipe discovery
+    // UPDATED: Announce new recipe discovery via AlertService
     async announceNewRecipeDiscovery(rule, discoveredBy) {
-        if (!this.client) return;
-
         try {
             const resultItem = await GachaItem.findOne({ itemId: rule.result.itemId });
             if (!resultItem) return;
 
-            const guild = await this.client.guilds.fetch(config.discord.guildId);
-            const channel = await guild.channels.fetch(GACHA_TRADE_CHANNEL_ID);
-            
-            if (!channel) return;
-
-            // Format the recipe
-            const recipeText = await this.formatSingleRecipe(rule, resultItem);
-            const resultEmoji = formatGachaEmoji(resultItem.emojiId, resultItem.emojiName, resultItem.isAnimated);
-            const rarityEmoji = this.getRarityEmoji(resultItem.rarity);
-
-            const embed = new EmbedBuilder()
-                .setTitle('📖 NEW RECIPE DISCOVERED!')
-                .setColor('#FFD700') // Gold for discoveries
-                .setDescription(
-                    `**${discoveredBy}** has discovered a new combination recipe!\n\n` +
-                    `**New Recipe:**\n${recipeText}\n\n` +
-                    `${resultEmoji} **${resultItem.itemName}** ${rarityEmoji}\n` +
-                    `*${resultItem.description || 'A mysterious creation...'}*\n\n` +
-                    `💡 Use \`/recipes\` to view all discovered combinations!`
-                )
-                .setTimestamp();
-
-            // Schedule message deletion after 10 minutes (longer for discoveries)
-            const message = await channel.send({ embeds: [embed] });
-            setTimeout(async () => {
-                try {
-                    await message.delete();
-                } catch (deleteError) {
-                    console.log('Recipe discovery message already deleted or inaccessible');
+            // Get ingredient names
+            const characterNames = [];
+            for (const ingredient of rule.ingredients) {
+                const ingredientItem = await GachaItem.findOne({ itemId: ingredient.itemId });
+                if (ingredientItem) {
+                    characterNames.push(ingredientItem.itemName);
                 }
-            }, 10 * 60 * 1000); // 10 minutes
+            }
+
+            // Format the recipe for display
+            const recipeText = await this.formatSingleRecipe(rule, resultItem);
+
+            // Send via AlertService
+            await alertService.sendRecipeDiscoveryAlert({
+                combinationType: 'Recipe Discovery',
+                ruleId: rule.ruleId,
+                username: discoveredBy,
+                characterNames: characterNames,
+                resultCharacterName: resultItem.itemName,
+                thumbnail: resultItem.imageUrl,
+                isSuccess: true,
+                isPlayerConfirmed: false,
+                description: `**${discoveredBy}** has discovered a new combination recipe!\n\n**New Recipe:**\n${recipeText}\n\n💡 Use \`/recipes\` to view all discovered combinations!`,
+                fields: [
+                    {
+                        name: 'Discovery Type',
+                        value: 'New Recipe',
+                        inline: true
+                    },
+                    {
+                        name: 'Discoverer',
+                        value: discoveredBy,
+                        inline: true
+                    }
+                ]
+            });
 
         } catch (error) {
-            console.error('Error announcing new recipe discovery:', error);
+            console.error('Error announcing new recipe discovery via AlertService:', error);
         }
     }
 
@@ -1200,7 +1140,7 @@ class CombinationService {
         }
     }
 
-    // UPDATED: Format a single recipe for display with non-destructive indicators
+    // Format a single recipe for display with non-destructive indicators
     async formatSingleRecipe(rule, resultItem) {
         const ingredients = [];
         
@@ -1219,7 +1159,7 @@ class CombinationService {
         const resultEmoji = formatGachaEmoji(resultItem.emojiId, resultItem.emojiName, resultItem.isAnimated);
         const resultQuantity = rule.result.quantity > 1 ? ` x${rule.result.quantity}` : '';
         
-        // NEW: Add non-destructive indicator
+        // Add non-destructive indicator
         const ingredientsPart = rule.isNonDestructive 
             ? `(${ingredients.join(' + ')})` 
             : ingredients.join(' + ');
@@ -1481,7 +1421,7 @@ class CombinationService {
             const possibleCombinations = [];
 
             for (const rule of rules) {
-                // NEW: For non-destructive combinations, check if user already has the result
+                // For non-destructive combinations, check if user already has the result
                 // This keeps the UI clean by hiding completed series rewards
                 if (rule.isNonDestructive) {
                     const userHasResult = user.gachaCollection?.some(item => item.itemId === rule.result.itemId);
@@ -1512,7 +1452,7 @@ class CombinationService {
                         result: rule.result,
                         canMake: canMake,
                         isAutomatic: rule.isAutomatic,
-                        isNonDestructive: rule.isNonDestructive, // Include non-destructive flag
+                        isNonDestructive: rule.isNonDestructive,
                         priority: rule.priority
                     });
                 }
