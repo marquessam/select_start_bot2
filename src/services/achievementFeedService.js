@@ -8,7 +8,8 @@ import { EmbedBuilder } from 'discord.js';
 import { config } from '../config/config.js';
 import EnhancedRateLimiter from './EnhancedRateLimiter.js';
 import gameAwardService from './gameAwardService.js';
-import AlertUtils, { ALERT_TYPES } from '../utils/AlertUtils.js';
+// UPDATED: Import new AlertService instead of AlertUtils
+import alertService, { ALERT_TYPES } from '../utils/AlertService.js';
 
 const AWARD_EMOJIS = {
     MASTERY: '✨',
@@ -55,8 +56,8 @@ class AchievementFeedService {
         this.client = client;
         // NEW: Also set client for gameAwardService
         gameAwardService.setClient(client);
-        // Set client for AlertUtils
-        AlertUtils.setClient(client);
+        // UPDATED: Set client for new AlertService
+        alertService.setClient(client);
         console.log('Discord client set for achievement feed service');
     }
 
@@ -179,13 +180,14 @@ class AchievementFeedService {
         }
 
         try {
-            // Get the channel
-            const channel = await this.getAnnouncementChannel();
-            if (!channel) {
-                console.error('Could not get announcement channel');
+            // UPDATED: Use new AlertService to get achievement channel
+            const channels = await alertService.getChannelsForAlert(ALERT_TYPES.ACHIEVEMENT);
+            if (!channels || channels.length === 0) {
+                console.error('Could not get achievement announcement channels');
                 return false;
             }
 
+            const channel = channels[0]; // Use first channel for testing
             console.log(`Found announcement channel: ${channel.name} (ID: ${channel.id})`);
             
             // Test sending a message
@@ -229,14 +231,8 @@ class AchievementFeedService {
     async checkForNewAchievements() {
         console.log('Checking for new achievements...');
         
-        // Get announcement channel
-        const announcementChannel = await this.getAnnouncementChannel();
-        if (!announcementChannel) {
-            console.error('Announcement channel not found or inaccessible');
-            return;
-        }
-        
-        console.log(`Successfully found announcement channel: ${announcementChannel.name}`);
+        // UPDATED: No need to get announcement channel here - AlertService handles it
+        console.log('Achievement feed service checking for new achievements...');
 
         // Get all users
         const users = await User.find({});
@@ -386,7 +382,6 @@ class AchievementFeedService {
                     await this.announcementRateLimiter.add(async () => {
                         try {
                             const announced = await this.announceAchievement(
-                                announcementChannel, 
                                 user, 
                                 gameInfo, 
                                 achievement, 
@@ -561,167 +556,68 @@ class AchievementFeedService {
         }
     }
 
-    // UPDATED: Achievement announcement with proper system-specific icons and colors
-    async announceAchievement(channel, user, gameInfo, achievement, achievementType, gameId) {
+    // UPDATED: Achievement announcement now uses new AlertService
+    async announceAchievement(user, gameInfo, achievement, achievementType, gameId) {
         try {
-            console.log(`Creating embed for achievement announcement: ${achievement.Title || 'Unknown Achievement'} (${achievementType})`);
+            console.log(`Creating achievement announcement: ${achievement.Title || 'Unknown Achievement'} (${achievementType})`);
             
-            // Set color and icon based on achievement type
-            let color = '#808080';  // Default to grey for regular achievements
-            let authorName = 'Achievement Unlocked';
-            let iconURL = null;
-            
-            // Raw GitHub URL for logo
-            const logoUrl = 'https://raw.githubusercontent.com/marquessam/select_start_bot2/a58a4136ff0597217bb9fb181115de3f152b71e4/assets/logo_simple.png';
+            // Determine the correct alert type based on achievement type
+            let alertType = ALERT_TYPES.ACHIEVEMENT; // Default for regular achievements
             
             if (achievementType === 'monthly') {
-                color = '#9B59B6';  // Purple for monthly challenge
-                authorName = 'Monthly Challenge';
-                iconURL = logoUrl; // Use logo for monthly
+                alertType = ALERT_TYPES.MONTHLY_AWARD;
             } else if (achievementType === 'shadow') {
-                color = '#000000';  // Black for shadow challenge
-                authorName = 'Shadow Challenge 👥';
-                iconURL = logoUrl; // Use logo for shadow
+                alertType = ALERT_TYPES.SHADOW_AWARD;
             } else if (achievementType === 'arcade') {
-                color = '#3498DB';  // Blue for arcade
-                authorName = 'Arcade Challenge 🕹️';
-                iconURL = logoUrl;
+                alertType = ALERT_TYPES.ARCADE_AWARD;
             } else if (achievementType === 'arena') {
-                color = '#FF5722';  // Red for arena
-                authorName = 'Arena Challenge ⚔️';
-                iconURL = logoUrl;
-            } else if (gameInfo?.imageIcon) {
-                // Use game icon for regular achievements
-                iconURL = `https://retroachievements.org${gameInfo.imageIcon}`;
-            }
-            
-            // Create embed
-            const embed = new EmbedBuilder()
-                .setColor(color)
-                .setTimestamp();
-            
-            // Set game name and platform as the title with clickable link to game page
-            const platformText = gameInfo?.consoleName ? ` • ${gameInfo.consoleName}` : '';
-            embed.setTitle(`${gameInfo?.title || 'Unknown Game'}${platformText}`);
-            embed.setURL(`https://retroachievements.org/game/${gameId}`);
-            
-            // Set author with appropriate icon
-            if (iconURL) {
-                embed.setAuthor({
-                    name: authorName,
-                    iconURL: iconURL
-                });
-            } else {
-                // Set text only with no icon if we don't have a valid URL
-                embed.setAuthor({
-                    name: authorName
-                });
-            }
-            
-            // Set the thumbnail (right side) to ALWAYS be the achievement badge
-            if (achievement.BadgeName) {
-                const badgeUrl = `https://media.retroachievements.org/Badge/${achievement.BadgeName}.png`;
-                embed.setThumbnail(badgeUrl);
+                alertType = ALERT_TYPES.ARENA_AWARD;
             }
             
             // Get user's profile image URL for footer
             const profileImageUrl = await this.getUserProfileImageUrl(user.raUsername);
             
-            // Create user link
-            const userLink = `[${user.raUsername}](https://retroachievements.org/user/${user.raUsername})`;
+            // Set the thumbnail to ALWAYS be the achievement badge
+            let badgeUrl = null;
+            if (achievement.BadgeName) {
+                badgeUrl = `https://media.retroachievements.org/Badge/${achievement.BadgeName}.png`;
+            }
             
-            // Build description
-            let description = '';
-            description += `${userLink} earned **${achievement.Title || 'Unknown Achievement'}**\n\n`;
+            // Create thumbnail from game icon
+            let thumbnail = null;
+            if (gameInfo?.imageIcon) {
+                thumbnail = `https://retroachievements.org${gameInfo.imageIcon}`;
+            }
+            
+            // Build description with achievement details
+            let description = `**${achievement.Title || 'Unknown Achievement'}**\n\n`;
             
             // Add achievement description if available (in italics)
             if (achievement.Description) {
                 description += `*${achievement.Description}*`;
             }
-            
-            embed.setDescription(description);
 
-            // Simplified footer - just points and user icon
-            let footerText = "";
-            if (achievement.Points) {
-                footerText = `Points: ${achievement.Points}`;
-            }
+            console.log(`Sending achievement announcement via AlertService`);
             
-            embed.setFooter({
-                text: footerText,
-                iconURL: profileImageUrl
+            // UPDATED: Use new AlertService method
+            await alertService.sendAchievementAlert({
+                alertType: alertType,
+                username: user.raUsername,
+                achievementTitle: achievement.Title || 'Unknown Achievement',
+                achievementDescription: description,
+                gameTitle: gameInfo?.title || 'Unknown Game',
+                gameId: gameId,
+                points: achievement.Points,
+                thumbnail: badgeUrl, // Achievement badge as thumbnail
+                badgeUrl: profileImageUrl // User profile as badge/footer icon
             });
-
-            console.log(`Sending achievement announcement to channel`);
             
-            // Send the announcement
-            try {
-                const sentMessage = await channel.send({ embeds: [embed] });
-                console.log(`Successfully sent achievement announcement, message ID: ${sentMessage.id}`);
-                return true;
-            } catch (sendError) {
-                console.error(`Failed to send announcement: ${sendError.message}`);
-                
-                // Try a plain text fallback
-                try {
-                    const fallbackText = `**${user.raUsername}** earned "${achievement.Title || 'an achievement'}" in ${gameInfo?.title || 'a game'}`;
-                    await channel.send(fallbackText);
-                    console.log('Sent plain text fallback message');
-                    return true;
-                } catch (fallbackError) {
-                    console.error(`Even fallback message failed: ${fallbackError.message}`);
-                    return false;
-                }
-            }
+            console.log(`Successfully sent achievement announcement via AlertService`);
+            return true;
 
         } catch (error) {
             console.error('Error announcing achievement:', error);
             return false;
-        }
-    }
-
-    async getAnnouncementChannel() {
-        if (!this.client) {
-            console.error('Discord client not set');
-            return null;
-        }
-
-        try {
-            // Get the configuration
-            const channelId = config.discord.achievementChannelId;
-            const guildId = config.discord.guildId;
-            
-            console.log(`Looking for channel ID ${channelId} in guild ${guildId}`);
-            
-            // Get the guild
-            const guild = await this.client.guilds.fetch(guildId);
-            if (!guild) {
-                console.error(`Guild not found: ${guildId}`);
-                return null;
-            }
-
-            // Get the channel
-            const channel = await guild.channels.fetch(channelId);
-            if (!channel) {
-                console.error(`Channel not found: ${channelId}`);
-                return null;
-            }
-            
-            // Log channel details
-            console.log(`Found channel: ${channel.name} (${channel.type})`);
-            
-            return channel;
-        } catch (error) {
-            console.error('Error getting announcement channel:', error);
-            
-            // More specific error handling
-            if (error.code === 10003) {
-                console.error('Channel not found - check ACHIEVEMENT_CHANNEL environment variable');
-            } else if (error.code === 50001) {
-                console.error('Missing access to channel - check bot permissions');
-            }
-            
-            return null;
         }
     }
 
