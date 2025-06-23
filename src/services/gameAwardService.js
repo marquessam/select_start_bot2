@@ -1,11 +1,12 @@
-// src/services/gameAwardService.js - Streamlined with hardcoded GP display
+// src/services/gameAwardService.js - Updated to use new AlertService
 import { User } from '../models/User.js';
 import { Challenge } from '../models/Challenge.js';
 import retroAPI from './retroAPI.js';
 import { config } from '../config/config.js';
 import { EmbedBuilder } from 'discord.js';
 import RetroAPIUtils from '../utils/RetroAPIUtils.js';
-import AlertUtils, { ALERT_TYPES } from '../utils/AlertUtils.js';
+// UPDATED: Import new AlertService instead of AlertUtils
+import alertService, { ALERT_TYPES } from '../utils/AlertService.js';
 
 // Lazy loading of GP service to prevent module loading issues
 let gpRewardService = null;
@@ -71,7 +72,8 @@ class GameAwardService {
     setClient(client) {
         this.client = client;
         console.log('Discord client set for game award service');
-        AlertUtils.setClient(client);
+        // UPDATED: Set client for new AlertService
+        alertService.setClient(client);
     }
 
     async initialize() {
@@ -538,7 +540,7 @@ class GameAwardService {
     }
 
     /**
-     * Announce regular game award with hardcoded GP display
+     * UPDATED: Announce regular game award using new AlertService
      */
     async announceRegularAward(user, gameInfo, gameId, isMastery, isBeaten) {
         // Ensure GP service is loaded
@@ -557,59 +559,45 @@ class GameAwardService {
         }
 
         // Create description with hardcoded GP display
-        const userLink = `[${user.raUsername}](https://retroachievements.org/user/${user.raUsername})`;
-        const gameLink = `[${gameInfo.title}](https://retroachievements.org/game/${gameId})`;
-        
-        let description = '';
-        if (isMastery) {
-            description = `${userLink} has mastered ${gameLink}!\n` +
-                         `They've earned every achievement in the game.`;
-        } else {
-            description = `${userLink} has beaten ${gameLink}!\n` +
-                         `They've completed the core achievements.`;
-        }
-
-        // Add hardcoded GP display at the bottom
         const gpDisplay = isMastery ? 50 : 25;
-        description += `\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n🏆 **+${gpDisplay} GP** earned!`;
+        let description = '';
         
-        await AlertUtils.sendAchievementAlert({
+        if (isMastery) {
+            description = `They've earned every achievement in the game.\n\n`;
+        } else {
+            description = `They've completed the core achievements.\n\n`;
+        }
+        
+        description += `━━━━━━━━━━━━━━━━━━━━━━━━━━\n🏆 **+${gpDisplay} GP** earned!`;
+        
+        // UPDATED: Use new AlertService
+        await alertService.sendAchievementAlert({
+            alertType: isMastery ? ALERT_TYPES.MASTERY : ALERT_TYPES.BEATEN,
             username: user.raUsername,
             achievementTitle: isMastery ? `Mastery of ${gameInfo.title}` : `Beaten ${gameInfo.title}`,
             achievementDescription: description,
             gameTitle: gameInfo.title,
             gameId: gameId,
             thumbnail: thumbnailUrl,
-            badgeUrl: profileImageUrl,
-            color: isMastery ? '#FFD700' : '#C0C0C0',
-            isMastery: isMastery,
-            isBeaten: isBeaten
-        }, ALERT_TYPES.MASTERY);
+            badgeUrl: profileImageUrl
+        });
     }
 
     /**
-     * Announce monthly/shadow award with hardcoded GP display
+     * UPDATED: Announce monthly/shadow award using new AlertService
      */
     async announceMonthlyAward(user, gameInfo, gameId, awardType, systemType) {
         // Ensure GP service is loaded
         await loadGPService();
         
         let awardTitle = '';
-        let awardColor = '';
-        let awardEmoji = '';
         
         if (awardType === 'mastery') {
             awardTitle = `${systemType === 'shadow' ? 'Shadow' : 'Monthly'} Challenge Mastery`;
-            awardColor = '#FFD700'; // Gold for mastery
-            awardEmoji = AWARD_EMOJIS.MASTERY;
         } else if (awardType === 'beaten') {
             awardTitle = `${systemType === 'shadow' ? 'Shadow' : 'Monthly'} Challenge Beaten`;
-            awardColor = '#C0C0C0'; // Silver for beaten
-            awardEmoji = AWARD_EMOJIS.BEATEN;
         } else if (awardType === 'participation') {
             awardTitle = `${systemType === 'shadow' ? 'Shadow' : 'Monthly'} Challenge Participation`;
-            awardColor = '#CD7F32'; // Bronze for participation
-            awardEmoji = AWARD_EMOJIS.PARTICIPATION;
         } else {
             console.error(`Unknown award type: ${awardType} for ${systemType} game`);
             return;
@@ -628,10 +616,7 @@ class GameAwardService {
         }
 
         // Create description with hardcoded GP display
-        const userLink = `[${user.raUsername}](https://retroachievements.org/user/${user.raUsername})`;
-        const gameLink = `[${gameInfo.title}](https://retroachievements.org/game/${gameId})`;
-        
-        let description = `${userLink} has earned ${awardTitle.toLowerCase()} for ${gameLink}!`;
+        let description = '';
         
         // Add hardcoded GP display at the bottom based on award type
         let gpDisplay = 0;
@@ -643,22 +628,22 @@ class GameAwardService {
             gpDisplay = 25; // Both shadow and monthly participation = 25
         }
         
-        description += `\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n🏆 **+${gpDisplay} GP** earned!`;
+        description = `\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n🏆 **+${gpDisplay} GP** earned!`;
         
-        // Use correct alert type based on system type
-        const alertType = systemType === 'shadow' ? ALERT_TYPES.SHADOW : ALERT_TYPES.MONTHLY;
+        // Determine correct alert type
+        const alertType = systemType === 'shadow' ? ALERT_TYPES.SHADOW_AWARD : ALERT_TYPES.MONTHLY_AWARD;
         
-        await AlertUtils.sendAchievementAlert({
+        // UPDATED: Use new AlertService
+        await alertService.sendAchievementAlert({
+            alertType: alertType,
             username: user.raUsername,
             achievementTitle: awardTitle,
             achievementDescription: description,
             gameTitle: gameInfo.title,
             gameId: gameId,
             thumbnail: thumbnailUrl,
-            badgeUrl: profileImageUrl,
-            color: awardColor,
-            isAward: true
-        }, alertType);
+            badgeUrl: profileImageUrl
+        });
     }
 
     /**
