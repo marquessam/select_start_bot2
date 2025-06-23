@@ -1,4 +1,4 @@
-// src/utils/AlertService.js - FIXED to match original achievement formatting
+// src/utils/AlertService.js - FIXED to handle ALL embed logic correctly
 import { EmbedBuilder } from 'discord.js';
 import { config } from '../config/config.js';
 import { COLORS, EMOJIS, getDiscordTimestamp } from './FeedUtils.js';
@@ -522,13 +522,13 @@ export class AlertService {
     }
     
     /**
-     * FIXED: Send achievement/award alert with ORIGINAL formatting
+     * COMPLETELY FIXED: Send achievement/award alert matching the EXACT format from the image
      */
     async sendAchievementAlert(options) {
         const {
             alertType,
             username,
-            achievementTitle,
+            achievementTitle = null,
             achievementDescription = null,
             gameTitle = null,
             gameId = null,
@@ -538,7 +538,9 @@ export class AlertService {
             userProfileImageUrl = null,
             customTitle = null,
             color = null,
-            gpEarned = null // NEW: For mastery/beaten GP awards
+            gpEarned = null,
+            awardType = null, // mastery, beaten, participation
+            systemType = null // monthly, shadow, regular
         } = options;
         
         try {
@@ -553,53 +555,69 @@ export class AlertService {
             // Use custom color or default to alert type color
             const embedColor = color || this.getAlertColor(alertType);
             
-            // FIXED: Handle mastery/beaten alerts differently (ORIGINAL FORMAT)
-            if (alertType === ALERT_TYPES.MASTERY || alertType === ALERT_TYPES.BEATEN) {
+            // FIXED: Handle mastery/beaten alerts EXACTLY like the image
+            if (alertType === ALERT_TYPES.MASTERY || alertType === ALERT_TYPES.BEATEN || 
+                alertType === ALERT_TYPES.MONTHLY_AWARD || alertType === ALERT_TYPES.SHADOW_AWARD) {
+                
+                // Create links
                 const gameLink = gameTitle && gameId ? 
                     LinkUtils.createGameLink(gameTitle, gameId) : gameTitle;
                 const userLink = LinkUtils.createUserLink(username);
                 
-                const masteryTitle = alertType === ALERT_TYPES.MASTERY ? 
-                    `✨ ${username} has mastered a game!` : 
-                    `⭐ ${username} has beaten a game!`;
+                // Determine title and description based on alert type
+                let embedTitle;
+                let embedDescription;
                 
-                const masteryDescription = alertType === ALERT_TYPES.MASTERY ?
-                    `${userLink} has mastered ${gameLink}! They've earned every achievement in the game.` :
-                    `${userLink} has beaten ${gameLink}! They've completed the core achievements.`;
+                if (alertType === ALERT_TYPES.MASTERY || 
+                    (alertType === ALERT_TYPES.MONTHLY_AWARD && awardType === 'mastery') ||
+                    (alertType === ALERT_TYPES.SHADOW_AWARD && awardType === 'mastery')) {
+                    
+                    // MASTERY FORMAT - exactly like image
+                    embedTitle = `✨ ${username} has mastered a game!`;
+                    embedDescription = `${userLink} has mastered ${gameLink}! They've earned every achievement in the game.`;
+                    
+                } else if (alertType === ALERT_TYPES.BEATEN || 
+                          (alertType === ALERT_TYPES.MONTHLY_AWARD && awardType === 'beaten') ||
+                          (alertType === ALERT_TYPES.SHADOW_AWARD && awardType === 'beaten')) {
+                    
+                    // BEATEN FORMAT - exactly like image  
+                    embedTitle = `⭐ ${username} has beaten a game!`;
+                    embedDescription = `${userLink} has beaten ${gameLink}! They've completed the core achievements.`;
+                    
+                } else if ((alertType === ALERT_TYPES.MONTHLY_AWARD && awardType === 'participation') ||
+                          (alertType === ALERT_TYPES.SHADOW_AWARD && awardType === 'participation')) {
+                    
+                    // PARTICIPATION FORMAT
+                    const challengeType = systemType === 'shadow' ? 'Shadow' : 'Monthly';
+                    embedTitle = `🏁 ${username} has participated in the ${challengeType} Challenge!`;
+                    embedDescription = `${userLink} has participated in the ${challengeType} Challenge for ${gameLink}!`;
+                    
+                } else {
+                    // Fallback
+                    embedTitle = `🎮 ${username} earned an award!`;
+                    embedDescription = `${userLink} earned an award for ${gameLink}!`;
+                }
                 
+                // Build the embed EXACTLY like the image
                 const embed = new EmbedBuilder()
                     .setColor(embedColor)
-                    .setTitle(masteryTitle)
-                    .setDescription(masteryDescription)
+                    .setTitle(embedTitle)
+                    .setDescription(embedDescription)
                     .setTimestamp();
                 
+                // Add thumbnail (game icon) - EXACTLY like image
                 if (thumbnail) {
                     embed.setThumbnail(thumbnail);
                 }
                 
-                // FIXED: Add divider and GP section (ORIGINAL FORMAT)
+                // Add the divider line and GP section - EXACTLY like image
                 if (gpEarned) {
                     embed.addFields({
-                        name: '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
-                        value: `🏆 +${gpEarned} GP earned!`,
+                        name: '━━━━━━━━━━━━━━━━━━━━━━━━━━',
+                        value: `🏆 **+${gpEarned} GP** earned!`,
                         inline: false
                     });
                 }
-                
-                // FIXED: Add time at bottom (ORIGINAL FORMAT)
-                const timeString = new Date().toLocaleString('en-US', {
-                    month: 'long',
-                    day: 'numeric',
-                    hour: 'numeric',
-                    minute: '2-digit',
-                    hour12: true
-                });
-                
-                embed.addFields({
-                    name: '\u200b', // Invisible character for spacing
-                    value: `Today at ${timeString}`,
-                    inline: false
-                });
                 
                 // Send to all target channels
                 for (const channel of channels) {
@@ -610,7 +628,7 @@ export class AlertService {
                 return;
             }
             
-            // REGULAR ACHIEVEMENT FORMATTING (ORIGINAL FORMAT)
+            // REGULAR ACHIEVEMENT FORMATTING (for non-mastery/beaten achievements)
             // Raw GitHub URL for logo (same as original)
             const logoUrl = 'https://raw.githubusercontent.com/marquessam/select_start_bot2/a58a4136ff0597217bb9fb181115de3f152b71e4/assets/logo_simple.png';
             
