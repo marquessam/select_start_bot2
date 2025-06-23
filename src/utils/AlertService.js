@@ -540,7 +540,8 @@ export class AlertService {
             color = null,
             gpEarned = null,
             awardType = null, // mastery, beaten, participation
-            systemType = null // monthly, shadow, regular
+            systemType = null, // monthly, shadow, regular
+            gameIconUrl = null // ADDED: Game icon URL for author icon
         } = options;
         
         try {
@@ -656,10 +657,9 @@ export class AlertService {
                 iconURL = logoUrl;
             } else if (alertType === ALERT_TYPES.ARENA_AWARD) {
                 iconURL = logoUrl;
-            } else if (gameTitle) {
-                // For regular achievements, try to use game icon if available
-                // Note: This would need gameInfo.imageIcon from the original data
-                iconURL = null; // Will fallback to text-only author
+            } else {
+                // FIXED: For regular achievements, use the game icon if available
+                iconURL = gameIconUrl || null;
             }
             
             if (iconURL) {
