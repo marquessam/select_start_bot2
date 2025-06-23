@@ -554,73 +554,67 @@ class AchievementFeedService {
     }
 
     // UPDATED: Achievement announcement with CORRECT channel routing based on game type
-    async announceAchievement(user, gameInfo, achievement, achievementType, gameId) {
+  async announceAchievement(user, gameInfo, achievement, achievementType, gameId) {
         try {
             console.log(`Creating achievement announcement: ${achievement.Title || 'Unknown Achievement'} (${achievementType})`);
             
-            // FIXED: Determine the correct alert type based on achievement type
-            let alertType;
+            // Set color and custom title based on achievement type (same as original)
             let color = '#808080';  // Default to grey for regular achievements
             let customTitle = 'Achievement Unlocked';
             
-            // Raw GitHub URL for logo (SAME as original)
-            const logoUrl = 'https://raw.githubusercontent.com/marquessam/select_start_bot2/a58a4136ff0597217bb9fb181115de3f152b71e4/assets/logo_simple.png';
-            
-            // CORRECTED: Route based on achievement type but arcade/arena go to achievement feed with styling
             if (achievementType === 'monthly') {
-                alertType = ALERT_TYPES.MONTHLY_AWARD; // → 1313640664356880445 (monthly channel)
                 color = '#9B59B6';  // Purple for monthly challenge
                 customTitle = 'Monthly Challenge';
             } else if (achievementType === 'shadow') {
-                alertType = ALERT_TYPES.SHADOW_AWARD; // → 1300941091335438470 (shadow channel)
                 color = '#000000';  // Black for shadow challenge
                 customTitle = 'Shadow Challenge 👥';
             } else if (achievementType === 'arcade') {
-                alertType = ALERT_TYPES.ACHIEVEMENT; // → 1326199972059680778 (achievement feed with arcade styling)
                 color = '#3498DB';  // Blue for arcade
                 customTitle = 'Arcade Challenge 🕹️';
             } else if (achievementType === 'arena') {
-                alertType = ALERT_TYPES.ACHIEVEMENT; // → 1326199972059680778 (achievement feed with arena styling)
                 color = '#FF5722';  // Red for arena
                 customTitle = 'Arena Challenge ⚔️';
-            } else {
-                // Regular achievements
-                alertType = ALERT_TYPES.ACHIEVEMENT; // → 1326199972059680778 (achievement feed)
-                customTitle = 'Achievement Unlocked';
             }
             
-            // Get user's profile image URL for footer (SAME as original)
-            const profileImageUrl = await this.getUserProfileImageUrl(user.raUsername);
+            // Get user's profile image URL for footer (same as original)
+            const userProfileImageUrl = await this.getUserProfileImageUrl(user.raUsername);
             
-            // Set the thumbnail to be the achievement badge (SAME as original)
+            // Set the thumbnail to be the achievement badge (same as original)
             let badgeUrl = null;
             if (achievement.BadgeName) {
                 badgeUrl = `https://media.retroachievements.org/Badge/${achievement.BadgeName}.png`;
             }
             
-            // Build description (SAME as original)
-            let description = `**${achievement.Title || 'Unknown Achievement'}**\n\n`;
-            
-            // Add achievement description if available (SAME as original)
-            if (achievement.Description) {
-                description += `*${achievement.Description}*`;
+            // FIXED: Determine the correct alert type based on achievement type
+            let alertType;
+            if (achievementType === 'monthly') {
+                alertType = ALERT_TYPES.MONTHLY_AWARD; // → 1313640664356880445 (monthly channel)
+            } else if (achievementType === 'shadow') {
+                alertType = ALERT_TYPES.SHADOW_AWARD; // → 1300941091335438470 (shadow channel)
+            } else if (achievementType === 'arcade') {
+                alertType = ALERT_TYPES.ACHIEVEMENT; // → 1326199972059680778 (achievement feed with arcade styling)
+            } else if (achievementType === 'arena') {
+                alertType = ALERT_TYPES.ACHIEVEMENT; // → 1326199972059680778 (achievement feed with arena styling)
+            } else {
+                // Regular achievements
+                alertType = ALERT_TYPES.ACHIEVEMENT; // → 1326199972059680778 (achievement feed)
             }
 
             console.log(`Sending achievement announcement via AlertService to ${achievementType} channel`);
             
-            // FIXED: Use correct alert type for proper channel routing
+            // FIXED: Pass correct parameters to match original formatting
             await alertService.sendAchievementAlert({
-                alertType: alertType, // Routes to correct channel based on achievement type
+                alertType: alertType,
                 username: user.raUsername,
                 achievementTitle: achievement.Title || 'Unknown Achievement',
-                achievementDescription: description,
+                achievementDescription: achievement.Description, // Just the achievement description, not the full "earned" text
                 gameTitle: gameInfo?.title || 'Unknown Game',
                 gameId: gameId,
+                consoleName: gameInfo?.consoleName, // ADDED: Console name for title formatting
                 points: achievement.Points,
                 thumbnail: badgeUrl, // Achievement badge as thumbnail
-                badgeUrl: profileImageUrl, // User profile as footer icon
+                userProfileImageUrl: userProfileImageUrl, // FIXED: User profile image for footer
                 customTitle: customTitle, // Custom title based on achievement type
-                customDescription: description, // Custom description
                 color: color // Custom color based on achievement type
             });
             
