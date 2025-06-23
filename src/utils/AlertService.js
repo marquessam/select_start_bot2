@@ -36,29 +36,33 @@ export const ALERT_TYPES = {
 
 // Channel routing configuration
 const CHANNEL_CONFIG = {
-    [ALERT_TYPES.ARCADE_RANKS]: '1300941091335438471',      // Arcade alerts
-    [ALERT_TYPES.ARENA_RANKS]: '1373570850912997476',       // Arena alerts
-    [ALERT_TYPES.MONTHLY_RANKS]: '1313640664356880445',     // Monthly challenge updates
-    [ALERT_TYPES.YEARLY_RANKS]: '1313640664356880445',      // Monthly challenge updates
+    // Position/Rank Changes
+    [ALERT_TYPES.ARCADE_RANKS]: '1300941091335438471',      // Arcade channel
+    [ALERT_TYPES.ARENA_RANKS]: '1373570850912997476',       // Arena channel
+    [ALERT_TYPES.MONTHLY_RANKS]: '1313640664356880445',     // Monthly game channel
+    [ALERT_TYPES.YEARLY_RANKS]: '1313640664356880445',      // Monthly game channel
     
-    [ALERT_TYPES.NEW_CHALLENGE]: ['1304533467455012904', '1300941091335438471'], // Announcements + Arcade
+    // New Content Announcements
+    [ALERT_TYPES.NEW_CHALLENGE]: ['1304533467455012904', '1313640664356880445'], // Announcements + Monthly
     [ALERT_TYPES.NEW_ARCADE_BOARD]: ['1304533467455012904', '1300941091335438471'], // Announcements + Arcade
     [ALERT_TYPES.NEW_RACING_CHALLENGE]: ['1304533467455012904', '1300941091335438471'], // Announcements + Arcade
     [ALERT_TYPES.NEW_TIEBREAKER]: ['1304533467455012904', '1300941091335438471'], // Announcements + Arcade
     [ALERT_TYPES.NEW_ARENA_CHALLENGE]: '1373570850912997476', // Arena channel
     
-    [ALERT_TYPES.MASTERY]: '1362227906343997583',           // Mastery/Beaten channel
-    [ALERT_TYPES.BEATEN]: '1362227906343997583',            // Mastery/Beaten channel  
-    [ALERT_TYPES.MONTHLY_AWARD]: '1362227906343997583',     // Mastery/Beaten channel
-    [ALERT_TYPES.SHADOW_AWARD]: '1362227906343997583',      // Mastery/Beaten channel
-    [ALERT_TYPES.RACING_AWARD]: '1362227906343997583',      // Mastery/Beaten channel
-    [ALERT_TYPES.ARCADE_AWARD]: '1362227906343997583',      // Mastery/Beaten channel
-    [ALERT_TYPES.ARENA_AWARD]: '1373570850912997476',       // Arena channel
-    [ALERT_TYPES.ACHIEVEMENT]: '1326199972059680778',       // Mastery/Beaten channel
+    // Achievement Types - CORRECTLY ROUTED
+    [ALERT_TYPES.ACHIEVEMENT]: '1326199972059680778',       // Regular achievements
+    [ALERT_TYPES.MASTERY]: '1362227906343997583',           // Regular mastery/beaten
+    [ALERT_TYPES.BEATEN]: '1362227906343997583',            // Regular mastery/beaten
+    [ALERT_TYPES.MONTHLY_AWARD]: '1313640664356880445',     // Monthly mastery/beaten → monthly channel
+    [ALERT_TYPES.SHADOW_AWARD]: '1300941091335438470',      // Shadow mastery/beaten → shadow channel
+    [ALERT_TYPES.RACING_AWARD]: '1300941091335438471',      // Racing/arcade awards → arcade channel
+    [ALERT_TYPES.ARCADE_AWARD]: '1300941091335438471',      // Arcade awards → arcade channel
+    [ALERT_TYPES.ARENA_AWARD]: '1373570850912997476',       // Arena awards → arena channel
     
+    // System/Admin
     [ALERT_TYPES.ADMIN]: '1304533467455012904',             // Announcements
     [ALERT_TYPES.SYSTEM]: '1304533467455012904',            // Announcements  
-    [ALERT_TYPES.DEFAULT]: '1362227906343997583'            // Fallback to mastery channel
+    [ALERT_TYPES.DEFAULT]: '1326199972059680778'            // Fallback to achievements
 };
 
 // Color mapping for different alert types
