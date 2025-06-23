@@ -1,11 +1,11 @@
-// src/services/arenaService.js - UPDATED to use new AlertService
+// src/services/arenaService.js - FIXED: Use consistent API method for challenge completion
 import { ArenaChallenge } from '../models/ArenaChallenge.js';
 import { User } from '../models/User.js';
 import { config } from '../config/config.js';
 import arenaUtils from '../utils/arenaUtils.js';
 import gpUtils from '../utils/gpUtils.js';
-import alertService, { ALERT_TYPES } from '../utils/AlertService.js'; // UPDATED: Use new AlertService
-import RetroAPIUtils from '../utils/RetroAPIUtils.js';
+import alertService, { ALERT_TYPES } from '../utils/AlertService.js';
+import RetroAPIUtils from '../utils/RetroAPIUtils.js'; // ADDED: Import RetroAPIUtils directly
 import retroAPI from '../services/retroAPI.js';
 import { EmbedBuilder, ButtonBuilder, ActionRowBuilder, ButtonStyle } from 'discord.js';
 
@@ -13,14 +13,13 @@ class ArenaService {
     constructor() {
         this.client = null;
         this.isProcessing = false;
-        this.processingChallenges = new Set(); // Track individual challenges being processed
+        this.processingChallenges = new Set();
         this.lastProcessingTime = 0;
-        this.processingDelay = 5000; // 5 seconds minimum between processing cycles
+        this.processingDelay = 5000;
     }
 
     setClient(client) {
         this.client = client;
-        // UPDATED: Set client for new AlertService
         alertService.setClient(client);
     }
 
@@ -32,16 +31,10 @@ class ArenaService {
         console.log('Arena service started with rate limiting support');
     }
 
-    /**
-     * Generate a unique challenge ID
-     */
     generateChallengeId() {
         return `arena_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
     }
 
-    /**
-     * ENHANCED: Create a new arena challenge with leaderboard validation
-     */
     async createChallenge(creatorUser, gameInfo, leaderboardInfo, wager, targetRaUsername = null, discordUsername = null, description = '') {
         try {
             console.log(`Creating challenge for user ${creatorUser.raUsername}...`);
@@ -107,7 +100,7 @@ class ArenaService {
 
             await challenge.save();
 
-            // UPDATED: Send immediate new challenge alert using new AlertService
+            // Send immediate new challenge alert using new AlertService
             try {
                 // Get game info for thumbnail
                 let thumbnailUrl = null;
@@ -140,7 +133,6 @@ class ArenaService {
                                      `Anyone can join this challenge!`;
                 }
                 
-                // UPDATED: Use new AlertService method
                 await alertService.sendNewArenaChallengeAlert({
                     title: title,
                     description: alertDescription,
@@ -156,7 +148,6 @@ class ArenaService {
                 
             } catch (alertError) {
                 console.error('Error sending immediate new challenge alert:', alertError);
-                // Don't throw - alert failures shouldn't break challenge creation
             }
 
             // Deduct wager from creator
@@ -176,9 +167,6 @@ class ArenaService {
         }
     }
 
-    /**
-     * ENHANCED: Accept a direct challenge with improved alerts
-     */
     async acceptChallenge(challengeId, acceptingUser) {
         try {
             const challenge = await ArenaChallenge.findOne({ challengeId, status: 'pending' });
@@ -219,7 +207,7 @@ class ArenaService {
 
             await challenge.save();
 
-            // UPDATED: Send immediate challenge accepted alert using new AlertService
+            // Send immediate challenge accepted alert using new AlertService
             try {
                 // Get game info for thumbnail
                 let thumbnailUrl = null;
@@ -240,7 +228,6 @@ class ArenaService {
                                        `**Total Prize Pool:** ${challenge.getTotalWager()} GP\n\n` +
                                        `Let the battle begin! The challenge runs for 7 days. 🔥`;
                 
-                // UPDATED: Use new AlertService method
                 await alertService.sendAnnouncementAlert({
                     alertType: ALERT_TYPES.NEW_ARENA_CHALLENGE,
                     title: title,
@@ -257,7 +244,6 @@ class ArenaService {
                 
             } catch (alertError) {
                 console.error('Error sending challenge accepted alert:', alertError);
-                // Don't throw - alert failures shouldn't break challenge acceptance
             }
 
             // Deduct wager from accepting user
@@ -284,9 +270,6 @@ class ArenaService {
         }
     }
 
-    /**
-     * ENHANCED: Join an open challenge with improved alerts
-     */
     async joinChallenge(challengeId, joiningUser) {
         try {
             const challenge = await ArenaChallenge.findOne({ challengeId, status: 'active', type: 'open' });
@@ -318,7 +301,7 @@ class ArenaService {
 
             await challenge.save();
 
-            // UPDATED: Send immediate new participant alert using new AlertService
+            // Send immediate new participant alert using new AlertService
             try {
                 // Get game info for thumbnail
                 let thumbnailUrl = null;
@@ -339,7 +322,6 @@ class ArenaService {
                                        `**Total Prize Pool:** ${challenge.getTotalWager()} GP\n\n` +
                                        `The competition heats up! 🔥`;
                 
-                // UPDATED: Use new AlertService method
                 await alertService.sendAnnouncementAlert({
                     alertType: ALERT_TYPES.NEW_ARENA_CHALLENGE,
                     title: title,
@@ -356,7 +338,6 @@ class ArenaService {
                 
             } catch (alertError) {
                 console.error('Error sending new participant alert:', alertError);
-                // Don't throw - alert failures shouldn't break joining
             }
 
             // Deduct wager from joining user
@@ -375,9 +356,6 @@ class ArenaService {
         }
     }
 
-    /**
-     * Place a bet on a challenge
-     */
     async placeBet(challengeId, bettingUser, targetRaUsername, amount) {
         try {
             const challenge = await ArenaChallenge.findOne({ challengeId, status: 'active' });
@@ -439,9 +417,6 @@ class ArenaService {
         }
     }
 
-    /**
-     * ENHANCED: Check for completed challenges with improved rate limiting
-     */
     async checkCompletedChallenges() {
         const now = Date.now();
         
@@ -503,10 +478,6 @@ class ArenaService {
         }
     }
 
-    /**
-     * ENHANCED: Process a single completed challenge using reliable API methods
-     * @private
-     */
     async processCompletedChallenge(challenge) {
         console.log(`Processing completed challenge: ${challenge.challengeId}`);
         
@@ -524,10 +495,9 @@ class ArenaService {
                 return;
             }
 
-            // Fetch final scores using the reliable method
-            console.log(`Fetching final scores for challenge ${challenge.challengeId} using reliable API...`);
-            const finalScores = await this.fetchLeaderboardScoresReliable(
-                challenge.gameId, 
+            // FIXED: Use the same reliable API method as the feed service
+            console.log(`Fetching final scores for challenge ${challenge.challengeId} using reliable RetroAPIUtils...`);
+            const finalScores = await this.fetchLeaderboardScoresUsingRetroAPIUtils(
                 challenge.leaderboardId,
                 challenge.participants.map(p => p.raUsername)
             );
@@ -565,21 +535,55 @@ class ArenaService {
     }
 
     /**
-     * ENHANCED: Use the same reliable API method as the feed and alert services
+     * FIXED: Use the same reliable API method as arenaFeedService.js
+     * This should match exactly what the feed service uses
      * @private
      */
-    async fetchLeaderboardScoresReliable(gameId, leaderboardId, raUsernames) {
+    async fetchLeaderboardScoresUsingRetroAPIUtils(leaderboardId, raUsernames) {
         try {
-            console.log(`Fetching leaderboard scores for game ${gameId}, leaderboard ${leaderboardId}`);
+            console.log(`Fetching leaderboard scores using RetroAPIUtils for leaderboard ${leaderboardId}`);
             console.log('Target users:', raUsernames);
 
-            // Use arenaUtils which has the improved API implementation with fallbacks
-            const userScores = await arenaUtils.fetchLeaderboardScores(gameId, leaderboardId, raUsernames);
+            // Use the exact same method as arenaFeedService.js
+            const rawEntries = await RetroAPIUtils.getLeaderboardEntries(leaderboardId, 1000);
             
-            console.log(`Successfully fetched scores using arenaUtils: ${userScores.length} users`);
+            if (!rawEntries || rawEntries.length === 0) {
+                console.log('No leaderboard data received from RetroAPIUtils');
+                return this.createNoScoreResults(raUsernames);
+            }
+
+            console.log(`Processed ${rawEntries.length} leaderboard entries from RetroAPIUtils`);
+
+            // Find entries for our target users - exact same logic as feed service
+            const userScores = [];
+            
+            for (const username of raUsernames) {
+                const entry = rawEntries.find(entry => {
+                    return entry.User && entry.User.toLowerCase() === username.toLowerCase();
+                });
+
+                if (entry) {
+                    userScores.push({
+                        raUsername: username,
+                        rank: entry.Rank,
+                        score: entry.FormattedScore || entry.Score?.toString() || 'No score',
+                        fetchedAt: new Date()
+                    });
+                    console.log(`Found score for ${username}: rank ${entry.Rank}, score ${entry.FormattedScore || entry.Score}`);
+                } else {
+                    userScores.push({
+                        raUsername: username,
+                        rank: null,
+                        score: 'No score',
+                        fetchedAt: new Date()
+                    });
+                    console.log(`No score found for ${username}`);
+                }
+            }
+
             return userScores;
         } catch (error) {
-            console.error('Error fetching reliable leaderboard scores:', error);
+            console.error('Error fetching leaderboard scores with RetroAPIUtils:', error);
             
             // Return no-score results for all users on error
             return this.createNoScoreResults(raUsernames);
@@ -599,10 +603,6 @@ class ArenaService {
         }));
     }
 
-    /**
-     * ENHANCED: Improved winner determination with better logging
-     * @private
-     */
     determineWinnerFixed(finalScores) {
         try {
             console.log('=== DETERMINING WINNER ===');
@@ -655,10 +655,6 @@ class ArenaService {
         }
     }
 
-    /**
-     * Process payouts for a completed challenge
-     * @private
-     */
     async processPayouts(challenge, winner) {
         const totalWager = challenge.getTotalWager();
         const totalBets = challenge.getTotalBets();
@@ -697,10 +693,6 @@ class ArenaService {
         }
     }
 
-    /**
-     * Process bet payouts
-     * @private
-     */
     async processBetPayouts(challenge, winner) {
         if (!winner || !winner.raUsername) {
             // No winner - refund all bets
@@ -761,9 +753,6 @@ class ArenaService {
         }
     }
 
-    /**
-     * Refund all participants and bettors for a challenge
-     */
     async refundChallenge(challenge, reason) {
         try {
             console.log(`Refunding challenge ${challenge.challengeId}: ${reason}`);
@@ -797,10 +786,6 @@ class ArenaService {
         }
     }
 
-    /**
-     * UPDATED: Post challenge results using new AlertService
-     * @private
-     */
     async postChallengeResults(challenge, winner, finalScores) {
         try {
             // Prepare the data for AlertService
@@ -860,7 +845,7 @@ class ArenaService {
                 console.error('Error fetching game info for results thumbnail:', error);
             }
 
-            // UPDATED: Use new AlertService to post results
+            // Use new AlertService to post results
             await alertService.sendAnnouncementAlert({
                 alertType: ALERT_TYPES.NEW_ARENA_CHALLENGE,
                 title: title,
@@ -880,9 +865,6 @@ class ArenaService {
         }
     }
 
-    /**
-     * ENHANCED: Check for and process challenge timeouts with rate limiting
-     */
     async checkAndProcessTimeouts() {
         try {
             const timeoutThreshold = new Date(Date.now() - 24 * 60 * 60 * 1000); // 24 hours
@@ -912,31 +894,20 @@ class ArenaService {
         }
     }
 
-    /**
-     * Update arena feeds (placeholder for feed management)
-     */
     async updateArenaFeeds() {
         try {
-            // This could be used to update embedded arena feed messages
-            // For now, we'll just log that it ran
             console.log('Arena service: Arena feeds updated');
         } catch (error) {
             console.error('Error updating arena feeds:', error);
         }
     }
 
-    /**
-     * Get active challenges
-     */
     async getActiveChallenges(limit = 10) {
         return await ArenaChallenge.find({ status: { $in: ['pending', 'active'] } })
             .sort({ createdAt: -1 })
             .limit(limit);
     }
 
-    /**
-     * Get challenges for a specific user
-     */
     async getUserChallenges(userId, limit = 10) {
         return await ArenaChallenge.find({
             $or: [
@@ -949,16 +920,10 @@ class ArenaService {
         .limit(limit);
     }
 
-    /**
-     * Get challenge by ID
-     */
     async getChallengeById(challengeId) {
         return await ArenaChallenge.findOne({ challengeId });
     }
 
-    /**
-     * ADDED: Get processing statistics
-     */
     getProcessingStats() {
         return {
             isProcessing: this.isProcessing,
@@ -968,9 +933,6 @@ class ArenaService {
         };
     }
 
-    /**
-     * ADDED: Force refresh processing (for debugging)
-     */
     forceRefreshProcessing() {
         this.isProcessing = false;
         this.processingChallenges.clear();
