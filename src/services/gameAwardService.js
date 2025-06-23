@@ -1,9 +1,8 @@
-// src/services/gameAwardService.js - CORRECTED CHANNEL ROUTING
+// src/services/gameAwardService.js - CLEANED UP - Only passes data to AlertService
 import { User } from '../models/User.js';
 import { Challenge } from '../models/Challenge.js';
 import retroAPI from './retroAPI.js';
 import { config } from '../config/config.js';
-import { EmbedBuilder } from 'discord.js';
 import RetroAPIUtils from '../utils/RetroAPIUtils.js';
 // UPDATED: Import new AlertService with correct routing
 import alertService, { ALERT_TYPES } from '../utils/AlertService.js';
@@ -43,12 +42,6 @@ async function loadGPService() {
     
     gpServiceLoading = false;
 }
-
-const AWARD_EMOJIS = {
-    MASTERY: '✨',
-    BEATEN: '⭐',
-    PARTICIPATION: '🏁'
-};
 
 class GameAwardService {
     constructor() {
@@ -327,7 +320,7 @@ class GameAwardService {
             // Add award to history
             await this.addAwardToHistory(awardIdentifier, user);
             
-            // Announce the award
+            // CLEANED UP: Just pass data to AlertService
             await this.announceRegularAward(user, gameInfo, gameId, isMastery, isBeaten);
             
             console.log(`✅ Successfully announced ${awardType} award for ${user.raUsername} on regular game ${gameInfo.title}`);
@@ -418,7 +411,7 @@ class GameAwardService {
             const gameInfo = await RetroAPIUtils.getGameInfo(gameId);
             await this.addAwardToHistory(awardIdentifier, user);
             
-            // Announce the award
+            // CLEANED UP: Just pass data to AlertService
             await this.announceMonthlyAward(user, gameInfo, gameId, awardType, systemType);
             
             console.log(`✅ Successfully announced ${awardType} award for ${user.raUsername} on ${systemType} game ${gameInfo.title}`);
@@ -540,17 +533,11 @@ class GameAwardService {
     }
 
     /**
-     * UPDATED: Announce regular game award using new AlertService with CORRECT routing
+     * CLEANED UP: Just pass raw data to AlertService - no embed building here
      */
     async announceRegularAward(user, gameInfo, gameId, isMastery, isBeaten) {
         // Ensure GP service is loaded
         await loadGPService();
-        
-        // Determine system type for styling
-        const systemType = this.getGameSystemType(gameId);
-        
-        const profileImageUrl = await this.getUserProfileImageUrl(user.raUsername);
-        const thumbnailUrl = gameInfo?.imageIcon ? `https://retroachievements.org${gameInfo.imageIcon}` : null;
         
         // Award GP for regular game completion
         if (gpRewardService && GP_REWARDS) {
@@ -561,66 +548,35 @@ class GameAwardService {
             }
         }
 
-        // Create description with hardcoded GP display
-        const gpDisplay = isMastery ? 50 : 25;
-        let description = '';
+        // Get profile image and game thumbnail
+        const profileImageUrl = await this.getUserProfileImageUrl(user.raUsername);
+        const thumbnailUrl = gameInfo?.imageIcon ? `https://retroachievements.org${gameInfo.imageIcon}` : null;
         
-        if (isMastery) {
-            description = `They've earned every achievement in the game.\n\n`;
-        } else {
-            description = `They've completed the core achievements.\n\n`;
-        }
+        // Determine system type for any special styling
+        const systemType = this.getGameSystemType(gameId);
         
-        description += `━━━━━━━━━━━━━━━━━━━━━━━━━━\n🏆 **+${gpDisplay} GP** earned!`;
+        // Calculate GP earned (hardcoded values matching UI)
+        const gpEarned = isMastery ? 50 : 25;
         
-        // Determine custom title and color based on system type
-        let customTitle = isMastery ? `Mastery of ${gameInfo.title}` : `Beaten ${gameInfo.title}`;
-        let color = undefined; // Use default
-        
-        if (systemType === 'arcade') {
-            customTitle = isMastery ? `🕹️ Arcade Mastery: ${gameInfo.title}` : `🕹️ Arcade Beaten: ${gameInfo.title}`;
-            color = '#3498DB'; // Blue for arcade
-        } else if (systemType === 'arena') {
-            customTitle = isMastery ? `⚔️ Arena Mastery: ${gameInfo.title}` : `⚔️ Arena Beaten: ${gameInfo.title}`;
-            color = '#FF5722'; // Red for arena
-        }
-        
-        // All mastery/beaten go to MASTERY/BEATEN channel but with different styling
+        // CLEANED UP: Just pass data to AlertService - let it handle ALL embed logic
         await alertService.sendAchievementAlert({
-            alertType: isMastery ? ALERT_TYPES.MASTERY : ALERT_TYPES.BEATEN, // → 1362227906343997583
+            alertType: isMastery ? ALERT_TYPES.MASTERY : ALERT_TYPES.BEATEN,
             username: user.raUsername,
-            achievementTitle: customTitle,
-            achievementDescription: description,
             gameTitle: gameInfo.title,
             gameId: gameId,
             thumbnail: thumbnailUrl,
-            badgeUrl: profileImageUrl,
-            color: color // Custom color for arcade/arena
+            userProfileImageUrl: profileImageUrl,
+            gpEarned: gpEarned,
+            systemType: systemType // Pass system type for special styling if needed
         });
     }
 
     /**
-     * UPDATED: Announce monthly/shadow award using new AlertService with CORRECT routing
+     * CLEANED UP: Just pass raw data to AlertService - no embed building here
      */
     async announceMonthlyAward(user, gameInfo, gameId, awardType, systemType) {
         // Ensure GP service is loaded
         await loadGPService();
-        
-        let awardTitle = '';
-        
-        if (awardType === 'mastery') {
-            awardTitle = `${systemType === 'shadow' ? 'Shadow' : 'Monthly'} Challenge Mastery`;
-        } else if (awardType === 'beaten') {
-            awardTitle = `${systemType === 'shadow' ? 'Shadow' : 'Monthly'} Challenge Beaten`;
-        } else if (awardType === 'participation') {
-            awardTitle = `${systemType === 'shadow' ? 'Shadow' : 'Monthly'} Challenge Participation`;
-        } else {
-            console.error(`Unknown award type: ${awardType} for ${systemType} game`);
-            return;
-        }
-        
-        const profileImageUrl = await this.getUserProfileImageUrl(user.raUsername);
-        const thumbnailUrl = gameInfo?.imageIcon ? `https://retroachievements.org${gameInfo.imageIcon}` : null;
         
         // Award GP for challenge completion
         if (gpRewardService) {
@@ -631,35 +587,33 @@ class GameAwardService {
             }
         }
 
-        // Create description with hardcoded GP display
-        let description = '';
+        // Get profile image and game thumbnail
+        const profileImageUrl = await this.getUserProfileImageUrl(user.raUsername);
+        const thumbnailUrl = gameInfo?.imageIcon ? `https://retroachievements.org${gameInfo.imageIcon}` : null;
         
-        // Add hardcoded GP display at the bottom based on award type
-        let gpDisplay = 0;
+        // Calculate GP earned (hardcoded values matching UI)
+        let gpEarned = 0;
         if (awardType === 'mastery') {
-            gpDisplay = 100; // Both shadow and monthly mastery = 100
+            gpEarned = 100; // Both shadow and monthly mastery = 100
         } else if (awardType === 'beaten') {
-            gpDisplay = 50; // Both shadow and monthly beaten = 50
+            gpEarned = 50; // Both shadow and monthly beaten = 50
         } else if (awardType === 'participation') {
-            gpDisplay = 25; // Both shadow and monthly participation = 25
+            gpEarned = 25; // Both shadow and monthly participation = 25
         }
         
-        description = `\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n🏆 **+${gpDisplay} GP** earned!`;
-        
-        // CORRECTED: Route to proper channel based on system type
+        // CLEANED UP: Just pass data to AlertService - let it handle ALL embed logic
         const alertType = systemType === 'shadow' ? ALERT_TYPES.SHADOW_AWARD : ALERT_TYPES.MONTHLY_AWARD;
-        // Shadow → 1300941091335438470 (shadow channel)
-        // Monthly → 1313640664356880445 (monthly channel)
         
         await alertService.sendAchievementAlert({
             alertType: alertType,
             username: user.raUsername,
-            achievementTitle: awardTitle,
-            achievementDescription: description,
             gameTitle: gameInfo.title,
             gameId: gameId,
             thumbnail: thumbnailUrl,
-            badgeUrl: profileImageUrl
+            userProfileImageUrl: profileImageUrl,
+            gpEarned: gpEarned,
+            awardType: awardType, // mastery, beaten, participation
+            systemType: systemType // monthly, shadow
         });
     }
 
