@@ -1,9 +1,11 @@
+// src/commands/admin/adminArcade.js - UPDATED with centralized AlertService
 import { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, 
   ModalBuilder, TextInputBuilder, TextInputStyle, StringSelectMenuBuilder } from 'discord.js';
 import { ArcadeBoard } from '../../models/ArcadeBoard.js';
 import retroAPI from '../../services/retroAPI.js';
 import monthlyTasksService from '../../services/monthlyTasksService.js';
 import { config } from '../../config/config.js';
+import AlertService from '../../utils/AlertService.js'; // NEW: Use centralized service
 
 // Add this after your imports - NEW Validation Class for Tiebreaker-Breaker
 class TiebreakerBreakerValidation {
@@ -102,6 +104,9 @@ export default {
                 ephemeral: true
             });
         }
+
+        // NEW: Set client for AlertService
+        AlertService.setClient(interaction.client);
 
         const subcommand = interaction.options.getSubcommand();
         
@@ -395,7 +400,7 @@ export default {
         }
     },
 
-    // NEW: Handler for expire tiebreakers
+    // Handler for expire tiebreakers
     async handleExpireTiebreakers(interaction) {
         try {
             await interaction.deferUpdate();
@@ -425,7 +430,7 @@ export default {
         }
     },
 
-    // NEW: Handler for cleanup tiebreakers
+    // Handler for cleanup tiebreakers
     async handleCleanupTiebreakers(interaction) {
         try {
             await interaction.deferUpdate();
@@ -462,7 +467,7 @@ export default {
         }
     },
 
-    // NEW: Process cleanup confirmation
+    // Process cleanup confirmation
     async processCleanupTiebreakers(interaction) {
         try {
             await interaction.deferUpdate();
@@ -586,7 +591,7 @@ export default {
         await interaction.showModal(modal);
     },
 
-    // UPDATED: Show a modal for creating a tiebreaker - now includes tiebreaker-breaker field
+    // Show a modal for creating a tiebreaker - includes tiebreaker-breaker field
     async showCreateTiebreakerModal(interaction) {
         const modal = new ModalBuilder()
             .setCustomId('adminarcade_create_tiebreaker_modal')
@@ -617,7 +622,7 @@ export default {
             .setStyle(TextInputStyle.Short)
             .setRequired(true);
 
-        // NEW: Add tiebreaker-breaker input field
+        // Add tiebreaker-breaker input field
         const tiebreakerBreakerInput = new TextInputBuilder()
             .setCustomId('tiebreaker_breaker')
             .setLabel('🗡️ Tiebreaker-Breaker (optional)')
@@ -904,7 +909,7 @@ export default {
         }
     },
 
-    // UPDATED: Handle the modal submit for creating a tiebreaker - now supports tiebreaker-breaker
+    // Handle the modal submit for creating a tiebreaker - supports tiebreaker-breaker
     async handleCreateTiebreakerModal(interaction) {
         try {
             await interaction.deferReply({ ephemeral: true });
@@ -925,13 +930,13 @@ export default {
             // Set end time to 23:59:59
             endDate.setHours(23, 59, 59);
 
-            // NEW: Validate tiebreaker-breaker input
+            // Validate tiebreaker-breaker input
             const tiebreakerBreakerValidation = TiebreakerBreakerValidation.validateTiebreakerBreakerInput(tiebreakerBreakerInput);
             if (!tiebreakerBreakerValidation.valid) {
                 return interaction.editReply(`Tiebreaker-breaker validation error: ${tiebreakerBreakerValidation.error}`);
             }
 
-            // NEW: Check for circular reference if tiebreaker-breaker is provided
+            // Check for circular reference if tiebreaker-breaker is provided
             if (tiebreakerBreakerValidation.data) {
                 const circularCheck = TiebreakerBreakerValidation.validateNoCircularReference(
                     leaderboardId, 
@@ -948,7 +953,7 @@ export default {
                 return interaction.editReply('Game not found. Please check the game ID.');
             }
 
-            // NEW: Validate tiebreaker-breaker game exists (if provided)
+            // Validate tiebreaker-breaker game exists (if provided)
             let tiebreakerBreakerGameInfo = null;
             if (tiebreakerBreakerValidation.data) {
                 try {
@@ -992,7 +997,7 @@ export default {
                 monthKey: monthYear
             });
 
-            // NEW: Set tiebreaker-breaker data if provided
+            // Set tiebreaker-breaker data if provided
             if (tiebreakerBreakerValidation.data && tiebreakerBreakerGameInfo) {
                 newBoard.setTiebreakerBreaker(
                     tiebreakerBreakerValidation.data.leaderboardId,
@@ -1018,7 +1023,7 @@ export default {
                     `**Tiebreaker Period:** ${now.toLocaleDateString()} to ${endDate.toLocaleDateString()}`
                 );
 
-            // NEW: Add tiebreaker-breaker info to embed if available
+            // Add tiebreaker-breaker info to embed if available
             if (tiebreakerBreakerGameInfo) {
                 embed.addFields({
                     name: '🗡️ Tiebreaker-Breaker',
@@ -1163,7 +1168,7 @@ export default {
         }
     },
 
-    // UPDATED: Show edit modal for tiebreaker board - now includes tiebreaker-breaker field
+    // Show edit modal for tiebreaker board - includes tiebreaker-breaker field
     async showEditTiebreakerModal(interaction, boardId) {
         try {
             // Find the board
@@ -1183,7 +1188,7 @@ export default {
             const endDate = board.endDate;
             const endDateStr = endDate ? `${endDate.getFullYear()}-${String(endDate.getMonth() + 1).padStart(2, '0')}-${String(endDate.getDate()).padStart(2, '0')}` : '';
 
-            // NEW: Format current tiebreaker-breaker value
+            // Format current tiebreaker-breaker value
             let tiebreakerBreakerValue = '';
             if (board.hasTiebreakerBreaker()) {
                 const tbInfo = board.getTiebreakerBreakerInfo();
@@ -1217,7 +1222,7 @@ export default {
                 .setValue(endDateStr)
                 .setRequired(true);
 
-            // NEW: Add tiebreaker-breaker input field with current value
+            // Add tiebreaker-breaker input field with current value
             const tiebreakerBreakerInput = new TextInputBuilder()
                 .setCustomId('tiebreaker_breaker')
                 .setLabel('🗡️ Tiebreaker-Breaker (optional)')
@@ -1360,7 +1365,7 @@ export default {
         }
     },
 
-    // UPDATED: Handle edit modal submission for tiebreaker board - now supports tiebreaker-breaker updates
+    // Handle edit modal submission for tiebreaker board - supports tiebreaker-breaker updates
     async handleEditTiebreakerModal(interaction, boardId) {
         try {
             await interaction.deferReply({ ephemeral: true });
@@ -1380,13 +1385,13 @@ export default {
             // Set end time to 23:59:59
             newEndDate.setHours(23, 59, 59);
 
-            // NEW: Validate tiebreaker-breaker input
+            // Validate tiebreaker-breaker input
             const tiebreakerBreakerValidation = TiebreakerBreakerValidation.validateTiebreakerBreakerInput(tiebreakerBreakerInput);
             if (!tiebreakerBreakerValidation.valid) {
                 return interaction.editReply(`Tiebreaker-breaker validation error: ${tiebreakerBreakerValidation.error}`);
             }
 
-            // NEW: Check for circular reference if tiebreaker-breaker is provided
+            // Check for circular reference if tiebreaker-breaker is provided
             if (tiebreakerBreakerValidation.data) {
                 const circularCheck = TiebreakerBreakerValidation.validateNoCircularReference(
                     newLeaderboardId, 
@@ -1407,7 +1412,7 @@ export default {
                 return interaction.editReply(`Tiebreaker board with ID "${boardId}" not found.`);
             }
 
-            // NEW: Handle tiebreaker-breaker updates
+            // Handle tiebreaker-breaker updates
             let tiebreakerBreakerGameInfo = null;
             if (tiebreakerBreakerValidation.data) {
                 // Validate tiebreaker-breaker game exists
@@ -1452,7 +1457,7 @@ export default {
             embed.addFields({ name: 'New Leaderboard ID', value: newLeaderboardId.toString() });
             embed.addFields({ name: 'New End Date', value: newEndDateStr });
 
-            // NEW: Add tiebreaker-breaker info to response
+            // Add tiebreaker-breaker info to response
             if (tiebreakerBreakerGameInfo) {
                 embed.addFields({
                     name: '🗡️ Tiebreaker-Breaker Updated',
@@ -1661,7 +1666,7 @@ export default {
                     entryText += `\nPeriod: ${board.startDate.toLocaleDateString()} to ${board.endDate.toLocaleDateString()}`;
                 }
                 
-                // NEW: Add status for tiebreakers
+                // Add status for tiebreakers
                 if (board.boardType === 'tiebreaker') {
                     const status = board.isActive === false ? '🔴 Expired' : 
                                   (board.endDate && board.endDate < new Date()) ? '⚠️ Should Expire' : '🟢 Active';
@@ -1673,7 +1678,7 @@ export default {
                     }
                 }
                 
-                // NEW: Add tiebreaker-breaker info if available
+                // Add tiebreaker-breaker info if available
                 if (board.boardType === 'tiebreaker' && board.hasTiebreakerBreaker()) {
                     const tbInfo = board.getTiebreakerBreakerInfo();
                     entryText += `\n🗡️ TB-Breaker: ${tbInfo.gameTitle}`;
@@ -1971,7 +1976,7 @@ export default {
         }
     },
 
-    // UPDATED: Announce a board - now includes tiebreaker-breaker info
+    // MASSIVELY SIMPLIFIED: Announce a board using AlertService
     async announceBoard(interaction, boardType, boardId, isSelectMenu = false) {
         try {
             if (isSelectMenu) {
@@ -1980,7 +1985,6 @@ export default {
                 await interaction.deferReply({ ephemeral: true });
             }
 
-            // Find the board
             const board = await ArcadeBoard.findOne({ 
                 boardId,
                 boardType
@@ -1991,120 +1995,100 @@ export default {
                 return interaction.editReply(response);
             }
 
-            // Get the announcement and arcade channels
-            const announcementChannel = await this.getAnnouncementChannel(interaction.client);
-            const arcadeChannel = await this.getArcadeChannel(interaction.client);
-            
-            if (!announcementChannel) {
-                return interaction.editReply('Announcement channel not found.');
-            }
-            
-            if (!arcadeChannel) {
-                return interaction.editReply('Arcade channel not found.');
-            }
-            
-            // Different announcement based on board type
-            let embed;
-            
-            if (boardType === 'racing') {
-                // Get month name for racing challenge
-                const monthName = board.startDate.toLocaleString('default', { month: 'long' });
-                const year = board.startDate.getFullYear();
-                
-                embed = new EmbedBuilder()
-                    .setColor('#FF9900')
-                    .setTitle(`🏎️ New Racing Challenge: ${monthName} ${year}`)
-                    .setDescription(
-                        `A new monthly racing challenge has begun!\n\n` +
-                        `**Game:** ${board.gameTitle}\n` +
-                        `**Track:** ${board.trackName}\n` +
-                        `**Description:** ${board.description}\n\n` +
-                        `**Challenge Period:** ${board.startDate.toLocaleDateString()} to ${board.endDate.toLocaleDateString()}\n\n` +
-                        `Compete for the fastest time! The top 3 players will receive award points at the end of the month. Check it out with \`/arcade racing\`!`
-                    )
-                    .setTimestamp();
-                
-                // Get game info for thumbnail
+            // Get game thumbnail
+            let thumbnailUrl = null;
+            try {
                 const gameInfo = await retroAPI.getGameInfo(board.gameId);
                 if (gameInfo?.imageIcon) {
-                    embed.setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`);
+                    thumbnailUrl = `https://retroachievements.org${gameInfo.imageIcon}`;
                 }
-            } else if (boardType === 'arcade') {
-                // Get game info
-                const gameInfo = await retroAPI.getGameInfo(board.gameId);
-                
-                embed = new EmbedBuilder()
-                    .setColor('#0099ff')
-                    .setTitle(`🎮 New Arcade Board: ${board.gameTitle}`)
-                    .setDescription(
-                        `A new arcade leaderboard has been added!\n\n` +
-                        `**Game:** ${board.gameTitle}\n` +
-                        `**Description:** ${board.description}\n\n` +
-                        `Check it out with \`/arcade board id:${board.boardId}\``
-                    )
-                    .setTimestamp();
-                
-                if (gameInfo?.imageIcon) {
-                    embed.setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`);
-                }
-            } else if (boardType === 'tiebreaker') {
-                // Get month name for tiebreaker
-                const monthName = board.startDate.toLocaleString('default', { month: 'long' });
-                const year = board.startDate.getFullYear();
-                
-                embed = new EmbedBuilder()
-                    .setColor('#FF0000')
-                    .setTitle(`⚔️ Monthly Tiebreaker Challenge: ${monthName} ${year}`)
-                    .setDescription(
-                        `A tiebreaker challenge has been created for this month's competition!\n\n` +
-                        `**Game:** ${board.gameTitle}\n` +
-                        `**Description:** ${board.description}\n\n` +
-                        `**Tiebreaker Period:** ${board.startDate.toLocaleDateString()} to ${board.endDate.toLocaleDateString()}\n\n` +
-                        `This tiebreaker will be used to resolve ties in the ${monthName} monthly challenge leaderboard. Check it out with \`/arcade tiebreaker\`!`
-                    )
-                    .setTimestamp();
+            } catch (error) {
+                console.error('Error fetching game info for thumbnail:', error);
+            }
 
-                // NEW: Add tiebreaker-breaker info if available
+            // SIMPLIFIED: Single method call based on board type with automatic link generation
+            if (boardType === 'arcade') {
+                await AlertService.sendNewArcadeBoardAlert({
+                    title: `🎮 New Arcade Board: ${board.gameTitle}`,
+                    description: `A new arcade leaderboard has been added!\n\n**Description:** ${board.description}\n\nCheck it out with \`/arcade board id:${board.boardId}\``,
+                    gameTitle: board.gameTitle,       // AlertService creates game link
+                    gameId: board.gameId,             // AlertService creates game link
+                    leaderboardTitle: board.gameTitle, // AlertService creates leaderboard link  
+                    leaderboardId: board.leaderboardId, // AlertService creates leaderboard link
+                    thumbnail: thumbnailUrl
+                });
+            } else if (boardType === 'racing') {
+                const monthName = board.startDate.toLocaleString('default', { month: 'long' });
+                const year = board.startDate.getFullYear();
+                
+                await AlertService.sendNewRacingChallengeAlert({
+                    title: `🏎️ New Racing Challenge: ${monthName} ${year}`,
+                    description: `A new monthly racing challenge has begun!\n\n**Track:** ${board.trackName}\n**Description:** ${board.description}\n\nCompete for the fastest time! Check it out with \`/arcade racing\`!`,
+                    gameTitle: board.gameTitle,       // AlertService creates game link
+                    gameId: board.gameId,             // AlertService creates game link
+                    leaderboardTitle: board.trackName, // AlertService creates leaderboard link
+                    leaderboardId: board.leaderboardId, // AlertService creates leaderboard link
+                    thumbnail: thumbnailUrl,
+                    fields: [
+                        {
+                            name: 'Challenge Period',
+                            value: `${board.startDate.toLocaleDateString()} to ${board.endDate.toLocaleDateString()}`,
+                            inline: true
+                        }
+                    ]
+                });
+            } else if (boardType === 'tiebreaker') {
+                const monthName = board.startDate.toLocaleString('default', { month: 'long' });
+                const year = board.startDate.getFullYear();
+                
+                const fields = [
+                    {
+                        name: 'Tiebreaker Period',
+                        value: `${board.startDate.toLocaleDateString()} to ${board.endDate.toLocaleDateString()}`,
+                        inline: false
+                    }
+                ];
+                
+                // Add tiebreaker-breaker info if available
                 if (board.hasTiebreakerBreaker()) {
                     const tbInfo = board.getTiebreakerBreakerInfo();
-                    embed.addFields({
+                    fields.push({
                         name: '🗡️ Tiebreaker-Breaker',
-                        value: `**Game:** ${tbInfo.gameTitle}\nIf users are tied in the main tiebreaker, this will resolve the tie.`
+                        value: `**Game:** ${tbInfo.gameTitle}\nIf users are tied in the main tiebreaker, this will resolve the tie.`,
+                        inline: false
                     });
                 }
                 
-                // Get game info for thumbnail
-                const gameInfo = await retroAPI.getGameInfo(board.gameId);
-                if (gameInfo?.imageIcon) {
-                    embed.setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`);
-                }
-            } else {
-                return interaction.editReply(`Cannot announce board of type "${boardType}".`);
+                await AlertService.sendNewTiebreakerAlert({
+                    title: `⚔️ Monthly Tiebreaker Challenge: ${monthName} ${year}`,
+                    description: `A tiebreaker challenge has been created for this month's competition!\n\n**Description:** ${board.description}\n\nThis tiebreaker will be used to resolve ties in the monthly challenge leaderboard. Check it out with \`/arcade tiebreaker\`!`,
+                    gameTitle: board.gameTitle,       // AlertService creates game link
+                    gameId: board.gameId,             // AlertService creates game link
+                    leaderboardTitle: board.gameTitle, // AlertService creates leaderboard link
+                    leaderboardId: board.leaderboardId, // AlertService creates leaderboard link
+                    thumbnail: thumbnailUrl,
+                    fields: fields
+                });
             }
-            
-            // Send to both announcement and arcade channels
-            await announcementChannel.send({ embeds: [embed] });
-            await arcadeChannel.send({ embeds: [embed] });
-            
+
             // Create response embed
             const responseEmbed = new EmbedBuilder()
                 .setColor('#00FF00')
                 .setTitle('✅ Announcement Sent')
-                .setDescription(
-                    `Successfully announced ${boardType} board "${board.gameTitle}" in both the announcements and arcade channels!`
-                );
+                .setDescription(`Successfully announced ${boardType} board "${board.gameTitle}" with proper links to multiple channels!`);
 
             return interaction.editReply({
                 embeds: [responseEmbed],
                 components: []
             });
+            
         } catch (error) {
             console.error(`Error announcing ${boardType}:`, error);
             return interaction.editReply('An error occurred while announcing the board.');
         }
     },
 
-    // Announce racing results
+    // SIMPLIFIED: Announce racing results using AlertService
     async announceRacingResults(interaction, boardId) {
         try {
             await interaction.deferUpdate();
@@ -2123,49 +2107,45 @@ export default {
                 return interaction.editReply('This racing challenge has no awarded results to announce.');
             }
 
-            // Get the announcement and arcade channels
-            const announcementChannel = await this.getAnnouncementChannel(interaction.client);
-            const arcadeChannel = await this.getArcadeChannel(interaction.client);
-            
-            if (!announcementChannel || !arcadeChannel) {
-                return interaction.editReply('Could not find the required channels.');
+            // Get game thumbnail
+            let thumbnailUrl = null;
+            try {
+                const gameInfo = await retroAPI.getGameInfo(board.gameId);
+                if (gameInfo?.imageIcon) {
+                    thumbnailUrl = `https://retroachievements.org${gameInfo.imageIcon}`;
+                }
+            } catch (error) {
+                console.error('Error fetching game info for results:', error);
             }
 
-            // Create results announcement embed
+            // Get month name for response
             const monthName = board.startDate.toLocaleString('default', { month: 'long' });
             const year = board.startDate.getFullYear();
-            
-            const embed = new EmbedBuilder()
-                .setColor('#00FF00')
-                .setTitle(`🏆 Racing Challenge Results: ${monthName} ${year}`)
-                .setDescription(
-                    `The results are in for the ${monthName} ${year} racing challenge!\n\n` +
-                    `**Game:** ${board.gameTitle}\n` +
-                    `**Track:** ${board.trackName}`
-                );
 
-            // Add results to embed
-            let resultsText = '';
-            board.results.forEach(result => {
+            // Format results for display
+            const resultsText = board.results.map(result => {
                 const emoji = result.rank === 1 ? '🥇' : (result.rank === 2 ? '🥈' : '🥉');
-                resultsText += `${emoji} **${result.username}** (${result.time}): ${result.points} point${result.points !== 1 ? 's' : ''}\n`;
-            });
-            
-            if (resultsText) {
-                embed.addFields({ name: 'Results', value: resultsText });
-            }
+                return `${emoji} **${result.username}** (${result.time}): ${result.points} point${result.points !== 1 ? 's' : ''}`;
+            }).join('\n');
 
-            // Send announcements
-            await announcementChannel.send({ embeds: [embed] });
-            await arcadeChannel.send({ embeds: [embed] });
+            // SIMPLIFIED: Use AlertService for racing awards
+            await AlertService.sendRacingAwardAlert({
+                username: 'Community Results',
+                achievementTitle: `${monthName} ${year} Racing Challenge Results`,
+                customTitle: `🏆 Racing Challenge Results: ${monthName} ${year}`,
+                customDescription: `The results are in for the ${monthName} ${year} racing challenge!\n\n**Track:** ${board.trackName}\n\n**Results:**\n${resultsText}`,
+                gameTitle: board.gameTitle,       // AlertService creates game link
+                gameId: board.gameId,             // AlertService creates game link
+                leaderboardTitle: board.trackName, // AlertService creates leaderboard link
+                leaderboardId: board.leaderboardId, // AlertService creates leaderboard link
+                thumbnail: thumbnailUrl
+            });
 
             // Create response embed
             const responseEmbed = new EmbedBuilder()
                 .setColor('#00FF00')
                 .setTitle('✅ Results Announced')
-                .setDescription(
-                    `Successfully announced the racing results in both the announcements and arcade channels!`
-                );
+                .setDescription(`Successfully announced the racing results with proper links!`);
 
             return interaction.editReply({
                 embeds: [responseEmbed],
@@ -2184,42 +2164,6 @@ export default {
         } catch (error) {
             console.error('Error fetching leaderboard entries:', error);
             throw error;
-        }
-    },
-
-    // Get announcement channel
-    async getAnnouncementChannel(client) {
-        try {
-            // Get the guild
-            const guild = await client.guilds.fetch(config.discord.guildId);
-            if (!guild) {
-                console.error('Guild not found');
-                return null;
-            }
-
-            // Get the announcement channel
-            return await guild.channels.fetch(config.discord.announcementChannelId);
-        } catch (error) {
-            console.error('Error getting announcement channel:', error);
-            return null;
-        }
-    },
-    
-    // Get arcade channel
-    async getArcadeChannel(client) {
-        try {
-            // Get the guild
-            const guild = await client.guilds.fetch(config.discord.guildId);
-            if (!guild) {
-                console.error('Guild not found');
-                return null;
-            }
-
-            // Get the arcade channel
-            return await guild.channels.fetch('1300941091335438471');
-        } catch (error) {
-            console.error('Error getting arcade channel:', error);
-            return null;
         }
     },
 
