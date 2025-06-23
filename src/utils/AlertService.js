@@ -1,4 +1,4 @@
-// src/utils/AlertService.js - Comprehensive centralized alert management
+// src/utils/AlertService.js - FIXED to match original achievement formatting
 import { EmbedBuilder } from 'discord.js';
 import { config } from '../config/config.js';
 import { COLORS, EMOJIS, getDiscordTimestamp } from './FeedUtils.js';
@@ -408,7 +408,7 @@ export class AlertService {
     }
     
     /**
-     * Send achievement/award alert
+     * FIXED: Send achievement/award alert with ORIGINAL formatting
      */
     async sendAchievementAlert(options) {
         const {
@@ -418,13 +418,12 @@ export class AlertService {
             achievementDescription = null,
             gameTitle = null,
             gameId = null,
-            leaderboardTitle = null,
-            leaderboardId = null,
+            consoleName = null,
             points = null,
             thumbnail = null,
-            badgeUrl = null,
+            userProfileImageUrl = null,
             customTitle = null,
-            customDescription = null
+            color = null
         } = options;
         
         try {
@@ -436,102 +435,84 @@ export class AlertService {
                 return;
             }
             
-            const color = this.getAlertColor(alertType);
+            // Use custom color or default to alert type color
+            const embedColor = color || this.getAlertColor(alertType);
+            
+            // Raw GitHub URL for logo (same as original)
+            const logoUrl = 'https://raw.githubusercontent.com/marquessam/select_start_bot2/a58a4136ff0597217bb9fb181115de3f152b71e4/assets/logo_simple.png';
             
             const embed = new EmbedBuilder()
-                .setColor(color)
+                .setColor(embedColor)
                 .setTimestamp();
             
-            // Set title based on alert type or custom title
-            if (customTitle) {
-                embed.setTitle(customTitle);
-            } else {
-                switch (alertType) {
-                    case ALERT_TYPES.MASTERY:
-                        embed.setTitle(`✨ ${username} has mastered a game!`);
-                        break;
-                    case ALERT_TYPES.BEATEN:
-                        embed.setTitle(`⭐ ${username} has beaten a game!`);
-                        break;
-                    case ALERT_TYPES.MONTHLY_AWARD:
-                    case ALERT_TYPES.SHADOW_AWARD:
-                    case ALERT_TYPES.RACING_AWARD:
-                    case ALERT_TYPES.ARCADE_AWARD:
-                    case ALERT_TYPES.ARENA_AWARD:
-                        embed.setTitle(`🏆 ${username} earned an award!`);
-                        break;
-                    default:
-                        embed.setTitle(`🎮 Achievement Unlocked!`);
-                }
+            // FIXED: Set game name and platform as the title with clickable link to game page (ORIGINAL FORMAT)
+            const platformText = consoleName ? ` • ${consoleName}` : '';
+            embed.setTitle(`${gameTitle || 'Unknown Game'}${platformText}`);
+            if (gameId) {
+                embed.setURL(`https://retroachievements.org/game/${gameId}`);
             }
             
-            // Create description with links
-            let description = '';
-            if (customDescription) {
-                description = customDescription;
-            } else if (achievementDescription) {
-                description = achievementDescription;
-            } else {
-                const userLink = LinkUtils.createUserLink(username);
-                const gameLink = gameTitle && gameId ? 
-                    LinkUtils.createGameLink(gameTitle, gameId) : gameTitle;
-                
-                switch (alertType) {
-                    case ALERT_TYPES.MASTERY:
-                        description = `${userLink} has mastered ${gameLink}!\nThey've earned every achievement in the game.`;
-                        break;
-                    case ALERT_TYPES.BEATEN:
-                        description = `${userLink} has beaten ${gameLink}!\nThey've completed the core achievements.`;
-                        break;
-                    default:
-                        description = `${userLink} has unlocked **${achievementTitle}**`;
-                        if (gameLink) description += `\nGame: ${gameLink}`;
-                }
+            // FIXED: Set author with appropriate icon based on achievement type (ORIGINAL FORMAT)
+            let authorName = customTitle || 'Achievement Unlocked';
+            let iconURL = null;
+            
+            // Determine icon based on achievement type
+            if (alertType === ALERT_TYPES.MONTHLY_AWARD) {
+                iconURL = logoUrl;
+            } else if (alertType === ALERT_TYPES.SHADOW_AWARD) {
+                iconURL = logoUrl;
+            } else if (alertType === ALERT_TYPES.ARCADE_AWARD) {
+                iconURL = logoUrl;
+            } else if (alertType === ALERT_TYPES.ARENA_AWARD) {
+                iconURL = logoUrl;
+            } else if (gameTitle) {
+                // For regular achievements, try to use game icon if available
+                // Note: This would need gameInfo.imageIcon from the original data
+                iconURL = null; // Will fallback to text-only author
             }
             
-            // Enhance description with links
-            description = LinkUtils.enhanceDescription(description, {
-                username,
-                gameTitle,
-                gameId
-            });
+            if (iconURL) {
+                embed.setAuthor({
+                    name: authorName,
+                    iconURL: iconURL
+                });
+            } else {
+                embed.setAuthor({
+                    name: authorName
+                });
+            }
+            
+            // FIXED: Set the thumbnail to ALWAYS be the achievement badge (ORIGINAL FORMAT)
+            if (thumbnail) {
+                embed.setThumbnail(thumbnail);
+            }
+            
+            // FIXED: Build description with user link and "earned" language (ORIGINAL FORMAT)
+            const userLink = LinkUtils.createUserLink(username);
+            let description = `${userLink} earned **${achievementTitle}**\n\n`;
+            
+            // FIXED: Add achievement description in italics if available (ORIGINAL FORMAT)
+            if (achievementDescription) {
+                description += `*${achievementDescription}*`;
+            }
             
             embed.setDescription(description);
             
-            // Add game info if not in description
-            if (gameTitle && gameId && !description.includes(gameTitle)) {
-                const gameLink = LinkUtils.createGameLink(gameTitle, gameId);
-                embed.addFields({
-                    name: 'Game',
-                    value: gameLink,
-                    inline: true
-                });
-            }
-            
-            // Add leaderboard info if available
-            if (leaderboardTitle && leaderboardId) {
-                const leaderboardLink = LinkUtils.createLeaderboardLink(leaderboardTitle, leaderboardId);
-                embed.addFields({
-                    name: 'Leaderboard',
-                    value: leaderboardLink,
-                    inline: true
-                });
-            }
-            
-            // Add points if available
+            // FIXED: Footer with points and user profile image (ORIGINAL FORMAT)
+            let footerText = '';
             if (points) {
-                embed.addFields({
-                    name: 'Points',
-                    value: points.toString(),
-                    inline: true
-                });
+                footerText = `Points: ${points}`;
             }
             
-            // Set thumbnail
-            if (thumbnail) {
-                embed.setThumbnail(thumbnail);
-            } else if (badgeUrl) {
-                embed.setThumbnail(badgeUrl);
+            if (userProfileImageUrl) {
+                embed.setFooter({
+                    text: footerText,
+                    iconURL: userProfileImageUrl
+                });
+            } else if (footerText) {
+                embed.setFooter({
+                    text: footerText
+                });
             }
             
             // Send to all target channels
