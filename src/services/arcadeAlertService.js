@@ -1,29 +1,28 @@
-// src/services/arcadeAlertService.js - FIXED with consistent data fetching
+// src/services/arcadeAlertService.js - UPDATED with centralized AlertService
 import { User } from '../models/User.js';
 import { ArcadeBoard } from '../models/ArcadeBoard.js';
 import { config } from '../config/config.js';
 import { FeedManagerBase } from '../utils/FeedManagerBase.js';
-import { COLORS, EMOJIS } from '../utils/FeedUtils.js';
 import RetroAPIUtils from '../utils/RetroAPIUtils.js';
-import AlertUtils, { ALERT_TYPES } from '../utils/AlertUtils.js';
+import AlertService from '../utils/AlertService.js'; // NEW: Use centralized service
 
 class ArcadeAlertService extends FeedManagerBase {
     constructor() {
         super(null, config.discord.arcadeAlertsChannelId || '1300941091335438471');
         // Store previous arcade standings for comparison
         this.previousStandings = new Map();
-        // ADDED: Track data consistency issues
+        // Track data consistency issues
         this.dataConsistencyIssues = new Map();
-        // ADDED: Minimum time between alerts for same board (prevent spam)
+        // Minimum time between alerts for same board (prevent spam)
         this.lastAlertTime = new Map();
         this.minAlertInterval = 30 * 60 * 1000; // 30 minutes between alerts for same board
     }
 
     setClient(client) {
         super.setClient(client);
-        // Set the client for AlertUtils when the service gets its client
-        AlertUtils.setClient(client);
-        console.log('AlertUtils client configured for arcade alerts via setClient');
+        // NEW: Set the client for AlertService when the service gets its client
+        AlertService.setClient(client);
+        console.log('AlertService configured for arcade alerts via setClient');
     }
 
     async start() {
@@ -35,9 +34,9 @@ class ArcadeAlertService extends FeedManagerBase {
         try {
             console.log('Starting arcade alert service...');
             
-            // Set the Discord client for AlertUtils
-            AlertUtils.setClient(this.client);
-            console.log('AlertUtils client configured for arcade alerts');
+            // Set the Discord client for AlertService
+            AlertService.setClient(this.client);
+            console.log('AlertService configured for arcade alerts');
             
             // Initial check (without alerts, just to build baseline standings)
             await this.checkForRankChanges(false);
@@ -58,12 +57,6 @@ class ArcadeAlertService extends FeedManagerBase {
         try {
             console.log(`Checking for arcade rank changes (sendAlerts=${sendAlerts})...`);
             
-            const alertsChannel = sendAlerts ? await this.getChannel() : null;
-            if (sendAlerts && !alertsChannel) {
-                console.error('Arcade alerts channel not found or inaccessible');
-                return;
-            }
-
             // Get all arcade boards
             const boards = await ArcadeBoard.find({ boardType: 'arcade' });
             
@@ -84,7 +77,7 @@ class ArcadeAlertService extends FeedManagerBase {
                 try {
                     console.log(`Processing board: ${board.gameTitle} (ID: ${board.boardId})`);
                     
-                    // FIXED: Get current standings with consistency checks
+                    // Get current standings with consistency checks
                     const currentStandings = await this.getArcadeBoardStandingsWithRetry(board, registeredUsersMap);
                     
                     // Skip if no results
@@ -95,17 +88,17 @@ class ArcadeAlertService extends FeedManagerBase {
                     
                     console.log(`Found ${currentStandings.size} registered users on board: ${board.gameTitle}`);
                     
-                    // FIXED: Only compare if we have consistent data
+                    // Only compare if we have consistent data
                     if (sendAlerts && this.previousStandings.has(board.boardId)) {
                         const prevStandings = this.previousStandings.get(board.boardId);
                         
-                        // ADDED: Check if this board should be alerted (rate limiting)
+                        // Check if this board should be alerted (rate limiting)
                         if (this.shouldSkipAlert(board.boardId)) {
                             console.log(`Skipping alert for board ${board.gameTitle} due to rate limiting`);
                             continue;
                         }
                         
-                        // ADDED: Only proceed if data sets are consistent in size
+                        // Only proceed if data sets are consistent in size
                         if (this.isDataConsistent(currentStandings, prevStandings, board)) {
                             await this.detectRankChanges(board, currentStandings, prevStandings, registeredUsersMap, alerts);
                         } else {
@@ -113,7 +106,7 @@ class ArcadeAlertService extends FeedManagerBase {
                         }
                     }
                     
-                    // FIXED: Update previous standings with current ones (keep as Map)
+                    // Update previous standings with current ones (keep as Map)
                     this.previousStandings.set(board.boardId, new Map(currentStandings));
                     
                 } catch (boardError) {
@@ -128,7 +121,7 @@ class ArcadeAlertService extends FeedManagerBase {
             // Send alerts if any were found
             if (sendAlerts && alerts.length > 0) {
                 console.log(`Found ${alerts.length} arcade ranking changes to notify`);
-                await this.sendRankChangeAlerts(alertsChannel, alerts);
+                await this.sendRankChangeAlerts(alerts);
             } else if (sendAlerts) {
                 console.log('No arcade rank changes detected');
             } else {
@@ -139,7 +132,7 @@ class ArcadeAlertService extends FeedManagerBase {
         }
     }
 
-    // ADDED: Get registered users map once and reuse
+    // Get registered users map once and reuse
     async getRegisteredUsersMap() {
         const users = await User.find({});
         const registeredUsers = new Map();
@@ -154,7 +147,7 @@ class ArcadeAlertService extends FeedManagerBase {
         return registeredUsers;
     }
 
-    // ADDED: Check if data is consistent between calls
+    // Check if data is consistent between calls
     isDataConsistent(currentStandings, prevStandings, board) {
         const currentSize = currentStandings.size;
         const prevSize = prevStandings.size;
@@ -182,7 +175,7 @@ class ArcadeAlertService extends FeedManagerBase {
         return true;
     }
 
-    // ADDED: Rate limiting for alerts to prevent spam
+    // Rate limiting for alerts to prevent spam
     shouldSkipAlert(boardId) {
         const lastAlert = this.lastAlertTime.get(boardId);
         if (lastAlert) {
@@ -196,7 +189,7 @@ class ArcadeAlertService extends FeedManagerBase {
         return false;
     }
 
-    // FIXED: Get arcade board standings with retry logic and consistency checks
+    // Get arcade board standings with retry logic and consistency checks
     async getArcadeBoardStandingsWithRetry(board, registeredUsers, maxRetries = 2) {
         let lastResult = null;
         let consistentResult = null;
@@ -244,7 +237,7 @@ class ArcadeAlertService extends FeedManagerBase {
         return consistentResult || lastResult || new Map();
     }
 
-    // ADDED: Check if two standings results are consistent
+    // Check if two standings results are consistent
     areStandingsConsistent(standings1, standings2, board) {
         if (!standings1 || !standings2) return false;
         
@@ -276,12 +269,12 @@ class ArcadeAlertService extends FeedManagerBase {
         return true;
     }
 
-    // FIXED: Detect rank changes using consistent Map comparison with better validation
+    // Detect rank changes using consistent Map comparison with better validation
     async detectRankChanges(board, currentStandings, prevStandings, registeredUsers, alerts) {
         try {
             const rankChangeAlerts = [];
             
-            // ADDED: Log detailed comparison info
+            // Log detailed comparison info
             console.log(`Comparing standings for ${board.gameTitle}:`);
             console.log(`  Current: ${currentStandings.size} users`);
             console.log(`  Previous: ${prevStandings.size} users`);
@@ -293,7 +286,7 @@ class ArcadeAlertService extends FeedManagerBase {
                 
                 const prevInfo = prevStandings.get(username);
                 if (!prevInfo) {
-                    // ADDED: More strict checking for new top 5 entries
+                    // More strict checking for new top 5 entries
                     const discordId = registeredUsers.get(username.toLowerCase())?.discordId;
                     if (discordId) {
                         console.log(`User ${username} newly entered top 5 at rank ${currentInfo.rank}`);
@@ -309,7 +302,7 @@ class ArcadeAlertService extends FeedManagerBase {
                         });
                     }
                 } else if (currentInfo.rank < prevInfo.rank) {
-                    // ADDED: Validate that this is a meaningful rank improvement
+                    // Validate that this is a meaningful rank improvement
                     const rankImprovement = prevInfo.rank - currentInfo.rank;
                     if (rankImprovement >= 1) { // Only alert for improvements of 1+ ranks
                         const discordId = registeredUsers.get(username.toLowerCase())?.discordId;
@@ -329,7 +322,7 @@ class ArcadeAlertService extends FeedManagerBase {
                         }
                     }
                 } else if (currentInfo.rank > prevInfo.rank && prevInfo.rank <= 5) {
-                    // ADDED: Validate meaningful rank decrease
+                    // Validate meaningful rank decrease
                     const rankDecrease = currentInfo.rank - prevInfo.rank;
                     if (rankDecrease >= 1) { // Only alert for decreases of 1+ ranks
                         const discordId = registeredUsers.get(username.toLowerCase())?.discordId;
@@ -380,7 +373,7 @@ class ArcadeAlertService extends FeedManagerBase {
             
             console.log(`Board ${board.gameTitle}: ${rankChangeAlerts.length} rank changes detected`);
             
-            // ADDED: Update last alert time if alerts were generated
+            // Update last alert time if alerts were generated
             if (rankChangeAlerts.length > 0) {
                 this.lastAlertTime.set(board.boardId, Date.now());
             }
@@ -390,7 +383,7 @@ class ArcadeAlertService extends FeedManagerBase {
         }
     }
 
-    // Get the current standings for a specific arcade board (unchanged but with better logging)
+    // Get the current standings for a specific arcade board
     async getArcadeBoardStandings(board, registeredUsers) {
         try {
             // Use our utility function to get leaderboard entries
@@ -435,7 +428,7 @@ class ArcadeAlertService extends FeedManagerBase {
                 });
             });
             
-            // ADDED: Log final standings for debugging
+            // Log final standings for debugging
             console.log(`Final standings for ${board.gameTitle}:`, Array.from(standings.entries()).slice(0, 5));
             
             return standings;
@@ -445,10 +438,10 @@ class ArcadeAlertService extends FeedManagerBase {
         }
     }
 
-    // Send alerts with proper organization (unchanged)
-    async sendRankChangeAlerts(alertsChannel, alerts) {
-        if (!alertsChannel) {
-            console.log('No alerts channel configured, skipping arcade rank change notifications');
+    // UPDATED: Send alerts using centralized AlertService
+    async sendRankChangeAlerts(alerts) {
+        if (!alerts || alerts.length === 0) {
+            console.log('No arcade rank change alerts to send');
             return;
         }
 
@@ -469,7 +462,7 @@ class ArcadeAlertService extends FeedManagerBase {
         }
     }
 
-    // Send rank change alerts for a specific board with clickable game links (unchanged)
+    // MASSIVELY SIMPLIFIED: Send rank change alerts using AlertService
     async sendBoardRankChangeAlerts(boardAlertsList) {
         try {
             const firstAlert = boardAlertsList[0];
@@ -527,19 +520,19 @@ class ArcadeAlertService extends FeedManagerBase {
                 currentStandings.push(...topFive);
             }
             
-            // Create clickable game title link
-            const leaderboardUrl = `https://retroachievements.org/leaderboardinfo.php?i=${leaderboardId}`;
-            const gameLink = `[${boardName}](${leaderboardUrl})`;
-            
-            // Use AlertUtils for rank changes with the ARCADE alert type
-            await AlertUtils.sendPositionChangeAlert({
+            // SIMPLIFIED: Single method call with all link generation handled automatically
+            await AlertService.sendArcadeRankAlert({
                 title: '🕹️ Arcade Alert!',
-                description: `The leaderboard for **${gameLink}** has been updated!`,
+                description: `The leaderboard has been updated!`,
                 changes: changes,
                 currentStandings: currentStandings,
+                gameTitle: board.gameTitle,           // AlertService creates game link
+                gameId: board.gameId,                 // AlertService creates game link
+                leaderboardTitle: board.gameTitle,    // AlertService creates leaderboard link
+                leaderboardId: board.leaderboardId,   // AlertService creates leaderboard link
                 thumbnail: thumbnailUrl,
                 footer: { text: 'Data provided by RetroAchievements • Rankings update hourly' }
-            }, ALERT_TYPES.ARCADE);
+            });
             
         } catch (error) {
             console.error('Error sending board rank change alerts:', error);
