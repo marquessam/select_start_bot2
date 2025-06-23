@@ -566,7 +566,7 @@ class AchievementFeedService {
             // Raw GitHub URL for logo (SAME as original)
             const logoUrl = 'https://raw.githubusercontent.com/marquessam/select_start_bot2/a58a4136ff0597217bb9fb181115de3f152b71e4/assets/logo_simple.png';
             
-            // CORRECTED: Route to proper channels based on achievement type
+            // CORRECTED: Route based on achievement type but arcade/arena go to achievement feed with styling
             if (achievementType === 'monthly') {
                 alertType = ALERT_TYPES.MONTHLY_AWARD; // → 1313640664356880445 (monthly channel)
                 color = '#9B59B6';  // Purple for monthly challenge
@@ -576,11 +576,11 @@ class AchievementFeedService {
                 color = '#000000';  // Black for shadow challenge
                 customTitle = 'Shadow Challenge 👥';
             } else if (achievementType === 'arcade') {
-                alertType = ALERT_TYPES.ARCADE_AWARD; // → 1300941091335438471 (arcade channel)
+                alertType = ALERT_TYPES.ACHIEVEMENT; // → 1326199972059680778 (achievement feed with arcade styling)
                 color = '#3498DB';  // Blue for arcade
                 customTitle = 'Arcade Challenge 🕹️';
             } else if (achievementType === 'arena') {
-                alertType = ALERT_TYPES.ARENA_AWARD; // → 1373570850912997476 (arena channel)
+                alertType = ALERT_TYPES.ACHIEVEMENT; // → 1326199972059680778 (achievement feed with arena styling)
                 color = '#FF5722';  // Red for arena
                 customTitle = 'Arena Challenge ⚔️';
             } else {
