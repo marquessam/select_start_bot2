@@ -1,4 +1,4 @@
-// src/services/achievementFeedService.js
+// src/services/achievementFeedService.js - CORRECTED CHANNEL ROUTING
 import { User } from '../models/User.js';
 import { Challenge } from '../models/Challenge.js';
 import { ArcadeBoard } from '../models/ArcadeBoard.js';
@@ -8,7 +8,7 @@ import { EmbedBuilder } from 'discord.js';
 import { config } from '../config/config.js';
 import EnhancedRateLimiter from './EnhancedRateLimiter.js';
 import gameAwardService from './gameAwardService.js';
-// UPDATED: Use AlertService instead of AlertUtils
+// UPDATED: Use AlertService with correct routing
 import alertService, { ALERT_TYPES } from '../utils/AlertService.js';
 
 const AWARD_EMOJIS = {
@@ -180,13 +180,14 @@ class AchievementFeedService {
         }
 
         try {
-            // Get the channel
-            const channel = await this.getAnnouncementChannel();
-            if (!channel) {
-                console.error('Could not get announcement channel');
+            // Test the regular achievement channel
+            const channels = await alertService.getChannelsForAlert(ALERT_TYPES.ACHIEVEMENT);
+            if (!channels || channels.length === 0) {
+                console.error('Could not get achievement announcement channels');
                 return false;
             }
 
+            const channel = channels[0];
             console.log(`Found announcement channel: ${channel.name} (ID: ${channel.id})`);
             
             // Test sending a message
@@ -229,15 +230,6 @@ class AchievementFeedService {
 
     async checkForNewAchievements() {
         console.log('Checking for new achievements...');
-        
-        // Get announcement channel
-        const announcementChannel = await this.getAnnouncementChannel();
-        if (!announcementChannel) {
-            console.error('Announcement channel not found or inaccessible');
-            return;
-        }
-        
-        console.log(`Successfully found announcement channel: ${announcementChannel.name}`);
 
         // Get all users
         const users = await User.find({});
@@ -561,30 +553,40 @@ class AchievementFeedService {
         }
     }
 
-    // UPDATED: Achievement announcement using AlertService but preserving original behavior
+    // UPDATED: Achievement announcement with CORRECT channel routing based on game type
     async announceAchievement(user, gameInfo, achievement, achievementType, gameId) {
         try {
-            console.log(`Creating achievement announcement via AlertService: ${achievement.Title || 'Unknown Achievement'} (${achievementType})`);
+            console.log(`Creating achievement announcement: ${achievement.Title || 'Unknown Achievement'} (${achievementType})`);
             
-            // Determine color based on achievement type (SAME as original)
+            // FIXED: Determine the correct alert type based on achievement type
+            let alertType;
             let color = '#808080';  // Default to grey for regular achievements
             let customTitle = 'Achievement Unlocked';
             
             // Raw GitHub URL for logo (SAME as original)
             const logoUrl = 'https://raw.githubusercontent.com/marquessam/select_start_bot2/a58a4136ff0597217bb9fb181115de3f152b71e4/assets/logo_simple.png';
             
+            // CORRECTED: Route to proper channels based on achievement type
             if (achievementType === 'monthly') {
+                alertType = ALERT_TYPES.MONTHLY_AWARD; // → 1313640664356880445 (monthly channel)
                 color = '#9B59B6';  // Purple for monthly challenge
                 customTitle = 'Monthly Challenge';
             } else if (achievementType === 'shadow') {
+                alertType = ALERT_TYPES.SHADOW_AWARD; // → 1300941091335438470 (shadow channel)
                 color = '#000000';  // Black for shadow challenge
                 customTitle = 'Shadow Challenge 👥';
             } else if (achievementType === 'arcade') {
+                alertType = ALERT_TYPES.ARCADE_AWARD; // → 1300941091335438471 (arcade channel)
                 color = '#3498DB';  // Blue for arcade
                 customTitle = 'Arcade Challenge 🕹️';
             } else if (achievementType === 'arena') {
+                alertType = ALERT_TYPES.ARENA_AWARD; // → 1373570850912997476 (arena channel)
                 color = '#FF5722';  // Red for arena
                 customTitle = 'Arena Challenge ⚔️';
+            } else {
+                // Regular achievements
+                alertType = ALERT_TYPES.ACHIEVEMENT; // → 1326199972059680778 (achievement feed)
+                customTitle = 'Achievement Unlocked';
             }
             
             // Get user's profile image URL for footer (SAME as original)
@@ -604,11 +606,11 @@ class AchievementFeedService {
                 description += `*${achievement.Description}*`;
             }
 
-            console.log(`Sending achievement announcement via AlertService to achievement channel`);
+            console.log(`Sending achievement announcement via AlertService to ${achievementType} channel`);
             
-            // UPDATED: Use AlertService but ensure ALL achievements go to the SAME channel
+            // FIXED: Use correct alert type for proper channel routing
             await alertService.sendAchievementAlert({
-                alertType: ALERT_TYPES.ACHIEVEMENT, // Always use ACHIEVEMENT type - routes to achievement channel
+                alertType: alertType, // Routes to correct channel based on achievement type
                 username: user.raUsername,
                 achievementTitle: achievement.Title || 'Unknown Achievement',
                 achievementDescription: description,
@@ -628,51 +630,6 @@ class AchievementFeedService {
         } catch (error) {
             console.error('Error announcing achievement:', error);
             return false;
-        }
-    }
-
-    async getAnnouncementChannel() {
-        if (!this.client) {
-            console.error('Discord client not set');
-            return null;
-        }
-
-        try {
-            // Get the configuration (SAME as original)
-            const channelId = config.discord.achievementChannelId;
-            const guildId = config.discord.guildId;
-            
-            console.log(`Looking for channel ID ${channelId} in guild ${guildId}`);
-            
-            // Get the guild
-            const guild = await this.client.guilds.fetch(guildId);
-            if (!guild) {
-                console.error(`Guild not found: ${guildId}`);
-                return null;
-            }
-
-            // Get the channel
-            const channel = await guild.channels.fetch(channelId);
-            if (!channel) {
-                console.error(`Channel not found: ${channelId}`);
-                return null;
-            }
-            
-            // Log channel details
-            console.log(`Found channel: ${channel.name} (${channel.type})`);
-            
-            return channel;
-        } catch (error) {
-            console.error('Error getting announcement channel:', error);
-            
-            // More specific error handling
-            if (error.code === 10003) {
-                console.error('Channel not found - check ACHIEVEMENT_CHANNEL environment variable');
-            } else if (error.code === 50001) {
-                console.error('Missing access to channel - check bot permissions');
-            }
-            
-            return null;
         }
     }
 
