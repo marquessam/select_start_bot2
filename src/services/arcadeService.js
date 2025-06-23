@@ -1,15 +1,21 @@
-// src/services/arcadeService.js
+// src/services/arcadeService.js - UPDATED to use new AlertService
 import { ArcadeBoard } from '../models/ArcadeBoard.js';
 import { User } from '../models/User.js';
 import { config } from '../config/config.js';
 import { FeedManagerBase } from '../utils/FeedManagerBase.js';
 import { COLORS, EMOJIS, createHeaderEmbed, getDiscordTimestamp } from '../utils/FeedUtils.js';
 import RetroAPIUtils from '../utils/RetroAPIUtils.js';
-import AlertUtils from '../utils/AlertUtils.js';
+import alertService, { ALERT_TYPES } from '../utils/AlertService.js'; // UPDATED: Use new AlertService
 
 class ArcadeService extends FeedManagerBase {
     constructor() {
         super(null, config.discord.announcementChannelId);
+    }
+
+    // UPDATED: Set client for AlertService when arcade service gets client
+    setClient(client) {
+        super.setClient(client);
+        alertService.setClient(client);
     }
 
     // Override shouldClearOnStart from base class
@@ -138,7 +144,7 @@ class ArcadeService extends FeedManagerBase {
             racingBoard.results = results;
             await racingBoard.save();
             
-            // Announce results
+            // Announce results using new AlertService
             await this.announceRacingResults(racingBoard, results);
             
             console.log(`Successfully awarded points for racing challenge ${racingBoard.boardId}`);
@@ -221,7 +227,7 @@ class ArcadeService extends FeedManagerBase {
             
             await tiebreaker.save();
             
-            // Announce results
+            // Announce results using new AlertService
             await this.announceTiebreakerResults(tiebreaker, filteredEntries);
             
             console.log(`Successfully processed tiebreaker ${tiebreaker.boardId}`);
@@ -230,164 +236,151 @@ class ArcadeService extends FeedManagerBase {
         }
     }
 
+    /**
+     * UPDATED: Announce racing results using new AlertService
+     */
     async announceRacingResults(racingBoard, results) {
         try {
-            // Get the announcement channel
-            const channel = await this.getChannel();
-            if (!channel) {
-                console.error('Announcement channel not found');
-                return;
-            }
-            
-            // Create embed
             const monthName = racingBoard.startDate.toLocaleString('default', { month: 'long' });
             const year = racingBoard.startDate.getFullYear();
             
-            // Use our utilities to create a standardized embed
-            const embed = createHeaderEmbed(
-                `${EMOJIS.RACING} ${monthName} ${year} Racing Challenge Results`,
-                `**${racingBoard.gameTitle}**\n*${racingBoard.description || ''}*`,
-                {
-                    color: COLORS.WARNING, // Orange/yellow color
-                    timestamp: true
-                }
-            );
-            
-            // Add game thumbnail if available
+            // Get game thumbnail
+            let thumbnailUrl = null;
             try {
                 const gameInfo = await RetroAPIUtils.getGameInfo(racingBoard.gameId);
                 if (gameInfo?.imageIcon) {
-                    embed.setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`);
+                    thumbnailUrl = `https://retroachievements.org${gameInfo.imageIcon}`;
                 }
             } catch (error) {
                 console.error('Error fetching game info for thumbnail:', error);
             }
             
-            // Add results field
-            let resultsText = '';
+            // Build description with results
+            let description = `**${racingBoard.gameTitle}**\n*${racingBoard.description || ''}*\n\n`;
             
             if (results.length > 0) {
+                description += `**Final Standings:**\n`;
                 results.forEach(result => {
-                    const medalEmoji = result.rank <= 3 ? EMOJIS[`RANK_${result.rank}`] : `#${result.rank}`;
-                    resultsText += `${medalEmoji} **${result.username}**: ${result.time} (${result.points} point${result.points !== 1 ? 's' : ''})\n`;
+                    const medalEmoji = result.rank === 1 ? '🥇' : (result.rank === 2 ? '🥈' : '🥉');
+                    description += `${medalEmoji} **${result.username}**: ${result.time} (${result.points} point${result.points !== 1 ? 's' : ''})\n`;
                 });
             } else {
-                resultsText = 'No eligible participants found.';
+                description += 'No eligible participants found.';
             }
             
-            embed.addFields({ name: 'Final Standings', value: resultsText });
-            
-            // Send the announcement
-            await channel.send({ embeds: [embed] });
+            // UPDATED: Use new AlertService for racing awards
+            await alertService.sendAnnouncementAlert({
+                alertType: ALERT_TYPES.NEW_RACING_CHALLENGE,
+                title: `🏁 ${monthName} ${year} Racing Challenge Results`,
+                description: description,
+                gameTitle: racingBoard.gameTitle,
+                gameId: racingBoard.gameId,
+                thumbnail: thumbnailUrl,
+                footer: {
+                    text: 'Data provided by RetroAchievements'
+                }
+            });
             
         } catch (error) {
             console.error('Error announcing racing results:', error);
         }
     }
 
+    /**
+     * UPDATED: Announce tiebreaker results using new AlertService
+     */
     async announceTiebreakerResults(tiebreaker, results) {
         try {
-            // Get the announcement channel
-            const channel = await this.getChannel();
-            if (!channel) {
-                console.error('Announcement channel not found');
-                return;
-            }
-            
-            // Use our utilities to create a standardized embed
-            const embed = createHeaderEmbed(
-                '⚔️ Tiebreaker Challenge Results',
-                `**${tiebreaker.gameTitle}**\n*${tiebreaker.description || ''}*`,
-                {
-                    color: COLORS.DANGER, // Red color
-                    timestamp: true
-                }
-            );
-            
-            // Add game thumbnail if available
+            // Get game thumbnail
+            let thumbnailUrl = null;
             try {
                 const gameInfo = await RetroAPIUtils.getGameInfo(tiebreaker.gameId);
                 if (gameInfo?.imageIcon) {
-                    embed.setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`);
+                    thumbnailUrl = `https://retroachievements.org${gameInfo.imageIcon}`;
                 }
             } catch (error) {
                 console.error('Error fetching game info for thumbnail:', error);
             }
             
-            // Add participants field
-            embed.addFields({ 
-                name: 'Participants', 
-                value: tiebreaker.tiedUsers.length > 0 ? tiebreaker.tiedUsers.join(', ') : 'No participants' 
-            });
+            // Build description with participants and results
+            let description = `**${tiebreaker.gameTitle}**\n*${tiebreaker.description || ''}*\n\n`;
             
-            // Add results field
-            let resultsText = '';
+            // Add participants
+            description += `**Participants:** ${tiebreaker.tiedUsers.length > 0 ? tiebreaker.tiedUsers.join(', ') : 'No participants'}\n\n`;
             
+            // Add results
             if (results.length > 0) {
+                description += `**Final Standings:**\n`;
                 results.forEach((result, index) => {
-                    const medalEmoji = index <= 2 ? EMOJIS[`RANK_${index + 1}`] : `#${index + 1}`;
+                    const medalEmoji = index === 0 ? '🥇' : (index === 1 ? '🥈' : (index === 2 ? '🥉' : `#${index + 1}`));
                     const scoreText = result.FormattedScore || result.TrackTime || result.Score?.toString() || 'No score';
-                    resultsText += `${medalEmoji} **${result.User}**: ${scoreText}\n`;
+                    description += `${medalEmoji} **${result.User}**: ${scoreText}\n`;
                 });
                 
                 // Announce the winner
-                resultsText += `\n${EMOJIS.WINNER} **${results[0].User}** has won the tiebreaker!`;
+                description += `\n🏆 **${results[0].User}** has won the tiebreaker!`;
             } else {
-                resultsText = 'No participants competed in the tiebreaker.';
+                description += 'No participants competed in the tiebreaker.';
             }
             
-            embed.addFields({ name: 'Final Standings', value: resultsText });
-            
-            // Send the announcement
-            await channel.send({ embeds: [embed] });
+            // UPDATED: Use new AlertService for tiebreaker announcements
+            await alertService.sendAnnouncementAlert({
+                alertType: ALERT_TYPES.NEW_TIEBREAKER,
+                title: '⚔️ Tiebreaker Challenge Results',
+                description: description,
+                gameTitle: tiebreaker.gameTitle,
+                gameId: tiebreaker.gameId,
+                thumbnail: thumbnailUrl,
+                footer: {
+                    text: 'Data provided by RetroAchievements'
+                }
+            });
             
         } catch (error) {
             console.error('Error announcing tiebreaker results:', error);
         }
     }
 
+    /**
+     * UPDATED: Announce new racing challenge using new AlertService
+     */
     async announceNewRacingChallenge(racingBoard) {
         try {            
-            // Get the announcement channel
-            const channel = await this.getChannel();
-            if (!channel) {
-                console.error('Announcement channel not found');
-                return;
-            }
-            
-            // Create embed
             const monthName = racingBoard.startDate.toLocaleString('default', { month: 'long' });
             const year = racingBoard.startDate.getFullYear();
             
             // Get end time in Discord timestamp format
             const endTimestamp = getDiscordTimestamp(racingBoard.endDate, 'F');
             
-            // Use our utilities to create a standardized embed
-            const embed = createHeaderEmbed(
-                `${EMOJIS.RACING} New Racing Challenge for ${monthName} ${year}`,
-                `A new monthly racing challenge has begun!\n\n` +
-                `**Game:** ${racingBoard.gameTitle}\n` +
-                `**Description:** ${racingBoard.description || 'No description provided'}\n\n` +
-                `Challenge ends: ${endTimestamp}\n\n` +
-                `The top 3 players at the end of the month will receive award points: 3 points for 1st place, 2 points for 2nd place, and 1 point for 3rd place.`,
-                {
-                    color: COLORS.WARNING, // Orange/yellow color
-                    timestamp: true
-                }
-            );
-            
-            // Add game thumbnail if available
+            // Get game thumbnail
+            let thumbnailUrl = null;
             try {
                 const gameInfo = await RetroAPIUtils.getGameInfo(racingBoard.gameId);
                 if (gameInfo?.imageIcon) {
-                    embed.setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`);
+                    thumbnailUrl = `https://retroachievements.org${gameInfo.imageIcon}`;
                 }
             } catch (error) {
                 console.error('Error fetching game info for thumbnail:', error);
             }
             
-            // Send the announcement
-            await channel.send({ embeds: [embed] });
+            // Build description
+            const description = `A new monthly racing challenge has begun!\n\n` +
+                             `**Game:** ${racingBoard.gameTitle}\n` +
+                             `**Description:** ${racingBoard.description || 'No description provided'}\n\n` +
+                             `Challenge ends: ${endTimestamp}\n\n` +
+                             `The top 3 players at the end of the month will receive award points: 3 points for 1st place, 2 points for 2nd place, and 1 point for 3rd place.`;
+            
+            // UPDATED: Use new AlertService for new racing challenges
+            await alertService.sendNewRacingChallengeAlert({
+                title: `🏁 New Racing Challenge for ${monthName} ${year}`,
+                description: description,
+                gameTitle: racingBoard.gameTitle,
+                gameId: racingBoard.gameId,
+                thumbnail: thumbnailUrl,
+                footer: {
+                    text: 'Data provided by RetroAchievements'
+                }
+            });
             
         } catch (error) {
             console.error('Error announcing new racing challenge:', error);
@@ -495,7 +488,7 @@ class ArcadeService extends FeedManagerBase {
                 }
             }
             
-            // Announce the results
+            // Announce the results using new AlertService
             await this.announceArcadeResults(allResults);
             
             console.log('Finished processing arcade boards');
@@ -505,73 +498,65 @@ class ArcadeService extends FeedManagerBase {
     }
     
     /**
-     * Announce the results of the annual arcade points
+     * UPDATED: Announce the results of the annual arcade points using new AlertService
      */
     async announceArcadeResults(allResults) {
         if (!this.client || allResults.length === 0) return;
         
         try {
-            // Get the announcement channel
-            const channel = await this.getChannel();
-            if (!channel) {
-                console.error('Announcement channel not found');
-                return;
-            }
-            
             // Get the current year
             const currentYear = new Date().getFullYear();
             
-            // Create main embed using our utility
-            const mainEmbed = createHeaderEmbed(
-                `${EMOJIS.ARCADE} ${currentYear} Arcade Results`,
-                `The annual arcade leaderboard results are in!\n\n` +
-                `The top players in each arcade category have been awarded points:\n` +
-                `- 1st Place: 3 points\n` +
-                `- 2nd Place: 2 points\n` +
-                `- 3rd Place: 1 point\n\n` +
-                `Check out the results for each arcade board below.`,
-                {
-                    color: COLORS.PRIMARY, // Blue color
-                    timestamp: true
+            // Build main announcement description
+            const mainDescription = `The annual arcade leaderboard results are in!\n\n` +
+                                  `The top players in each arcade category have been awarded points:\n` +
+                                  `- 1st Place: 3 points\n` +
+                                  `- 2nd Place: 2 points\n` +
+                                  `- 3rd Place: 1 point\n\n` +
+                                  `Check out the results for each arcade board below.`;
+            
+            // UPDATED: Send main announcement using new AlertService
+            await alertService.sendNewArcadeBoardAlert({
+                title: `🕹️ ${currentYear} Arcade Results`,
+                description: mainDescription,
+                footer: {
+                    text: 'Data provided by RetroAchievements'
                 }
-            );
+            });
             
-            // Send the main announcement
-            await channel.send({ embeds: [mainEmbed] });
-            
-            // Create separate embeds for each board with results
+            // Send individual results for each board
             for (const { board, results } of allResults) {
-                // Use our utilities to create a standardized embed
-                const boardEmbed = createHeaderEmbed(
-                    board.gameTitle,
-                    `*${board.description || 'No description provided'}*\n\n**Top Players:**`,
-                    {
-                        color: COLORS.PRIMARY, // Blue color for consistency
-                        timestamp: false
-                    }
-                );
-                
-                // Add results to the embed
-                let resultsText = '';
-                for (const result of results) {
-                    const medalEmoji = result.rank <= 3 ? EMOJIS[`RANK_${result.rank}`] : `#${result.rank}`;
-                    resultsText += `${medalEmoji} **${result.username}**: ${result.score} (${result.points} point${result.points !== 1 ? 's' : ''})\n`;
-                }
-                
-                boardEmbed.addFields({ name: 'Results', value: resultsText });
-                
-                // Add game thumbnail if available
+                // Get game thumbnail
+                let thumbnailUrl = null;
                 try {
                     const gameInfo = await RetroAPIUtils.getGameInfo(board.gameId);
                     if (gameInfo?.imageIcon) {
-                        boardEmbed.setThumbnail(`https://retroachievements.org${gameInfo.imageIcon}`);
+                        thumbnailUrl = `https://retroachievements.org${gameInfo.imageIcon}`;
                     }
                 } catch (error) {
-                    // Continue without the thumbnail
+                    // Continue without thumbnail
                 }
                 
-                // Send each board's results
-                await channel.send({ embeds: [boardEmbed] });
+                // Build results description
+                let boardDescription = `*${board.description || 'No description provided'}*\n\n**Top Players:**\n`;
+                
+                for (const result of results) {
+                    const medalEmoji = result.rank === 1 ? '🥇' : (result.rank === 2 ? '🥈' : '🥉');
+                    boardDescription += `${medalEmoji} **${result.username}**: ${result.score} (${result.points} point${result.points !== 1 ? 's' : ''})\n`;
+                }
+                
+                // UPDATED: Send each board's results using new AlertService
+                await alertService.sendAnnouncementAlert({
+                    alertType: ALERT_TYPES.NEW_ARCADE_BOARD,
+                    title: board.gameTitle,
+                    description: boardDescription,
+                    gameTitle: board.gameTitle,
+                    gameId: board.gameId,
+                    thumbnail: thumbnailUrl,
+                    footer: {
+                        text: 'Data provided by RetroAchievements'
+                    }
+                });
                 
                 // Add a small delay between messages to avoid rate limits
                 await new Promise(resolve => setTimeout(resolve, 1000));
