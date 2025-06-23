@@ -8,7 +8,7 @@ import { EmbedBuilder } from 'discord.js';
 import { config } from '../config/config.js';
 import EnhancedRateLimiter from './EnhancedRateLimiter.js';
 import gameAwardService from './gameAwardService.js';
-// UPDATED: Import new AlertService instead of AlertUtils
+// UPDATED: Use AlertService instead of AlertUtils
 import alertService, { ALERT_TYPES } from '../utils/AlertService.js';
 
 const AWARD_EMOJIS = {
@@ -56,7 +56,7 @@ class AchievementFeedService {
         this.client = client;
         // NEW: Also set client for gameAwardService
         gameAwardService.setClient(client);
-        // UPDATED: Set client for new AlertService
+        // UPDATED: Set client for AlertService
         alertService.setClient(client);
         console.log('Discord client set for achievement feed service');
     }
@@ -180,14 +180,13 @@ class AchievementFeedService {
         }
 
         try {
-            // UPDATED: Use new AlertService to get achievement channel
-            const channels = await alertService.getChannelsForAlert(ALERT_TYPES.ACHIEVEMENT);
-            if (!channels || channels.length === 0) {
-                console.error('Could not get achievement announcement channels');
+            // Get the channel
+            const channel = await this.getAnnouncementChannel();
+            if (!channel) {
+                console.error('Could not get announcement channel');
                 return false;
             }
 
-            const channel = channels[0]; // Use first channel for testing
             console.log(`Found announcement channel: ${channel.name} (ID: ${channel.id})`);
             
             // Test sending a message
@@ -231,8 +230,14 @@ class AchievementFeedService {
     async checkForNewAchievements() {
         console.log('Checking for new achievements...');
         
-        // UPDATED: No need to get announcement channel here - AlertService handles it
-        console.log('Achievement feed service checking for new achievements...');
+        // Get announcement channel
+        const announcementChannel = await this.getAnnouncementChannel();
+        if (!announcementChannel) {
+            console.error('Announcement channel not found or inaccessible');
+            return;
+        }
+        
+        console.log(`Successfully found announcement channel: ${announcementChannel.name}`);
 
         // Get all users
         const users = await User.find({});
@@ -556,52 +561,54 @@ class AchievementFeedService {
         }
     }
 
-    // UPDATED: Achievement announcement now uses new AlertService
+    // UPDATED: Achievement announcement using AlertService but preserving original behavior
     async announceAchievement(user, gameInfo, achievement, achievementType, gameId) {
         try {
-            console.log(`Creating achievement announcement: ${achievement.Title || 'Unknown Achievement'} (${achievementType})`);
+            console.log(`Creating achievement announcement via AlertService: ${achievement.Title || 'Unknown Achievement'} (${achievementType})`);
             
-            // Determine the correct alert type based on achievement type
-            let alertType = ALERT_TYPES.ACHIEVEMENT; // Default for regular achievements
+            // Determine color based on achievement type (SAME as original)
+            let color = '#808080';  // Default to grey for regular achievements
+            let customTitle = 'Achievement Unlocked';
+            
+            // Raw GitHub URL for logo (SAME as original)
+            const logoUrl = 'https://raw.githubusercontent.com/marquessam/select_start_bot2/a58a4136ff0597217bb9fb181115de3f152b71e4/assets/logo_simple.png';
             
             if (achievementType === 'monthly') {
-                alertType = ALERT_TYPES.MONTHLY_AWARD;
+                color = '#9B59B6';  // Purple for monthly challenge
+                customTitle = 'Monthly Challenge';
             } else if (achievementType === 'shadow') {
-                alertType = ALERT_TYPES.SHADOW_AWARD;
+                color = '#000000';  // Black for shadow challenge
+                customTitle = 'Shadow Challenge 👥';
             } else if (achievementType === 'arcade') {
-                alertType = ALERT_TYPES.ARCADE_AWARD;
+                color = '#3498DB';  // Blue for arcade
+                customTitle = 'Arcade Challenge 🕹️';
             } else if (achievementType === 'arena') {
-                alertType = ALERT_TYPES.ARENA_AWARD;
+                color = '#FF5722';  // Red for arena
+                customTitle = 'Arena Challenge ⚔️';
             }
             
-            // Get user's profile image URL for footer
+            // Get user's profile image URL for footer (SAME as original)
             const profileImageUrl = await this.getUserProfileImageUrl(user.raUsername);
             
-            // Set the thumbnail to ALWAYS be the achievement badge
+            // Set the thumbnail to be the achievement badge (SAME as original)
             let badgeUrl = null;
             if (achievement.BadgeName) {
                 badgeUrl = `https://media.retroachievements.org/Badge/${achievement.BadgeName}.png`;
             }
             
-            // Create thumbnail from game icon
-            let thumbnail = null;
-            if (gameInfo?.imageIcon) {
-                thumbnail = `https://retroachievements.org${gameInfo.imageIcon}`;
-            }
-            
-            // Build description with achievement details
+            // Build description (SAME as original)
             let description = `**${achievement.Title || 'Unknown Achievement'}**\n\n`;
             
-            // Add achievement description if available (in italics)
+            // Add achievement description if available (SAME as original)
             if (achievement.Description) {
                 description += `*${achievement.Description}*`;
             }
 
-            console.log(`Sending achievement announcement via AlertService`);
+            console.log(`Sending achievement announcement via AlertService to achievement channel`);
             
-            // UPDATED: Use new AlertService method
+            // UPDATED: Use AlertService but ensure ALL achievements go to the SAME channel
             await alertService.sendAchievementAlert({
-                alertType: alertType,
+                alertType: ALERT_TYPES.ACHIEVEMENT, // Always use ACHIEVEMENT type - routes to achievement channel
                 username: user.raUsername,
                 achievementTitle: achievement.Title || 'Unknown Achievement',
                 achievementDescription: description,
@@ -609,7 +616,10 @@ class AchievementFeedService {
                 gameId: gameId,
                 points: achievement.Points,
                 thumbnail: badgeUrl, // Achievement badge as thumbnail
-                badgeUrl: profileImageUrl // User profile as badge/footer icon
+                badgeUrl: profileImageUrl, // User profile as footer icon
+                customTitle: customTitle, // Custom title based on achievement type
+                customDescription: description, // Custom description
+                color: color // Custom color based on achievement type
             });
             
             console.log(`Successfully sent achievement announcement via AlertService`);
@@ -618,6 +628,51 @@ class AchievementFeedService {
         } catch (error) {
             console.error('Error announcing achievement:', error);
             return false;
+        }
+    }
+
+    async getAnnouncementChannel() {
+        if (!this.client) {
+            console.error('Discord client not set');
+            return null;
+        }
+
+        try {
+            // Get the configuration (SAME as original)
+            const channelId = config.discord.achievementChannelId;
+            const guildId = config.discord.guildId;
+            
+            console.log(`Looking for channel ID ${channelId} in guild ${guildId}`);
+            
+            // Get the guild
+            const guild = await this.client.guilds.fetch(guildId);
+            if (!guild) {
+                console.error(`Guild not found: ${guildId}`);
+                return null;
+            }
+
+            // Get the channel
+            const channel = await guild.channels.fetch(channelId);
+            if (!channel) {
+                console.error(`Channel not found: ${channelId}`);
+                return null;
+            }
+            
+            // Log channel details
+            console.log(`Found channel: ${channel.name} (${channel.type})`);
+            
+            return channel;
+        } catch (error) {
+            console.error('Error getting announcement channel:', error);
+            
+            // More specific error handling
+            if (error.code === 10003) {
+                console.error('Channel not found - check ACHIEVEMENT_CHANNEL environment variable');
+            } else if (error.code === 50001) {
+                console.error('Missing access to channel - check bot permissions');
+            }
+            
+            return null;
         }
     }
 
