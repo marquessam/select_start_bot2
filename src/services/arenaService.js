@@ -1,10 +1,10 @@
-// src/services/arenaService.js - COMPLETE UPDATED VERSION with reliable score fetching and rate limiting
+// src/services/arenaService.js - UPDATED to use new AlertService
 import { ArenaChallenge } from '../models/ArenaChallenge.js';
 import { User } from '../models/User.js';
 import { config } from '../config/config.js';
 import arenaUtils from '../utils/arenaUtils.js';
 import gpUtils from '../utils/gpUtils.js';
-import AlertUtils, { ALERT_TYPES } from '../utils/AlertUtils.js';
+import alertService, { ALERT_TYPES } from '../utils/AlertService.js'; // UPDATED: Use new AlertService
 import RetroAPIUtils from '../utils/RetroAPIUtils.js';
 import retroAPI from '../services/retroAPI.js';
 import { EmbedBuilder, ButtonBuilder, ActionRowBuilder, ButtonStyle } from 'discord.js';
@@ -20,6 +20,8 @@ class ArenaService {
 
     setClient(client) {
         this.client = client;
+        // UPDATED: Set client for new AlertService
+        alertService.setClient(client);
     }
 
     async start() {
@@ -105,7 +107,7 @@ class ArenaService {
 
             await challenge.save();
 
-            // SEND IMMEDIATE NEW CHALLENGE ALERT
+            // UPDATED: Send immediate new challenge alert using new AlertService
             try {
                 // Get game info for thumbnail
                 let thumbnailUrl = null;
@@ -138,15 +140,19 @@ class ArenaService {
                                      `Anyone can join this challenge!`;
                 }
                 
-                // Send the immediate new challenge alert
-                await AlertUtils.sendPositionChangeAlert({
+                // UPDATED: Use new AlertService method
+                await alertService.sendNewArenaChallengeAlert({
                     title: title,
                     description: alertDescription,
+                    gameTitle: challenge.gameTitle,
+                    gameId: challenge.gameId,
+                    leaderboardTitle: challenge.leaderboardTitle,
+                    leaderboardId: challenge.leaderboardId,
                     thumbnail: thumbnailUrl,
                     footer: { 
                         text: `Challenge ID: ${challengeId} • Use /arena to participate` 
                     }
-                }, ALERT_TYPES.ARENA);
+                });
                 
             } catch (alertError) {
                 console.error('Error sending immediate new challenge alert:', alertError);
@@ -213,7 +219,7 @@ class ArenaService {
 
             await challenge.save();
 
-            // SEND IMMEDIATE CHALLENGE ACCEPTED ALERT
+            // UPDATED: Send immediate challenge accepted alert using new AlertService
             try {
                 // Get game info for thumbnail
                 let thumbnailUrl = null;
@@ -234,15 +240,20 @@ class ArenaService {
                                        `**Total Prize Pool:** ${challenge.getTotalWager()} GP\n\n` +
                                        `Let the battle begin! The challenge runs for 7 days. 🔥`;
                 
-                // Send the challenge accepted alert
-                await AlertUtils.sendPositionChangeAlert({
+                // UPDATED: Use new AlertService method
+                await alertService.sendAnnouncementAlert({
+                    alertType: ALERT_TYPES.NEW_ARENA_CHALLENGE,
                     title: title,
                     description: alertDescription,
+                    gameTitle: challenge.gameTitle,
+                    gameId: challenge.gameId,
+                    leaderboardTitle: challenge.leaderboardTitle,
+                    leaderboardId: challenge.leaderboardId,
                     thumbnail: thumbnailUrl,
                     footer: { 
                         text: `Challenge ID: ${challengeId} • Battle duration: 7 days` 
                     }
-                }, ALERT_TYPES.ARENA);
+                });
                 
             } catch (alertError) {
                 console.error('Error sending challenge accepted alert:', alertError);
@@ -307,7 +318,7 @@ class ArenaService {
 
             await challenge.save();
 
-            // SEND IMMEDIATE NEW PARTICIPANT ALERT
+            // UPDATED: Send immediate new participant alert using new AlertService
             try {
                 // Get game info for thumbnail
                 let thumbnailUrl = null;
@@ -328,15 +339,20 @@ class ArenaService {
                                        `**Total Prize Pool:** ${challenge.getTotalWager()} GP\n\n` +
                                        `The competition heats up! 🔥`;
                 
-                // Send the new participant alert
-                await AlertUtils.sendPositionChangeAlert({
+                // UPDATED: Use new AlertService method
+                await alertService.sendAnnouncementAlert({
+                    alertType: ALERT_TYPES.NEW_ARENA_CHALLENGE,
                     title: title,
                     description: alertDescription,
+                    gameTitle: challenge.gameTitle,
+                    gameId: challenge.gameId,
+                    leaderboardTitle: challenge.leaderboardTitle,
+                    leaderboardId: challenge.leaderboardId,
                     thumbnail: thumbnailUrl,
                     footer: { 
                         text: `Challenge ID: ${challengeId} • Battle duration: 7 days` 
                     }
-                }, ALERT_TYPES.ARENA);
+                });
                 
             } catch (alertError) {
                 console.error('Error sending new participant alert:', alertError);
@@ -536,7 +552,7 @@ class ArenaService {
             // Process payouts
             await this.processPayouts(challenge, winner);
 
-            // Post results
+            // Post results using new AlertService
             await this.postChallengeResults(challenge, winner, finalScores);
 
             console.log(`Successfully processed challenge: ${challenge.challengeId}`);
@@ -782,63 +798,83 @@ class ArenaService {
     }
 
     /**
-     * Post challenge results to the arena channel
+     * UPDATED: Post challenge results using new AlertService
      * @private
      */
     async postChallengeResults(challenge, winner, finalScores) {
         try {
-            const arenaChannel = await this.client.channels.fetch(config.discord.arenaChannelId);
-            if (!arenaChannel) {
-                console.error('Arena channel not found');
-                return;
-            }
-
-            const embed = new EmbedBuilder()
-                .setTitle('🏆 Challenge Complete!')
-                .setColor(winner ? '#00FF00' : '#FFA500')
-                .addFields(
-                    { name: 'Challenge', value: `${challenge.challengeId}`, inline: true },
-                    { name: 'Game', value: challenge.gameTitle, inline: true },
-                    { name: 'Leaderboard', value: challenge.leaderboardTitle, inline: true }
-                );
-
+            // Prepare the data for AlertService
+            let title = '🏆 Challenge Complete!';
+            let description = '';
+            
+            // Build basic challenge info
+            description += `**Challenge ID:** ${challenge.challengeId}\n`;
+            description += `**Game:** ${challenge.gameTitle}\n`;
+            description += `**Leaderboard:** ${challenge.leaderboardTitle}\n`;
+            
             // Add description if available
             if (challenge.description) {
-                embed.addFields({ name: 'Description', value: challenge.description, inline: false });
+                description += `**Description:** ${challenge.description}\n`;
             }
+            
+            description += `\n`;
 
+            // Add winner information
             if (winner) {
-                embed.addFields(
-                    { name: '🥇 Winner', value: `**${winner.raUsername}**\nRank: ${winner.rank}\nScore: ${winner.score}`, inline: false }
-                );
+                description += `🥇 **Winner:** **${winner.raUsername}**\n`;
+                description += `**Rank:** ${winner.rank}\n`;
+                description += `**Score:** ${winner.score}\n\n`;
                 
-                const winnerUser = await User.findOne({ discordId: challenge.winnerUserId });
-                if (winnerUser) {
-                    const totalWon = challenge.getTotalWager();
-                    embed.addFields({ name: '💰 Prize', value: `${totalWon} GP`, inline: true });
-                }
+                const totalWon = challenge.getTotalWager();
+                description += `💰 **Prize:** ${totalWon} GP\n\n`;
             } else {
-                embed.addFields({ name: '🤝 Result', value: 'No winner determined - all wagers refunded', inline: false });
+                description += `🤝 **Result:** No winner determined - all wagers refunded\n\n`;
             }
 
             // Add final scores
             if (finalScores && finalScores.length > 0) {
-                const scoresText = finalScores
-                    .sort((a, b) => (a.rank || 999) - (b.rank || 999))
-                    .map(score => `**${score.raUsername}**: Rank ${score.rank || 'N/A'} (${score.score || 'No score'})`)
-                    .join('\n');
-                embed.addFields({ name: '📊 Final Scores', value: scoresText, inline: false });
+                description += `📊 **Final Scores:**\n`;
+                const sortedScores = finalScores
+                    .sort((a, b) => (a.rank || 999) - (b.rank || 999));
+                
+                for (const score of sortedScores) {
+                    description += `**${score.raUsername}**: Rank ${score.rank || 'N/A'} (${score.score || 'No score'})\n`;
+                }
+                description += `\n`;
             }
 
             // Add betting results if there were bets
             if (challenge.bets.length > 0) {
                 const totalBets = challenge.getTotalBets();
-                embed.addFields({ name: '🎰 Total Bets', value: `${totalBets} GP from ${challenge.bets.length} bet(s)`, inline: true });
+                description += `🎰 **Total Bets:** ${totalBets} GP from ${challenge.bets.length} bet(s)\n`;
             }
 
-            embed.setTimestamp();
+            // Get game thumbnail
+            let thumbnailUrl = null;
+            try {
+                const gameInfo = await arenaUtils.getGameInfo(challenge.gameId);
+                if (gameInfo?.imageIcon) {
+                    thumbnailUrl = `https://retroachievements.org${gameInfo.imageIcon}`;
+                }
+            } catch (error) {
+                console.error('Error fetching game info for results thumbnail:', error);
+            }
 
-            await arenaChannel.send({ embeds: [embed] });
+            // UPDATED: Use new AlertService to post results
+            await alertService.sendAnnouncementAlert({
+                alertType: ALERT_TYPES.NEW_ARENA_CHALLENGE,
+                title: title,
+                description: description,
+                gameTitle: challenge.gameTitle,
+                gameId: challenge.gameId,
+                leaderboardTitle: challenge.leaderboardTitle,
+                leaderboardId: challenge.leaderboardId,
+                thumbnail: thumbnailUrl,
+                footer: {
+                    text: `Challenge ID: ${challenge.challengeId} • Data from RetroAchievements.org`
+                }
+            });
+
         } catch (error) {
             console.error('Error posting challenge results:', error);
         }
