@@ -231,7 +231,8 @@ export class AlertService {
             description = null,
             prizePool = null,
             challengeId = null,
-            updateTime = null
+            updateTime = null,
+            monthName = null // NEW: For monthly challenge titles
         } = options;
         
         try {
@@ -256,23 +257,34 @@ export class AlertService {
             
             // FIXED: Set title based on alert type (ORIGINAL FORMAT)
             let title;
-            if (alertType === ALERT_TYPES.ARCADE_RANKS) {
+            let embedDescription;
+            
+            if (alertType === ALERT_TYPES.MONTHLY_RANKS) {
+                // FIXED: Monthly challenge format (ORIGINAL FORMAT)
+                const currentMonth = monthName || now.toLocaleString('en-US', { month: 'long' });
+                title = `📊 ${currentMonth} Challenge Update!`;
+                embedDescription = 'The leaderboard for **the monthly challenge** has been updated with enhanced tracking!';
+            } else if (alertType === ALERT_TYPES.ARCADE_RANKS) {
                 title = '🕹️ Arcade Alert!';
+                if (gameTitle && gameId) {
+                    const gameLink = LinkUtils.createGameLink(gameTitle, gameId);
+                    embedDescription = `The leaderboard for ${gameLink} has been updated!`;
+                } else {
+                    embedDescription = 'The leaderboard has been updated!';
+                }
             } else if (alertType === ALERT_TYPES.ARENA_RANKS) {
                 title = '🏟️ Arena Alert!';
+                if (leaderboardTitle && leaderboardId) {
+                    const leaderboardLink = LinkUtils.createLeaderboardLink(leaderboardTitle, leaderboardId);
+                    embedDescription = `The leaderboard for ${leaderboardLink} has been updated!`;
+                } else if (gameTitle && gameId) {
+                    const gameLink = LinkUtils.createGameLink(gameTitle, gameId);
+                    embedDescription = `The leaderboard for ${gameLink} has been updated!`;
+                } else {
+                    embedDescription = 'The leaderboard has been updated!';
+                }
             } else {
                 title = 'Leaderboard Update!';
-            }
-            
-            // FIXED: Create description with game link (ORIGINAL FORMAT)
-            let embedDescription;
-            if (gameTitle && gameId) {
-                const gameLink = LinkUtils.createGameLink(gameTitle, gameId);
-                embedDescription = `The leaderboard for ${gameLink} has been updated!`;
-            } else if (leaderboardTitle && leaderboardId) {
-                const leaderboardLink = LinkUtils.createLeaderboardLink(leaderboardTitle, leaderboardId);
-                embedDescription = `The leaderboard for ${leaderboardLink} has been updated!`;
-            } else {
                 embedDescription = 'The leaderboard has been updated!';
             }
             
@@ -339,7 +351,7 @@ export class AlertService {
                     .sort((a, b) => (a.rank || 999) - (b.rank || 999));
                 
                 let standingsText = '';
-                sortedStandings.slice(0, 5).forEach(user => {
+                sortedStandings.slice(0, 5).forEach((user, index) => {
                     let rankEmoji;
                     if (user.rank === 1) rankEmoji = '🥇';
                     else if (user.rank === 2) rankEmoji = '🥈';
@@ -347,10 +359,31 @@ export class AlertService {
                     else rankEmoji = `🔹`;
                     
                     const userLink = LinkUtils.createUserLink(user.username);
-                    const globalRank = user.globalRank ? ` (Global: #${user.globalRank})` : '';
-                    const score = user.score || user.value || '';
                     
-                    standingsText += `${rankEmoji} ${userLink}: ${score}${globalRank}\n`;
+                    // FIXED: Monthly challenge format shows achievements and tiebreakers (ORIGINAL FORMAT)
+                    if (alertType === ALERT_TYPES.MONTHLY_RANKS) {
+                        if (user.achievementCount && user.totalAchievements) {
+                            const percentage = ((user.achievementCount / user.totalAchievements) * 100).toFixed(2);
+                            standingsText += `${rankEmoji} ${userLink}: ${user.achievementCount}/${user.totalAchievements} achievements (${percentage}%)\n`;
+                        } else {
+                            standingsText += `${rankEmoji} ${userLink}: ${user.score || ''}\n`;
+                        }
+                        
+                        // Add tiebreaker info if available
+                        if (user.tiebreakerInfo) {
+                            standingsText += `🥈 Tiebreaker: ${user.tiebreakerInfo}\n`;
+                        }
+                        
+                        // Add ranking number for lower positions
+                        if (user.rank > 3) {
+                            standingsText += `#${index + 1} ${userLink}: ${user.score || ''}\n`;
+                        }
+                    } else {
+                        // Regular format for arcade/arena
+                        const globalRank = user.globalRank ? ` (Global: #${user.globalRank})` : '';
+                        const score = user.score || user.value || '';
+                        standingsText += `${rankEmoji} ${userLink}: ${score}${globalRank}\n`;
+                    }
                 });
                 
                 embed.addFields({ 
@@ -362,7 +395,18 @@ export class AlertService {
             
             // FIXED: Add footer based on alert type (ORIGINAL FORMAT)
             let footerText;
-            if (alertType === ALERT_TYPES.ARCADE_RANKS) {
+            if (alertType === ALERT_TYPES.MONTHLY_RANKS) {
+                const shortDate = now.toLocaleDateString('en-US', {
+                    month: 'long',
+                    day: 'numeric'
+                });
+                const shortTime = now.toLocaleTimeString('en-US', {
+                    hour: 'numeric',
+                    minute: '2-digit',
+                    hour12: true
+                });
+                footerText = `Alerts sent hourly • Leaderboard updates every 15 minutes • Data from RetroAchievements • Today at ${shortTime}`;
+            } else if (alertType === ALERT_TYPES.ARCADE_RANKS) {
                 const shortDate = now.toLocaleDateString('en-US', {
                     month: 'numeric',
                     day: 'numeric',
@@ -493,7 +537,8 @@ export class AlertService {
             thumbnail = null,
             userProfileImageUrl = null,
             customTitle = null,
-            color = null
+            color = null,
+            gpEarned = null // NEW: For mastery/beaten GP awards
         } = options;
         
         try {
@@ -508,6 +553,64 @@ export class AlertService {
             // Use custom color or default to alert type color
             const embedColor = color || this.getAlertColor(alertType);
             
+            // FIXED: Handle mastery/beaten alerts differently (ORIGINAL FORMAT)
+            if (alertType === ALERT_TYPES.MASTERY || alertType === ALERT_TYPES.BEATEN) {
+                const gameLink = gameTitle && gameId ? 
+                    LinkUtils.createGameLink(gameTitle, gameId) : gameTitle;
+                const userLink = LinkUtils.createUserLink(username);
+                
+                const masteryTitle = alertType === ALERT_TYPES.MASTERY ? 
+                    `✨ ${username} has mastered a game!` : 
+                    `⭐ ${username} has beaten a game!`;
+                
+                const masteryDescription = alertType === ALERT_TYPES.MASTERY ?
+                    `${userLink} has mastered ${gameLink}! They've earned every achievement in the game.` :
+                    `${userLink} has beaten ${gameLink}! They've completed the core achievements.`;
+                
+                const embed = new EmbedBuilder()
+                    .setColor(embedColor)
+                    .setTitle(masteryTitle)
+                    .setDescription(masteryDescription)
+                    .setTimestamp();
+                
+                if (thumbnail) {
+                    embed.setThumbnail(thumbnail);
+                }
+                
+                // FIXED: Add divider and GP section (ORIGINAL FORMAT)
+                if (gpEarned) {
+                    embed.addFields({
+                        name: '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
+                        value: `🏆 +${gpEarned} GP earned!`,
+                        inline: false
+                    });
+                }
+                
+                // FIXED: Add time at bottom (ORIGINAL FORMAT)
+                const timeString = new Date().toLocaleString('en-US', {
+                    month: 'long',
+                    day: 'numeric',
+                    hour: 'numeric',
+                    minute: '2-digit',
+                    hour12: true
+                });
+                
+                embed.addFields({
+                    name: '\u200b', // Invisible character for spacing
+                    value: `Today at ${timeString}`,
+                    inline: false
+                });
+                
+                // Send to all target channels
+                for (const channel of channels) {
+                    await channel.send({ embeds: [embed] });
+                    console.log(`AlertService: Sent mastery/beaten alert to ${channel.name}`);
+                }
+                
+                return;
+            }
+            
+            // REGULAR ACHIEVEMENT FORMATTING (ORIGINAL FORMAT)
             // Raw GitHub URL for logo (same as original)
             const logoUrl = 'https://raw.githubusercontent.com/marquessam/select_start_bot2/a58a4136ff0597217bb9fb181115de3f152b71e4/assets/logo_simple.png';
             
