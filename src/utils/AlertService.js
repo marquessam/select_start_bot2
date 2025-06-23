@@ -1,9 +1,9 @@
-// src/utils/AlertService.js - FIXED to handle ALL embed logic correctly
+// src/utils/AlertService.js - UPDATED with combination/gacha alert support
 import { EmbedBuilder } from 'discord.js';
 import { config } from '../config/config.js';
 import { COLORS, EMOJIS, getDiscordTimestamp } from './FeedUtils.js';
 
-// Alert type constants - comprehensive coverage
+// Alert type constants - comprehensive coverage including combinations
 export const ALERT_TYPES = {
     // Position/Rank Changes
     ARCADE_RANKS: 'arcade_ranks',
@@ -27,6 +27,12 @@ export const ALERT_TYPES = {
     ARCADE_AWARD: 'arcade_award',
     ARENA_AWARD: 'arena_award',
     ACHIEVEMENT: 'achievement',
+    
+    // Combination/Gacha Alerts
+    COMBINATION_COMPLETE: 'combination_complete',
+    COMBINATION_TRANSFER: 'combination_transfer', 
+    COMBINATION_ADMIN_GIFT: 'combination_admin_gift',
+    RECIPE_DISCOVERY: 'recipe_discovery',
     
     // System/Admin Alerts
     ADMIN: 'admin',
@@ -59,6 +65,12 @@ const CHANNEL_CONFIG = {
     [ALERT_TYPES.ARCADE_AWARD]: '1326199972059680778',      // Arcade achievements → achievement feed (with styling)
     [ALERT_TYPES.ARENA_AWARD]: '1326199972059680778',       // Arena achievements → achievement feed (with styling)
     
+    // Combination/Gacha Alerts - ALL go to gacha trade channel
+    [ALERT_TYPES.COMBINATION_COMPLETE]: '1234567890123456789', // Replace with your gacha trade channel ID
+    [ALERT_TYPES.COMBINATION_TRANSFER]: '1234567890123456789', // Replace with your gacha trade channel ID
+    [ALERT_TYPES.COMBINATION_ADMIN_GIFT]: '1234567890123456789', // Replace with your gacha trade channel ID
+    [ALERT_TYPES.RECIPE_DISCOVERY]: '1234567890123456789', // Replace with your gacha trade channel ID
+    
     // System/Admin
     [ALERT_TYPES.ADMIN]: '1304533467455012904',             // Announcements
     [ALERT_TYPES.SYSTEM]: '1304533467455012904',            // Announcements  
@@ -86,6 +98,12 @@ const ALERT_COLORS = {
     [ALERT_TYPES.ARCADE_AWARD]: '#3498DB',        // Blue
     [ALERT_TYPES.ARENA_AWARD]: '#FF5722',         // Red
     [ALERT_TYPES.ACHIEVEMENT]: '#808080',         // Grey
+    
+    // Combination/Gacha Colors
+    [ALERT_TYPES.COMBINATION_COMPLETE]: '#00FF00',     // Green
+    [ALERT_TYPES.COMBINATION_TRANSFER]: '#FFD700',     // Gold
+    [ALERT_TYPES.COMBINATION_ADMIN_GIFT]: '#FF69B4',   // Hot Pink
+    [ALERT_TYPES.RECIPE_DISCOVERY]: '#9932CC',         // Dark Orchid
     
     [ALERT_TYPES.ADMIN]: '#95A5A6',               // Grey
     [ALERT_TYPES.SYSTEM]: '#95A5A6',              // Grey
@@ -213,6 +231,143 @@ export class AlertService {
         }
         
         return channels;
+    }
+    
+    /**
+     * Send combination/gacha alert
+     */
+    async sendCombinationAlert(options) {
+        const {
+            alertType,
+            combinationType,
+            ruleId,
+            username,
+            characterNames = [],
+            resultCharacterName = null,
+            thumbnail = null,
+            isSuccess = true,
+            isPlayerConfirmed = false,
+            description = null,
+            fields = []
+        } = options;
+        
+        try {
+            console.log(`AlertService: Sending combination alert - Type: ${alertType}`);
+            
+            const channels = await this.getChannelsForAlert(alertType);
+            if (channels.length === 0) {
+                console.error(`AlertService: No channels found for alert type ${alertType}`);
+                return;
+            }
+            
+            const color = this.getAlertColor(alertType);
+            
+            // Build embed based on combination type
+            let title;
+            let embedDescription;
+            let emoji;
+            
+            switch (alertType) {
+                case ALERT_TYPES.COMBINATION_COMPLETE:
+                    emoji = isSuccess ? '✅' : '❌';
+                    title = `${emoji} Combination ${isSuccess ? 'Successful' : 'Failed'}!`;
+                    if (isSuccess) {
+                        embedDescription = `**${username}** successfully combined **${characterNames.join(' + ')}** to create **${resultCharacterName}**!`;
+                    } else {
+                        embedDescription = `**${username}** attempted to combine **${characterNames.join(' + ')}** but it failed.`;
+                    }
+                    break;
+                    
+                case ALERT_TYPES.COMBINATION_TRANSFER:
+                    emoji = '🔄';
+                    title = `${emoji} Transfer Combination!`;
+                    embedDescription = `**${username}** received **${resultCharacterName}** through a character transfer!`;
+                    break;
+                    
+                case ALERT_TYPES.COMBINATION_ADMIN_GIFT:
+                    emoji = '🎁';
+                    title = `${emoji} Admin Gift Combination!`;
+                    embedDescription = `**${username}** received **${resultCharacterName}** as an admin gift!`;
+                    break;
+                    
+                case ALERT_TYPES.RECIPE_DISCOVERY:
+                    emoji = '🧪';
+                    title = `${emoji} New Recipe Discovered!`;
+                    embedDescription = `**${username}** discovered a new combination recipe: **${characterNames.join(' + ')} = ${resultCharacterName}**!`;
+                    break;
+                    
+                default:
+                    emoji = '⚡';
+                    title = `${emoji} Gacha Event!`;
+                    embedDescription = description || `**${username}** triggered a gacha event!`;
+            }
+            
+            const embed = new EmbedBuilder()
+                .setColor(color)
+                .setTitle(title)
+                .setDescription(embedDescription)
+                .setTimestamp();
+            
+            // Add thumbnail if provided
+            if (thumbnail) {
+                embed.setThumbnail(thumbnail);
+            }
+            
+            // Add combination details as fields
+            if (characterNames.length > 0) {
+                embed.addFields({
+                    name: 'Characters Used',
+                    value: characterNames.map(name => `• ${name}`).join('\n'),
+                    inline: true
+                });
+            }
+            
+            if (resultCharacterName) {
+                embed.addFields({
+                    name: 'Result',
+                    value: `**${resultCharacterName}**`,
+                    inline: true
+                });
+            }
+            
+            if (combinationType) {
+                embed.addFields({
+                    name: 'Combination Type',
+                    value: combinationType,
+                    inline: true
+                });
+            }
+            
+            // Add custom fields
+            if (fields && fields.length > 0) {
+                embed.addFields(fields);
+            }
+            
+            // Add footer with combination ID and status
+            let footerText = '';
+            if (ruleId) {
+                footerText = `Combination ID: ${ruleId}`;
+            }
+            if (combinationType) {
+                footerText += footerText ? ` • ${combinationType}` : combinationType;
+            }
+            if (isPlayerConfirmed && alertType === ALERT_TYPES.COMBINATION_COMPLETE) {
+                footerText += footerText ? ' • Player confirmed' : 'Player confirmed';
+            }
+            
+            if (footerText) {
+                embed.setFooter({ text: footerText });
+            }
+            
+            // Send to all target channels
+            for (const channel of channels) {
+                await channel.send({ embeds: [embed] });
+                console.log(`AlertService: Sent combination alert to ${channel.name}`);
+            }
+            
+        } catch (error) {
+            console.error(`AlertService: Error sending combination alert:`, error);
+        }
     }
     
     /**
@@ -837,6 +992,35 @@ export class AlertService {
     async sendArenaAwardAlert(options) {
         return this.sendAchievementAlert({
             alertType: ALERT_TYPES.ARENA_AWARD,
+            ...options
+        });
+    }
+    
+    // Combination/Gacha convenience methods
+    async sendCombinationCompleteAlert(options) {
+        return this.sendCombinationAlert({
+            alertType: ALERT_TYPES.COMBINATION_COMPLETE,
+            ...options
+        });
+    }
+    
+    async sendCombinationTransferAlert(options) {
+        return this.sendCombinationAlert({
+            alertType: ALERT_TYPES.COMBINATION_TRANSFER,
+            ...options
+        });
+    }
+    
+    async sendCombinationAdminGiftAlert(options) {
+        return this.sendCombinationAlert({
+            alertType: ALERT_TYPES.COMBINATION_ADMIN_GIFT,
+            ...options
+        });
+    }
+    
+    async sendRecipeDiscoveryAlert(options) {
+        return this.sendCombinationAlert({
+            alertType: ALERT_TYPES.RECIPE_DISCOVERY,
             ...options
         });
     }
