@@ -1,4 +1,4 @@
-// src/services/achievementFeedService.js - CORRECTED CHANNEL ROUTING
+// src/services/achievementFeedService.js - UPDATED to pass game icon URL
 import { User } from '../models/User.js';
 import { Challenge } from '../models/Challenge.js';
 import { ArcadeBoard } from '../models/ArcadeBoard.js';
@@ -553,8 +553,8 @@ class AchievementFeedService {
         }
     }
 
-    // UPDATED: Achievement announcement with CORRECT channel routing based on game type
-  async announceAchievement(user, gameInfo, achievement, achievementType, gameId) {
+    // UPDATED: Achievement announcement with CORRECT channel routing and game icon URL
+    async announceAchievement(user, gameInfo, achievement, achievementType, gameId) {
         try {
             console.log(`Creating achievement announcement: ${achievement.Title || 'Unknown Achievement'} (${achievementType})`);
             
@@ -585,6 +585,12 @@ class AchievementFeedService {
                 badgeUrl = `https://media.retroachievements.org/Badge/${achievement.BadgeName}.png`;
             }
             
+            // FIXED: Get game icon URL for author icon (especially for regular achievements)
+            let gameIconUrl = null;
+            if (gameInfo?.imageIcon) {
+                gameIconUrl = `https://retroachievements.org${gameInfo.imageIcon}`;
+            }
+            
             // FIXED: Determine the correct alert type based on achievement type
             let alertType;
             if (achievementType === 'monthly') {
@@ -602,7 +608,7 @@ class AchievementFeedService {
 
             console.log(`Sending achievement announcement via AlertService to ${achievementType} channel`);
             
-            // FIXED: Pass correct parameters to match original formatting
+            // FIXED: Pass correct parameters including game icon URL
             await alertService.sendAchievementAlert({
                 alertType: alertType,
                 username: user.raUsername,
@@ -610,12 +616,13 @@ class AchievementFeedService {
                 achievementDescription: achievement.Description, // Just the achievement description, not the full "earned" text
                 gameTitle: gameInfo?.title || 'Unknown Game',
                 gameId: gameId,
-                consoleName: gameInfo?.consoleName, // ADDED: Console name for title formatting
+                consoleName: gameInfo?.consoleName, // Console name for title formatting
                 points: achievement.Points,
                 thumbnail: badgeUrl, // Achievement badge as thumbnail
-                userProfileImageUrl: userProfileImageUrl, // FIXED: User profile image for footer
+                userProfileImageUrl: userProfileImageUrl, // User profile image for footer
                 customTitle: customTitle, // Custom title based on achievement type
-                color: color // Custom color based on achievement type
+                color: color, // Custom color based on achievement type
+                gameIconUrl: gameIconUrl // ADDED: Game icon URL for author icon
             });
             
             console.log(`Successfully sent achievement announcement via AlertService`);
