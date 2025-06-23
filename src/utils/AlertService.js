@@ -79,7 +79,7 @@ const ALERT_COLORS = {
     [ALERT_TYPES.NEW_ARENA_CHALLENGE]: '#FF5722', // Red
     
     [ALERT_TYPES.MASTERY]: '#FFD700',             // Gold
-    [ALERT_TYPES.BEATEN]: '#C0C0C0',              // Silver
+    [ALERT_TYPES.BEATEN]: '#FFD700',              // Gold
     [ALERT_TYPES.MONTHLY_AWARD]: '#9B59B6',       // Purple
     [ALERT_TYPES.SHADOW_AWARD]: '#000000',        // Black
     [ALERT_TYPES.RACING_AWARD]: '#FF9900',        // Orange
