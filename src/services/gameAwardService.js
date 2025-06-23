@@ -1,11 +1,11 @@
-// src/services/gameAwardService.js - Updated to use new AlertService
+// src/services/gameAwardService.js - CORRECTED CHANNEL ROUTING
 import { User } from '../models/User.js';
 import { Challenge } from '../models/Challenge.js';
 import retroAPI from './retroAPI.js';
 import { config } from '../config/config.js';
 import { EmbedBuilder } from 'discord.js';
 import RetroAPIUtils from '../utils/RetroAPIUtils.js';
-// UPDATED: Import new AlertService instead of AlertUtils
+// UPDATED: Import new AlertService with correct routing
 import alertService, { ALERT_TYPES } from '../utils/AlertService.js';
 
 // Lazy loading of GP service to prevent module loading issues
@@ -540,7 +540,7 @@ class GameAwardService {
     }
 
     /**
-     * UPDATED: Announce regular game award using new AlertService
+     * UPDATED: Announce regular game award using new AlertService with CORRECT routing
      */
     async announceRegularAward(user, gameInfo, gameId, isMastery, isBeaten) {
         // Ensure GP service is loaded
@@ -570,9 +570,9 @@ class GameAwardService {
         
         description += `━━━━━━━━━━━━━━━━━━━━━━━━━━\n🏆 **+${gpDisplay} GP** earned!`;
         
-        // UPDATED: Use new AlertService
+        // CORRECTED: Regular mastery/beaten go to MASTERY/BEATEN channel (1362227906343997583)
         await alertService.sendAchievementAlert({
-            alertType: isMastery ? ALERT_TYPES.MASTERY : ALERT_TYPES.BEATEN,
+            alertType: isMastery ? ALERT_TYPES.MASTERY : ALERT_TYPES.BEATEN, // → 1362227906343997583
             username: user.raUsername,
             achievementTitle: isMastery ? `Mastery of ${gameInfo.title}` : `Beaten ${gameInfo.title}`,
             achievementDescription: description,
@@ -584,7 +584,7 @@ class GameAwardService {
     }
 
     /**
-     * UPDATED: Announce monthly/shadow award using new AlertService
+     * UPDATED: Announce monthly/shadow award using new AlertService with CORRECT routing
      */
     async announceMonthlyAward(user, gameInfo, gameId, awardType, systemType) {
         // Ensure GP service is loaded
@@ -630,10 +630,11 @@ class GameAwardService {
         
         description = `\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n🏆 **+${gpDisplay} GP** earned!`;
         
-        // Determine correct alert type
+        // CORRECTED: Route to proper channel based on system type
         const alertType = systemType === 'shadow' ? ALERT_TYPES.SHADOW_AWARD : ALERT_TYPES.MONTHLY_AWARD;
+        // Shadow → 1300941091335438470 (shadow channel)
+        // Monthly → 1313640664356880445 (monthly channel)
         
-        // UPDATED: Use new AlertService
         await alertService.sendAchievementAlert({
             alertType: alertType,
             username: user.raUsername,
