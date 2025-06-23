@@ -54,7 +54,7 @@ const CHANNEL_CONFIG = {
     [ALERT_TYPES.RACING_AWARD]: '1362227906343997583',      // Mastery/Beaten channel
     [ALERT_TYPES.ARCADE_AWARD]: '1362227906343997583',      // Mastery/Beaten channel
     [ALERT_TYPES.ARENA_AWARD]: '1373570850912997476',       // Arena channel
-    [ALERT_TYPES.ACHIEVEMENT]: '1362227906343997583',       // Mastery/Beaten channel
+    [ALERT_TYPES.ACHIEVEMENT]: '1326199972059680778',       // Mastery/Beaten channel
     
     [ALERT_TYPES.ADMIN]: '1304533467455012904',             // Announcements
     [ALERT_TYPES.SYSTEM]: '1304533467455012904',            // Announcements  
