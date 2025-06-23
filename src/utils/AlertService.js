@@ -50,14 +50,14 @@ const CHANNEL_CONFIG = {
     [ALERT_TYPES.NEW_ARENA_CHALLENGE]: '1373570850912997476', // Arena channel
     
     // Achievement Types - CORRECTLY ROUTED
-    [ALERT_TYPES.ACHIEVEMENT]: '1326199972059680778',       // Regular achievements
-    [ALERT_TYPES.MASTERY]: '1362227906343997583',           // Regular mastery/beaten
-    [ALERT_TYPES.BEATEN]: '1362227906343997583',            // Regular mastery/beaten
+    [ALERT_TYPES.ACHIEVEMENT]: '1326199972059680778',       // Regular achievements → achievement feed
+    [ALERT_TYPES.MASTERY]: '1362227906343997583',           // Regular mastery/beaten → mastery channel
+    [ALERT_TYPES.BEATEN]: '1362227906343997583',            // Regular mastery/beaten → mastery channel
     [ALERT_TYPES.MONTHLY_AWARD]: '1313640664356880445',     // Monthly mastery/beaten → monthly channel
     [ALERT_TYPES.SHADOW_AWARD]: '1300941091335438470',      // Shadow mastery/beaten → shadow channel
-    [ALERT_TYPES.RACING_AWARD]: '1300941091335438471',      // Racing/arcade awards → arcade channel
-    [ALERT_TYPES.ARCADE_AWARD]: '1300941091335438471',      // Arcade awards → arcade channel
-    [ALERT_TYPES.ARENA_AWARD]: '1373570850912997476',       // Arena awards → arena channel
+    [ALERT_TYPES.RACING_AWARD]: '1326199972059680778',      // Racing/arcade achievements → achievement feed (with styling)
+    [ALERT_TYPES.ARCADE_AWARD]: '1326199972059680778',      // Arcade achievements → achievement feed (with styling)
+    [ALERT_TYPES.ARENA_AWARD]: '1326199972059680778',       // Arena achievements → achievement feed (with styling)
     
     // System/Admin
     [ALERT_TYPES.ADMIN]: '1304533467455012904',             // Announcements
