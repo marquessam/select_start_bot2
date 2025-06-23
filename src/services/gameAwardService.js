@@ -546,6 +546,9 @@ class GameAwardService {
         // Ensure GP service is loaded
         await loadGPService();
         
+        // Determine system type for styling
+        const systemType = this.getGameSystemType(gameId);
+        
         const profileImageUrl = await this.getUserProfileImageUrl(user.raUsername);
         const thumbnailUrl = gameInfo?.imageIcon ? `https://retroachievements.org${gameInfo.imageIcon}` : null;
         
@@ -570,16 +573,29 @@ class GameAwardService {
         
         description += `━━━━━━━━━━━━━━━━━━━━━━━━━━\n🏆 **+${gpDisplay} GP** earned!`;
         
-        // CORRECTED: Regular mastery/beaten go to MASTERY/BEATEN channel (1362227906343997583)
+        // Determine custom title and color based on system type
+        let customTitle = isMastery ? `Mastery of ${gameInfo.title}` : `Beaten ${gameInfo.title}`;
+        let color = undefined; // Use default
+        
+        if (systemType === 'arcade') {
+            customTitle = isMastery ? `🕹️ Arcade Mastery: ${gameInfo.title}` : `🕹️ Arcade Beaten: ${gameInfo.title}`;
+            color = '#3498DB'; // Blue for arcade
+        } else if (systemType === 'arena') {
+            customTitle = isMastery ? `⚔️ Arena Mastery: ${gameInfo.title}` : `⚔️ Arena Beaten: ${gameInfo.title}`;
+            color = '#FF5722'; // Red for arena
+        }
+        
+        // All mastery/beaten go to MASTERY/BEATEN channel but with different styling
         await alertService.sendAchievementAlert({
             alertType: isMastery ? ALERT_TYPES.MASTERY : ALERT_TYPES.BEATEN, // → 1362227906343997583
             username: user.raUsername,
-            achievementTitle: isMastery ? `Mastery of ${gameInfo.title}` : `Beaten ${gameInfo.title}`,
+            achievementTitle: customTitle,
             achievementDescription: description,
             gameTitle: gameInfo.title,
             gameId: gameId,
             thumbnail: thumbnailUrl,
-            badgeUrl: profileImageUrl
+            badgeUrl: profileImageUrl,
+            color: color // Custom color for arcade/arena
         });
     }
 
