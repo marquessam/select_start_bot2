@@ -1,4 +1,4 @@
-// src/services/leaderboardFeedService.js
+// src/services/leaderboardFeedService.js - FIXED with game links in alerts
 import { User } from '../models/User.js';
 import { Challenge } from '../models/Challenge.js';
 import { ArcadeBoard } from '../models/ArcadeBoard.js';
@@ -6,7 +6,7 @@ import { config } from '../config/config.js';
 import { FeedManagerBase } from '../utils/FeedManagerBase.js';
 import { COLORS, EMOJIS, createHeaderEmbed, getDiscordTimestamp } from '../utils/FeedUtils.js';
 import RetroAPIUtils from '../utils/RetroAPIUtils.js';
-import AlertUtils from '../utils/AlertUtils.js';
+import AlertService from '../utils/AlertService.js'; // NEW: Use centralized service
 
 const UPDATE_INTERVAL = 15 * 60 * 1000; // 15 minutes
 
@@ -54,6 +54,12 @@ function calculateOptimalUserCount(activeTiebreaker) {
     return 5;
 }
 
+// ADDED: Helper function to create game link for monthly challenges
+function createGameLink(gameTitle, gameId) {
+    if (!gameId) return gameTitle;
+    return `[${gameTitle}](https://retroachievements.org/game/${gameId})`;
+}
+
 class LeaderboardFeedService extends FeedManagerBase {
     constructor() {
         super(null, config.discord.leaderboardFeedChannelId || '1371350718505811989');
@@ -67,14 +73,18 @@ class LeaderboardFeedService extends FeedManagerBase {
         this.lastGlobalAlertTime = 0; // Track when we last sent any alerts
         
         this.debugMode = process.env.NODE_ENV === 'development'; // Enable debug logging in dev
-        
-        // Set the alerts channel for notifications
-        AlertUtils.setAlertsChannel(this.alertsChannelId);
     }
 
     async start() {
         // Call the parent class's start method with our interval
         await super.start(UPDATE_INTERVAL);
+    }
+
+    setClient(client) {
+        super.setClient(client);
+        // NEW: Set the client for AlertService when the service gets its client
+        AlertService.setClient(client);
+        console.log('AlertService configured for leaderboard alerts via setClient');
     }
 
     // Override the update method from base class
@@ -1262,7 +1272,7 @@ class LeaderboardFeedService extends FeedManagerBase {
         }
     }
 
-    // Enhanced alert sending with more detailed information
+    // MASSIVELY SIMPLIFIED: Enhanced alert sending using AlertService
     async sendEnhancedRankChangeAlerts(alerts, currentRanks) {
         try {
             const now = new Date();
@@ -1332,18 +1342,19 @@ class LeaderboardFeedService extends FeedManagerBase {
                 thumbnailUrl = `https://retroachievements.org${currentChallenge.monthly_game_icon_url}`;
             }
 
-            // Send enhanced alert with updated footer
-            await AlertUtils.sendPositionChangeAlert({
+            // SIMPLIFIED: Single method call with automatic link generation
+            await AlertService.sendMonthlyRankAlert({
                 title: `📊 ${monthName} Challenge Update!`,
-                description: `The leaderboard for **${currentChallenge.monthly_challange_title || 'the monthly challenge'}** has been updated with enhanced tracking!`,
+                description: `The leaderboard has been updated with enhanced tracking!`,
                 changes: changes,
                 currentStandings: currentStandings,
+                gameTitle: currentChallenge.monthly_game_title || currentChallenge.monthly_challange_title, // AlertService creates game link
+                gameId: currentChallenge.monthly_challange_gameid, // AlertService creates game link
                 thumbnail: thumbnailUrl,
-                color: COLORS.INFO,
                 footer: { 
                     text: 'Alerts sent hourly • Leaderboard updates every 15 minutes • Data from RetroAchievements' 
                 }
-            }, 'monthly');
+            });
             
             console.log(`[LeaderboardFeed] Sent enhanced monthly challenge alert with ${changes.length} changes detected`);
         } catch (error) {
