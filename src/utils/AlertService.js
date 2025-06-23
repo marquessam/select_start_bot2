@@ -66,10 +66,10 @@ const CHANNEL_CONFIG = {
     [ALERT_TYPES.ARENA_AWARD]: '1326199972059680778',       // Arena achievements → achievement feed (with styling)
     
     // Combination/Gacha Alerts - ALL go to gacha trade channel
-    [ALERT_TYPES.COMBINATION_COMPLETE]: '1234567890123456789', // Replace with your gacha trade channel ID
-    [ALERT_TYPES.COMBINATION_TRANSFER]: '1234567890123456789', // Replace with your gacha trade channel ID
-    [ALERT_TYPES.COMBINATION_ADMIN_GIFT]: '1234567890123456789', // Replace with your gacha trade channel ID
-    [ALERT_TYPES.RECIPE_DISCOVERY]: '1234567890123456789', // Replace with your gacha trade channel ID
+    [ALERT_TYPES.COMBINATION_COMPLETE]: '1379402075120730185', // gacha trade channel 
+    [ALERT_TYPES.COMBINATION_TRANSFER]: '1379402075120730185', // gacha trade channel
+    [ALERT_TYPES.COMBINATION_ADMIN_GIFT]: '1379402075120730185', // gacha trade channel
+    [ALERT_TYPES.RECIPE_DISCOVERY]: '1379402075120730185', // gacha trade channel
     
     // System/Admin
     [ALERT_TYPES.ADMIN]: '1304533467455012904',             // Announcements
