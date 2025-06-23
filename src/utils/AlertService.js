@@ -216,21 +216,22 @@ export class AlertService {
     }
     
     /**
-     * Send position/rank change alert
+     * FIXED: Send position/rank change alert with ORIGINAL formatting
      */
     async sendRankChangeAlert(options) {
         const {
             alertType,
-            title,
-            description,
-            changes = [],
-            currentStandings = [],
             gameTitle = null,
             gameId = null,
             leaderboardTitle = null,
             leaderboardId = null,
+            changes = [],
+            currentStandings = [],
             thumbnail = null,
-            footer = null
+            description = null,
+            prizePool = null,
+            challengeId = null,
+            updateTime = null
         } = options;
         
         try {
@@ -243,84 +244,153 @@ export class AlertService {
             }
             
             const color = this.getAlertColor(alertType);
-            const timestamp = getDiscordTimestamp(new Date());
+            const now = new Date();
+            const timeString = updateTime || now.toLocaleString('en-US', {
+                month: 'long',
+                day: 'numeric', 
+                year: 'numeric',
+                hour: 'numeric',
+                minute: '2-digit',
+                hour12: true
+            });
             
-            // Create enhanced description with links
-            let enhancedDescription = description;
+            // FIXED: Set title based on alert type (ORIGINAL FORMAT)
+            let title;
+            if (alertType === ALERT_TYPES.ARCADE_RANKS) {
+                title = '🕹️ Arcade Alert!';
+            } else if (alertType === ALERT_TYPES.ARENA_RANKS) {
+                title = '🏟️ Arena Alert!';
+            } else {
+                title = 'Leaderboard Update!';
+            }
+            
+            // FIXED: Create description with game link (ORIGINAL FORMAT)
+            let embedDescription;
             if (gameTitle && gameId) {
                 const gameLink = LinkUtils.createGameLink(gameTitle, gameId);
-                enhancedDescription = enhancedDescription.replace(gameTitle, gameLink);
-            }
-            if (leaderboardTitle && leaderboardId) {
+                embedDescription = `The leaderboard for ${gameLink} has been updated!`;
+            } else if (leaderboardTitle && leaderboardId) {
                 const leaderboardLink = LinkUtils.createLeaderboardLink(leaderboardTitle, leaderboardId);
-                enhancedDescription = enhancedDescription.replace(leaderboardTitle, leaderboardLink);
+                embedDescription = `The leaderboard for ${leaderboardLink} has been updated!`;
+            } else {
+                embedDescription = 'The leaderboard has been updated!';
             }
             
             const embed = new EmbedBuilder()
                 .setColor(color)
                 .setTitle(title)
-                .setDescription(`${enhancedDescription}\n**Time:** ${timestamp}`)
+                .setDescription(embedDescription)
                 .setTimestamp();
+            
+            // FIXED: Add time field (ORIGINAL FORMAT)
+            embed.addFields({
+                name: 'Time',
+                value: timeString,
+                inline: false
+            });
+            
+            // FIXED: Arena-specific fields (ORIGINAL FORMAT)
+            if (alertType === ALERT_TYPES.ARENA_RANKS) {
+                if (description) {
+                    embed.addFields({
+                        name: 'Description',
+                        value: description,
+                        inline: false
+                    });
+                }
+                
+                if (prizePool) {
+                    embed.addFields({
+                        name: 'Prize Pool',
+                        value: prizePool,
+                        inline: false
+                    });
+                }
+            }
             
             if (thumbnail) {
                 embed.setThumbnail(thumbnail);
             }
             
-            // Add position changes with user links
+            // FIXED: Add position changes with proper emoji format (ORIGINAL FORMAT)
             if (changes && changes.length > 0) {
                 let changesText = '';
                 changes.forEach(change => {
-                    const rankEmoji = change.newRank <= 3 ? 
-                        EMOJIS[`RANK_${change.newRank}`] : `#${change.newRank}`;
                     const userLink = LinkUtils.createUserLink(change.username);
+                    let rankEmoji;
+                    if (change.newRank === 1) rankEmoji = '🥇';
+                    else if (change.newRank === 2) rankEmoji = '🥈';
+                    else if (change.newRank === 3) rankEmoji = '🥉';
+                    else rankEmoji = `#${change.newRank}`;
+                    
                     changesText += `${userLink} is now in ${rankEmoji} place!\n`;
                 });
                 
                 embed.addFields({ 
                     name: 'Position Changes', 
-                    value: changesText 
+                    value: changesText,
+                    inline: false
                 });
             }
             
-            // Add current standings with user links
+            // FIXED: Add current standings with proper format (ORIGINAL FORMAT)
             if (currentStandings && currentStandings.length > 0) {
                 const sortedStandings = [...currentStandings]
                     .sort((a, b) => (a.rank || 999) - (b.rank || 999));
                 
                 let standingsText = '';
                 sortedStandings.slice(0, 5).forEach(user => {
-                    const rankEmoji = user.rank <= 3 ? 
-                        EMOJIS[`RANK_${user.rank}`] : `#${user.rank}`;
-                    const globalRank = user.globalRank ? ` (Global: #${user.globalRank})` : '';
+                    let rankEmoji;
+                    if (user.rank === 1) rankEmoji = '🥇';
+                    else if (user.rank === 2) rankEmoji = '🥈';
+                    else if (user.rank === 3) rankEmoji = '🥉';
+                    else rankEmoji = `🔹`;
+                    
                     const userLink = LinkUtils.createUserLink(user.username);
+                    const globalRank = user.globalRank ? ` (Global: #${user.globalRank})` : '';
+                    const score = user.score || user.value || '';
                     
-                    // Handle multi-line scores
-                    const scoreLines = (user.score || user.value || '').split('\n');
-                    const primaryScore = scoreLines[0];
-                    const secondaryInfo = scoreLines.slice(1).join('\n');
-                    
-                    standingsText += `${rankEmoji} ${userLink}: ${primaryScore}${globalRank}\n`;
-                    
-                    // Add indented secondary info
-                    if (secondaryInfo.trim()) {
-                        standingsText += `   ${secondaryInfo}\n`;
-                    }
+                    standingsText += `${rankEmoji} ${userLink}: ${score}${globalRank}\n`;
                 });
                 
                 embed.addFields({ 
                     name: 'Current Top 5', 
-                    value: standingsText 
+                    value: standingsText,
+                    inline: false
                 });
             }
             
-            // Add footer
-            if (footer) {
-                embed.setFooter(footer);
-            } else {
-                embed.setFooter({ 
-                    text: 'Rankings update regularly. Check the feed channel for full standings.' 
+            // FIXED: Add footer based on alert type (ORIGINAL FORMAT)
+            let footerText;
+            if (alertType === ALERT_TYPES.ARCADE_RANKS) {
+                const shortDate = now.toLocaleDateString('en-US', {
+                    month: 'numeric',
+                    day: 'numeric',
+                    year: 'numeric'
                 });
+                const shortTime = now.toLocaleTimeString('en-US', {
+                    hour: 'numeric',
+                    minute: '2-digit',
+                    hour12: true
+                });
+                footerText = `Data provided by RetroAchievements • Rankings update hourly • ${shortDate} ${shortTime}`;
+            } else if (alertType === ALERT_TYPES.ARENA_RANKS && challengeId) {
+                const shortDate = now.toLocaleDateString('en-US', {
+                    month: 'numeric',
+                    day: 'numeric',
+                    year: 'numeric'
+                });
+                const shortTime = now.toLocaleTimeString('en-US', {
+                    hour: 'numeric',
+                    minute: '2-digit',
+                    hour12: true
+                });
+                footerText = `Challenge ID: ${challengeId} • Data from RetroAchievements.org • ${shortDate} ${shortTime}`;
+            } else {
+                footerText = 'Data provided by RetroAchievements';
             }
+            
+            embed.setFooter({ text: footerText });
             
             // Send to all target channels
             for (const channel of channels) {
@@ -530,7 +600,7 @@ export class AlertService {
      * Convenience methods for common alert types
      */
     
-    // Arcade rank changes
+    // FIXED: Arcade rank changes with proper parameters
     async sendArcadeRankAlert(options) {
         return this.sendRankChangeAlert({
             alertType: ALERT_TYPES.ARCADE_RANKS,
@@ -538,7 +608,7 @@ export class AlertService {
         });
     }
     
-    // Arena rank changes  
+    // FIXED: Arena rank changes with proper parameters  
     async sendArenaRankAlert(options) {
         return this.sendRankChangeAlert({
             alertType: ALERT_TYPES.ARENA_RANKS,
