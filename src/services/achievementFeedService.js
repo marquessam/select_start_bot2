@@ -555,84 +555,73 @@ class AchievementFeedService {
 
     // UPDATED: Achievement announcement with CORRECT channel routing and game icon URL
     async announceAchievement(user, gameInfo, achievement, achievementType, gameId) {
-        try {
-            console.log(`Creating achievement announcement: ${achievement.Title || 'Unknown Achievement'} (${achievementType})`);
-            
-            // Set color and custom title based on achievement type (same as original)
-            let color = '#808080';  // Default to grey for regular achievements
-            let customTitle = 'Achievement Unlocked';
-            
-            if (achievementType === 'monthly') {
-                color = '#9B59B6';  // Purple for monthly challenge
-                customTitle = 'Monthly Challenge';
-            } else if (achievementType === 'shadow') {
-                color = '#000000';  // Black for shadow challenge
-                customTitle = 'Shadow Challenge 👥';
-            } else if (achievementType === 'arcade') {
-                color = '#3498DB';  // Blue for arcade
-                customTitle = 'Arcade Challenge 🕹️';
-            } else if (achievementType === 'arena') {
-                color = '#FF5722';  // Red for arena
-                customTitle = 'Arena Challenge ⚔️';
-            }
-            
-            // Get user's profile image URL for footer (same as original)
-            const userProfileImageUrl = await this.getUserProfileImageUrl(user.raUsername);
-            
-            // Set the thumbnail to be the achievement badge (same as original)
-            let badgeUrl = null;
-            if (achievement.BadgeName) {
-                badgeUrl = `https://media.retroachievements.org/Badge/${achievement.BadgeName}.png`;
-            }
-            
-            // FIXED: Get game icon URL for author icon (especially for regular achievements)
-            let gameIconUrl = null;
-            if (gameInfo?.imageIcon) {
-                gameIconUrl = `https://retroachievements.org${gameInfo.imageIcon}`;
-            }
-            
-            // FIXED: Determine the correct alert type based on achievement type
-            let alertType;
-            if (achievementType === 'monthly') {
-                alertType = ALERT_TYPES.MONTHLY_AWARD; // → 1313640664356880445 (monthly channel)
-            } else if (achievementType === 'shadow') {
-                alertType = ALERT_TYPES.SHADOW_AWARD; // → 1300941091335438470 (shadow channel)
-            } else if (achievementType === 'arcade') {
-                alertType = ALERT_TYPES.ACHIEVEMENT; // → 1326199972059680778 (achievement feed with arcade styling)
-            } else if (achievementType === 'arena') {
-                alertType = ALERT_TYPES.ACHIEVEMENT; // → 1326199972059680778 (achievement feed with arena styling)
-            } else {
-                // Regular achievements
-                alertType = ALERT_TYPES.ACHIEVEMENT; // → 1326199972059680778 (achievement feed)
-            }
-
-            console.log(`Sending achievement announcement via AlertService to ${achievementType} channel`);
-            
-            // FIXED: Pass correct parameters including game icon URL
-            await alertService.sendAchievementAlert({
-                alertType: alertType,
-                username: user.raUsername,
-                achievementTitle: achievement.Title || 'Unknown Achievement',
-                achievementDescription: achievement.Description, // Just the achievement description, not the full "earned" text
-                gameTitle: gameInfo?.title || 'Unknown Game',
-                gameId: gameId,
-                consoleName: gameInfo?.consoleName, // Console name for title formatting
-                points: achievement.Points,
-                thumbnail: badgeUrl, // Achievement badge as thumbnail
-                userProfileImageUrl: userProfileImageUrl, // User profile image for footer
-                customTitle: customTitle, // Custom title based on achievement type
-                color: color, // Custom color based on achievement type
-                gameIconUrl: gameIconUrl // ADDED: Game icon URL for author icon
-            });
-            
-            console.log(`Successfully sent achievement announcement via AlertService`);
-            return true;
-
-        } catch (error) {
-            console.error('Error announcing achievement:', error);
-            return false;
+    try {
+        console.log(`Creating achievement announcement: ${achievement.Title || 'Unknown Achievement'} (${achievementType})`);
+        
+        // Set color and custom title based on achievement type (same as original)
+        let color = '#808080';  // Default to grey for regular achievements
+        let customTitle = 'Achievement Unlocked';
+        
+        if (achievementType === 'monthly') {
+            color = '#9B59B6';  // Purple for monthly challenge
+            customTitle = 'Monthly Challenge';
+        } else if (achievementType === 'shadow') {
+            color = '#000000';  // Black for shadow challenge
+            customTitle = 'Shadow Challenge 👥';
+        } else if (achievementType === 'arcade') {
+            color = '#3498DB';  // Blue for arcade
+            customTitle = 'Arcade Challenge 🕹️';
+        } else if (achievementType === 'arena') {
+            color = '#FF5722';  // Red for arena
+            customTitle = 'Arena Challenge ⚔️';
         }
+        
+        // Get user's profile image URL for footer (same as original)
+        const userProfileImageUrl = await this.getUserProfileImageUrl(user.raUsername);
+        
+        // Set the thumbnail to be the achievement badge (same as original)
+        let badgeUrl = null;
+        if (achievement.BadgeName) {
+            badgeUrl = `https://media.retroachievements.org/Badge/${achievement.BadgeName}.png`;
+        }
+        
+        // Get game icon URL for author icon
+        let gameIconUrl = null;
+        if (gameInfo?.imageIcon) {
+            gameIconUrl = `https://retroachievements.org${gameInfo.imageIcon}`;
+        }
+        
+        // FIXED: ALL achievements go to the achievement feed regardless of type
+        // Only mastery/beaten awards should go to specialized channels
+        const alertType = ALERT_TYPES.ACHIEVEMENT; // → 1326199972059680778 (achievement feed)
+
+        console.log(`Sending achievement announcement via AlertService to achievement feed channel`);
+        
+        // Send achievement alert with proper styling based on type
+        await alertService.sendAchievementAlert({
+            alertType: alertType,
+            username: user.raUsername,
+            achievementTitle: achievement.Title || 'Unknown Achievement',
+            achievementDescription: achievement.Description,
+            gameTitle: gameInfo?.title || 'Unknown Game',
+            gameId: gameId,
+            consoleName: gameInfo?.consoleName,
+            points: achievement.Points,
+            thumbnail: badgeUrl, // Achievement badge as thumbnail
+            userProfileImageUrl: userProfileImageUrl, // User profile image for footer
+            customTitle: customTitle, // Custom title based on achievement type
+            color: color, // Custom color based on achievement type
+            gameIconUrl: gameIconUrl // Game icon URL for author icon
+        });
+        
+        console.log(`Successfully sent achievement announcement via AlertService`);
+        return true;
+
+    } catch (error) {
+        console.error('Error announcing achievement:', error);
+        return false;
     }
+}
 
     async isGuildMember(discordId) {
         if (!discordId) return false;
