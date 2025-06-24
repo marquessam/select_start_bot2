@@ -399,10 +399,11 @@ export default {
             const [year, month] = monthKey.split('-');
             const trophyDate = new Date(parseInt(year), parseInt(month) - 1, 15);
             
-            const gameTitle = data.gameTitle || 
-                             challengeTitleMap[monthKey]?.[challengeType] || 
-                             `${challengeType.charAt(0).toUpperCase() + challengeType.slice(1)} Challenge - ${this.formatShortDate(monthKey)}`;
+            const rawGameTitle = data.gameTitle || 
+                                challengeTitleMap[monthKey]?.[challengeType] || 
+                                `${challengeType.charAt(0).toUpperCase() + challengeType.slice(1)} Challenge - ${this.formatShortDate(monthKey)}`;
             
+            const gameTitle = this.shortenGameTitle(rawGameTitle);
             const emojiData = await getTrophyEmoji(challengeType, monthKey, awardLevel);
 
             trophies.push({
@@ -420,6 +421,49 @@ export default {
         } else {
             return progress === 2 ? 'beaten' : 'participation';
         }
+    },
+
+    shortenGameTitle(title) {
+        if (!title) return title;
+        
+        // Common game title shortenings for better display
+        const shortenings = {
+            'Mario & Luigi: Superstar Saga': 'Superstar Saga',
+            'Mario and Luigi: Superstar Saga': 'Superstar Saga',
+            'The Legend of Zelda: A Link to the Past': 'A Link to the Past',
+            'The Legend of Zelda: Link to the Past': 'A Link to the Past',
+            'Super Mario Bros. 3': 'Super Mario Bros. 3',
+            'Pokémon Red Version': 'Pokémon Red',
+            'Pokémon Blue Version': 'Pokémon Blue',
+            'Pokémon Yellow Version': 'Pokémon Yellow',
+            'Final Fantasy VII': 'Final Fantasy VII',
+            'Chrono Trigger': 'Chrono Trigger',
+            'Secret of Mana': 'Secret of Mana'
+        };
+        
+        // Check for exact matches first
+        if (shortenings[title]) {
+            return shortenings[title];
+        }
+        
+        // Pattern-based shortenings
+        let shortened = title;
+        
+        // Remove "The Legend of Zelda:" prefix
+        shortened = shortened.replace(/^The Legend of Zelda:\s*/i, '');
+        
+        // Remove "Mario & Luigi:" or "Mario and Luigi:" prefix
+        shortened = shortened.replace(/^Mario (&|and) Luigi:\s*/i, '');
+        
+        // Remove "Version" suffix from Pokemon games
+        shortened = shortened.replace(/\s+Version$/i, '');
+        
+        // Limit to reasonable length (truncate if still too long)
+        if (shortened.length > 25) {
+            shortened = shortened.substring(0, 22) + '...';
+        }
+        
+        return shortened;
     },
 
     createTrophyCaseEmbed(user, trophies) {
