@@ -1258,16 +1258,19 @@ class CombinationService {
         const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
         const monthName = monthNames[month - 1];
 
-        const embed = this.createEmbed('🌙 SHADOW CHALLENGE REVEALED!', COMBINATION_COLORS.shadow,
+        const embed = this.createEmbed('🌙 SHADOW CHALLENGE REVEALED!', COMBINATION_COLORS.shadow);
+        embed.setDescription(
             `**${user.raUsername}** has unlocked the secrets!\n\n` +
             `🔓 The shadow challenge for **${monthName} ${year}** has been revealed!\n\n` +
             `**Shadow Game:** ${challenge.shadow_game_title || 'Mystery Game'}\n\n` +
             `*The hidden challenge emerges from the darkness...*`
-        ).addFields({
+        );
+        embed.addFields({
             name: '🎯 How to Participate',
             value: `Use \`/challenge\` to view the newly revealed shadow challenge details!`,
             inline: false
-        }).setFooter({ text: `Unlocked by ${user.raUsername} through item combination • The shadow awaits...` });
+        });
+        embed.setFooter({ text: `Unlocked by ${user.raUsername} through item combination • The shadow awaits...` });
 
         if (challenge.shadow_game_icon_url) {
             embed.setThumbnail(`https://retroachievements.org${challenge.shadow_game_icon_url}`);
