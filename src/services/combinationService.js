@@ -681,9 +681,16 @@ class CombinationService {
     }
 
     // UI Building utilities
-    createEmbed(title, color = COLORS.INFO, description = '') {
-        return new EmbedBuilder().setTitle(title).setColor(color).setDescription(description).setTimestamp();
+   createEmbed(title, color = COLORS.INFO, description = null) {
+    const embed = new EmbedBuilder().setTitle(title).setColor(color).setTimestamp();
+    
+    // Only set description if it's not null/undefined and has content
+    if (description && description.length > 0) {
+        embed.setDescription(description);
     }
+    
+    return embed;
+}
 
     createResultSelectMenu(combination) {
         const options = combination.possibleResults.map(resultItem => {
