@@ -209,8 +209,18 @@ export default {
         return { totalUsers, totalItems: totalCollectionItems[0]?.total || 0 };
     },
 
-    createEmbed(title, color = COLORS.INFO, description = '') {
-        return new EmbedBuilder().setTitle(title).setColor(color).setDescription(description).setTimestamp();
+    createEmbed(title, color = COLORS.INFO, description = null) {
+        const embed = new EmbedBuilder()
+            .setTitle(title)
+            .setColor(color)
+            .setTimestamp();
+        
+        // Only set description if it's not null/undefined and has content
+        if (description && description.trim().length > 0) {
+            embed.setDescription(description);
+        }
+        
+        return embed;
     },
 
     createButton(customId, label, style = ButtonStyle.Secondary, emoji = null, disabled = false) {
