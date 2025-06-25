@@ -1,4 +1,4 @@
-// src/services/combinationService.js - Streamlined with deduplicate fix
+// src/services/combinationService.js - Streamlined & DRY optimized
 import { GachaItem, CombinationRule } from '../models/GachaItem.js';
 import { Challenge } from '../models/Challenge.js';
 import { config } from '../config/config.js';
@@ -6,6 +6,21 @@ import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelec
 import { formatGachaEmoji } from '../config/gachaEmojis.js';
 import { COLORS } from '../utils/FeedUtils.js';
 import alertService, { ALERT_TYPES } from '../utils/AlertService.js';
+
+const RESULT_TYPE_CONFIG = {
+    single: { emoji: '⚗️', label: 'Standard' },
+    choice: { emoji: '🎯', label: 'Choice' },
+    random: { emoji: '🎲', label: 'Random' }
+};
+
+const COMBINATION_COLORS = {
+    standard: COLORS.WARNING,
+    nondestructive: COLORS.SUCCESS,
+    shadow: '#9932CC',
+    choice: '#4A90E2',
+    random: '#FF6B35',
+    discovery: '#FFD700'
+};
 
 class CombinationService {
     constructor() {
@@ -18,498 +33,484 @@ class CombinationService {
         alertService.setClient(client);
     }
 
-    // Core combination checking logic
+    // Core combination logic
     async checkPossibleCombinations(user, triggerItemId = null) {
-        try {
-            if (!user.gachaCollection?.length) return [];
+        if (!user.gachaCollection?.length) return [];
 
-            const rules = await CombinationRule.find({ isActive: true });
-            const possibleCombinations = [];
+        const rules = await CombinationRule.find({ isActive: true });
+        const combinations = [];
 
-            for (const rule of rules) {
-                const combinations = await this.findPossibleCombinationsForRule(user, rule, triggerItemId);
-                possibleCombinations.push(...combinations);
-            }
-
-            return possibleCombinations.sort((a, b) => (b.rule.priority || 0) - (a.rule.priority || 0));
-        } catch (error) {
-            console.error('Error checking possible combinations:', error);
-            return [];
+        for (const rule of rules) {
+            const ruleCombinations = await this.findPossibleCombinationsForRule(user, rule, triggerItemId);
+            combinations.push(...ruleCombinations);
         }
+
+        return combinations.sort((a, b) => (b.rule.priority || 0) - (a.rule.priority || 0));
     }
 
     async findPossibleCombinationsForRule(user, rule, triggerItemId = null) {
-        const combinations = [];
-
-        try {
-            const userItemMap = this.buildUserItemMap(user);
-
-            // Skip non-destructive combinations if user already has result
-            if (rule.isNonDestructive && userItemMap.has(rule.result.itemId)) {
-                return [];
-            }
-
-            const requiredIngredients = rule.ingredients;
-            const availableQuantities = [];
-
-            for (const ingredient of requiredIngredients) {
-                const userItem = userItemMap.get(ingredient.itemId);
-                if (!userItem || userItem.quantity < ingredient.quantity) {
-                    return [];
-                }
-                availableQuantities.push(Math.floor(userItem.quantity / ingredient.quantity));
-            }
-
-            if (triggerItemId && !requiredIngredients.some(ing => ing.itemId === triggerItemId)) {
-                return [];
-            }
-
-            const maxCombinations = Math.min(...availableQuantities);
-            if (maxCombinations > 0) {
-                const resultItem = await GachaItem.findOne({ itemId: rule.result.itemId });
-                if (resultItem) {
-                    combinations.push({
-                        ruleId: rule.ruleId,
-                        rule: rule,
-                        resultItem: resultItem,
-                        resultQuantity: rule.result.quantity || 1,
-                        maxCombinations: maxCombinations,
-                        ingredients: requiredIngredients.map(ing => ({
-                            itemId: ing.itemId,
-                            quantity: ing.quantity,
-                            available: userItemMap.get(ing.itemId)?.quantity || 0,
-                            item: userItemMap.get(ing.itemId)?.item
-                        }))
-                    });
-                }
-            }
-        } catch (error) {
-            console.error('Error processing combination rule:', error);
+        const userItemMap = this.buildUserItemMap(user);
+        const possibleResults = await this.getPossibleResultItems(rule);
+        
+        // Skip non-destructive if user already has any result
+        if (rule.isNonDestructive && possibleResults.some(item => userItemMap.has(item.itemId))) {
+            return [];
         }
 
-        return combinations;
+        const availableQuantities = rule.ingredients.map(ingredient => {
+            const userItem = userItemMap.get(ingredient.itemId);
+            return userItem && userItem.quantity >= ingredient.quantity 
+                ? Math.floor(userItem.quantity / ingredient.quantity) 
+                : 0;
+        });
+
+        if (availableQuantities.some(qty => qty === 0)) return [];
+        if (triggerItemId && !rule.ingredients.some(ing => ing.itemId === triggerItemId)) return [];
+
+        const maxCombinations = Math.min(...availableQuantities);
+        
+        return [{
+            ruleId: rule.ruleId,
+            rule,
+            resultType: rule.resultType || 'single',
+            possibleResults,
+            maxCombinations,
+            ingredients: rule.ingredients.map(ing => ({
+                itemId: ing.itemId,
+                quantity: ing.quantity,
+                available: userItemMap.get(ing.itemId)?.quantity || 0,
+                item: userItemMap.get(ing.itemId)?.item
+            }))
+        }];
     }
 
-    // UI Display Methods
-    async showCombinationAlert(interaction, user, possibleCombinations) {
-        try {
-            if (!possibleCombinations.length) return;
+    async getPossibleResultItems(rule) {
+        const resultConfigs = this.getResultConfigs(rule);
+        const resultItems = [];
 
-            if (possibleCombinations.length === 1) {
-                await this.showSingleCombinationConfirmation(interaction, user, possibleCombinations[0]);
-            } else {
-                await this.showMultipleCombinationSelection(interaction, user, possibleCombinations);
+        for (const config of resultConfigs) {
+            const item = await GachaItem.findOne({ itemId: config.itemId });
+            if (item) {
+                resultItems.push({ ...item.toObject(), resultQuantity: config.quantity || 1 });
             }
-        } catch (error) {
-            console.error('Error showing combination alert:', error);
         }
+
+        return resultItems;
+    }
+
+    getResultConfigs(rule) {
+        switch (rule.resultType) {
+            case 'choice':
+            case 'random':
+                return rule.results || [];
+            default:
+                return rule.result?.itemId ? [rule.result] : [];
+        }
+    }
+
+    buildUserItemMap(user) {
+        const map = new Map();
+        user.gachaCollection.forEach(item => {
+            const existing = map.get(item.itemId) || { quantity: 0, item };
+            existing.quantity += (item.quantity || 1);
+            map.set(item.itemId, existing);
+        });
+        return map;
+    }
+
+    // UI Display system
+    async showCombinationAlert(interaction, user, possibleCombinations) {
+        if (!possibleCombinations.length) return;
+
+        const choiceCombinations = possibleCombinations.filter(combo => combo.resultType === 'choice');
+        if (choiceCombinations.length > 0) {
+            return this.showChoiceCombinationSelection(interaction, user, choiceCombinations[0]);
+        }
+
+        return possibleCombinations.length === 1 
+            ? this.showSingleCombinationConfirmation(interaction, user, possibleCombinations[0])
+            : this.showMultipleCombinationSelection(interaction, user, possibleCombinations);
+    }
+
+    async showChoiceCombinationSelection(interaction, user, combination) {
+        const { rule, possibleResults, ingredients, maxCombinations } = combination;
+        const ingredientsText = this.formatIngredients(ingredients);
+
+        const embed = this.createEmbed('🎯 Choice Combination Available!', COMBINATION_COLORS.choice)
+            .setDescription(
+                `Choose which item to create from this combination!\n\n` +
+                `**Recipe:**\n${ingredientsText}\n\n` +
+                `**Available:** ${maxCombinations} combinations\n\n` +
+                this.getWarningText(rule.isNonDestructive)
+            )
+            .setFooter({ text: 'Select which item you want to create from the dropdown below' });
+
+        const selectMenu = this.createResultSelectMenu(combination);
+        const components = [
+            new ActionRowBuilder().addComponents(selectMenu),
+            this.createCancelButtons()
+        ];
+
+        await interaction.followUp({ embeds: [embed], components, ephemeral: true });
     }
 
     async showSingleCombinationConfirmation(interaction, user, combination) {
-        const { resultItem, resultQuantity, ingredients, maxCombinations, rule } = combination;
-        
-        const isShadowUnlock = this.isShadowUnlockItem(resultItem);
-        const isNonDestructive = rule.isNonDestructive;
-        const resultEmoji = formatGachaEmoji(resultItem.emojiId, resultItem.emojiName, resultItem.isAnimated);
-        const rarityEmoji = this.getRarityEmoji(resultItem.rarity);
+        const { rule, possibleResults, ingredients, maxCombinations, resultType } = combination;
+        const ingredientsText = this.formatIngredients(ingredients);
+        const { title, color, description } = this.buildCombinationDisplay(rule, possibleResults, ingredientsText, maxCombinations, resultType);
 
-        const ingredientsText = ingredients.map(ing => {
-            const emoji = ing.item ? formatGachaEmoji(ing.item.emojiId, ing.item.emojiName, ing.item.isAnimated) : '❓';
-            const name = ing.item ? ing.item.itemName : ing.itemId;
-            return `${emoji} ${ing.quantity}x ${name}`;
-        }).join('\n');
-
-        const { title, color, warningText } = this.getCombinationDisplayData(isShadowUnlock, isNonDestructive);
-
-        const embed = new EmbedBuilder()
-            .setTitle(title)
-            .setColor(color)
-            .setDescription(
-                `You can create ${isShadowUnlock ? '**the Shadow Unlock item**' : (isNonDestructive ? '**a collection bonus**' : 'a new item')} by combining ingredients!\n\n` +
-                `**Recipe:**\n${ingredientsText}\n\n` +
-                `**Creates:**\n${resultEmoji} ${rarityEmoji} **${resultQuantity}x ${resultItem.itemName}**\n\n` +
-                `**Available combinations:** ${maxCombinations}\n\n` +
-                warningText
-            )
-            .addFields({ name: 'Result Description', value: resultItem.description || 'No description', inline: false })
+        const embed = this.createEmbed(title, color, description)
             .setFooter({ 
-                text: isNonDestructive 
+                text: rule.isNonDestructive 
                     ? 'Choose how many combinations to perform - your ingredients will be kept!'
                     : 'Choose how many combinations to perform, or cancel.' 
-            })
-            .setTimestamp();
+            });
 
-        const actionRow = this.buildCombinationButtons(combination, maxCombinations, isShadowUnlock, isNonDestructive);
+        if (resultType === 'single' && possibleResults[0]) {
+            embed.addFields({ name: 'Result Description', value: possibleResults[0].description || 'No description' });
+        }
 
-        await interaction.followUp({
-            embeds: [embed],
-            components: [actionRow],
-            ephemeral: true
-        });
+        const actionRow = this.buildCombinationButtons(combination, maxCombinations);
+        await interaction.followUp({ embeds: [embed], components: [actionRow], ephemeral: true });
     }
 
     async showMultipleCombinationSelection(interaction, user, combinations) {
         const limitedCombinations = combinations.slice(0, 25);
-        const hasShadowUnlock = limitedCombinations.some(combo => this.isShadowUnlockItem(combo.resultItem));
-        const hasNonDestructive = limitedCombinations.some(combo => combo.rule.isNonDestructive);
+        const hasSpecialTypes = this.analyzeSpecialTypes(limitedCombinations);
 
-        const { title, color } = this.getMultiCombinationDisplayData(hasShadowUnlock, hasNonDestructive);
-
-        const embed = new EmbedBuilder()
-            .setTitle(title)
-            .setColor(color)
-            .setDescription(
-                `You have ingredients for multiple combinations!\nChoose which one you'd like to make:\n\n` +
-                `⚠️ **Standard combinations will consume ingredients!**\n` +
-                (hasNonDestructive ? `🔄 **Non-destructive combinations will keep ingredients!**\n` : '') +
-                (hasShadowUnlock ? `🌙 **One option will unlock the shadow challenge!**` : '')
-            )
-            .setFooter({ text: 'Select a combination from the menu below, or cancel.' })
-            .setTimestamp();
+        const embed = this.createEmbed(
+            this.getMultiCombinationTitle(hasSpecialTypes),
+            this.getMultiCombinationColor(hasSpecialTypes)
+        ).setDescription(this.getMultiCombinationDescription(limitedCombinations.length, hasSpecialTypes))
+         .setFooter({ text: 'Select a combination from the menu below, or cancel.' });
 
         const selectOptions = this.buildCombinationSelectOptions(limitedCombinations);
-        const components = this.buildMultiCombinationComponents(selectOptions);
+        const components = [
+            new ActionRowBuilder().addComponents(
+                new StringSelectMenuBuilder()
+                    .setCustomId('combo_selection')
+                    .setPlaceholder('Choose a combination...')
+                    .addOptions(selectOptions)
+            ),
+            this.createCancelButtons()
+        ];
 
-        await interaction.followUp({
-            embeds: [embed],
-            components: components,
-            ephemeral: true
-        });
+        await interaction.followUp({ embeds: [embed], components, ephemeral: true });
     }
 
-    // Core combination execution
-    async performCombination(user, ruleId, quantity = 1) {
-        try {
-            const rule = await CombinationRule.findOne({ ruleId: ruleId, isActive: true });
-            if (!rule) throw new Error(`Combination rule not found for ID: ${ruleId}`);
+    // Combination execution
+    async performCombination(user, ruleId, quantity = 1, selectedResultItemId = null) {
+        const rule = await CombinationRule.findOne({ ruleId, isActive: true });
+        if (!rule) throw new Error(`Combination rule not found: ${ruleId}`);
 
-            const possibleCombinations = await this.findPossibleCombinationsForRule(user, rule);
-            if (!possibleCombinations.length) throw new Error('You no longer have the required ingredients');
+        const possibleCombinations = await this.findPossibleCombinationsForRule(user, rule);
+        if (!possibleCombinations.length) throw new Error('You no longer have the required ingredients');
 
-            const combination = possibleCombinations[0];
-            if (combination.maxCombinations < quantity) {
-                throw new Error(`You can only make ${combination.maxCombinations} of this combination`);
+        const combination = possibleCombinations[0];
+        if (combination.maxCombinations < quantity) {
+            throw new Error(`You can only make ${combination.maxCombinations} of this combination`);
+        }
+
+        return rule.resultType === 'random' 
+            ? this.performRandomCombination(user, rule, quantity)
+            : this.performStandardCombination(user, rule, quantity, selectedResultItemId);
+    }
+
+    async performStandardCombination(user, rule, quantity, selectedResultItemId) {
+        const { resultItem, resultQuantity } = await this.resolveResult(rule, quantity, selectedResultItemId);
+        const removedIngredients = await this.processIngredients(user, rule, quantity);
+        const addResult = user.addGachaItem(resultItem, resultQuantity, 'combined');
+        const wasNewDiscovery = await this.markCombinationDiscovered(rule.ruleId, user.raUsername);
+
+        const result = {
+            success: true,
+            ruleId: rule.ruleId,
+            resultItem,
+            resultQuantity,
+            addResult,
+            rule,
+            ingredients: rule.ingredients,
+            removedIngredients,
+            wasNewDiscovery,
+            isNonDestructive: rule.isNonDestructive,
+            resultType: rule.resultType,
+            selectedResultItemId
+        };
+
+        await this.checkForShadowUnlock(user, result);
+        return result;
+    }
+
+    async performRandomCombination(user, rule, quantity) {
+        const randomResults = [];
+        for (let i = 0; i < quantity; i++) {
+            const randomResult = rule.getRandomResult();
+            const randomItem = await GachaItem.findOne({ itemId: randomResult.itemId });
+            if (randomItem) {
+                randomResults.push({ item: randomItem, quantity: randomResult.quantity || 1 });
+            }
+        }
+
+        if (!randomResults.length) throw new Error('No valid random results found');
+
+        const removedIngredients = await this.processIngredients(user, rule, randomResults.length);
+        const results = randomResults.map(({ item, quantity }) => ({
+            resultItem: item,
+            resultQuantity: quantity,
+            addResult: user.addGachaItem(item, quantity, 'combined')
+        }));
+
+        const wasNewDiscovery = await this.markCombinationDiscovered(rule.ruleId, user.raUsername);
+
+        return {
+            success: true,
+            ruleId: rule.ruleId,
+            rule,
+            ingredients: rule.ingredients,
+            removedIngredients,
+            wasNewDiscovery,
+            isNonDestructive: rule.isNonDestructive,
+            resultType: 'random',
+            randomResults: results
+        };
+    }
+
+    async resolveResult(rule, quantity, selectedResultItemId) {
+        let resultConfig;
+        
+        switch (rule.resultType) {
+            case 'choice':
+                if (!selectedResultItemId) throw new Error('Choice combination requires a selected result item');
+                resultConfig = rule.results.find(r => r.itemId === selectedResultItemId);
+                if (!resultConfig) throw new Error('Invalid result item selection');
+                break;
+            default:
+                resultConfig = rule.result;
+        }
+
+        const resultItem = await GachaItem.findOne({ itemId: resultConfig.itemId });
+        if (!resultItem) throw new Error('Result item not found');
+
+        return {
+            resultItem,
+            resultQuantity: (resultConfig.quantity || 1) * quantity
+        };
+    }
+
+    async processIngredients(user, rule, quantity) {
+        const removedIngredients = [];
+        
+        for (const ingredient of rule.ingredients) {
+            const totalRequired = ingredient.quantity * quantity;
+            const userItem = user.gachaCollection.find(item => item.itemId === ingredient.itemId);
+            
+            if (!userItem || (userItem.quantity || 1) < totalRequired) {
+                throw new Error(`Insufficient quantity of ${ingredient.itemId}`);
             }
 
-            const resultItem = await GachaItem.findOne({ itemId: rule.result.itemId });
-            if (!resultItem) throw new Error('Result item not found');
-
-            const removedIngredients = await this.processIngredients(user, rule, quantity);
-            const totalResultQuantity = (rule.result.quantity || 1) * quantity;
-            const addResult = user.addGachaItem(resultItem, totalResultQuantity, 'combined');
-            const wasNewDiscovery = await this.markCombinationDiscovered(ruleId, user.raUsername);
-
-            const result = {
-                success: true,
-                ruleId,
-                resultItem,
-                resultQuantity: totalResultQuantity,
-                addResult,
-                rule,
-                ingredients: rule.ingredients,
-                removedIngredients,
-                wasNewDiscovery,
-                isNonDestructive: rule.isNonDestructive
-            };
-
-            await this.checkForShadowUnlock(user, result);
-            return result;
-        } catch (error) {
-            console.error('Error performing combination:', error);
-            return { success: false, error: error.message };
-        }
-    }
-
-    // Transfer and gift alert methods
-    async triggerCombinationAlertsForPlayerTransfer(recipient, giftedItemId, giverUsername) {
-        try {
-            const possibleCombinations = await this.checkPossibleCombinations(recipient, giftedItemId);
-            if (!possibleCombinations.length) return { hasCombinations: false };
-
-            const { memberTag, alertData } = await this.buildTransferAlertData(recipient, possibleCombinations, giverUsername);
-
-            await alertService.sendCombinationTransferAlert({
-                ...alertData,
-                description: `${memberTag} received an item from **${giverUsername}** and now has **${possibleCombinations.length}** combination option(s) available!\n\n💡 **${recipient.raUsername}**, use \`/collection\` to confirm your combinations!`,
-            });
-
-            return { 
-                hasCombinations: true, 
-                combinationCount: possibleCombinations.length,
-                publicAnnouncementSent: true
-            };
-        } catch (error) {
-            console.error('Error triggering combination alerts for player transfer:', error);
-            return { hasCombinations: false, error: error.message };
-        }
-    }
-
-    async triggerCombinationAlertsForAdminGift(user, giftedItemId, adminInteraction) {
-        try {
-            const possibleCombinations = await this.checkPossibleCombinations(user, giftedItemId);
-            if (!possibleCombinations.length) return { hasCombinations: false };
-
-            const { memberTag, alertData } = await this.buildAdminGiftAlertData(user, possibleCombinations, adminInteraction);
-
-            await alertService.sendCombinationAdminGiftAlert({
-                ...alertData,
-                description: `${memberTag} received an admin gift and now has **${possibleCombinations.length}** combination option(s) available!\n\n💡 **${user.raUsername}**, use \`/collection\` to confirm your combinations!`,
-            });
-
-            return { 
-                hasCombinations: true, 
-                combinationCount: possibleCombinations.length,
-                publicAnnouncementSent: true
-            };
-        } catch (error) {
-            console.error('Error triggering combination alerts for admin gift:', error);
-            return { hasCombinations: false, error: error.message };
-        }
-    }
-
-    // Shadow unlock handling
-    async checkForShadowUnlock(user, combinationResult) {
-        try {
-            const { resultItem } = combinationResult;
-            
-            if (this.isShadowUnlockItem(resultItem)) {
-                const currentChallenge = await this.getCurrentChallenge();
+            if (!rule.isNonDestructive) {
+                const removeSuccess = user.removeGachaItem(ingredient.itemId, totalRequired);
+                if (!removeSuccess) throw new Error(`Failed to remove ingredient: ${ingredient.itemId}`);
                 
-                if (currentChallenge?.shadow_challange_gameid && !currentChallenge.shadow_challange_revealed) {
-                    currentChallenge.shadow_challange_revealed = true;
-                    await currentChallenge.save();
-                    
-                    const now = new Date();
-                    await this.sendShadowUnlockAlert(user, currentChallenge, now.getMonth() + 1, now.getFullYear());
-                }
+                removedIngredients.push({
+                    itemId: ingredient.itemId,
+                    itemName: userItem.itemName,
+                    quantityRemoved: totalRequired
+                });
+            } else {
+                removedIngredients.push({
+                    itemId: ingredient.itemId,
+                    itemName: userItem.itemName,
+                    quantityUsed: totalRequired,
+                    kept: true
+                });
             }
-        } catch (error) {
-            console.error('Error checking for shadow unlock:', error);
         }
-    }
-
-    async sendShadowUnlockAlert(user, challenge, month, year) {
-        if (!this.client) return;
-
-        try {
-            const generalChannelId = config.discord.generalChannelId || '1224834039804334121';
-            const guild = await this.client.guilds.fetch(config.discord.guildId);
-            const channel = await guild.channels.fetch(generalChannelId);
-            
-            if (!channel) return;
-
-            const monthNames = ["January", "February", "March", "April", "May", "June",
-                              "July", "August", "September", "October", "November", "December"];
-            const monthName = monthNames[month - 1];
-
-            const embed = new EmbedBuilder()
-                .setTitle('🌙 SHADOW CHALLENGE REVEALED!')
-                .setColor('#9932CC')
-                .setDescription(
-                    `**${user.raUsername}** has unlocked the secrets!\n\n` +
-                    `🔓 The shadow challenge for **${monthName} ${year}** has been revealed!\n\n` +
-                    `**Shadow Game:** ${challenge.shadow_game_title || 'Mystery Game'}\n\n` +
-                    `*The hidden challenge emerges from the darkness...*`
-                )
-                .addFields({
-                    name: '🎯 How to Participate',
-                    value: `Use \`/challenge\` to view the newly revealed shadow challenge details!`,
-                    inline: false
-                })
-                .setFooter({ 
-                    text: `Unlocked by ${user.raUsername} through item combination • The shadow awaits...` 
-                })
-                .setTimestamp();
-
-            if (challenge.shadow_game_icon_url) {
-                embed.setThumbnail(`https://retroachievements.org${challenge.shadow_game_icon_url}`);
-            }
-
-            await channel.send({ 
-                content: `🌙 **BREAKING:** The shadow has been unveiled! 🌙`,
-                embeds: [embed] 
-            });
-        } catch (error) {
-            console.error('Error sending shadow unlock alert:', error);
-        }
+        
+        return removedIngredients;
     }
 
     // Interaction handling
     async handleCombinationInteraction(interaction) {
-        try {
-            if (!interaction.customId.startsWith('combo_')) return false;
+        if (!interaction.customId.startsWith('combo_')) return false;
 
-            const { action, actionData } = this.parseInteractionCustomId(interaction.customId);
-
-            if (action === 'cancel' || action === 'to_collection') {
-                await interaction.deferUpdate();
-                return await this.handleCancelOrCollection(interaction, action);
-            }
-
-            if (action === 'to_recipes') {
-                await interaction.deferUpdate();
-                await this.showRecipeBook(interaction, 0);
-                return true;
-            }
-
-            await interaction.deferUpdate();
-
-            switch (action) {
-                case 'confirm':
-                    return await this.handleConfirmInteraction(interaction, actionData);
-                case 'select':
-                    return await this.handleSelectInteraction(interaction, actionData);
-                case 'selection':
-                    return await this.handleSelectionInteraction(interaction);
-                default:
-                    return false;
-            }
-        } catch (error) {
-            console.error('Error handling combination interaction:', error);
-            await interaction.editReply({
-                content: '❌ An error occurred while processing the combination.',
-                embeds: [],
-                components: []
-            });
+        if (interaction.customId.startsWith('combo_choice_selection_')) {
+            return this.handleChoiceSelection(interaction);
         }
-        return false;
+
+        const { action, actionData } = this.parseInteractionCustomId(interaction.customId);
+
+        const handlers = {
+            cancel: () => this.handleCancel(interaction),
+            to_collection: () => this.handleToCollection(interaction),
+            to_recipes: () => this.handleToRecipes(interaction),
+            confirm: () => this.handleConfirm(interaction, actionData),
+            select: () => this.handleSelect(interaction, actionData),
+            selection: () => this.handleSelection(interaction)
+        };
+
+        const handler = handlers[action];
+        if (!handler) return false;
+
+        if (!['cancel', 'to_collection', 'to_recipes'].includes(action)) {
+            await interaction.deferUpdate();
+        }
+
+        await handler();
+        return true;
+    }
+
+    async handleChoiceSelection(interaction) {
+        if (!interaction.isStringSelectMenu()) return false;
+        
+        await interaction.deferUpdate();
+        const selectedValue = interaction.values[0];
+        const [, , , ruleId, selectedItemId] = selectedValue.split('_');
+        
+        const user = await this.getUserForInteraction(interaction);
+        if (!user) return true;
+        
+        return this.executeChoiceCombination(interaction, user, ruleId, selectedItemId, 1);
+    }
+
+    async handleConfirm(interaction, actionData) {
+        const user = await this.getUserForInteraction(interaction);
+        if (!user) return true;
+
+        const { ruleId, quantity } = this.parseConfirmAction(actionData);
+        const actualQuantity = quantity === 'all' 
+            ? await this.getMaxCombinations(user, ruleId)
+            : parseInt(quantity);
+
+        return this.executeConfirmCombination(interaction, user, ruleId, actualQuantity);
+    }
+
+    async executeConfirmCombination(interaction, user, ruleId, quantity) {
+        const result = await this.performCombination(user, ruleId, quantity);
+        
+        if (result.success) {
+            await user.save();
+            await this.showCombinationSuccess(interaction, result, quantity);
+            await this.sendCombinationAlert(user, result);
+        } else {
+            await interaction.editReply({ content: `❌ Combination failed: ${result.error}`, embeds: [], components: [] });
+        }
+        return true;
+    }
+
+    async executeChoiceCombination(interaction, user, ruleId, selectedItemId, quantity) {
+        const result = await this.performCombination(user, ruleId, quantity, selectedItemId);
+        
+        if (result.success) {
+            await user.save();
+            await this.showCombinationSuccess(interaction, result, quantity);
+            await this.sendCombinationAlert(user, result);
+        } else {
+            await interaction.editReply({ content: `❌ Combination failed: ${result.error}`, embeds: [], components: [] });
+        }
+        return true;
     }
 
     async showCombinationSuccess(interaction, result, quantity) {
-        const { resultItem, resultQuantity, addResult, wasNewDiscovery, isNonDestructive } = result;
-        const resultEmoji = formatGachaEmoji(resultItem.emojiId, resultItem.emojiName, resultItem.isAnimated);
-        const rarityEmoji = this.getRarityEmoji(resultItem.rarity);
-        const isShadowUnlock = this.isShadowUnlockItem(resultItem);
+        const { rule, wasNewDiscovery, isNonDestructive, resultType } = result;
+        const { title, color, description } = this.buildSuccessDisplay(result, resultType, wasNewDiscovery, isNonDestructive);
 
-        const { title, color, description } = this.buildSuccessDisplayData(
-            resultEmoji, rarityEmoji, resultItem, resultQuantity, 
-            isShadowUnlock, wasNewDiscovery, isNonDestructive
-        );
-
-        const embed = new EmbedBuilder()
-            .setTitle(title)
-            .setColor(color)
-            .setDescription(description)
+        const embed = this.createEmbed(title, color, description)
             .setFooter({ 
                 text: isNonDestructive 
-                    ? 'The new item has been added to your collection and you kept your ingredients!'
-                    : 'The new item has been added to your collection!' 
-            })
-            .setTimestamp();
+                    ? 'The new item(s) have been added to your collection and you kept your ingredients!'
+                    : 'The new item(s) have been added to your collection!' 
+            });
 
-        this.addSuccessFields(embed, addResult, isNonDestructive);
+        if (resultType !== 'random') {
+            this.addSuccessFields(embed, result.addResult, isNonDestructive);
+        }
+
         const components = this.buildSuccessComponents(wasNewDiscovery);
-
         await interaction.editReply({ embeds: [embed], components });
     }
 
-    // FIXED: Single alert for combinations, no duplicates
-    async sendCombinationAlert(user, combinationResult) {
-        try {
-            const { ruleId, resultItem, resultQuantity, wasNewDiscovery, isNonDestructive, ingredients } = combinationResult;
-            const isShadowUnlock = this.isShadowUnlockItem(resultItem);
-            
-            const characterNames = await this.getIngredientNames(ingredients);
-            const thumbnail = resultItem.imageUrl || null;
-
-            if (wasNewDiscovery) {
-                const recipeText = await this.formatSingleRecipe(combinationResult.rule, resultItem);
-                await alertService.sendRecipeDiscoveryAlert({
-                    combinationType: 'Recipe Discovery',
-                    ruleId,
-                    username: user.raUsername,
-                    characterNames,
-                    resultCharacterName: resultItem.itemName,
-                    thumbnail,
-                    isSuccess: true,
-                    isPlayerConfirmed: false,
-                    description: `**${user.raUsername}** discovered a new combination recipe!\n\n**New Recipe:**\n${recipeText}\n\n💡 Use \`/recipes\` to view all discovered combinations!`,
-                    fields: [
-                        { name: 'Discovery Type', value: 'New Recipe', inline: true },
-                        { name: 'Discoverer', value: user.raUsername, inline: true },
-                        ...(resultItem.flavorText ? [{ name: 'Flavor Text', value: `*"${resultItem.flavorText}"*`, inline: false }] : [])
-                    ]
-                });
-            } else {
-                await alertService.sendCombinationAlert({
-                    alertType: ALERT_TYPES.COMBINATION_COMPLETE,
-                    combinationType: isNonDestructive ? 'Non-Destructive' : 'Standard',
-                    ruleId,
-                    username: user.raUsername,
-                    characterNames,
-                    resultCharacterName: resultItem.itemName,
-                    thumbnail,
-                    isSuccess: true,
-                    isPlayerConfirmed: true,
-                    description: `${user.raUsername} ${isShadowUnlock ? 'unlocked the shadow!' : (isNonDestructive ? 'completed a non-destructive combination!' : 'created a combination!')}`,
-                    fields: [
-                        {
-                            name: 'Result',
-                            value: `${formatGachaEmoji(resultItem.emojiId, resultItem.emojiName, resultItem.isAnimated)} ${resultQuantity}x **${resultItem.itemName}**`,
-                            inline: true
-                        },
-                        ...(resultItem.flavorText ? [{ name: 'Flavor Text', value: `*"${resultItem.flavorText}"*`, inline: false }] : [])
-                    ]
-                });
-            }
-        } catch (error) {
-            console.error('Error sending combination alert via AlertService:', error);
+    // Recipe book functionality
+    async showRecipeBook(interaction, page = 0) {
+        if (!interaction.deferred && !interaction.replied) {
+            await interaction.deferReply({ ephemeral: true });
         }
+
+        const allRecipes = await this.getDiscoveredRecipes();
+        
+        if (!allRecipes.length) {
+            return interaction.editReply({ 
+                embeds: [this.buildEmptyRecipeBookEmbed()], 
+                components: [] 
+            });
+        }
+
+        const { embed, components } = await this.buildRecipeBookDisplay(allRecipes, page);
+        await interaction.editReply({ embeds: [embed], components });
     }
 
-    // FIXED: Mark discovery without duplicate alerts
-    async markCombinationDiscovered(ruleId, discoveredBy) {
-        try {
-            const rule = await CombinationRule.findOne({ ruleId });
-            if (rule && !rule.discovered) {
-                rule.discovered = true;
-                rule.discoveredAt = new Date();
-                rule.discoveredBy = discoveredBy;
-                await rule.save();
-                return true;
-            }
-            return false;
-        } catch (error) {
-            console.error('Error marking combination as discovered:', error);
-            return false;
-        }
-    }
-
-    // Recipe book methods
     async getDiscoveredRecipes() {
-        try {
-            const discoveredRules = await CombinationRule.find({ 
-                isActive: true, 
-                discovered: true 
-            }).sort({ discoveredAt: 1 });
+        const discoveredRules = await CombinationRule.find({ 
+            isActive: true, 
+            discovered: true 
+        }).sort({ discoveredAt: 1 });
 
-            const recipes = [];
-            for (const rule of discoveredRules) {
-                const resultItem = await GachaItem.findOne({ itemId: rule.result.itemId });
-                if (!resultItem) continue;
-
+        const recipes = [];
+        for (const rule of discoveredRules) {
+            const resultItems = await this.getPossibleResultItems(rule);
+            if (resultItems.length > 0) {
                 const ingredientItems = await this.getIngredientItems(rule.ingredients);
                 if (ingredientItems.length === rule.ingredients.length) {
                     recipes.push({
                         rule,
-                        resultItem,
+                        resultItems,
                         ingredients: ingredientItems,
                         discoveredBy: rule.discoveredBy,
                         discoveredAt: rule.discoveredAt
                     });
                 }
             }
-
-            return this.sortRecipes(recipes);
-        } catch (error) {
-            console.error('Error getting discovered recipes:', error);
-            return [];
         }
+
+        return this.sortRecipes(recipes);
     }
 
-    async formatSingleRecipe(rule, resultItem) {
+    async buildRecipeBookDisplay(allRecipes, page) {
+        const RECIPES_PER_PAGE = 15;
+        const totalPages = Math.ceil(allRecipes.length / RECIPES_PER_PAGE);
+        const pageRecipes = allRecipes.slice(page * RECIPES_PER_PAGE, (page + 1) * RECIPES_PER_PAGE);
+
+        const embed = this.createEmbed('📖 Community Recipe Book', COLORS.INFO)
+            .setDescription(await this.buildRecipeDescription(pageRecipes, allRecipes.length))
+            .setFooter({ text: this.buildRecipeFooter(totalPages, page, allRecipes.length, RECIPES_PER_PAGE) });
+
+        const components = this.buildRecipeBookComponents(totalPages, page);
+        return { embed, components };
+    }
+
+    async buildRecipeDescription(recipes, totalRecipes) {
+        let description = `**Discovered Combinations:** ${totalRecipes}\n\n`;
+        const rarityGroups = this.groupRecipesByRarity(recipes);
+
+        for (const rarity of ['mythic', 'legendary', 'epic', 'rare', 'uncommon', 'common']) {
+            const rarityRecipes = rarityGroups[rarity];
+            if (!rarityRecipes?.length) continue;
+
+            description += `${this.getRarityEmoji(rarity)} **${this.getRarityDisplayName(rarity)}**\n`;
+            
+            for (const recipe of rarityRecipes) {
+                const recipeText = await this.formatSingleRecipe(recipe.rule, recipe.resultItems[0]);
+                description += `${recipeText}\n`;
+            }
+            description += '\n';
+        }
+
+        return description.trim();
+    }
+
+    // Utility methods
+    async formatSingleRecipe(rule, resultItem = null) {
         const ingredients = [];
-        
         for (const ingredient of rule.ingredients) {
             const item = await GachaItem.findOne({ itemId: ingredient.itemId });
             if (item) {
@@ -518,75 +519,510 @@ class CombinationService {
             }
         }
 
-        const resultEmoji = formatGachaEmoji(resultItem.emojiId, resultItem.emojiName, resultItem.isAnimated);
-        const resultQuantity = rule.result.quantity > 1 ? ` x${rule.result.quantity}` : '';
         const ingredientsPart = rule.isNonDestructive ? `(${ingredients.join(' + ')})` : ingredients.join(' + ');
         
-        return `${ingredientsPart} = ${resultEmoji}${resultQuantity}${rule.isNonDestructive ? ' 🔄' : ''}`;
+        let resultPart = '';
+        switch (rule.resultType) {
+            case 'single':
+                if (resultItem) {
+                    const resultEmoji = formatGachaEmoji(resultItem.emojiId, resultItem.emojiName, resultItem.isAnimated);
+                    const resultQuantity = rule.result.quantity > 1 ? ` x${rule.result.quantity}` : '';
+                    resultPart = `${resultEmoji}${resultQuantity}`;
+                }
+                break;
+            case 'choice':
+                resultPart = '🎯 Choice';
+                break;
+            case 'random':
+                resultPart = '🎲 Random';
+                break;
+        }
+        
+        const nonDestructiveFlag = rule.isNonDestructive ? ' 🔄' : '';
+        return `${ingredientsPart} = ${resultPart}${nonDestructiveFlag}`;
     }
 
-    async showRecipeBook(interaction, page = 0) {
-        try {
-            if (!interaction.deferred && !interaction.replied) {
-                await interaction.deferReply({ ephemeral: true });
-            }
-
-            const allRecipes = await this.getDiscoveredRecipes();
+    // Shadow unlock and alerts
+    async checkForShadowUnlock(user, combinationResult) {
+        const { resultItem } = combinationResult;
+        
+        if (this.isShadowUnlockItem(resultItem)) {
+            const currentChallenge = await this.getCurrentChallenge();
             
-            if (!allRecipes.length) {
-                return interaction.editReply({ 
-                    embeds: [this.buildEmptyRecipeBookEmbed()], 
-                    components: [] 
-                });
+            if (currentChallenge?.shadow_challange_gameid && !currentChallenge.shadow_challange_revealed) {
+                currentChallenge.shadow_challange_revealed = true;
+                await currentChallenge.save();
+                
+                const now = new Date();
+                await this.sendShadowUnlockAlert(user, currentChallenge, now.getMonth() + 1, now.getFullYear());
             }
+        }
+    }
 
-            const { embed, components } = await this.buildRecipeBookDisplay(allRecipes, page);
-            await interaction.editReply({ embeds: [embed], components });
-        } catch (error) {
-            console.error('Error showing recipe book:', error);
-            await interaction.editReply({ 
-                content: '❌ An error occurred while loading the recipe book. Please try again later.',
-                embeds: [],
-                components: []
+    async sendCombinationAlert(user, combinationResult) {
+        const { ruleId, resultItem, resultQuantity, wasNewDiscovery, isNonDestructive, ingredients, resultType } = combinationResult;
+        const isShadowUnlock = this.isShadowUnlockItem(resultItem);
+        
+        const characterNames = await this.getIngredientNames(ingredients);
+        const thumbnail = resultItem.imageUrl || null;
+
+        if (wasNewDiscovery) {
+            const recipeText = await this.formatSingleRecipe(combinationResult.rule, resultItem);
+            await alertService.sendRecipeDiscoveryAlert({
+                combinationType: 'Recipe Discovery',
+                ruleId,
+                username: user.raUsername,
+                characterNames,
+                resultCharacterName: resultItem.itemName,
+                thumbnail,
+                isSuccess: true,
+                isPlayerConfirmed: false,
+                description: `**${user.raUsername}** discovered a new combination recipe!\n\n**New Recipe:**\n${recipeText}\n\n💡 Use \`/recipes\` to view all discovered combinations!`,
+                fields: [
+                    { name: 'Discovery Type', value: 'New Recipe', inline: true },
+                    { name: 'Discoverer', value: user.raUsername, inline: true },
+                    ...(resultItem.flavorText ? [{ name: 'Flavor Text', value: `*"${resultItem.flavorText}"*`, inline: false }] : [])
+                ]
+            });
+        } else {
+            const combinationType = this.getCombinationType(resultType, isNonDestructive);
+            await alertService.sendCombinationAlert({
+                alertType: ALERT_TYPES.COMBINATION_COMPLETE,
+                combinationType,
+                ruleId,
+                username: user.raUsername,
+                characterNames,
+                resultCharacterName: resultItem.itemName,
+                thumbnail,
+                isSuccess: true,
+                isPlayerConfirmed: true,
+                description: this.getAlertDescription(user.raUsername, isShadowUnlock, isNonDestructive, resultType),
+                fields: [
+                    {
+                        name: 'Result',
+                        value: `${formatGachaEmoji(resultItem.emojiId, resultItem.emojiName, resultItem.isAnimated)} ${resultQuantity}x **${resultItem.itemName}**`,
+                        inline: true
+                    },
+                    ...(resultItem.flavorText ? [{ name: 'Flavor Text', value: `*"${resultItem.flavorText}"*`, inline: false }] : [])
+                ]
             });
         }
     }
 
-    async handleRecipeBookInteraction(interaction) {
-        if (!interaction.customId.startsWith('recipes_')) return false;
-
-        try {
-            await interaction.deferUpdate();
-
-            const action = interaction.customId.split('_')[1];
-
-            switch (action) {
-                case 'refresh':
-                    await this.showRecipeBook(interaction, 0);
-                    return true;
-                case 'to':
-                    if (interaction.customId === 'recipes_to_collection') {
-                        return await this.handleRecipeToCollection(interaction);
-                    }
-                    break;
-                case 'prev':
-                case 'next':
-                    return await this.handleRecipePagination(interaction, action);
-            }
-        } catch (error) {
-            console.error('Error handling recipe book interaction:', error);
-            await interaction.editReply({
-                content: '❌ An error occurred while processing your request.',
-                embeds: [],
-                components: []
-            });
+    async markCombinationDiscovered(ruleId, discoveredBy) {
+        const rule = await CombinationRule.findOne({ ruleId });
+        if (rule && !rule.discovered) {
+            rule.discovered = true;
+            rule.discoveredAt = new Date();
+            rule.discoveredBy = discoveredBy;
+            await rule.save();
+            return true;
         }
         return false;
     }
 
+    // Transfer alerts
+    async triggerCombinationAlertsForPlayerTransfer(recipient, giftedItemId, giverUsername) {
+        const possibleCombinations = await this.checkPossibleCombinations(recipient, giftedItemId);
+        if (!possibleCombinations.length) return { hasCombinations: false };
+
+        const { memberTag, alertData } = await this.buildTransferAlertData(recipient, possibleCombinations, giverUsername);
+
+        await alertService.sendCombinationTransferAlert({
+            ...alertData,
+            description: `${memberTag} received an item from **${giverUsername}** and now has **${possibleCombinations.length}** combination option(s) available!\n\n💡 **${recipient.raUsername}**, use \`/collection\` to confirm your combinations!`,
+        });
+
+        return { 
+            hasCombinations: true, 
+            combinationCount: possibleCombinations.length,
+            publicAnnouncementSent: true
+        };
+    }
+
+    async triggerCombinationAlertsForAdminGift(user, giftedItemId, adminInteraction) {
+        const possibleCombinations = await this.checkPossibleCombinations(user, giftedItemId);
+        if (!possibleCombinations.length) return { hasCombinations: false };
+
+        const { memberTag, alertData } = await this.buildAdminGiftAlertData(user, possibleCombinations, adminInteraction);
+
+        await alertService.sendCombinationAdminGiftAlert({
+            ...alertData,
+            description: `${memberTag} received an admin gift and now has **${possibleCombinations.length}** combination option(s) available!\n\n💡 **${user.raUsername}**, use \`/collection\` to confirm your combinations!`,
+        });
+
+        return { 
+            hasCombinations: true, 
+            combinationCount: possibleCombinations.length,
+            publicAnnouncementSent: true
+        };
+    }
+
+    // UI Building utilities
+    createEmbed(title, color = COLORS.INFO, description = '') {
+        return new EmbedBuilder().setTitle(title).setColor(color).setDescription(description).setTimestamp();
+    }
+
+    createResultSelectMenu(combination) {
+        const options = combination.possibleResults.map(resultItem => {
+            const option = {
+                label: `${resultItem.resultQuantity}x ${resultItem.itemName}`.slice(0, 100),
+                value: `choice_result_${combination.ruleId}_${resultItem.itemId}`,
+                description: `${this.getRarityDisplayName(resultItem.rarity)} - ${resultItem.description?.slice(0, 50) || 'No description'}...`.slice(0, 100)
+            };
+
+            if (resultItem.emojiId && resultItem.emojiName) {
+                option.emoji = { 
+                    id: resultItem.emojiId, 
+                    name: resultItem.emojiName,
+                    animated: resultItem.isAnimated || false
+                };
+            }
+            
+            return option;
+        }).slice(0, 25);
+
+        return new StringSelectMenuBuilder()
+            .setCustomId(`combo_choice_selection_${combination.ruleId}`)
+            .setPlaceholder('Choose which item you want to create...')
+            .addOptions(options);
+    }
+
+    buildCombinationButtons(combination, maxCombinations) {
+        const { rule, resultType, possibleResults } = combination;
+        const isNonDestructive = rule.isNonDestructive;
+        const isShadowUnlock = resultType === 'single' && this.isShadowUnlockItem(possibleResults[0]);
+        
+        const buttons = [];
+        
+        if (maxCombinations >= 1) {
+            const buttonData = this.getButtonData(resultType, isShadowUnlock, isNonDestructive);
+            buttons.push(
+                new ButtonBuilder()
+                    .setCustomId(`combo_confirm_${combination.ruleId}_1`)
+                    .setLabel(buttonData.label)
+                    .setStyle(buttonData.style)
+                    .setEmoji(buttonData.emoji)
+            );
+        }
+        
+        if (maxCombinations >= 5 && maxCombinations !== 5 && !isShadowUnlock) {
+            const label = this.getMultiButtonLabel(resultType, isNonDestructive, 5);
+            buttons.push(
+                new ButtonBuilder()
+                    .setCustomId(`combo_confirm_${combination.ruleId}_5`)
+                    .setLabel(label)
+                    .setStyle(isNonDestructive ? ButtonStyle.Success : ButtonStyle.Primary)
+            );
+        }
+        
+        if (maxCombinations > 1 && !isShadowUnlock) {
+            const label = this.getMultiButtonLabel(resultType, isNonDestructive, maxCombinations);
+            buttons.push(
+                new ButtonBuilder()
+                    .setCustomId(`combo_confirm_${combination.ruleId}_all`)
+                    .setLabel(label)
+                    .setStyle(ButtonStyle.Success)
+            );
+        }
+
+        buttons.push(
+            new ButtonBuilder().setCustomId('combo_cancel').setLabel('Cancel').setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder().setCustomId('combo_to_collection').setLabel('← View Collection').setStyle(ButtonStyle.Secondary)
+        );
+
+        return new ActionRowBuilder().addComponents(...buttons);
+    }
+
+    createCancelButtons() {
+        return new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId('combo_cancel').setLabel('Cancel').setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder().setCustomId('combo_to_collection').setLabel('← View Collection').setStyle(ButtonStyle.Secondary)
+        );
+    }
+
+    buildSuccessComponents(wasNewDiscovery) {
+        const buttons = [
+            new ButtonBuilder().setCustomId('combo_to_collection').setLabel('← View Collection').setStyle(ButtonStyle.Primary)
+        ];
+
+        if (wasNewDiscovery) {
+            buttons.push(
+                new ButtonBuilder().setCustomId('combo_to_recipes').setLabel('📖 View Recipe Book').setStyle(ButtonStyle.Secondary)
+            );
+        }
+
+        return [new ActionRowBuilder().addComponents(...buttons)];
+    }
+
+    // Helper methods
+    formatIngredients(ingredients) {
+        return ingredients.map(ing => {
+            const emoji = ing.item ? formatGachaEmoji(ing.item.emojiId, ing.item.emojiName, ing.item.isAnimated) : '❓';
+            const name = ing.item ? ing.item.itemName : ing.itemId;
+            return `${emoji} ${ing.quantity}x ${name}`;
+        }).join('\n');
+    }
+
+    getWarningText(isNonDestructive) {
+        return isNonDestructive 
+            ? '🔄 **This will keep your ingredients!**'
+            : '⚠️ **This will consume the ingredients!**';
+    }
+
+    buildCombinationDisplay(rule, possibleResults, ingredientsText, maxCombinations, resultType) {
+        if (resultType === 'random') {
+            const randomResultsText = possibleResults.map(item => {
+                const emoji = formatGachaEmoji(item.emojiId, item.emojiName, item.isAnimated);
+                const rarityEmoji = this.getRarityEmoji(item.rarity);
+                return `${emoji} ${rarityEmoji} ${item.resultQuantity}x ${item.itemName}`;
+            }).join('\n');
+
+            return {
+                title: '🎲 Random Combination Available!',
+                color: COMBINATION_COLORS.random,
+                description: `You will get a random item from ${possibleResults.length} possible results!\n\n` +
+                           `**Recipe:**\n${ingredientsText}\n\n` +
+                           `**Possible Results:**\n${randomResultsText}\n\n` +
+                           `**Available combinations:** ${maxCombinations}\n\n` +
+                           this.getWarningText(rule.isNonDestructive)
+            };
+        } else {
+            const resultItem = possibleResults[0];
+            const isShadowUnlock = this.isShadowUnlockItem(resultItem);
+            const resultEmoji = formatGachaEmoji(resultItem.emojiId, resultItem.emojiName, resultItem.isAnimated);
+            const rarityEmoji = this.getRarityEmoji(resultItem.rarity);
+
+            const displayData = this.getCombinationDisplayData(isShadowUnlock, rule.isNonDestructive);
+
+            return {
+                title: displayData.title,
+                color: displayData.color,
+                description: `You can create ${isShadowUnlock ? '**the Shadow Unlock item**' : (rule.isNonDestructive ? '**a collection bonus**' : 'a new item')} by combining ingredients!\n\n` +
+                           `**Recipe:**\n${ingredientsText}\n\n` +
+                           `**Creates:**\n${resultEmoji} ${rarityEmoji} **${resultItem.resultQuantity}x ${resultItem.itemName}**\n\n` +
+                           `**Available combinations:** ${maxCombinations}\n\n` +
+                           displayData.warningText
+            };
+        }
+    }
+
+    getCombinationDisplayData(isShadowUnlock, isNonDestructive) {
+        if (isShadowUnlock) {
+            return {
+                title: '🌙 SHADOW UNLOCK AVAILABLE!',
+                color: COMBINATION_COLORS.shadow,
+                warningText: isNonDestructive 
+                    ? '🔄 **This will keep your ingredients!**\n🔓 **This will reveal this month\'s shadow challenge!**'
+                    : '⚠️ **This will consume the ingredients!**\n🔓 **This will reveal this month\'s shadow challenge!**'
+            };
+        } else if (isNonDestructive) {
+            return {
+                title: '🔄 Non-Destructive Combination Available!',
+                color: COMBINATION_COLORS.nondestructive,
+                warningText: '🔄 **This will keep your ingredients - perfect for series completion rewards!**'
+            };
+        } else {
+            return {
+                title: '⚗️ Combination Available!',
+                color: COMBINATION_COLORS.standard,
+                warningText: '⚠️ **This will consume the ingredients!**'
+            };
+        }
+    }
+
+    buildSuccessDisplay(result, resultType, wasNewDiscovery, isNonDestructive) {
+        let title = '✨ Combination Successful!';
+        let color = COLORS.SUCCESS;
+        let description = '';
+        
+        if (resultType === 'random' && result.randomResults) {
+            title = '🎲 Random Combination Successful!';
+            color = COMBINATION_COLORS.random;
+            
+            description = `You performed ${result.randomResults.length} random combination(s) and got:\n\n`;
+            result.randomResults.forEach((randomResult, index) => {
+                const emoji = formatGachaEmoji(randomResult.resultItem.emojiId, randomResult.resultItem.emojiName, randomResult.resultItem.isAnimated);
+                const rarityEmoji = this.getRarityEmoji(randomResult.resultItem.rarity);
+                description += `**${index + 1}.** ${emoji} ${rarityEmoji} **${randomResult.resultQuantity}x ${randomResult.resultItem.itemName}**\n`;
+            });
+        } else {
+            const { resultItem, resultQuantity } = result;
+            const resultEmoji = formatGachaEmoji(resultItem.emojiId, resultItem.emojiName, resultItem.isAnimated);
+            const rarityEmoji = this.getRarityEmoji(resultItem.rarity);
+            const isShadowUnlock = this.isShadowUnlockItem(resultItem);
+            
+            if (resultType === 'choice') {
+                title = '🎯 Choice Combination Successful!';
+                color = COMBINATION_COLORS.choice;
+            }
+            
+            if (isShadowUnlock) {
+                title = '🌙 SHADOW UNLOCKED!';
+                color = COMBINATION_COLORS.shadow;
+            } else if (wasNewDiscovery) {
+                title = '🎉 NEW RECIPE DISCOVERED!';
+                color = COMBINATION_COLORS.discovery;
+            }
+            
+            description = `You created ${isShadowUnlock ? '**the Shadow Unlock item**' : (isNonDestructive ? '**a collection bonus**' : 'a new item')}!\n\n` +
+                         `${resultEmoji} ${rarityEmoji} **${resultQuantity}x ${resultItem.itemName}**\n\n` +
+                         `*${resultItem.description}*`;
+            
+            if (isShadowUnlock) {
+                description += '\n\n🔓 **The shadow challenge has been revealed to the server!**';
+            }
+        }
+        
+        if (wasNewDiscovery) {
+            description += '\n\n📖 **This recipe has been added to the community recipe book for everyone to see!**\n💡 Use `/recipes` to view all discovered combinations!';
+        }
+        
+        if (isNonDestructive) {
+            description += '\n\n🔄 **Your ingredients were kept!** Perfect for series completion rewards!';
+        }
+
+        return { title, color, description };
+    }
+
+    analyzeSpecialTypes(combinations) {
+        return {
+            hasShadowUnlock: combinations.some(combo => this.isShadowUnlockItem(combo.possibleResults[0])),
+            hasNonDestructive: combinations.some(combo => combo.rule.isNonDestructive),
+            hasChoice: combinations.some(combo => combo.resultType === 'choice'),
+            hasRandom: combinations.some(combo => combo.resultType === 'random')
+        };
+    }
+
+    getMultiCombinationTitle(hasSpecialTypes) {
+        if (hasSpecialTypes.hasShadowUnlock) return '🌙 SHADOW UNLOCK + MORE AVAILABLE!';
+        if (hasSpecialTypes.hasChoice || hasSpecialTypes.hasRandom) return '🎯 Enhanced Combinations Available!';
+        if (hasSpecialTypes.hasNonDestructive) return '🔄 Multiple Combinations Available!';
+        return '⚗️ Multiple Combinations Available!';
+    }
+
+    getMultiCombinationColor(hasSpecialTypes) {
+        if (hasSpecialTypes.hasShadowUnlock) return COMBINATION_COLORS.shadow;
+        if (hasSpecialTypes.hasChoice || hasSpecialTypes.hasRandom) return COMBINATION_COLORS.choice;
+        if (hasSpecialTypes.hasNonDestructive) return COMBINATION_COLORS.nondestructive;
+        return COLORS.INFO;
+    }
+
+    getMultiCombinationDescription(count, hasSpecialTypes) {
+        let description = `You have ingredients for multiple combinations!\nChoose which one you'd like to make:\n\n`;
+        
+        if (!hasSpecialTypes.hasNonDestructive) {
+            description += `⚠️ **Standard combinations will consume ingredients!**\n`;
+        }
+        if (hasSpecialTypes.hasNonDestructive) {
+            description += `🔄 **Non-destructive combinations will keep ingredients!**\n`;
+        }
+        if (hasSpecialTypes.hasChoice) {
+            description += `🎯 **Choice combinations let you pick the result!**\n`;
+        }
+        if (hasSpecialTypes.hasRandom) {
+            description += `🎲 **Random combinations give surprise results!**\n`;
+        }
+        if (hasSpecialTypes.hasShadowUnlock) {
+            description += `🌙 **One option will unlock the shadow challenge!**`;
+        }
+        
+        return description;
+    }
+
+    buildCombinationSelectOptions(combinations) {
+        return combinations.map((combo) => {
+            const resultItem = combo.possibleResults[0]; // For display purposes
+            const ingredientNames = combo.ingredients.map(ing => ing.item?.itemName || ing.itemId).join(' + ');
+            const typeEmoji = RESULT_TYPE_CONFIG[combo.resultType]?.emoji || '⚗️';
+            const isShadowUnlock = this.isShadowUnlockItem(resultItem);
+            const isNonDestructive = combo.rule.isNonDestructive;
+            
+            let label = `${resultItem.resultQuantity}x ${resultItem.itemName}`;
+            let description = `${ingredientNames} (max: ${combo.maxCombinations})`;
+            
+            if (isShadowUnlock) {
+                label += ' 🌙';
+                description += ' - SHADOW!';
+            } else if (combo.resultType === 'choice') {
+                label += ` ${typeEmoji}`;
+                description += ' - CHOICE!';
+            } else if (combo.resultType === 'random') {
+                label += ` ${typeEmoji}`;
+                description += ' - RANDOM!';
+            } else if (isNonDestructive) {
+                label += ' 🔄';
+                description += ' - KEEPS INGREDIENTS!';
+            }
+            
+            const option = {
+                label: label.slice(0, 100),
+                value: `combo_select_${combo.ruleId}`,
+                description: description.slice(0, 100)
+            };
+
+            if (resultItem.emojiId && resultItem.emojiName) {
+                option.emoji = { 
+                    id: resultItem.emojiId, 
+                    name: resultItem.emojiName,
+                    animated: resultItem.isAnimated || false
+                };
+            }
+            
+            return option;
+        });
+    }
+
+    getButtonData(resultType, isShadowUnlock, isNonDestructive) {
+        if (isShadowUnlock) {
+            return { label: 'Unlock Shadow!', style: ButtonStyle.Danger, emoji: '🌙' };
+        }
+        
+        switch (resultType) {
+            case 'random':
+                return { label: '🎲 Random Result', style: ButtonStyle.Primary, emoji: '🎲' };
+            case 'choice':
+                return { label: '🎯 Make Choice', style: ButtonStyle.Primary, emoji: '🎯' };
+            default:
+                return isNonDestructive 
+                    ? { label: 'Create 1 🔄', style: ButtonStyle.Success, emoji: '🎁' }
+                    : { label: 'Make 1', style: ButtonStyle.Primary, emoji: '⚗️' };
+        }
+    }
+
+    getMultiButtonLabel(resultType, isNonDestructive, count) {
+        const countText = count === 5 ? '5' : `All (${count})`;
+        
+        switch (resultType) {
+            case 'random':
+                return `🎲 Random x${countText}`;
+            default:
+                return isNonDestructive ? `Create ${countText} 🔄` : `Make ${countText}`;
+        }
+    }
+
+    // Utility functions
+    parseInteractionCustomId(customId) {
+        const parts = customId.split('_');
+        return { action: parts[1], actionData: parts.slice(2) };
+    }
+
+    parseConfirmAction(actionData) {
+        const quantityPart = actionData[actionData.length - 1];
+        const ruleId = actionData.slice(0, -1).join('_');
+        return { ruleId, quantity: quantityPart };
+    }
+
+    async getMaxCombinations(user, ruleId) {
+        const rule = await CombinationRule.findOne({ ruleId, isActive: true });
+        if (!rule) return 0;
+        
+        const possibleCombinations = await this.findPossibleCombinationsForRule(user, rule);
+        return possibleCombinations.length > 0 ? possibleCombinations[0].maxCombinations : 0;
+    }
+
     async getUserForInteraction(interaction) {
         const { User } = await import('../models/User.js');
-        
         const user = await User.findOne({ discordId: interaction.user.id });
         
         if (!user) {
@@ -600,660 +1036,113 @@ class CombinationService {
         return user;
     }
 
-    // Utility methods
-    buildUserItemMap(user) {
-        const userItemMap = new Map();
-        user.gachaCollection.forEach(item => {
-            const existing = userItemMap.get(item.itemId) || { quantity: 0, item };
-            existing.quantity += (item.quantity || 1);
-            userItemMap.set(item.itemId, existing);
-        });
-        return userItemMap;
-    }
-
-    getCombinationDisplayData(isShadowUnlock, isNonDestructive) {
-        if (isShadowUnlock) {
-            return {
-                title: '🌙 SHADOW UNLOCK AVAILABLE!',
-                color: '#9932CC',
-                warningText: isNonDestructive 
-                    ? '🔄 **This will keep your ingredients!**\n🔓 **This will reveal this month\'s shadow challenge!**'
-                    : '⚠️ **This will consume the ingredients!**\n🔓 **This will reveal this month\'s shadow challenge!**'
-            };
-        } else if (isNonDestructive) {
-            return {
-                title: '🔄 Non-Destructive Combination Available!',
-                color: COLORS.SUCCESS,
-                warningText: '🔄 **This will keep your ingredients - perfect for series completion rewards!**'
-            };
-        } else {
-            return {
-                title: '⚗️ Combination Available!',
-                color: COLORS.WARNING,
-                warningText: '⚠️ **This will consume the ingredients!**'
-            };
-        }
-    }
-
-    getMultiCombinationDisplayData(hasShadowUnlock, hasNonDestructive) {
-        if (hasShadowUnlock) {
-            return { title: '🌙 SHADOW UNLOCK + MORE AVAILABLE!', color: '#9932CC' };
-        } else if (hasNonDestructive) {
-            return { title: '🔄 Multiple Combinations Available!', color: COLORS.SUCCESS };
-        } else {
-            return { title: '⚗️ Multiple Combinations Available!', color: COLORS.INFO };
-        }
-    }
-
-    buildCombinationButtons(combination, maxCombinations, isShadowUnlock, isNonDestructive) {
-        const actionRow = new ActionRowBuilder();
-        
-        if (maxCombinations >= 1) {
-            const buttonData = this.getButtonData(isShadowUnlock, isNonDestructive);
-            actionRow.addComponents(
-                new ButtonBuilder()
-                    .setCustomId(`combo_confirm_${combination.ruleId}_1`)
-                    .setLabel(buttonData.label)
-                    .setStyle(buttonData.style)
-                    .setEmoji(buttonData.emoji)
-            );
-        }
-        
-        if (maxCombinations >= 5 && maxCombinations !== 5 && !isShadowUnlock) {
-            actionRow.addComponents(
-                new ButtonBuilder()
-                    .setCustomId(`combo_confirm_${combination.ruleId}_5`)
-                    .setLabel(isNonDestructive ? 'Create 5 🔄' : 'Make 5')
-                    .setStyle(isNonDestructive ? ButtonStyle.Success : ButtonStyle.Primary)
-            );
-        }
-        
-        if (maxCombinations > 1 && !isShadowUnlock) {
-            actionRow.addComponents(
-                new ButtonBuilder()
-                    .setCustomId(`combo_confirm_${combination.ruleId}_all`)
-                    .setLabel(isNonDestructive ? `Create All (${maxCombinations}) 🔄` : `Make All (${maxCombinations})`)
-                    .setStyle(ButtonStyle.Success)
-            );
-        }
-
-        actionRow.addComponents(
-            new ButtonBuilder()
-                .setCustomId('combo_cancel')
-                .setLabel('Cancel')
-                .setStyle(ButtonStyle.Secondary),
-            new ButtonBuilder()
-                .setCustomId('combo_to_collection')
-                .setLabel('← View Collection')
-                .setStyle(ButtonStyle.Secondary)
-        );
-
-        return actionRow;
-    }
-
-    buildCombinationSelectOptions(combinations) {
-        return combinations.map((combo) => {
-            const resultEmoji = formatGachaEmoji(combo.resultItem.emojiId, combo.resultItem.emojiName, combo.resultItem.isAnimated);
-            const ingredientNames = combo.ingredients.map(ing => ing.item?.itemName || ing.itemId).join(' + ');
-            const isShadowUnlock = this.isShadowUnlockItem(combo.resultItem);
-            const isNonDestructive = combo.rule.isNonDestructive;
-            
-            let label = `${combo.resultQuantity}x ${combo.resultItem.itemName}`;
-            let description = `${ingredientNames} (max: ${combo.maxCombinations})`;
-            
-            if (isShadowUnlock) {
-                label += ' 🌙';
-                description += ' - SHADOW!';
-            } else if (isNonDestructive) {
-                label += ' 🔄';
-                description += ' - KEEPS INGREDIENTS!';
-            }
-            
-            const option = {
-                label: label.slice(0, 100),
-                value: `combo_select_${combo.ruleId}`,
-                description: description.slice(0, 100)
-            };
-
-            if (combo.resultItem.emojiId && combo.resultItem.emojiName) {
-                option.emoji = { 
-                    id: combo.resultItem.emojiId, 
-                    name: combo.resultItem.emojiName,
-                    animated: combo.resultItem.isAnimated || false
-                };
-            } else if (combo.resultItem.emojiName) {
-                option.emoji = combo.resultItem.emojiName;
-            }
-            
-            return option;
-        });
-    }
-
-    buildMultiCombinationComponents(selectOptions) {
-        const selectMenu = new StringSelectMenuBuilder()
-            .setCustomId('combo_selection')
-            .setPlaceholder('Choose a combination...')
-            .addOptions(selectOptions);
-
-        return [
-            new ActionRowBuilder().addComponents(selectMenu),
-            new ActionRowBuilder().addComponents(
-                new ButtonBuilder()
-                    .setCustomId('combo_cancel')
-                    .setLabel('Cancel')
-                    .setStyle(ButtonStyle.Secondary),
-                new ButtonBuilder()
-                    .setCustomId('combo_to_collection')
-                    .setLabel('← View Collection')
-                    .setStyle(ButtonStyle.Secondary)
-            )
-        ];
-    }
-
-    async processIngredients(user, rule, quantity) {
-        const removedIngredients = [];
-        
-        if (!rule.isNonDestructive) {
-            for (const ingredient of rule.ingredients) {
-                const totalToRemove = ingredient.quantity * quantity;
-                const userItem = user.gachaCollection.find(item => item.itemId === ingredient.itemId);
-                
-                if (!userItem || (userItem.quantity || 1) < totalToRemove) {
-                    throw new Error(`Insufficient quantity of ${ingredient.itemId}`);
-                }
-
-                const removeSuccess = user.removeGachaItem(ingredient.itemId, totalToRemove);
-                if (!removeSuccess) {
-                    throw new Error(`Failed to remove ingredient: ${ingredient.itemId}`);
-                }
-                
-                removedIngredients.push({
-                    itemId: ingredient.itemId,
-                    itemName: userItem.itemName,
-                    quantityRemoved: totalToRemove
-                });
-            }
-        } else {
-            for (const ingredient of rule.ingredients) {
-                const totalRequired = ingredient.quantity * quantity;
-                const userItem = user.gachaCollection.find(item => item.itemId === ingredient.itemId);
-                
-                if (!userItem || (userItem.quantity || 1) < totalRequired) {
-                    throw new Error(`Insufficient quantity of ${ingredient.itemId}`);
-                }
-                
-                removedIngredients.push({
-                    itemId: ingredient.itemId,
-                    itemName: userItem.itemName,
-                    quantityUsed: totalRequired,
-                    kept: true
-                });
-            }
-        }
-        
-        return removedIngredients;
-    }
-
-    async buildTransferAlertData(recipient, possibleCombinations, giverUsername) {
-        let memberTag = `**${recipient.raUsername}**`;
-        try {
-            if (this.client) {
-                const guild = await this.client.guilds.cache.first();
-                const member = await guild.members.fetch(recipient.discordId);
-                memberTag = `<@${recipient.discordId}>`;
-            }
-        } catch (error) {
-            // Use username fallback
-        }
-
-        const { characterNames, resultCharacterName, thumbnail } = this.extractCombinationData(possibleCombinations);
-
-        return {
-            memberTag,
-            alertData: {
-                combinationType: 'Player Transfer',
-                ruleId: possibleCombinations[0]?.ruleId || 'multiple',
-                username: recipient.raUsername,
-                characterNames,
-                resultCharacterName,
-                thumbnail,
-                isSuccess: true,
-                isPlayerConfirmed: false,
-                fields: [{
-                    name: '🎯 Available Combinations',
-                    value: this.formatAvailableCombinations(possibleCombinations),
-                    inline: false
-                }]
-            }
-        };
-    }
-
-    async buildAdminGiftAlertData(user, possibleCombinations, adminInteraction) {
-        let memberTag = `**${user.raUsername}**`;
-        try {
-            if (this.client && adminInteraction.guildId) {
-                const guild = await this.client.guilds.fetch(adminInteraction.guildId);
-                const member = await guild.members.fetch(user.discordId);
-                memberTag = `<@${user.discordId}>`;
-            }
-        } catch (error) {
-            // Use username fallback
-        }
-
-        const { characterNames, resultCharacterName, thumbnail } = this.extractCombinationData(possibleCombinations);
-
-        return {
-            memberTag,
-            alertData: {
-                combinationType: 'Admin Gift',
-                ruleId: possibleCombinations[0]?.ruleId || 'multiple',
-                username: user.raUsername,
-                characterNames,
-                resultCharacterName,
-                thumbnail,
-                isSuccess: true,
-                isPlayerConfirmed: false,
-                fields: [{
-                    name: '🎯 Available Combinations',
-                    value: this.formatAvailableCombinations(possibleCombinations),
-                    inline: false
-                }]
-            }
-        };
-    }
-
-    extractCombinationData(possibleCombinations) {
-        const characterNames = [];
-        let resultCharacterName = 'Multiple Options';
-        let thumbnail = null;
-
-        if (possibleCombinations.length === 1) {
-            const combo = possibleCombinations[0];
-            characterNames.push(...combo.ingredients.map(ing => ing.item?.itemName || ing.itemId));
-            resultCharacterName = combo.resultItem.itemName;
-            thumbnail = combo.resultItem.imageUrl;
-        }
-
-        return { characterNames, resultCharacterName, thumbnail };
-    }
-
-    formatAvailableCombinations(possibleCombinations) {
-        const formatted = possibleCombinations.slice(0, 3).map(combo => {
-            const resultEmoji = formatGachaEmoji(combo.resultItem.emojiId, combo.resultItem.emojiName, combo.resultItem.isAnimated);
-            const isShadowUnlock = this.isShadowUnlockItem(combo.resultItem);
-            const isNonDestructive = combo.rule.isNonDestructive;
-            let suffix = '';
-            if (isShadowUnlock) suffix = ' 🌙';
-            else if (isNonDestructive) suffix = ' 🔄';
-            return `${resultEmoji} ${combo.resultItem.itemName}${suffix}`;
-        }).join('\n');
-        
-        return formatted + (possibleCombinations.length > 3 ? '\n*...and more!*' : '');
-    }
-
-    async getCurrentChallenge() {
-        const now = new Date();
-        const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-        const nextMonthStart = new Date(now.getFullYear(), now.getMonth() + 1, 1);
-        
-        return await Challenge.findOne({
-            date: { $gte: currentMonthStart, $lt: nextMonthStart }
-        });
-    }
-
-    parseInteractionCustomId(customId) {
-        const parts = customId.split('_');
-        const action = parts[1];
-        const actionData = parts.slice(2);
-        return { action, actionData };
-    }
-
-    async handleCancelOrCollection(interaction, action) {
-        if (action === 'to_collection') {
-            const user = await this.getUserForInteraction(interaction);
-            if (user) {
-                const { default: collectionCommand } = await import('../commands/user/collection.js');
-                await collectionCommand.showCollection(interaction, user, 'all', 0);
-            } else {
-                await interaction.editReply({
-                    content: '❌ Could not load your collection.',
-                    embeds: [],
-                    components: []
-                });
-            }
-        } else {
-            await interaction.editReply({
-                content: '❌ Combination cancelled.',
-                embeds: [],
-                components: []
-            });
-        }
+    async handleCancel(interaction) {
+        await interaction.deferUpdate();
+        await interaction.editReply({ content: '❌ Combination cancelled.', embeds: [], components: [] });
         return true;
     }
 
-    async handleConfirmInteraction(interaction, actionData) {
+    async handleToCollection(interaction) {
+        await interaction.deferUpdate();
         const user = await this.getUserForInteraction(interaction);
-        if (!user) return true;
-
-        const { ruleId, quantity } = this.parseConfirmAction(actionData);
-        
-        if (quantity === 'all') {
-            const rule = await CombinationRule.findOne({ ruleId, isActive: true });
-            if (!rule) {
-                await interaction.editReply({
-                    content: `❌ Combination rule not found.`,
-                    embeds: [],
-                    components: []
-                });
-                return true;
-            }
-            
-            const possibleCombinations = await this.findPossibleCombinationsForRule(user, rule);
-            if (!possibleCombinations.length) {
-                await interaction.editReply({
-                    content: '❌ This combination is no longer available.',
-                    embeds: [],
-                    components: []
-                });
-                return true;
-            }
-            
-            const actualQuantity = possibleCombinations[0].maxCombinations;
-            return await this.executeConfirmCombination(interaction, user, ruleId, actualQuantity);
+        if (user) {
+            const { default: collectionCommand } = await import('../commands/user/collection.js');
+            await collectionCommand.showCollection(interaction, user, 'all', 0);
         } else {
-            return await this.executeConfirmCombination(interaction, user, ruleId, parseInt(quantity));
-        }
-    }
-
-    async handleSelectInteraction(interaction, actionData) {
-        const ruleId = actionData.join('_');
-        const user = await this.getUserForInteraction(interaction);
-        if (!user) return true;
-
-        const rule = await CombinationRule.findOne({ ruleId, isActive: true });
-        if (!rule) {
-            await interaction.editReply({
-                content: '❌ Combination rule not found.',
-                embeds: [],
-                components: []
-            });
-            return true;
-        }
-
-        const possibleCombinations = await this.findPossibleCombinationsForRule(user, rule);
-        
-        if (possibleCombinations.length > 0) {
-            await this.showSingleCombinationConfirmation(interaction, user, possibleCombinations[0]);
-        } else {
-            await interaction.editReply({
-                content: '❌ This combination is no longer available.',
-                embeds: [],
-                components: []
-            });
+            await interaction.editReply({ content: '❌ Could not load your collection.', embeds: [], components: [] });
         }
         return true;
     }
 
-    async handleSelectionInteraction(interaction) {
-        if (interaction.isStringSelectMenu()) {
-            const selectedValue = interaction.values[0];
-            const selectedParts = selectedValue.split('_');
-            const selectedRuleId = selectedParts.slice(2).join('_');
-            
-            const user = await this.getUserForInteraction(interaction);
-            if (!user) return true;
-
-            const rule = await CombinationRule.findOne({ ruleId: selectedRuleId, isActive: true });
-            if (!rule) {
-                await interaction.editReply({
-                    content: '❌ Combination rule not found.',
-                    embeds: [],
-                    components: []
-                });
-                return true;
-            }
-
-            const possibleCombinations = await this.findPossibleCombinationsForRule(user, rule);
-            
-            if (possibleCombinations.length > 0) {
-                await this.showSingleCombinationConfirmation(interaction, user, possibleCombinations[0]);
-            } else {
-                await interaction.editReply({
-                    content: '❌ This combination is no longer available.',
-                    embeds: [],
-                    components: []
-                });
-            }
-        }
+    async handleToRecipes(interaction) {
+        await interaction.deferUpdate();
+        await this.showRecipeBook(interaction, 0);
         return true;
     }
 
-    parseConfirmAction(actionData) {
-        const quantityPart = actionData[actionData.length - 1];
-        const ruleId = actionData.slice(0, -1).join('_');
-        return { ruleId, quantity: quantityPart };
+    getCombinationType(resultType, isNonDestructive) {
+        if (isNonDestructive) return 'Non-Destructive';
+        if (resultType === 'choice') return 'Choice';
+        if (resultType === 'random') return 'Random';
+        return 'Standard';
     }
 
-    async executeConfirmCombination(interaction, user, ruleId, quantity) {
-        const result = await this.performCombination(user, ruleId, quantity);
-        
-        if (result.success) {
-            await user.save();
-            await this.showCombinationSuccess(interaction, result, quantity);
-            await this.sendCombinationAlert(user, result);
-        } else {
-            await interaction.editReply({
-                content: `❌ Combination failed: ${result.error}`,
-                embeds: [],
-                components: []
-            });
-        }
-        return true;
-    }
-
-    buildSuccessDisplayData(resultEmoji, rarityEmoji, resultItem, resultQuantity, isShadowUnlock, wasNewDiscovery, isNonDestructive) {
-        let title = '✨ Combination Successful!';
-        let color = COLORS.SUCCESS;
-        
-        if (isShadowUnlock) {
-            title = '🌙 SHADOW UNLOCKED!';
-            color = '#9932CC';
-        } else if (wasNewDiscovery) {
-            title = '🎉 NEW RECIPE DISCOVERED!';
-            color = '#FFD700';
-        } else if (isNonDestructive) {
-            title = '🔄 Non-Destructive Combination Successful!';
-            color = '#00FF00';
-        }
-
-        let description = `You created ${isShadowUnlock ? '**the Shadow Unlock item**' : (isNonDestructive ? '**a collection bonus**' : 'a new item')}!\n\n` +
-                         `${resultEmoji} ${rarityEmoji} **${resultQuantity}x ${resultItem.itemName}**\n\n` +
-                         `*${resultItem.description}*`;
-        
-        if (isShadowUnlock) {
-            description += '\n\n🔓 **The shadow challenge has been revealed to the server!**';
-        } else if (wasNewDiscovery) {
-            description += '\n\n📖 **This recipe has been added to the community recipe book for everyone to see!**\n💡 Use `/recipes` to view all discovered combinations!';
-        }
-        
-        if (isNonDestructive) {
-            description += '\n\n🔄 **Your ingredients were kept!** Perfect for series completion rewards!';
-        }
-
-        return { title, color, description };
+    getAlertDescription(username, isShadowUnlock, isNonDestructive, resultType) {
+        if (isShadowUnlock) return `${username} unlocked the shadow!`;
+        if (resultType === 'choice') return `${username} completed a choice combination!`;
+        if (resultType === 'random') return `${username} completed a random combination!`;
+        if (isNonDestructive) return `${username} completed a non-destructive combination!`;
+        return `${username} created a combination!`;
     }
 
     addSuccessFields(embed, addResult, isNonDestructive) {
         if (addResult?.wasStacked) {
             embed.addFields({ name: '📚 Stacked', value: `Added to existing stack`, inline: true });
         }
-
         if (addResult?.isNew) {
             embed.addFields({ name: '✨ New Item', value: `First time obtaining this item!`, inline: true });
         }
-        
         if (isNonDestructive) {
             embed.addFields({ name: '🔄 Ingredients Status', value: `All ingredients kept in your collection!`, inline: true });
         }
     }
 
-    buildSuccessComponents(wasNewDiscovery) {
-        const components = [
-            new ActionRowBuilder().addComponents(
-                new ButtonBuilder()
-                    .setCustomId('combo_to_collection')
-                    .setLabel('← View Collection')
-                    .setStyle(ButtonStyle.Primary)
-            )
-        ];
-
-        if (wasNewDiscovery) {
-            components[0].addComponents(
-                new ButtonBuilder()
-                    .setCustomId('combo_to_recipes')
-                    .setLabel('📖 View Recipe Book')
-                    .setStyle(ButtonStyle.Secondary)
-            );
-        }
-
-        return components;
+    isShadowUnlockItem(item) {
+        return item.itemId === '999' || 
+               item.itemName?.toLowerCase().includes('shadow unlock') ||
+               item.itemName?.toLowerCase().includes('shadow_unlock');
     }
 
-    async getIngredientNames(ingredients) {
-        const characterNames = [];
-        for (const ingredient of ingredients) {
-            const ingredientItem = await GachaItem.findOne({ itemId: ingredient.itemId });
-            if (ingredientItem) {
-                characterNames.push(ingredientItem.itemName);
-            }
-        }
-        return characterNames;
+    getRarityEmoji(rarity) {
+        const emojis = { common: '⚪', uncommon: '🟢', rare: '🔵', epic: '🟣', legendary: '🟡', mythic: '🌟' };
+        return emojis[rarity] || emojis.common;
     }
 
-    async getIngredientItems(ingredients) {
-        const ingredientItems = [];
-        for (const ingredient of ingredients) {
-            const item = await GachaItem.findOne({ itemId: ingredient.itemId });
-            if (item) {
-                ingredientItems.push({
-                    ...item.toObject(),
-                    quantity: ingredient.quantity
-                });
-            }
-        }
-        return ingredientItems;
+    getRarityDisplayName(rarity) {
+        const names = { common: 'Common', uncommon: 'Uncommon', rare: 'Rare', epic: 'Epic', legendary: 'Legendary', mythic: 'Mythic' };
+        return names[rarity] || 'Unknown';
+    }
+
+    getCombinationStats(user) {
+        if (!user.gachaCollection) return { totalCombined: 0 };
+        const combinedItems = user.gachaCollection.filter(item => item.source === 'combined');
+        return { totalCombined: combinedItems.reduce((total, item) => total + (item.quantity || 1), 0) };
+    }
+
+    // Additional utility methods for recipe book and other features
+    groupRecipesByRarity(recipes) {
+        const groups = {};
+        recipes.forEach(recipe => {
+            const rarity = recipe.resultItems[0]?.rarity || 'common';
+            if (!groups[rarity]) groups[rarity] = [];
+            groups[rarity].push(recipe);
+        });
+        return groups;
     }
 
     sortRecipes(recipes) {
         const rarityOrder = ['mythic', 'legendary', 'epic', 'rare', 'uncommon', 'common'];
         return recipes.sort((a, b) => {
-            const aRarityIndex = rarityOrder.indexOf(a.resultItem.rarity);
-            const bRarityIndex = rarityOrder.indexOf(b.resultItem.rarity);
-            if (aRarityIndex !== bRarityIndex) return aRarityIndex - bRarityIndex;
+            const aRarity = rarityOrder.indexOf(a.resultItems[0]?.rarity);
+            const bRarity = rarityOrder.indexOf(b.resultItems[0]?.rarity);
+            if (aRarity !== bRarity) return aRarity - bRarity;
             
-            const aSeriesId = a.resultItem.seriesId || 'zzz_individual';
-            const bSeriesId = b.resultItem.seriesId || 'zzz_individual';
+            const aSeriesId = a.resultItems[0]?.seriesId || 'zzz_individual';
+            const bSeriesId = b.resultItems[0]?.seriesId || 'zzz_individual';
             const seriesCompare = aSeriesId.localeCompare(bSeriesId);
             if (seriesCompare !== 0) return seriesCompare;
             
-            return a.resultItem.itemName.localeCompare(b.resultItem.itemName);
+            return a.resultItems[0]?.itemName.localeCompare(b.resultItems[0]?.itemName);
         });
     }
 
     buildEmptyRecipeBookEmbed() {
-        return new EmbedBuilder()
-            .setTitle('📖 Community Recipe Book')
-            .setColor(COLORS.INFO)
-            .setDescription(
-                '🔍 **No recipes discovered yet!**\n\n' +
-                'Be the first to discover a combination recipe!\n' +
-                'When you successfully perform a combination, it will be added to this community recipe book for everyone to see.\n\n' +
-                '💡 **Tip:** Experiment with different item combinations in `/collection`!'
-            )
-            .setFooter({ text: 'The recipe book updates automatically when new combinations are discovered!' })
-            .setTimestamp();
-    }
-
-    async buildRecipeBookDisplay(allRecipes, page) {
-        const RECIPES_PER_PAGE = 15;
-        const totalPages = Math.ceil(allRecipes.length / RECIPES_PER_PAGE);
-        const startIndex = page * RECIPES_PER_PAGE;
-        const pageRecipes = allRecipes.slice(startIndex, startIndex + RECIPES_PER_PAGE);
-
-        const embed = new EmbedBuilder()
-            .setTitle('📖 Community Recipe Book')
-            .setColor(COLORS.INFO)
-            .setTimestamp();
-
-        const rarityGroups = this.groupRecipesByRarity(pageRecipes);
-        const description = await this.buildRecipeDescription(rarityGroups, allRecipes.length);
-        
-        embed.setDescription(description);
-
-        const footerText = this.buildRecipeFooter(totalPages, page, startIndex, allRecipes.length, RECIPES_PER_PAGE);
-        embed.setFooter({ text: footerText });
-
-        const components = this.buildRecipeBookComponents(totalPages, page);
-
-        return { embed, components };
-    }
-
-    groupRecipesByRarity(recipes) {
-        const rarityGroups = {};
-        const rarityOrder = ['mythic', 'legendary', 'epic', 'rare', 'uncommon', 'common'];
-        
-        for (const recipe of recipes) {
-            const rarity = recipe.resultItem.rarity;
-            if (!rarityGroups[rarity]) rarityGroups[rarity] = [];
-            rarityGroups[rarity].push(recipe);
-        }
-
-        return { groups: rarityGroups, order: rarityOrder };
-    }
-
-    async buildRecipeDescription(rarityGroups, totalRecipes) {
-        let description = `**Discovered Combinations:** ${totalRecipes}\n\n`;
-        let totalCharacters = description.length;
-
-        for (const rarity of rarityGroups.order) {
-            const recipes = rarityGroups.groups[rarity];
-            if (!recipes?.length) continue;
-
-            const rarityEmoji = this.getRarityEmoji(rarity);
-            const rarityName = this.getRarityDisplayName(rarity);
-            const rarityHeader = `${rarityEmoji} **${rarityName}**\n`;
-            
-            if (totalCharacters + rarityHeader.length > 3800) break;
-
-            description += rarityHeader;
-            totalCharacters += rarityHeader.length;
-
-            for (const recipe of recipes) {
-                const recipeText = await this.formatSingleRecipe(recipe.rule, recipe.resultItem);
-                const recipeLine = `${recipeText}\n`;
-                
-                if (totalCharacters + recipeLine.length > 3800) {
-                    description += '*...more recipes on next page*\n';
-                    break;
-                }
-                
-                description += recipeLine;
-                totalCharacters += recipeLine.length;
-            }
-            
-            description += '\n';
-            totalCharacters += 1;
-        }
-
-        return description.trim();
-    }
-
-    buildRecipeFooter(totalPages, page, startIndex, totalRecipes, recipesPerPage) {
-        let footerText = totalPages > 1 
-            ? `Page ${page + 1}/${totalPages} • ${startIndex + 1}-${Math.min(startIndex + recipesPerPage, totalRecipes)} of ${totalRecipes} recipes`
-            : `${totalRecipes} discovered recipes`;
-        
-        return footerText + ' • 🔄 = Non-Destructive (keeps ingredients) • Recipes update automatically!';
+        return this.createEmbed('📖 Community Recipe Book', COLORS.INFO,
+            '🔍 **No recipes discovered yet!**\n\n' +
+            'Be the first to discover a combination recipe!\n' +
+            'When you successfully perform a combination, it will be added to this community recipe book for everyone to see.\n\n' +
+            '💡 **Tip:** Experiment with different item combinations in `/collection`!'
+        ).setFooter({ text: 'The recipe book updates automatically when new combinations are discovered!' });
     }
 
     buildRecipeBookComponents(totalPages, page) {
@@ -1293,145 +1182,259 @@ class CombinationService {
         return components;
     }
 
-    async handleRecipeToCollection(interaction) {
-        const user = await this.getUserForInteraction(interaction);
-        if (user) {
-            const { default: collectionCommand } = await import('../commands/user/collection.js');
-            await collectionCommand.showCollection(interaction, user, 'all', 0);
-        } else {
-            await interaction.editReply({
-                content: '❌ Could not load your collection.',
-                embeds: [],
-                components: []
-            });
-        }
-        return true;
+    buildRecipeFooter(totalPages, page, totalRecipes, recipesPerPage) {
+        let footerText = totalPages > 1 
+            ? `Page ${page + 1}/${totalPages} • ${page * recipesPerPage + 1}-${Math.min((page + 1) * recipesPerPage, totalRecipes)} of ${totalRecipes} recipes`
+            : `${totalRecipes} discovered recipes`;
+        
+        return footerText + ' • 🔄 = Non-Destructive (keeps ingredients) • Recipes update automatically!';
     }
 
-    async handleRecipePagination(interaction, direction) {
-        const parts = interaction.customId.split('_');
-        const currentPage = parseInt(parts[2]);
-        const newPage = direction === 'prev' ? currentPage - 1 : currentPage + 1;
-        await this.showRecipeBook(interaction, newPage);
-        return true;
-    }
-
-    getButtonData(isShadowUnlock, isNonDestructive) {
-        if (isShadowUnlock) {
-            return { label: 'Unlock Shadow!', style: ButtonStyle.Danger, emoji: '🌙' };
-        } else if (isNonDestructive) {
-            return { label: 'Create 1 🔄', style: ButtonStyle.Success, emoji: '🎁' };
-        } else {
-            return { label: 'Make 1', style: ButtonStyle.Primary, emoji: '⚗️' };
-        }
-    }
-
-    // Legacy and utility methods
-    isShadowUnlockItem(item) {
-        return item.itemId === '999' || 
-               item.itemName?.toLowerCase().includes('shadow unlock') ||
-               item.itemName?.toLowerCase().includes('shadow_unlock');
-    }
-
-    getRarityEmoji(rarity) {
-        const emojis = {
-            common: '⚪',
-            uncommon: '🟢',
-            rare: '🔵',
-            epic: '🟣',
-            legendary: '🟡',
-            mythic: '🌟'
-        };
-        return emojis[rarity] || emojis.common;
-    }
-
-    getRarityDisplayName(rarity) {
-        const names = {
-            common: 'Common',
-            uncommon: 'Uncommon',
-            rare: 'Rare',
-            epic: 'Epic',
-            legendary: 'Legendary',
-            mythic: 'Mythic'
-        };
-        return names[rarity] || 'Unknown';
-    }
-
-    getCombinationStats(user) {
-        if (!user.gachaCollection) {
-            return { totalCombined: 0 };
-        }
-
-        const combinedItems = user.gachaCollection.filter(item => item.source === 'combined');
-        const totalCombined = combinedItems.reduce((total, item) => total + (item.quantity || 1), 0);
-
-        return { totalCombined };
-    }
-
-    async getPossibleCombinations(user) {
-        try {
-            const rules = await CombinationRule.find({ isActive: true });
-            const possibleCombinations = [];
-
-            for (const rule of rules) {
-                if (rule.isNonDestructive) {
-                    const userHasResult = user.gachaCollection?.some(item => item.itemId === rule.result.itemId);
-                    if (userHasResult) continue;
-                }
-
-                const canMake = this.checkIngredients(user, rule.ingredients);
-                const resultItem = await GachaItem.findOne({ itemId: rule.result.itemId });
-                
-                if (resultItem) {
-                    possibleCombinations.push({
-                        ruleId: rule.ruleId,
-                        rule: rule,
-                        resultItem: {
-                            itemId: resultItem.itemId,
-                            itemName: resultItem.itemName,
-                            emojiId: resultItem.emojiId,
-                            emojiName: resultItem.emojiName,
-                            isAnimated: resultItem.isAnimated,
-                            rarity: resultItem.rarity,
-                            description: resultItem.description,
-                            flavorText: resultItem.flavorText
-                        },
-                        ingredients: rule.ingredients,
-                        result: rule.result,
-                        canMake: canMake,
-                        isAutomatic: rule.isAutomatic,
-                        isNonDestructive: rule.isNonDestructive,
-                        priority: rule.priority
-                    });
-                }
-            }
-
-            return possibleCombinations.sort((a, b) => {
-                if (a.canMake !== b.canMake) return b.canMake - a.canMake;
-                if (a.priority !== b.priority) return b.priority - a.priority;
-                return a.ruleId.localeCompare(b.ruleId);
-            });
-        } catch (error) {
-            console.error('Error getting possible combinations:', error);
-            return [];
-        }
-    }
-
-    checkIngredients(user, ingredients) {
+    async getIngredientItems(ingredients) {
+        const items = [];
         for (const ingredient of ingredients) {
-            const userItem = user.gachaCollection.find(item => item.itemId === ingredient.itemId);
-            const userQuantity = userItem ? (userItem.quantity || 1) : 0;
-            
-            if (userQuantity < ingredient.quantity) {
-                return false;
+            const item = await GachaItem.findOne({ itemId: ingredient.itemId });
+            if (item) {
+                items.push({ ...item.toObject(), quantity: ingredient.quantity });
             }
+        }
+        return items;
+    }
+
+    async getIngredientNames(ingredients) {
+        const names = [];
+        for (const ingredient of ingredients) {
+            const item = await GachaItem.findOne({ itemId: ingredient.itemId });
+            if (item) names.push(item.itemName);
+        }
+        return names;
+    }
+
+    async getCurrentChallenge() {
+        const now = new Date();
+        const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+        const nextMonthStart = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+        
+        return Challenge.findOne({
+            date: { $gte: currentMonthStart, $lt: nextMonthStart }
+        });
+    }
+
+    async sendShadowUnlockAlert(user, challenge, month, year) {
+        if (!this.client) return;
+
+        const generalChannelId = config.discord.generalChannelId || '1224834039804334121';
+        const guild = await this.client.guilds.fetch(config.discord.guildId);
+        const channel = await guild.channels.fetch(generalChannelId);
+        
+        if (!channel) return;
+
+        const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+        const monthName = monthNames[month - 1];
+
+        const embed = this.createEmbed('🌙 SHADOW CHALLENGE REVEALED!', COMBINATION_COLORS.shadow,
+            `**${user.raUsername}** has unlocked the secrets!\n\n` +
+            `🔓 The shadow challenge for **${monthName} ${year}** has been revealed!\n\n` +
+            `**Shadow Game:** ${challenge.shadow_game_title || 'Mystery Game'}\n\n` +
+            `*The hidden challenge emerges from the darkness...*`
+        ).addFields({
+            name: '🎯 How to Participate',
+            value: `Use \`/challenge\` to view the newly revealed shadow challenge details!`,
+            inline: false
+        }).setFooter({ text: `Unlocked by ${user.raUsername} through item combination • The shadow awaits...` });
+
+        if (challenge.shadow_game_icon_url) {
+            embed.setThumbnail(`https://retroachievements.org${challenge.shadow_game_icon_url}`);
+        }
+
+        await channel.send({ 
+            content: `🌙 **BREAKING:** The shadow has been unveiled! 🌙`,
+            embeds: [embed] 
+        });
+    }
+
+    async buildTransferAlertData(recipient, possibleCombinations, giverUsername) {
+        let memberTag = `**${recipient.raUsername}**`;
+        try {
+            if (this.client) {
+                const guild = await this.client.guilds.cache.first();
+                await guild.members.fetch(recipient.discordId);
+                memberTag = `<@${recipient.discordId}>`;
+            }
+        } catch (error) {
+            // Use username fallback
+        }
+
+        const { characterNames, resultCharacterName, thumbnail } = this.extractCombinationData(possibleCombinations);
+
+        return {
+            memberTag,
+            alertData: {
+                combinationType: 'Player Transfer',
+                ruleId: possibleCombinations[0]?.ruleId || 'multiple',
+                username: recipient.raUsername,
+                characterNames,
+                resultCharacterName,
+                thumbnail,
+                isSuccess: true,
+                isPlayerConfirmed: false,
+                fields: [{
+                    name: '🎯 Available Combinations',
+                    value: this.formatAvailableCombinations(possibleCombinations),
+                    inline: false
+                }]
+            }
+        };
+    }
+
+    async buildAdminGiftAlertData(user, possibleCombinations, adminInteraction) {
+        let memberTag = `**${user.raUsername}**`;
+        try {
+            if (this.client && adminInteraction.guildId) {
+                const guild = await this.client.guilds.fetch(adminInteraction.guildId);
+                await guild.members.fetch(user.discordId);
+                memberTag = `<@${user.discordId}>`;
+            }
+        } catch (error) {
+            // Use username fallback
+        }
+
+        const { characterNames, resultCharacterName, thumbnail } = this.extractCombinationData(possibleCombinations);
+
+        return {
+            memberTag,
+            alertData: {
+                combinationType: 'Admin Gift',
+                ruleId: possibleCombinations[0]?.ruleId || 'multiple',
+                username: user.raUsername,
+                characterNames,
+                resultCharacterName,
+                thumbnail,
+                isSuccess: true,
+                isPlayerConfirmed: false,
+                fields: [{
+                    name: '🎯 Available Combinations',
+                    value: this.formatAvailableCombinations(possibleCombinations),
+                    inline: false
+                }]
+            }
+        };
+    }
+
+    extractCombinationData(possibleCombinations) {
+        const characterNames = [];
+        let resultCharacterName = 'Multiple Options';
+        let thumbnail = null;
+
+        if (possibleCombinations.length === 1) {
+            const combo = possibleCombinations[0];
+            characterNames.push(...combo.ingredients.map(ing => ing.item?.itemName || ing.itemId));
+            resultCharacterName = combo.possibleResults[0]?.itemName || 'Unknown';
+            thumbnail = combo.possibleResults[0]?.imageUrl;
+        }
+
+        return { characterNames, resultCharacterName, thumbnail };
+    }
+
+    formatAvailableCombinations(possibleCombinations) {
+        const formatted = possibleCombinations.slice(0, 3).map(combo => {
+            const resultItem = combo.possibleResults[0];
+            const resultEmoji = formatGachaEmoji(resultItem.emojiId, resultItem.emojiName, resultItem.isAnimated);
+            const typeEmoji = RESULT_TYPE_CONFIG[combo.resultType]?.emoji || '';
+            const isShadowUnlock = this.isShadowUnlockItem(resultItem);
+            const isNonDestructive = combo.rule.isNonDestructive;
+            
+            let suffix = '';
+            if (isShadowUnlock) suffix = ' 🌙';
+            else if (combo.resultType === 'choice') suffix = ' 🎯';
+            else if (combo.resultType === 'random') suffix = ' 🎲';
+            else if (isNonDestructive) suffix = ' 🔄';
+            
+            return `${resultEmoji} ${resultItem.itemName}${suffix}`;
+        }).join('\n');
+        
+        return formatted + (possibleCombinations.length > 3 ? '\n*...and more!*' : '');
+    }
+
+    // Recipe book interaction handlers  
+    async handleRecipeBookInteraction(interaction) {
+        if (!interaction.customId.startsWith('recipes_')) return false;
+
+        await interaction.deferUpdate();
+        const action = interaction.customId.split('_')[1];
+
+        switch (action) {
+            case 'refresh':
+                await this.showRecipeBook(interaction, 0);
+                return true;
+            case 'to':
+                if (interaction.customId === 'recipes_to_collection') {
+                    const user = await this.getUserForInteraction(interaction);
+                    if (user) {
+                        const { default: collectionCommand } = await import('../commands/user/collection.js');
+                        await collectionCommand.showCollection(interaction, user, 'all', 0);
+                    }
+                }
+                return true;
+            case 'prev':
+            case 'next':
+                const currentPageMatch = interaction.customId.match(/recipes_(prev|next)_(\d+)/);
+                if (currentPageMatch) {
+                    const currentPage = parseInt(currentPageMatch[2]);
+                    const newPage = action === 'prev' ? currentPage - 1 : currentPage + 1;
+                    await this.showRecipeBook(interaction, newPage);
+                }
+                return true;
+        }
+        return false;
+    }
+
+    // Legacy methods for backward compatibility
+    async handleSelect(interaction, actionData) {
+        const ruleId = actionData.join('_');
+        const user = await this.getUserForInteraction(interaction);
+        if (!user) return true;
+
+        const rule = await CombinationRule.findOne({ ruleId, isActive: true });
+        if (!rule) {
+            await interaction.editReply({ content: '❌ Combination rule not found.', embeds: [], components: [] });
+            return true;
+        }
+
+        const possibleCombinations = await this.findPossibleCombinationsForRule(user, rule);
+        
+        if (possibleCombinations.length > 0) {
+            await this.showSingleCombinationConfirmation(interaction, user, possibleCombinations[0]);
+        } else {
+            await interaction.editReply({ content: '❌ This combination is no longer available.', embeds: [], components: [] });
         }
         return true;
     }
 
-    // Legacy methods for backwards compatibility
-    async checkAutoCombinations(user) {
-        return [];
+    async handleSelection(interaction) {
+        if (!interaction.isStringSelectMenu()) return true;
+        
+        const selectedValue = interaction.values[0];
+        const selectedParts = selectedValue.split('_');
+        const selectedRuleId = selectedParts.slice(2).join('_');
+        
+        const user = await this.getUserForInteraction(interaction);
+        if (!user) return true;
+
+        const rule = await CombinationRule.findOne({ ruleId: selectedRuleId, isActive: true });
+        if (!rule) {
+            await interaction.editReply({ content: '❌ Combination rule not found.', embeds: [], components: [] });
+            return true;
+        }
+
+        const possibleCombinations = await this.findPossibleCombinationsForRule(user, rule);
+        
+        if (possibleCombinations.length > 0) {
+            await this.showSingleCombinationConfirmation(interaction, user, possibleCombinations[0]);
+        } else {
+            await interaction.editReply({ content: '❌ This combination is no longer available.', embeds: [], components: [] });
+        }
+        return true;
     }
 }
 
