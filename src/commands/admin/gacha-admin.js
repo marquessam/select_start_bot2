@@ -1,4 +1,4 @@
-// src/commands/admin/gacha-admin.js - Streamlined & DRY optimized
+// src/commands/admin/gacha-admin.js - Complete fixed version with proper embed validation
 import { 
     SlashCommandBuilder, 
     EmbedBuilder, 
@@ -30,8 +30,12 @@ const RESULT_TYPE_EMOJIS = {
 };
 
 const RARITY_COLORS = {
-    common: '#95a5a6', uncommon: '#2ecc71', rare: '#3498db',
-    epic: '#9b59b6', legendary: '#f39c12', mythic: '#e74c3c'
+    common: '#95a5a6', 
+    uncommon: '#2ecc71', 
+    rare: '#3498db',
+    epic: '#9b59b6', 
+    legendary: '#f39c12', 
+    mythic: '#e74c3c'
 };
 
 export default {
@@ -160,6 +164,7 @@ export default {
 
             await (handlers[subcommand] || (() => { throw new Error('Unknown subcommand'); }))();
         } catch (error) {
+            console.error('Error in gacha-admin command:', error);
             await interaction.editReply(`❌ Error: ${error.message}`);
         }
     },
@@ -218,19 +223,104 @@ export default {
         return new StringSelectMenuBuilder().setCustomId(customId).setPlaceholder(placeholder).addOptions(options);
     },
 
-    formatItemEmoji(item) {
-        if (item.emojiId && item.emojiName) {
-            const prefix = item.isAnimated ? 'a' : '';
-            return `<${prefix}:${item.emojiName}:${item.emojiId}>`;
+    // FIXED: Enhanced emoji parsing with comprehensive validation
+    parseEmojiInput(emojiInput) {
+        if (!emojiInput || typeof emojiInput !== 'string') {
+            throw new Error('Emoji input is required');
         }
-        return item.emojiName || '❓';
+        
+        const match = emojiInput.trim().match(/<(a?):([^:]+):(\d+)>/);
+        if (!match) {
+            throw new Error('Invalid emoji format. Use Discord emoji format: <:name:id> or <a:name:id>');
+        }
+        
+        const [, animatedFlag, emojiName, emojiId] = match;
+        
+        // Validate emoji name (Discord requirements)
+        if (emojiName.length < 2 || emojiName.length > 32) {
+            throw new Error('Emoji name must be between 2 and 32 characters');
+        }
+        
+        // Validate emoji ID (should be Discord snowflake)
+        if (!/^\d{17,19}$/.test(emojiId)) {
+            throw new Error('Invalid emoji ID format');
+        }
+        
+        return { 
+            emojiName: emojiName.trim(), 
+            emojiId: emojiId.trim(), 
+            isAnimated: animatedFlag === 'a' 
+        };
     },
 
-    parseEmojiInput(emojiInput) {
-        const match = emojiInput.match(/<(a?):([^:]+):(\d+)>/);
-        if (!match) throw new Error('Invalid emoji format');
-        const [, animatedFlag, emojiName, emojiId] = match;
-        return { emojiName, emojiId, isAnimated: animatedFlag === 'a' };
+    // FIXED: Safe emoji formatting with proper validation and fallbacks
+    formatItemEmoji(item) {
+        try {
+            if (!item) {
+                return '❓';
+            }
+            
+            if (item.emojiId && item.emojiName) {
+                // Validate emoji ID format (Discord snowflake: 17-19 digits)
+                if (!/^\d{17,19}$/.test(item.emojiId)) {
+                    console.warn(`Invalid emoji ID for item ${item.itemId}: ${item.emojiId}`);
+                    return item.emojiName || '❓';
+                }
+                
+                // Validate emoji name length
+                if (item.emojiName.length < 2 || item.emojiName.length > 32) {
+                    console.warn(`Invalid emoji name length for item ${item.itemId}: ${item.emojiName}`);
+                    return '❓';
+                }
+                
+                const prefix = item.isAnimated ? 'a' : '';
+                return `<${prefix}:${item.emojiName}:${item.emojiId}>`;
+            }
+            
+            return item.emojiName || '❓';
+        } catch (error) {
+            console.error('Error formatting emoji for item:', item?.itemId, error);
+            return '❓';
+        }
+    },
+
+    // ENHANCED: Embed validation helper
+    validateEmbedFields(embed) {
+        try {
+            const embedData = embed.toJSON();
+            
+            // Check overall embed size (Discord limit: ~6000 characters)
+            const embedSize = JSON.stringify(embedData).length;
+            if (embedSize > 6000) {
+                console.warn('Embed exceeds Discord size limit:', embedSize);
+                return false;
+            }
+            
+            // Check description length
+            if (embedData.description && embedData.description.length > 4096) {
+                console.warn('Embed description too long:', embedData.description.length);
+                return false;
+            }
+            
+            // Check field limits
+            if (embedData.fields) {
+                for (const field of embedData.fields) {
+                    if (field.name && field.name.length > 256) {
+                        console.warn('Field name too long:', field.name.length);
+                        return false;
+                    }
+                    if (field.value && field.value.length > 1024) {
+                        console.warn('Field value too long:', field.value.length);
+                        return false;
+                    }
+                }
+            }
+            
+            return true;
+        } catch (error) {
+            console.error('Embed validation failed:', error);
+            return false;
+        }
     },
 
     async findItem(itemId) {
@@ -546,33 +636,128 @@ export default {
         return components;
     },
 
-    // Item management
+    // COMPLETELY FIXED: handleAddItem method with comprehensive validation and safe embed building
     async handleAddItem(interaction) {
-        const itemData = this.extractItemOptions(interaction);
-        
-        if (await GachaItem.findOne({ itemId: itemData.itemId })) {
-            throw new Error(`Item "${itemData.itemId}" already exists.`);
-        }
+        try {
+            const itemData = this.extractItemOptions(interaction);
+            
+            // STEP 1: Validate input lengths BEFORE processing (Discord-safe limits)
+            if (itemData.itemName && itemData.itemName.length > 100) {
+                throw new Error('Item name must be 100 characters or less');
+            }
+            
+            if (itemData.description && itemData.description.length > 500) {
+                throw new Error('Description must be 500 characters or less');
+            }
+            
+            if (itemData.flavorText && itemData.flavorText.length > 500) {
+                throw new Error('Flavor text must be 500 characters or less');
+            }
 
-        const emojiData = this.parseEmojiInput(itemData.emojiInput);
-        const newItem = new GachaItem({
-            ...itemData,
-            ...emojiData,
-            maxStack: itemData.maxStack || 99,
-            createdBy: interaction.user.username
-        });
+            // STEP 2: Check for existing item
+            if (await GachaItem.findOne({ itemId: itemData.itemId })) {
+                throw new Error(`Item "${itemData.itemId}" already exists.`);
+            }
 
-        await newItem.save();
+            // STEP 3: Parse and validate emoji data
+            const emojiData = this.parseEmojiInput(itemData.emojiInput);
 
-        const embed = this.createEmbed('✅ Item Created', RARITY_COLORS[itemData.rarity])
-            .addFields(
-                { name: 'Preview', value: `${this.formatItemEmoji(newItem)} **${itemData.itemName}**` },
-                { name: 'Details', value: `**ID:** ${itemData.itemId}\n**Type:** ${itemData.itemType}\n**Rarity:** ${itemData.rarity}\n**Source:** ${itemData.dropRate > 0 ? `Gacha (${itemData.dropRate}%)` : 'Combination only'}` }
+            // STEP 4: Create and save the item
+            const newItem = new GachaItem({
+                ...itemData,
+                ...emojiData,
+                maxStack: itemData.maxStack || 99,
+                createdBy: interaction.user.username
+            });
+
+            await newItem.save();
+            console.log(`✅ Item saved successfully: ${itemData.itemId}`);
+
+            // STEP 5: Build safe embed with validation
+            const embed = this.createEmbed(
+                '✅ Item Created', 
+                RARITY_COLORS[itemData.rarity] || COLORS.SUCCESS
+            );
+            
+            // Safe emoji preview with comprehensive fallbacks
+            let previewText;
+            try {
+                const emojiDisplay = this.formatItemEmoji(newItem);
+                previewText = `${emojiDisplay} **${itemData.itemName}**`;
+            } catch (emojiError) {
+                console.warn('Emoji formatting error:', emojiError);
+                previewText = `❓ **${itemData.itemName}**`;
+            }
+            
+            // Build details text with safe truncation
+            const sourceText = itemData.dropRate > 0 ? `Gacha (${itemData.dropRate}%)` : 'Combination only';
+            const detailsText = `**ID:** ${itemData.itemId}\n**Type:** ${itemData.itemType}\n**Rarity:** ${itemData.rarity}\n**Source:** ${sourceText}`;
+            
+            // Add fields with Discord length limits enforced
+            embed.addFields(
+                { 
+                    name: 'Preview', 
+                    value: previewText.slice(0, 1024), // Discord field value limit
+                    inline: false 
+                },
+                { 
+                    name: 'Details', 
+                    value: detailsText.slice(0, 1024), // Discord field value limit
+                    inline: false 
+                }
             );
 
-        if (itemData.flavorText) embed.addFields({ name: 'Flavor Text', value: `*${itemData.flavorText}*` });
+            // Add flavor text field if present and within limits
+            if (itemData.flavorText && itemData.flavorText.trim()) {
+                const flavorValue = `*${itemData.flavorText.trim()}*`;
+                if (flavorValue.length <= 1024) {
+                    embed.addFields({ 
+                        name: 'Flavor Text', 
+                        value: flavorValue,
+                        inline: false 
+                    });
+                }
+            }
 
-        await interaction.editReply({ embeds: [embed] });
+            // STEP 6: Validate embed before sending
+            if (!this.validateEmbedFields(embed)) {
+                // Fallback to minimal embed if validation fails
+                const fallbackEmbed = this.createEmbed(
+                    '✅ Item Created Successfully', 
+                    COLORS.SUCCESS,
+                    `**${itemData.itemName}** (ID: ${itemData.itemId}) has been created and saved to the database.`
+                );
+                
+                await interaction.editReply({ embeds: [fallbackEmbed] });
+                console.log('Used fallback embed due to validation failure');
+                return;
+            }
+
+            // STEP 7: Send the embed
+            await interaction.editReply({ embeds: [embed] });
+            console.log('✅ Successfully sent item creation embed');
+            
+        } catch (error) {
+            console.error('Error in handleAddItem:', error);
+            
+            // Differentiate between validation errors and Discord API errors
+            if (error.message.includes('already exists') || 
+                error.message.includes('must be') || 
+                error.message.includes('Invalid emoji') ||
+                error.message.includes('characters or less')) {
+                // These are validation errors before saving
+                throw error;
+            }
+            
+            // If it's a Discord API error after successful save, provide helpful message
+            const errorMessage = error.message.includes('Invalid Form Body') || 
+                                error.message.includes('received one or more errors') ||
+                                error.code === 50035
+                ? `Item created successfully! However, there was an issue displaying the result. Check your collection to confirm the item "${interaction.options.getString('item-id')}" was added.`
+                : error.message;
+                
+            throw new Error(errorMessage);
+        }
     },
 
     extractItemOptions(interaction) {
