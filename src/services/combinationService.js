@@ -1,4 +1,4 @@
-// src/services/combinationService.js - Streamlined & DRY optimized
+// src/services/combinationService.js - Complete fixed version with all UI and error fixes
 import { GachaItem, CombinationRule } from '../models/GachaItem.js';
 import { Challenge } from '../models/Challenge.js';
 import { config } from '../config/config.js';
@@ -385,17 +385,39 @@ class CombinationService {
         return this.executeConfirmCombination(interaction, user, ruleId, actualQuantity);
     }
 
+    // FIXED: Handle random results safely for alerts
     async executeConfirmCombination(interaction, user, ruleId, quantity) {
-        const result = await this.performCombination(user, ruleId, quantity);
-        
-        if (result.success) {
-            await user.save();
-            await this.showCombinationSuccess(interaction, result, quantity);
-            await this.sendCombinationAlert(user, result);
-        } else {
-            await interaction.editReply({ content: `❌ Combination failed: ${result.error}`, embeds: [], components: [] });
+        try {
+            const result = await this.performCombination(user, ruleId, quantity);
+            
+            if (result.success) {
+                await user.save();
+                await this.showCombinationSuccess(interaction, result, quantity);
+                
+                // FIXED: Handle random results safely for alerts
+                if (result.resultType === 'random' && result.randomResults) {
+                    // For random results, send alert for first result or summary
+                    const firstResult = result.randomResults[0];
+                    if (firstResult && firstResult.resultItem) {
+                        await this.sendCombinationAlert(user, {
+                            ...result,
+                            resultItem: firstResult.resultItem,
+                            resultQuantity: firstResult.resultQuantity
+                        });
+                    }
+                } else if (result.resultItem) {
+                    // For single/choice results
+                    await this.sendCombinationAlert(user, result);
+                }
+            } else {
+                await interaction.editReply({ content: `❌ Combination failed: ${result.error}`, embeds: [], components: [] });
+            }
+            return true;
+        } catch (error) {
+            console.error('Error in executeConfirmCombination:', error);
+            await interaction.editReply({ content: `❌ Combination failed: ${error.message}`, embeds: [], components: [] });
+            return true;
         }
-        return true;
     }
 
     async executeChoiceCombination(interaction, user, ruleId, selectedItemId, quantity) {
@@ -770,22 +792,19 @@ class CombinationService {
             : '⚠️ **This will consume the ingredients!**';
     }
 
+    // FIXED: Don't show all random outcomes, show summary instead
     buildCombinationDisplay(rule, possibleResults, ingredientsText, maxCombinations, resultType) {
         if (resultType === 'random') {
-            const randomResultsText = possibleResults.map(item => {
-                const emoji = formatGachaEmoji(item.emojiId, item.emojiName, item.isAnimated);
-                const rarityEmoji = this.getRarityEmoji(item.rarity);
-                return `${emoji} ${rarityEmoji} ${item.resultQuantity}x ${item.itemName}`;
-            }).join('\n');
-
+            // FIXED: Don't show all outcomes, show summary instead
             return {
                 title: '🎲 Random Combination Available!',
                 color: COMBINATION_COLORS.random,
-                description: `You will get a random item from ${possibleResults.length} possible results!\n\n` +
+                description: `You will get a random item from **${possibleResults.length} possible results**!\n\n` +
                            `**Recipe:**\n${ingredientsText}\n\n` +
-                           `**Possible Results:**\n${randomResultsText}\n\n` +
+                           `**Possible Outcomes:** ${possibleResults.length} different items\n` +
                            `**Available combinations:** ${maxCombinations}\n\n` +
-                           this.getWarningText(rule.isNonDestructive)
+                           this.getWarningText(rule.isNonDestructive) + '\n\n' +
+                           `🎯 *Exact results will be revealed when you combine!*`
             };
         } else {
             const resultItem = possibleResults[0];
@@ -831,6 +850,7 @@ class CombinationService {
         }
     }
 
+    // FIXED: Handle random results better
     buildSuccessDisplay(result, resultType, wasNewDiscovery, isNonDestructive) {
         let title = '✨ Combination Successful!';
         let color = COLORS.SUCCESS;
@@ -846,7 +866,7 @@ class CombinationService {
                 const rarityEmoji = this.getRarityEmoji(randomResult.resultItem.rarity);
                 description += `**${index + 1}.** ${emoji} ${rarityEmoji} **${randomResult.resultQuantity}x ${randomResult.resultItem.itemName}**\n`;
             });
-        } else {
+        } else if (result.resultItem) {
             const { resultItem, resultQuantity } = result;
             const resultEmoji = formatGachaEmoji(resultItem.emojiId, resultItem.emojiName, resultItem.isAnimated);
             const rarityEmoji = this.getRarityEmoji(resultItem.rarity);
@@ -1087,7 +1107,13 @@ class CombinationService {
         }
     }
 
+    // FIXED: Check if item exists before accessing properties
     isShadowUnlockItem(item) {
+        // FIXED: Check if item exists before accessing properties
+        if (!item) {
+            return false;
+        }
+        
         return item.itemId === '999' || 
                item.itemName?.toLowerCase().includes('shadow unlock') ||
                item.itemName?.toLowerCase().includes('shadow_unlock');
