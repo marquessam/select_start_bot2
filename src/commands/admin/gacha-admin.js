@@ -1165,7 +1165,7 @@ export default {
             );
     },
 
-    async handleModalSubmit(interaction, type) {
+    async processModalSubmit(interaction, type) {
         await interaction.deferReply({ ephemeral: true });
 
         try {
@@ -1308,8 +1308,8 @@ export default {
                 'gacha-admin_back_to_users': () => this.showUsersMenu(interaction),
                 'gacha-admin_add_combination_modal': () => this.showModal(interaction, 'combination'),
                 'gacha-admin_give_item_modal': () => this.showModal(interaction, 'giveItem'),
-                'gacha-admin_add_combo_submit': () => this.handleModalSubmit(interaction, 'combination'),
-                'gacha-admin_give_item_submit': () => this.handleModalSubmit(interaction, 'giveItem')
+                'gacha-admin_add_combo_submit': () => this.processModalSubmit(interaction, 'combination'),
+                'gacha-admin_give_item_submit': () => this.processModalSubmit(interaction, 'giveItem')
             };
 
             // Handle paginated routes
