@@ -1259,7 +1259,7 @@ class CombinationService {
         const monthName = monthNames[month - 1];
 
         const embed = this.createEmbed('🌙 SHADOW CHALLENGE REVEALED!', COMBINATION_COLORS.shadow);
-        embed.setDescription(
+        this.setEmbedDescription(embed,
             `**${user.raUsername}** has unlocked the secrets!\n\n` +
             `🔓 The shadow challenge for **${monthName} ${year}** has been revealed!\n\n` +
             `**Shadow Game:** ${challenge.shadow_game_title || 'Mystery Game'}\n\n` +
