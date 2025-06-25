@@ -1,7 +1,7 @@
-// src/models/GachaItem.js - UPDATED with non-destructive combination support
+// src/models/GachaItem.js - UPDATED with random/choice combination support
 import mongoose from 'mongoose';
 
-// UPDATED: Enhanced combination rule schema with non-destructive support
+// UPDATED: Enhanced combination rule schema with random/choice result support
 const combinationRuleSchema = new mongoose.Schema({
     ruleId: {
         type: String,
@@ -15,22 +15,35 @@ const combinationRuleSchema = new mongoose.Schema({
         quantity: { type: Number, default: 1 }
     }],
     
-    // What you get
+    // UPDATED: Single result (for backward compatibility)
     result: {
         itemId: String,
         quantity: { type: Number, default: 1 }
     },
     
+    // NEW: Multiple results for choice/random combinations
+    results: [{
+        itemId: String,
+        quantity: { type: Number, default: 1 }
+    }],
+    
+    // NEW: Result type determines behavior
+    resultType: {
+        type: String,
+        enum: ['single', 'choice', 'random'],
+        default: 'single'
+    },
+    
     // Auto-combine or manual only
     isAutomatic: {
         type: Boolean,
-        default: false // true = combines automatically when you have ingredients
+        default: false
     },
     
-    // NEW: Non-destructive combination flag
+    // Non-destructive combination flag
     isNonDestructive: {
         type: Boolean,
-        default: false // true = keeps ingredients after combination
+        default: false
     },
     
     // Priority for auto-combines (higher = combines first)
@@ -47,17 +60,17 @@ const combinationRuleSchema = new mongoose.Schema({
     // Discovery tracking fields
     discovered: {
         type: Boolean,
-        default: false // Whether this combination has been discovered by the community
+        default: false
     },
     
     discoveredAt: {
         type: Date,
-        default: null // When this combination was first discovered
+        default: null
     },
     
     discoveredBy: {
         type: String,
-        default: null // Username of the first person to discover this combination
+        default: null
     },
     
     createdBy: String,
@@ -67,11 +80,78 @@ const combinationRuleSchema = new mongoose.Schema({
     }
 });
 
-// Add index for efficient discovery queries
+// Add indexes
 combinationRuleSchema.index({ discovered: 1, discoveredAt: 1 });
-// Add index for non-destructive combinations
 combinationRuleSchema.index({ isNonDestructive: 1 });
+combinationRuleSchema.index({ resultType: 1 }); // NEW: Index for result type queries
 
+// NEW: Virtual to get all possible result items (single or multiple)
+combinationRuleSchema.virtual('allPossibleResults').get(function() {
+    switch (this.resultType) {
+        case 'single':
+            return this.result ? [this.result] : [];
+        case 'choice':
+        case 'random':
+            return this.results || [];
+        default:
+            return this.result ? [this.result] : [];
+    }
+});
+
+// NEW: Method to get a random result (for random type)
+combinationRuleSchema.methods.getRandomResult = function() {
+    if (this.resultType !== 'random' || !this.results?.length) {
+        return this.result;
+    }
+    
+    const randomIndex = Math.floor(Math.random() * this.results.length);
+    return this.results[randomIndex];
+};
+
+// NEW: Method to validate result configuration
+combinationRuleSchema.methods.validateResults = function() {
+    switch (this.resultType) {
+        case 'single':
+            return !!this.result?.itemId;
+        case 'choice':
+        case 'random':
+            return this.results?.length > 0 && this.results.every(r => r.itemId);
+        default:
+            return false;
+    }
+};
+
+// NEW: Static method to get discovery statistics with new result types
+combinationRuleSchema.statics.getDiscoveryStats = function() {
+    return this.aggregate([
+        {
+            $group: {
+                _id: null,
+                totalRules: { $sum: 1 },
+                discoveredRules: {
+                    $sum: { $cond: [{ $eq: ['$discovered', true] }, 1, 0] }
+                },
+                undiscoveredRules: {
+                    $sum: { $cond: [{ $eq: ['$discovered', false] }, 1, 0] }
+                },
+                nonDestructiveRules: {
+                    $sum: { $cond: [{ $eq: ['$isNonDestructive', true] }, 1, 0] }
+                },
+                singleResultRules: {
+                    $sum: { $cond: [{ $eq: ['$resultType', 'single'] }, 1, 0] }
+                },
+                choiceResultRules: {
+                    $sum: { $cond: [{ $eq: ['$resultType', 'choice'] }, 1, 0] }
+                },
+                randomResultRules: {
+                    $sum: { $cond: [{ $eq: ['$resultType', 'random'] }, 1, 0] }
+                }
+            }
+        }
+    ]);
+};
+
+// Existing gacha item schema (unchanged)
 const gachaItemSchema = new mongoose.Schema({
     itemId: {
         type: String,
@@ -134,7 +214,7 @@ const gachaItemSchema = new mongoose.Schema({
     // Display settings
     sortPriority: {
         type: Number,
-        default: 0 // Higher numbers appear first in collections
+        default: 0
     },
     
     // Availability
@@ -195,27 +275,6 @@ gachaItemSchema.statics.getGachaPool = function() {
 // Static method to get all combination items (dropRate: 0)
 gachaItemSchema.statics.getCombinationItems = function() {
     return this.find({ isActive: true, dropRate: 0 });
-};
-
-// Static method to get discovery statistics
-combinationRuleSchema.statics.getDiscoveryStats = function() {
-    return this.aggregate([
-        {
-            $group: {
-                _id: null,
-                totalRules: { $sum: 1 },
-                discoveredRules: {
-                    $sum: { $cond: [{ $eq: ['$discovered', true] }, 1, 0] }
-                },
-                undiscoveredRules: {
-                    $sum: { $cond: [{ $eq: ['$discovered', false] }, 1, 0] }
-                },
-                nonDestructiveRules: {
-                    $sum: { $cond: [{ $eq: ['$isNonDestructive', true] }, 1, 0] }
-                }
-            }
-        }
-    ]);
 };
 
 export const GachaItem = mongoose.model('GachaItem', gachaItemSchema);
