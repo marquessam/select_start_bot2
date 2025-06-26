@@ -1,4 +1,4 @@
-// src/services/gachaMachine.js - UPDATED with proper system integration
+// src/services/gachaMachine.js - UPDATED with improved store design
 import { 
     EmbedBuilder, 
     ActionRowBuilder, 
@@ -12,7 +12,7 @@ import { User } from '../models/User.js';
 import { GachaItem } from '../models/GachaItem.js';
 import gachaService from './gachaService.js';
 import combinationService from './combinationService.js';
-import gpUtils from '../utils/gpUtils.js'; // UPDATED: Use system GP utils
+import gpUtils from '../utils/gpUtils.js';
 import { formatGachaEmoji } from '../config/gachaEmojis.js';
 import { COLORS, EMOJIS } from '../utils/FeedUtils.js';
 import { fileURLToPath } from 'url';
@@ -22,12 +22,12 @@ import { existsSync } from 'fs';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-// Store pricing based on rarity
+// UPDATED: Store pricing reduced by 50%
 const STORE_PRICES = {
-    common: 100,
-    uncommon: 150,
-    rare: 300,
-    epic: 500
+    common: 50,
+    uncommon: 75,
+    rare: 150,
+    epic: 250
     // legendary and mythic not available in store
 };
 
@@ -117,7 +117,7 @@ class GachaMachine {
             for (const [, message] of messages) {
                 if (message.embeds.length > 0) {
                     const embed = message.embeds[0];
-                    if (embed.title === '🏪 Gacha Store' && message.author.bot) {
+                    if (embed.title === 'Gacha Store' && message.author.bot) {
                         console.log(`Found existing gacha store: ${message.id}`);
                         return message;
                     }
@@ -163,7 +163,7 @@ class GachaMachine {
     }
 
     /**
-     * Refresh store items with series diversity
+     * UPDATED: Refresh store items with series diversity (4 items instead of 5)
      */
     async refreshStoreItems() {
         try {
@@ -182,8 +182,8 @@ class GachaMachine {
                 return;
             }
 
-            // Select 5 items with series diversity
-            this.currentStoreItems = this.selectDiverseItems(eligibleItems, 5);
+            // UPDATED: Select 4 items instead of 5
+            this.currentStoreItems = this.selectDiverseItems(eligibleItems, 4);
             this.lastStoreRefresh = new Date();
 
             console.log(`✅ Store refreshed with ${this.currentStoreItems.length} items:`, 
@@ -230,47 +230,112 @@ class GachaMachine {
     }
 
     /**
-     * Create store embed with current items
+     * UPDATED: Create store embed with cleaner design and 2-column layout
      */
     async createStoreEmbed() {
         const embed = new EmbedBuilder()
-            .setTitle('🏪 Gacha Store')
-            .setColor(COLORS.INFO) // UPDATED: Use system colors
+            .setTitle('Gacha Store') // UPDATED: Removed emoji from title
+            .setColor(COLORS.INFO)
             .setTimestamp();
 
-        let description = '**Daily rotating stock of premium items!** 🛒\n\n';
-        description += '💰 **Direct purchase with GP** - No luck required!\n';
-        description += '🔄 **Stock refreshes daily** at midnight UTC\n\n';
+        // UPDATED: Add store image
+        let attachment = null;
+        try {
+            const imagePath = join(__dirname, '../../assets/store.png');
+            if (existsSync(imagePath)) {
+                attachment = new AttachmentBuilder(imagePath, { name: 'store.png' });
+                embed.setImage('attachment://store.png');
+                console.log('Store image attached successfully');
+            } else {
+                console.warn('Store image not found at:', imagePath);
+            }
+        } catch (imageError) {
+            console.warn('Could not load store image:', imageError.message);
+        }
+
+        let description = '**Daily rotating stock of premium items!**\n\n';
+        description += 'Direct purchase with GP - No luck required!\n';
+        description += 'Stock refreshes daily at midnight UTC\n\n';
 
         if (this.currentStoreItems.length === 0) {
-            description += '❌ **Store is currently restocking...**\nPlease check back later!';
+            description += '**Store is currently restocking...**\nPlease check back later!';
             embed.setDescription(description);
-            return { embed, components: [] };
+            return { embed: embed, components: [] };
         }
 
         description += '**Today\'s Featured Items:**\n\n';
 
-        // Create item list and components
-        const components = [];
-        const selectOptions = [];
+        // UPDATED: Create 2-column layout for 4 items
+        const items = this.currentStoreItems;
+        const leftColumn = items.slice(0, 2); // Items 0, 1
+        const rightColumn = items.slice(2, 4); // Items 2, 3
 
-        for (let i = 0; i < this.currentStoreItems.length; i++) {
-            const item = this.currentStoreItems[i];
+        // Helper function to format item display
+        const formatItem = (item) => {
             const price = STORE_PRICES[item.rarity];
             const emoji = gachaService.formatItemEmoji(item);
             const rarityEmoji = gachaService.getRarityEmoji(item.rarity);
             const rarityName = gachaService.getRarityDisplayName(item.rarity);
+            const seriesText = item.seriesId ? item.seriesId.charAt(0).toUpperCase() + item.seriesId.slice(1) : 'Individual';
 
-            // Add to description
-            description += `${i + 1}. ${emoji} **${item.itemName}** ${rarityEmoji}\n`;
-            description += `   *${item.description}*\n`;
-            description += `   **Price:** ${price.toLocaleString()} GP\n`;
-            if (item.seriesId) {
-                description += `   **Series:** ${item.seriesId.charAt(0).toUpperCase() + item.seriesId.slice(1)}\n`;
+            return `${emoji}\n**${item.itemName}**\n*${item.description}*\n${rarityEmoji} ${rarityName} • ${price.toLocaleString()} GP\nSeries: ${seriesText}`;
+        };
+
+        // Create column content
+        let leftColumnText = '';
+        let rightColumnText = '';
+
+        for (let i = 0; i < Math.max(leftColumn.length, rightColumn.length); i++) {
+            if (leftColumn[i]) {
+                leftColumnText += formatItem(leftColumn[i]);
+                if (i < leftColumn.length - 1) leftColumnText += '\n\n';
             }
-            description += '\n';
+            
+            if (rightColumn[i]) {
+                rightColumnText += formatItem(rightColumn[i]);
+                if (i < rightColumn.length - 1) rightColumnText += '\n\n';
+            }
+        }
 
-            // Add to select menu options
+        embed.setDescription(description);
+
+        // Add columns as fields
+        if (leftColumnText) {
+            embed.addFields({
+                name: '\u200b', // Invisible character for spacing
+                value: leftColumnText,
+                inline: true
+            });
+        }
+
+        if (rightColumnText) {
+            embed.addFields({
+                name: '\u200b', // Invisible character for spacing
+                value: rightColumnText,
+                inline: true
+            });
+        }
+
+        // UPDATED: Fix refresh timer in description instead of footer
+        const now = new Date();
+        const nextRefresh = new Date();
+        nextRefresh.setUTCHours(24, 0, 0, 0); // Next midnight UTC
+        const hoursUntilRefresh = Math.ceil((nextRefresh.getTime() - now.getTime()) / (1000 * 60 * 60));
+        
+        embed.addFields({
+            name: 'Store Information',
+            value: `Next refresh: **${hoursUntilRefresh} hours**\nUse /profile to check your GP balance`,
+            inline: false
+        });
+
+        // Create select menu components
+        const components = [];
+        const selectOptions = [];
+
+        for (const item of items) {
+            const price = STORE_PRICES[item.rarity];
+            const rarityName = gachaService.getRarityDisplayName(item.rarity);
+
             selectOptions.push({
                 label: `${item.itemName} - ${price.toLocaleString()} GP`,
                 value: `store_buy_${item.itemId}`,
@@ -279,17 +344,6 @@ class GachaMachine {
             });
         }
 
-        embed.setDescription(description);
-
-        // Add refresh timer
-        const nextRefresh = new Date();
-        nextRefresh.setUTCHours(24, 0, 0, 0); // Next midnight UTC
-        const nextRefreshTimestamp = Math.floor(nextRefresh.getTime() / 1000);
-        embed.setFooter({ 
-            text: `Next refresh: <t:${nextRefreshTimestamp}:R> • Use /profile to check your GP balance` 
-        });
-
-        // Create select menu if we have items
         if (selectOptions.length > 0) {
             const selectMenu = new StringSelectMenuBuilder()
                 .setCustomId('gacha_store_purchase')
@@ -303,7 +357,7 @@ class GachaMachine {
     }
 
     /**
-     * UPDATED: Handle store purchase with proper GP utils integration
+     * UPDATED: Handle store purchase with updated pricing
      */
     async handleStorePurchase(interaction, user, itemId) {
         try {
@@ -313,17 +367,17 @@ class GachaMachine {
             const storeItem = this.currentStoreItems.find(item => item.itemId === itemId);
             if (!storeItem) {
                 return interaction.editReply({
-                    content: '❌ This item is no longer available in the store. The store may have refreshed.',
+                    content: 'This item is no longer available in the store. The store may have refreshed.',
                     ephemeral: true
                 });
             }
 
             const price = STORE_PRICES[storeItem.rarity];
 
-            // UPDATED: Use gpUtils for validation
+            // Use gpUtils for validation
             if (!gpUtils.canAfford(user, price)) {
                 return interaction.editReply({
-                    content: `❌ Insufficient GP! You need ${gpUtils.formatGP(price)} but only have ${gpUtils.formatGP(user.gpBalance)}.`,
+                    content: `Insufficient GP! You need ${gpUtils.formatGP(price)} but only have ${gpUtils.formatGP(user.gpBalance)}.`,
                     ephemeral: true
                 });
             }
@@ -333,13 +387,13 @@ class GachaMachine {
                 const existingItem = user.gachaCollection?.find(item => item.itemId === itemId);
                 if (existingItem) {
                     return interaction.editReply({
-                        content: `❌ You already own **${storeItem.itemName}**! This item cannot be stacked.`,
+                        content: `You already own **${storeItem.itemName}**! This item cannot be stacked.`,
                         ephemeral: true
                     });
                 }
             }
 
-            // UPDATED: Process purchase using gpUtils
+            // Process purchase using gpUtils
             await gpUtils.deductGP(user, price, 'gacha_pull', `Store purchase: ${storeItem.itemName}`);
 
             // Add item to collection
@@ -349,7 +403,7 @@ class GachaMachine {
 
             // Create success embed
             const successEmbed = new EmbedBuilder()
-                .setTitle('🛒 Purchase Successful!')
+                .setTitle('Purchase Successful!')
                 .setColor(gachaService.getRarityColor(storeItem.rarity))
                 .setTimestamp();
 
@@ -361,9 +415,9 @@ class GachaMachine {
             purchaseDescription += `**New Balance:** ${gpUtils.formatGP(user.gpBalance)}\n\n`;
             
             if (addResult.wasStacked) {
-                purchaseDescription += `📚 **Stacked with existing item** (Quantity: ${addResult.item.quantity})`;
+                purchaseDescription += `Stacked with existing item (Quantity: ${addResult.item.quantity})`;
             } else {
-                purchaseDescription += `✨ **Added to your collection!**`;
+                purchaseDescription += `Added to your collection!`;
             }
 
             successEmbed.setDescription(purchaseDescription);
@@ -401,7 +455,7 @@ class GachaMachine {
         } catch (error) {
             console.error('Error handling store purchase:', error);
             await interaction.editReply({
-                content: `❌ Error processing purchase: ${error.message}`,
+                content: `Error processing purchase: ${error.message}`,
                 ephemeral: true
             });
         }
@@ -439,7 +493,7 @@ class GachaMachine {
         }, msUntilRefresh);
     }
 
-    // ===== EXISTING MACHINE FUNCTIONALITY (Updated with system integration) =====
+    // ===== EXISTING MACHINE FUNCTIONALITY =====
 
     async createMachine() {
         try {
@@ -582,6 +636,7 @@ class GachaMachine {
         return { embed, attachment };
     }
 
+    // ... rest of the existing methods remain the same ...
     createMachineButtons() {
         return new ActionRowBuilder()
             .addComponents(
@@ -605,7 +660,6 @@ class GachaMachine {
             );
     }
 
-    // UPDATED: Handle pull with gpUtils integration
     async handlePull(interaction, user, pullType) {
         try {
             const result = await gachaService.performPull(user, pullType);
@@ -690,7 +744,7 @@ class GachaMachine {
             });
         }
 
-        // UPDATED: Show combination alerts instead of auto-combination results
+        // Show combination alerts instead of auto-combination results
         if (possibleCombinations && possibleCombinations.length > 0) {
             // Delay before showing combination alert to let user see their pulls
             setTimeout(async () => {
@@ -771,7 +825,7 @@ class GachaMachine {
             });
         }
 
-        // UPDATED: Add balance info in footer with gpUtils formatting
+        // Add balance info in footer with gpUtils formatting
         embed.setFooter({ 
             text: `GP Balance: ${gpUtils.formatGP(result.newBalance)}` 
         });
@@ -799,8 +853,6 @@ class GachaMachine {
                 description += `${rewardEmoji} Unlocked: **${completion.rewardItem.itemName}**\n\n`;
             }
         }
-
-        // REMOVED: Auto-combination display since we now use confirmations
 
         embed.setDescription(description);
         embed.setFooter({ text: 'These bonuses have been added to your collection automatically!' });
