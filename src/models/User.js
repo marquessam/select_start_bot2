@@ -1,4 +1,4 @@
-// src/models/User.js - UPDATED with animated emoji support
+// src/models/User.js - COMPLETE with store_purchase integration
 import mongoose from 'mongoose';
 
 const communityAwardSchema = new mongoose.Schema({
@@ -71,7 +71,7 @@ const trophyCaseSchema = new mongoose.Schema({
     monthKey: String        // YYYY-MM format (null for community awards)
 });
 
-// UPDATED: Enhanced gacha collection schema with animated emoji support
+// UPDATED: Enhanced gacha collection schema with store_purchase source
 const gachaCollectionSchema = new mongoose.Schema({
     itemId: {
         type: String,
@@ -92,7 +92,7 @@ const gachaCollectionSchema = new mongoose.Schema({
         enum: ['common', 'uncommon', 'rare', 'epic', 'legendary', 'mythic'],
         required: true
     },
-    // UPDATED: Enhanced emoji support with animation flag
+    // Enhanced emoji support with animation flag
     emojiId: {
         type: String,
         default: null       // Discord custom emoji ID
@@ -118,7 +118,7 @@ const gachaCollectionSchema = new mongoose.Schema({
     },
     source: {
         type: String,
-        enum: ['gacha', 'combined', 'series_completion', 'admin_grant', 'admin_test', 'player_transfer'],
+        enum: ['gacha', 'combined', 'series_completion', 'admin_grant', 'admin_test', 'player_transfer', 'store_purchase'], // ADDED store_purchase
         default: 'gacha'
     }
 });
@@ -692,7 +692,7 @@ userSchema.methods.addGachaItem = function(gachaItem, quantity = 1, source = 'ga
             // CRITICAL: Ensure ALL emoji data is properly copied
             emojiId: gachaItem.emojiId || null,
             emojiName: gachaItem.emojiName || '❓',
-            isAnimated: gachaItem.isAnimated || false,  // NEW: Copy animation flag
+            isAnimated: gachaItem.isAnimated || false,  // UPDATED: Copy animation flag
             obtainedAt: new Date(),
             quantity: quantity,
             source: source
