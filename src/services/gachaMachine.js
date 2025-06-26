@@ -96,8 +96,12 @@ class GachaMachine {
             }
 
             // Create new store
-            const { embed, components } = await this.createStoreEmbed();
-            const message = await channel.send({ embeds: [embed], components });
+            const { embed, components, files } = await this.createStoreEmbed();
+            const messageOptions = { embeds: [embed], components };
+            if (files && files.length > 0) {
+                messageOptions.files = files;
+            }
+            const message = await channel.send(messageOptions);
 
             this.storeMessageId = message.id;
             console.log(`Gacha store created with message ID: ${this.storeMessageId}`);
@@ -136,8 +140,12 @@ class GachaMachine {
      */
     async updateExistingStore(message) {
         try {
-            const { embed, components } = await this.createStoreEmbed();
-            await message.edit({ embeds: [embed], components });
+            const { embed, components, files } = await this.createStoreEmbed();
+            const messageOptions = { embeds: [embed], components };
+            if (files && files.length > 0) {
+                messageOptions.files = files;
+            }
+            await message.edit(messageOptions);
             console.log('Updated existing gacha store');
         } catch (error) {
             console.error('Error updating existing gacha store:', error);
@@ -238,14 +246,14 @@ class GachaMachine {
             .setColor(COLORS.INFO)
             .setTimestamp();
 
-        // UPDATED: Add store image
+        // UPDATED: Add store image as thumbnail (top-right corner)
         let attachment = null;
         try {
             const imagePath = join(__dirname, '../../assets/store.png');
             if (existsSync(imagePath)) {
                 attachment = new AttachmentBuilder(imagePath, { name: 'store.png' });
-                embed.setImage('attachment://store.png');
-                console.log('Store image attached successfully');
+                embed.setThumbnail('attachment://store.png');
+                console.log('Store image attached as thumbnail successfully');
             } else {
                 console.warn('Store image not found at:', imagePath);
             }
@@ -260,7 +268,7 @@ class GachaMachine {
         if (this.currentStoreItems.length === 0) {
             description += '**Store is currently restocking...**\nPlease check back later!';
             embed.setDescription(description);
-            return { embed: embed, components: [] };
+            return { embed: embed, components: [], files: attachment ? [attachment] : [] };
         }
 
         description += '**Today\'s Featured Items:**\n\n';
@@ -353,7 +361,7 @@ class GachaMachine {
             components.push(new ActionRowBuilder().addComponents(selectMenu));
         }
 
-        return { embed, components };
+        return { embed, components, files: attachment ? [attachment] : [] };
     }
 
     /**
@@ -439,6 +447,18 @@ class GachaMachine {
             }
 
             await interaction.editReply({ embeds: [successEmbed] });
+
+            // UPDATED: Reset the store dropdown after purchase
+            try {
+                const channel = await this.getChannel();
+                if (channel && this.storeMessageId) {
+                    const storeMessage = await channel.messages.fetch(this.storeMessageId);
+                    await this.updateExistingStore(storeMessage);
+                    console.log('Store dropdown reset after purchase');
+                }
+            } catch (resetError) {
+                console.error('Error resetting store dropdown:', resetError);
+            }
 
             // Check for combinations after purchase
             const possibleCombinations = await combinationService.checkPossibleCombinations(user);
