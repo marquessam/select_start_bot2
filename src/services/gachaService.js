@@ -1,4 +1,4 @@
-// src/services/gachaService.js - UPDATED with animated emoji support
+// src/services/gachaService.js - COMPLETE with store_purchase integration
 import { User } from '../models/User.js';
 import { GachaItem } from '../models/GachaItem.js';
 import combinationService from './combinationService.js';
@@ -275,7 +275,7 @@ class GachaService {
     }
 
     /**
-     * Get user's collection summary with combination stats
+     * UPDATED: Get user's collection summary with store_purchase integration
      */
     getUserCollectionSummary(user) {
         console.log('Getting collection summary for user:', user.raUsername);
@@ -303,11 +303,13 @@ class GachaService {
             mythic: 0
         };
 
+        // UPDATED: Include store_purchase in source breakdown
         const sourceBreakdown = {
             gacha: 0,
             combined: 0,
             series_completion: 0,
-            player_transfer: 0
+            player_transfer: 0,
+            store_purchase: 0  // ADDED store_purchase tracking
         };
 
         const seriesBreakdown = {};
@@ -326,6 +328,7 @@ class GachaService {
             if (sourceBreakdown[source] !== undefined) {
                 sourceBreakdown[source] += quantity;
             } else {
+                // Handle any unknown sources
                 sourceBreakdown[source] = quantity;
             }
 
