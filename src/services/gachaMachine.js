@@ -638,14 +638,14 @@ class GachaMachine {
             })
             .setTimestamp();
 
-        // Try to attach the gacha image
+        // Try to attach the gacha image as thumbnail
         let attachment = null;
         try {
             const imagePath = join(__dirname, '../../assets/gacha.png');
             if (existsSync(imagePath)) {
                 attachment = new AttachmentBuilder(imagePath, { name: 'gacha.png' });
-                embed.setImage('attachment://gacha.png');
-                console.log('Gacha image attached successfully');
+                embed.setThumbnail('attachment://gacha.png');
+                console.log('Gacha image attached as thumbnail successfully');
             } else {
                 console.warn('Gacha image not found at:', imagePath);
             }
