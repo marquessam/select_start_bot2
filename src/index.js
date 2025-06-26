@@ -1,4 +1,4 @@
-// src/index.js - Enhanced with better collection button handling and nominations pagination
+// src/index.js - Streamlined with Gacha Store integration
 import { Client, Collection, Events, GatewayIntentBits, EmbedBuilder } from 'discord.js';
 import { config, validateConfig } from './config/config.js';
 import { connectDB, checkDatabaseHealth } from './models/index.js';
@@ -25,7 +25,7 @@ import combinationService from './services/combinationService.js';
 import { User } from './models/User.js';
 import { ArcadeBoard } from './models/ArcadeBoard.js';
 
-// Import nomination and restriction handlers
+// Import handlers
 import { 
     handleNominationButtonInteraction, 
     handleNominationModalSubmit, 
@@ -36,8 +36,6 @@ import {
     handleRestrictionModalSubmit, 
     handleRestrictionSelectMenu 
 } from './handlers/restrictionHandlers.js';
-
-// Import arena handlers
 import { 
     handleArenaButtonInteraction, 
     handleArenaModalSubmit, 
@@ -102,11 +100,7 @@ client.on(Events.InteractionCreate, async interaction => {
     } catch (error) {
         console.error('Error executing command:', error);
         
-        // Better error handling for expired interactions
-        if (error.code === 10062) {
-            console.log('Command interaction expired - user will need to run command again');
-            return;
-        }
+        if (error.code === 10062) return; // Expired interaction
         
         const errorMessage = {
             content: 'There was an error executing this command.',
@@ -125,19 +119,13 @@ client.on(Events.InteractionCreate, async interaction => {
     }
 });
 
-// Handle button interactions - UPDATED VERSION with nominations pagination and enhanced collection support
+// Handle button interactions - UPDATED with Gacha Store support
 client.on(Events.InteractionCreate, async interaction => {
     if (!interaction.isButton()) return;
     
-    console.log('=== BUTTON INTERACTION RECEIVED ===');
-    console.log('CustomId:', interaction.customId);
-    console.log('User:', interaction.user.username);
-    console.log('Channel:', interaction.channel?.name);
-    
     try {
-        // NEW: Handle nominations pagination buttons
+        // Handle nominations pagination
         if (interaction.customId === 'nominations_prev' || interaction.customId === 'nominations_next') {
-            console.log('Routing to nominations pagination handler');
             const nominationsCommand = interaction.client.commands.get('nominations');
             if (nominationsCommand && typeof nominationsCommand.handlePaginationInteraction === 'function') {
                 await nominationsCommand.handlePaginationInteraction(interaction);
@@ -150,18 +138,16 @@ client.on(Events.InteractionCreate, async interaction => {
             return;
         }
 
-        // NEW: Check if this is a combination-related button FIRST
+        // Handle combination buttons
         if (interaction.customId.startsWith('combo_')) {
-            console.log('Routing to combination handler');
             const handled = await combinationService.handleCombinationInteraction(interaction);
             if (handled) return;
         }
 
-        // Check if this is a gacha machine button (not admin buttons)
+        // Handle gacha machine buttons - UPDATED with better error handling
         if (interaction.customId === 'gacha_single_pull' || 
             interaction.customId === 'gacha_multi_pull' || 
             interaction.customId === 'gacha_collection') {
-            console.log('Routing to gacha machine handler');
             
             await interaction.deferReply({ ephemeral: true });
 
@@ -187,9 +173,8 @@ client.on(Events.InteractionCreate, async interaction => {
             return;
         }
 
-        // Check if this is a gacha admin button
+        // Handle gacha admin buttons
         if (interaction.customId.startsWith('gacha_')) {
-            console.log('Routing to gacha admin handler');
             const gachaAdminCommand = client.commands.get('gacha-admin');
             if (gachaAdminCommand && typeof gachaAdminCommand.handleButtonInteraction === 'function') {
                 await gachaAdminCommand.handleButtonInteraction(interaction);
@@ -197,9 +182,8 @@ client.on(Events.InteractionCreate, async interaction => {
             return;
         }
 
-        // NEW: Check if this is a recipes button
+        // Handle recipes buttons
         if (interaction.customId.startsWith('recipes_')) {
-            console.log('Routing to recipes handler');
             const recipesCommand = client.commands.get('recipes');
             if (recipesCommand && typeof recipesCommand.handleButtonInteraction === 'function') {
                 await recipesCommand.handleButtonInteraction(interaction);
@@ -212,14 +196,12 @@ client.on(Events.InteractionCreate, async interaction => {
             return;
         }
 
-        // UPDATED: Enhanced collection-related button handling
+        // Handle collection buttons
         if (interaction.customId.startsWith('coll_')) {
-            console.log('Routing to collection handler');
             const collectionCommand = client.commands.get('collection');
             if (collectionCommand && typeof collectionCommand.handleInteraction === 'function') {
                 await collectionCommand.handleInteraction(interaction);
             } else {
-                console.log('Collection command interaction handler not found');
                 await interaction.reply({
                     content: '❌ Collection feature not available.',
                     ephemeral: true
@@ -228,48 +210,35 @@ client.on(Events.InteractionCreate, async interaction => {
             return;
         }
         
-        // Check if this is a nomination-related button
+        // Handle nomination buttons
         if (interaction.customId.startsWith('nominate_')) {
-            console.log('Routing to nomination handler');
             await handleNominationButtonInteraction(interaction);
             return;
         }
         
-        // Check if this is a restriction-related button
+        // Handle restriction buttons
         if (interaction.customId.startsWith('restrictions_')) {
-            console.log('Routing to restriction handler');
             await handleRestrictionButtonInteraction(interaction);
             return;
         }
         
-        // Check if this is an arena-related button
+        // Handle arena buttons
         if (interaction.customId.startsWith('arena_') || interaction.customId.startsWith('admin_arena_')) {
-            console.log('Routing to arena handler');
             await handleArenaButtonInteraction(interaction);
             return;
         }
         
         // Handle other button interactions by command
-        console.log('Checking for command-based button handler');
         const commandName = interaction.customId.split('_')[0];
         const command = client.commands.get(commandName);
         
         if (command && typeof command.handleButtonInteraction === 'function') {
-            console.log(`Found command handler for: ${commandName}`);
             await command.handleButtonInteraction(interaction);
-        } else {
-            console.log(`No button handler found for customId: ${interaction.customId}`);
-            console.log(`Available commands:`, Array.from(client.commands.keys()));
         }
     } catch (error) {
         console.error('Error handling button interaction:', error);
-        console.error('Error stack:', error.stack);
         try {
-            // Better error handling for expired interactions
-            if (error.code === 10062) {
-                console.log('Button interaction expired - user will need to run command again');
-                return; // Don't try to respond to expired interactions
-            }
+            if (error.code === 10062) return; // Expired interaction
             
             if (interaction.replied || interaction.deferred) {
                 await interaction.followUp({ content: 'There was an error processing this button.', ephemeral: true });
@@ -282,21 +251,42 @@ client.on(Events.InteractionCreate, async interaction => {
     }
 });
 
-// Handle select menu interactions - UPDATED VERSION with enhanced collection support
+// Handle select menu interactions - UPDATED with Gacha Store support
 client.on(Events.InteractionCreate, async interaction => {
     if (!interaction.isStringSelectMenu()) return;
     
     try {
-        // NEW: Check if this is a combination-related select menu FIRST
+        // Handle combination select menus
         if (interaction.customId.startsWith('combo_')) {
-            console.log('Routing to combination select menu handler');
             const handled = await combinationService.handleCombinationInteraction(interaction);
             if (handled) return;
         }
 
-        // UPDATED: Enhanced collection-related select menu handling
+        // NEW: Handle gacha store purchases
+        if (interaction.customId === 'gacha_store_purchase') {
+            const user = await User.findOne({ discordId: interaction.user.id });
+            if (!user) {
+                return interaction.reply({
+                    content: '❌ You are not registered! Please ask an admin to register you first.',
+                    ephemeral: true
+                });
+            }
+
+            const selectedValue = interaction.values[0];
+            if (selectedValue.startsWith('store_buy_')) {
+                const itemId = selectedValue.replace('store_buy_', '');
+                await gachaMachine.handleStorePurchase(interaction, user, itemId);
+            } else {
+                await interaction.reply({
+                    content: '❌ Invalid store selection.',
+                    ephemeral: true
+                });
+            }
+            return;
+        }
+
+        // Handle collection select menus
         if (interaction.customId.startsWith('coll_')) {
-            console.log('Routing to collection select menu handler');
             const collectionCommand = client.commands.get('collection');
             if (collectionCommand && typeof collectionCommand.handleInteraction === 'function') {
                 await collectionCommand.handleInteraction(interaction);
@@ -309,19 +299,19 @@ client.on(Events.InteractionCreate, async interaction => {
             return;
         }
         
-        // Check if this is a nomination-related select menu
+        // Handle nomination select menus
         if (interaction.customId.startsWith('nominate_')) {
             await handleNominationSelectMenu(interaction);
             return;
         }
         
-        // Check if this is a restriction-related select menu
+        // Handle restriction select menus
         if (interaction.customId.startsWith('restrictions_')) {
             await handleRestrictionSelectMenu(interaction);
             return;
         }
         
-        // Check if this is an arena-related select menu
+        // Handle arena select menus
         if (interaction.customId.startsWith('arena_')) {
             await handleArenaSelectMenu(interaction);
             return;
@@ -333,17 +323,11 @@ client.on(Events.InteractionCreate, async interaction => {
         
         if (command && typeof command.handleSelectMenuInteraction === 'function') {
             await command.handleSelectMenuInteraction(interaction);
-        } else {
-            console.log(`No select menu handler found for customId: ${interaction.customId}`);
         }
     } catch (error) {
         console.error('Error handling select menu interaction:', error);
         try {
-            // Better error handling for expired interactions
-            if (error.code === 10062) {
-                console.log('Select menu interaction expired - user will need to run command again');
-                return;
-            }
+            if (error.code === 10062) return; // Expired interaction
             
             if (interaction.replied || interaction.deferred) {
                 await interaction.followUp({ content: 'There was an error processing this selection.', ephemeral: true });
@@ -356,14 +340,13 @@ client.on(Events.InteractionCreate, async interaction => {
     }
 });
 
-// Handle modal submit interactions - UPDATED VERSION with enhanced collection support
+// Handle modal submit interactions - UPDATED with enhanced collection support
 client.on(Events.InteractionCreate, async interaction => {
     if (!interaction.isModalSubmit()) return;
     
     try {
-        // UPDATED: Enhanced collection modal handling
+        // Handle collection give details modal
         if (interaction.customId.startsWith('coll_give_details_')) {
-            console.log('Routing to collection give details modal handler');
             const collectionCommand = client.commands.get('collection');
             if (collectionCommand && typeof collectionCommand.handleModalSubmit === 'function') {
                 await collectionCommand.handleModalSubmit(interaction);
@@ -376,9 +359,8 @@ client.on(Events.InteractionCreate, async interaction => {
             return;
         }
 
-        // Check if this is a gacha admin combination modal
+        // Handle gacha admin modals
         if (interaction.customId === 'gacha_add_combo_modal') {
-            console.log('Routing to gacha admin combination modal handler');
             const gachaAdminCommand = client.commands.get('gacha-admin');
             if (gachaAdminCommand && typeof gachaAdminCommand.handleModalSubmit === 'function') {
                 await gachaAdminCommand.handleModalSubmit(interaction);
@@ -391,19 +373,19 @@ client.on(Events.InteractionCreate, async interaction => {
             return;
         }
         
-        // Check if this is a nomination-related modal
+        // Handle nomination modals
         if (interaction.customId.startsWith('nomination_')) {
             await handleNominationModalSubmit(interaction);
             return;
         }
         
-        // Check if this is a restriction-related modal
+        // Handle restriction modals
         if (interaction.customId.startsWith('restrictions_')) {
             await handleRestrictionModalSubmit(interaction);
             return;
         }
         
-        // Check if this is an arena-related modal
+        // Handle arena modals
         if (interaction.customId.startsWith('arena_')) {
             await handleArenaModalSubmit(interaction);
             return;
@@ -415,17 +397,11 @@ client.on(Events.InteractionCreate, async interaction => {
         
         if (command && typeof command.handleModalSubmit === 'function') {
             await command.handleModalSubmit(interaction);
-        } else {
-            console.log(`No modal handler found for customId: ${interaction.customId}`);
         }
     } catch (error) {
         console.error('Error handling modal submission:', error);
         try {
-            // Better error handling for expired interactions
-            if (error.code === 10062) {
-                console.log('Modal interaction expired - user will need to run command again');
-                return;
-            }
+            if (error.code === 10062) return; // Expired interaction
             
             if (interaction.replied || interaction.deferred) {
                 await interaction.followUp({ content: 'There was an error processing your submission.', ephemeral: true });
@@ -438,25 +414,20 @@ client.on(Events.InteractionCreate, async interaction => {
     }
 });
 
-// Function to handle weekly comprehensive yearly sync
+// Weekly comprehensive yearly sync
 async function handleWeeklyComprehensiveSync() {
     try {
         console.log('🔄 Starting weekly comprehensive yearly sync...');
         
         const currentYear = new Date().getFullYear();
-        
-        // Find the yearlyboard command
         const yearlyboardCommand = client.commands.get('yearlyboard');
         if (!yearlyboardCommand) {
             console.error('Yearlyboard command not found for weekly sync');
             return;
         }
         
-        // Create a mock interaction for the comprehensive sync
         const mockInteraction = {
-            deferReply: async () => {
-                console.log('Weekly sync: Deferring reply...');
-            },
+            deferReply: async () => {},
             editReply: async (message) => {
                 if (typeof message === 'string') {
                     console.log('Weekly sync progress:', message);
@@ -464,39 +435,30 @@ async function handleWeeklyComprehensiveSync() {
                     const embed = message.embeds[0];
                     if (embed.title) {
                         console.log(`Weekly sync: ${embed.title}`);
-                        if (embed.description) {
-                            console.log(`Weekly sync: ${embed.description}`);
-                        }
                     }
                 }
             },
             member: { 
                 roles: { 
                     cache: { 
-                        has: () => true // Mock admin permissions
+                        has: () => true
                     } 
                 } 
             },
             options: {
-                getInteger: (option) => {
-                    if (option === 'year') return currentYear;
-                    return null;
-                },
+                getInteger: (option) => option === 'year' ? currentYear : null,
                 getBoolean: (option) => {
-                    if (option === 'sync') return true; // Enable comprehensive sync
+                    if (option === 'sync') return true;
                     if (option === 'debug') return false;
                     return false;
                 },
-                getString: () => null // No specific username
+                getString: () => null
             }
         };
         
-        // Execute the comprehensive sync
         await yearlyboardCommand.execute(mockInteraction);
-        
         console.log('✅ Weekly comprehensive yearly sync completed successfully');
         
-        // Optional: Send notification to admin log channel
         try {
             const adminLogChannel = await client.channels.fetch(config.discord.adminLogChannelId);
             if (adminLogChannel) {
@@ -513,7 +475,6 @@ async function handleWeeklyComprehensiveSync() {
     } catch (error) {
         console.error('❌ Error in weekly comprehensive sync:', error);
         
-        // Send error notification to admin log
         try {
             const adminLogChannel = await client.channels.fetch(config.discord.adminLogChannelId);
             if (adminLogChannel) {
@@ -529,23 +490,18 @@ async function handleWeeklyComprehensiveSync() {
     }
 }
 
-// Function to handle month-end tiebreaker expiration
+// Month-end tiebreaker expiration
 async function handleMonthEndTiebreakerExpiration() {
     try {
-        console.log('🌅 Starting month-end tiebreaker expiration...');
-        
         const today = new Date();
         const tomorrow = new Date(today);
         tomorrow.setDate(tomorrow.getDate() + 1);
         
-        // Check if tomorrow is the first day of a new month
         if (tomorrow.getDate() === 1) {
             console.log('📅 Month transition detected - expiring tiebreakers...');
             
-            // Expire old tiebreakers
             const expirationResult = await monthlyTasksService.expireOldTiebreakers();
             
-            // Log results
             if (expirationResult.success) {
                 console.log(`✅ Month-end tiebreaker expiration complete. Expired ${expirationResult.expired.length} tiebreaker(s).`);
                 
@@ -555,7 +511,6 @@ async function handleMonthEndTiebreakerExpiration() {
                     });
                 }
                 
-                // Send notification to admin log channel
                 try {
                     const adminLogChannel = await client.channels.fetch(config.discord.adminLogChannelId);
                     if (adminLogChannel) {
@@ -589,26 +544,20 @@ async function handleMonthEndTiebreakerExpiration() {
             } else {
                 console.error('❌ Month-end tiebreaker expiration failed:', expirationResult.error);
             }
-        } else {
-            console.log('ℹ️ Not a month transition day, skipping tiebreaker expiration...');
         }
     } catch (error) {
         console.error('❌ Error in month-end tiebreaker expiration:', error);
     }
 }
 
-// Function to handle month-start tiebreaker cleanup
+// Month-start tiebreaker cleanup
 async function handleMonthStartTiebreakerCleanup() {
     try {
-        console.log('🧹 Starting month-start tiebreaker cleanup...');
-        
-        // Clean up very old tiebreakers (older than 90 days)
         const cleanupResult = await monthlyTasksService.cleanupOldTiebreakers(90);
         
         if (cleanupResult.count > 0) {
             console.log(`🗑️ Cleaned up ${cleanupResult.count} old tiebreaker(s)`);
             
-            // Send notification to admin log channel
             try {
                 const adminLogChannel = await client.channels.fetch(config.discord.adminLogChannelId);
                 if (adminLogChannel) {
@@ -628,8 +577,6 @@ async function handleMonthStartTiebreakerCleanup() {
             } catch (notifyError) {
                 console.error('Error sending cleanup notification:', notifyError);
             }
-        } else {
-            console.log('ℹ️ No old tiebreakers found for cleanup');
         }
         
         console.log('✅ Month-start tiebreaker cleanup complete');
@@ -639,24 +586,14 @@ async function handleMonthStartTiebreakerCleanup() {
     }
 }
 
-// Function to fix duplicate index issues automatically
+// Fix duplicate index issues
 async function fixDuplicateIndexes() {
     try {
-        console.log('🔧 Checking for duplicate indexes...');
-        
-        // Get all indexes for the collection
         const indexes = await ArcadeBoard.collection.indexes();
-        console.log('Current indexes:', indexes.map(i => ({ name: i.name, sparse: i.sparse })));
-        
-        // Find any expiredAt indexes
         const expiredAtIndexes = indexes.filter(index => index.name === 'expiredAt_1');
         
         if (expiredAtIndexes.length > 0) {
-            console.log(`Found ${expiredAtIndexes.length} expiredAt index(es)`);
-            
-            // Drop ALL expiredAt indexes to start fresh
             for (const index of expiredAtIndexes) {
-                console.log(`🗑️ Dropping existing expiredAt index: ${JSON.stringify(index)}`);
                 try {
                     await ArcadeBoard.collection.dropIndex('expiredAt_1');
                     console.log('✅ Successfully dropped expiredAt index');
@@ -665,11 +602,8 @@ async function fixDuplicateIndexes() {
                 }
             }
             
-            // Wait a moment for the drop to complete
             await new Promise(resolve => setTimeout(resolve, 1000));
             
-            // Now create the correct sparse index
-            console.log('🔨 Creating new sparse expiredAt index...');
             try {
                 await ArcadeBoard.collection.createIndex(
                     { expiredAt: 1 }, 
@@ -679,33 +613,23 @@ async function fixDuplicateIndexes() {
             } catch (createError) {
                 console.log('Index creation handled by schema:', createError.message);
             }
-        } else {
-            console.log('✅ No expiredAt indexes found - schema will create the correct one');
-        }
-        
-        // Verify the final state
-        const finalIndexes = await ArcadeBoard.collection.indexes();
-        const finalExpiredAtIndex = finalIndexes.find(i => i.name === 'expiredAt_1');
-        if (finalExpiredAtIndex) {
-            console.log('Final expiredAt index:', JSON.stringify(finalExpiredAtIndex));
         }
         
     } catch (error) {
         console.error('Error in index fixing:', error);
-        console.log('⚠️ Index issues may need manual resolution');
     }
 }
 
-// ENHANCED: Handle ready event with better GP service logging
+// MAIN READY EVENT - UPDATED with Gacha Store initialization
 client.once(Events.ClientReady, async () => {
     try {
         console.log(`Logged in as ${client.user.tag}`);
 
-        // FIRST: Connect to MongoDB with improved timeout settings
-        await connectDB(); // This now includes GachaItem and TrophyEmoji models
+        // Connect to MongoDB
+        await connectDB();
         console.log('✅ Connected to MongoDB with all models initialized');
 
-        // TEST: Quick database health check
+        // Database health check
         const healthCheck = await checkDatabaseHealth();
         if (healthCheck.healthy) {
             console.log(`🏥 Database health: OK (${healthCheck.latency}ms ping)`);
@@ -713,10 +637,9 @@ client.once(Events.ClientReady, async () => {
             console.warn('⚠️ Database health check failed:', healthCheck.error);
         }
 
-        // FIXED: Non-blocking emoji cache initialization with timeout protection
-        console.log('🎭 Starting emoji cache initialization (non-blocking)...');
+        // Emoji cache initialization with timeout protection
+        console.log('🎭 Starting emoji cache initialization...');
         
-        // Use Promise.allSettled to prevent any single emoji config from blocking startup
         const emojiLoadingPromises = [
             import('./config/gachaEmojis.js').catch(error => {
                 console.error('Failed to import gacha emojis config:', error.message);
@@ -728,7 +651,6 @@ client.once(Events.ClientReady, async () => {
             })
         ];
 
-        // Set a timeout for emoji loading to prevent indefinite blocking
         const EMOJI_LOADING_TIMEOUT = 45000; // 45 seconds max
         
         const emojiLoadingWithTimeout = Promise.race([
@@ -759,16 +681,10 @@ client.once(Events.ClientReady, async () => {
             
         } catch (timeoutError) {
             console.warn('⚠️ Emoji loading timed out, continuing with fallback emojis');
-            console.warn('   Bot will function normally with default emojis');
         }
 
-        // Continue with the rest of initialization regardless of emoji loading status
-        console.log('🔧 Continuing with bot initialization...');
-
-        // Fix any duplicate index issues automatically
+        // Continue with initialization
         await fixDuplicateIndexes();
-
-        // Load commands
         await loadCommands();
         console.log('Commands loaded');
 
@@ -785,208 +701,150 @@ client.once(Events.ClientReady, async () => {
         arenaFeedService.setClient(client);
         gameAwardService.setClient(client);
         gachaMachine.setClient(client);
-        combinationService.setClient(client); // UPDATED: Set client for combination alerts to trade channel
+        combinationService.setClient(client);
 
-        // START MONTHLY GP SERVICE
+        // Start services
         monthlyGPService.start();
-        console.log('✅ Monthly GP Service initialized - automatic grants on 1st of each month');
+        console.log('✅ Monthly GP Service initialized');
 
-        // ENHANCED: GP REWARD SERVICE INITIALIZATION WITH DETAILED LOGGING
         console.log('🎁 Initializing GP reward service...');
         try {
-            gpRewardService.initialize(); // This now safely sets up the cleanup interval
+            gpRewardService.initialize();
             const rewardStats = gpRewardService.getRewardStats();
             
             console.log('✅ GP reward service initialized successfully');
-            console.log('💰 GP reward amounts:', JSON.stringify(rewardStats.rewardAmounts, null, 2));
-            console.log('🔧 Service status:', { 
-                initialized: rewardStats.isInitialized, 
-                cleanupActive: rewardStats.hasCleanupInterval,
-                historySize: rewardStats.rewardHistorySize
-            });
-            
-            // Test the service with a quick check
-            console.log('🧪 Testing GP reward service basic functionality...');
-            const testStats = gpRewardService.getRewardStats();
-            if (testStats.isInitialized) {
-                console.log('✅ GP reward service test passed - ready to award GP');
-            } else {
-                console.warn('⚠️ GP reward service test failed - may have initialization issues');
-            }
+            console.log('💰 GP reward system active with enhanced logging and error handling');
             
         } catch (gpInitError) {
             console.error('❌ Failed to initialize GP reward service:', gpInitError);
-            console.error('GP Service Error Stack:', gpInitError.stack);
-            console.warn('⚠️ GP rewards may not work properly - check service configuration');
         }
 
-        // START GACHA MACHINE
+        // START GACHA MACHINE AND STORE - UPDATED
         await gachaMachine.start();
-        console.log('✅ Gacha Machine initialized and pinned in gacha channel');
+        console.log('✅ Gacha Machine and Store initialized and pinned in gacha channel');
 
-        // FIXED: Schedule emoji cache refresh every 30 minutes (non-blocking with timeout protection)
+        // Schedule emoji cache refresh every 30 minutes
         let emojiCacheJob = null;
         try {
             emojiCacheJob = cron.schedule('*/30 * * * *', async () => {
-                console.log('🎭 Auto-refreshing emoji caches...');
-                
-                // Non-blocking emoji refresh with timeout
                 const refreshPromises = [
                     Promise.resolve().then(async () => {
                         const gachaModule = await import('./config/gachaEmojis.js');
                         if (gachaModule.safeCacheRefresh) {
                             await gachaModule.safeCacheRefresh();
                         }
-                    }).catch(error => {
-                        console.warn('Gacha emoji refresh failed:', error.message);
-                    }),
+                    }).catch(() => {}),
                     
                     Promise.resolve().then(async () => {
                         const trophyModule = await import('./config/trophyEmojis.js');
                         if (trophyModule.safeCacheRefresh) {
                             await trophyModule.safeCacheRefresh();
                         }
-                    }).catch(error => {
-                        console.warn('Trophy emoji refresh failed:', error.message);
-                    })
+                    }).catch(() => {})
                 ];
 
-                // Refresh with timeout to prevent hanging
                 const refreshTimeout = Promise.race([
                     Promise.allSettled(refreshPromises),
-                    new Promise(resolve => setTimeout(() => {
-                        console.warn('Emoji refresh timed out, skipping this cycle');
-                        resolve([]);
-                    }, 10000)) // 10 second timeout for refresh
+                    new Promise(resolve => setTimeout(() => resolve([]), 10000))
                 ]);
 
                 await refreshTimeout;
             }, {
-                scheduled: false // Start manually
+                scheduled: false
             });
             
             emojiCacheJob.start();
-            console.log('✅ Emoji cache auto-refresh scheduled every 30 minutes (non-blocking)');
+            console.log('✅ Emoji cache auto-refresh scheduled');
         } catch (cronError) {
             console.error('Failed to schedule emoji cache refresh:', cronError);
-            console.log('   Bot will continue without automatic emoji refresh');
         }
 
-        // Schedule stats updates every 30 minutes
+        // Schedule various tasks
         cron.schedule('*/30 * * * *', () => {
-            console.log('Running scheduled stats update...');
             statsUpdateService.start().catch(error => {
                 console.error('Error in scheduled stats update:', error);
             });
         });
 
-        // Schedule achievement feed checks every 15 minutes
         cron.schedule('*/15 * * * *', () => {
-            console.log('Running achievement feed check...');
             achievementFeedService.start().catch(error => {
                 console.error('Error in achievement feed check:', error);
             });
         });
 
-        // Schedule weekly comprehensive yearly sync (Sundays at 3:00 AM)
         cron.schedule('0 3 * * 0', () => {
-            console.log('Running weekly comprehensive yearly sync...');
             handleWeeklyComprehensiveSync().catch(error => {
                 console.error('Error in weekly comprehensive yearly sync:', error);
             });
         });
 
-        // Schedule month-end tiebreaker expiration (last 4 days of month at 11:30 PM)
         cron.schedule('30 23 28-31 * *', () => {
-            console.log('Running month-end tiebreaker expiration check...');
             handleMonthEndTiebreakerExpiration().catch(error => {
                 console.error('Error in month-end tiebreaker expiration:', error);
             });
         });
 
-        // Schedule monthly tasks on the 1st of each month at 00:01
         cron.schedule('1 0 1 * *', () => {
-            console.log('Running monthly tasks...');
             monthlyTasksService.clearAllNominations().catch(error => {
                 console.error('Error clearing nominations:', error);
             });
         });
 
-        // Schedule month-start tiebreaker cleanup on the 1st of each month at 02:00
         cron.schedule('0 2 1 * *', () => {
-            console.log('Running month-start tiebreaker cleanup...');
             handleMonthStartTiebreakerCleanup().catch(error => {
                 console.error('Error in month-start tiebreaker cleanup:', error);
             });
         });
 
-        // Schedule arcade service to run daily at 00:15 (just after midnight)
         cron.schedule('15 0 * * *', () => {
-            console.log('Running scheduled arcade service...');
             arcadeService.start().catch(error => {
                 console.error('Error in scheduled arcade service:', error);
             });
         });
 
-        // Schedule leaderboard feed updates every 15 minutes
         cron.schedule('*/15 * * * *', () => {
-            console.log('Running leaderboard feed update...');
             leaderboardFeedService.updateLeaderboard().catch(error => {
                 console.error('Error in leaderboard feed update:', error);
             });
         });
 
-        // Schedule arcade alert checks every hour
         cron.schedule('0 * * * *', () => {
-            console.log('Running arcade alerts check...');
             arcadeAlertService.checkForRankChanges(true).catch(error => {
                 console.error('Error in arcade alerts check:', error);
             });
         });
 
-        // Schedule arcade feed updates every hour
         cron.schedule('10 * * * *', () => {
-            console.log('Running arcade feed update...');
             arcadeFeedService.updateArcadeFeed().catch(error => {
                 console.error('Error in arcade feed update:', error);
             });
         });
 
-        // Schedule arena alert checks every 15 minutes
         cron.schedule('*/15 * * * *', () => {
-            console.log('Running arena alerts check...');
             arenaAlertService.update().catch(error => {
                 console.error('Error in arena alerts check:', error);
             });
         });
 
-        // Schedule arena feed updates every 30 minutes
         cron.schedule('*/30 * * * *', () => {
-            console.log('Running arena feed update...');
             arenaFeedService.update().catch(error => {
                 console.error('Error in arena feed update:', error);
             });
         });
 
-        // Schedule completed arena challenges check every 15 minutes
         cron.schedule('*/15 * * * *', () => {
-            console.log('Running arena completed challenges check...');
             arenaService.checkCompletedChallenges().catch(error => {
                 console.error('Error in arena completed challenges check:', error);
             });
         });
 
-        // Schedule arena timeout checks every hour at 45 minutes past
         cron.schedule('45 * * * *', () => {
-            console.log('Running arena timeout check...');
             arenaService.checkAndProcessTimeouts().catch(error => {
                 console.error('Error in arena timeout check:', error);
             });
         });
 
-        // Schedule membership check daily at 3:00 AM
         cron.schedule('0 3 * * *', () => {
-            console.log('Running scheduled membership check...');
             membershipCheckService.checkMemberships().catch(error => {
                 console.error('Error in scheduled membership check:', error);
             });
@@ -1025,7 +883,7 @@ client.once(Events.ClientReady, async () => {
             }
         });
 
-        // Check if we need to finalize the previous month's leaderboard on startup
+        // Check if we need to finalize previous month's leaderboard on startup
         const now = new Date();
         const currentDay = now.getDate();
         if (currentDay <= 3) {
@@ -1038,8 +896,6 @@ client.once(Events.ClientReady, async () => {
                         editReply: async (message) => { 
                             if (typeof message === 'string') {
                                 console.log('Finalization check result:', message);
-                            } else {
-                                console.log('Finalization check completed');
                             }
                         },
                         fetchReply: async () => ({ 
@@ -1062,7 +918,6 @@ client.once(Events.ClientReady, async () => {
 
         // Check for any tiebreakers that should have been expired on startup
         if (currentDay <= 3) {
-            console.log('Checking for any tiebreakers that should have been expired...');
             try {
                 const expirationResult = await monthlyTasksService.expireOldTiebreakers();
                 if (expirationResult.success && expirationResult.expired.length > 0) {
@@ -1082,7 +937,6 @@ client.once(Events.ClientReady, async () => {
             const daysInMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
             
             if (today.getDate() === daysInMonth - 8) {
-                console.log('Running scheduled voting poll creation...');
                 monthlyTasksService.createVotingPoll().catch(error => {
                     console.error('Error creating voting poll:', error);
                 });
@@ -1095,7 +949,6 @@ client.once(Events.ClientReady, async () => {
             const daysInMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
             
             if (today.getDate() === daysInMonth - 1) {
-                console.log('Running scheduled vote counting...');
                 monthlyTasksService.countAndAnnounceVotes().catch(error => {
                     console.error('Error counting votes:', error);
                 });
@@ -1115,52 +968,26 @@ client.once(Events.ClientReady, async () => {
         await arenaFeedService.start();
         await gameAwardService.initialize();
 
-        // Check for any arena timeouts that may have occurred while the bot was offline
-        console.log('Checking for any arena timeouts that occurred while offline...');
+        // Check for arena timeouts that occurred while bot was offline
         arenaService.checkAndProcessTimeouts().catch(error => {
             console.error('Error in startup timeout check:', error);
         });
 
-        console.log('Bot is ready!');
-        console.log('📅 Scheduled tasks:');
-        console.log('  • Stats updates: Every 30 minutes');
-        console.log('  • Achievement feeds: Every 15 minutes');
-        console.log('  • Arena completed challenges: Every 15 minutes');
-        console.log('  • Arena alerts: Every 15 minutes');
-        console.log('  • Monthly GP grants: Automatic on 1st of each month');
-        console.log('  • GP Rewards: Automatic for nominations, votes, and game awards');
-        console.log('  • GP Reward cleanup: Every hour (controlled, no infinite loops)');
-        console.log('  • Weekly comprehensive yearly sync: Sundays at 3:00 AM');
-        console.log('  • Monthly tasks: 1st of each month');
-        console.log('  • Tiebreaker expiration: Last 4 days of month at 11:30 PM');
-        console.log('  • Tiebreaker cleanup: 1st of each month at 2:00 AM');
-        console.log('  • Arcade service: Daily at 12:15 AM');
-        console.log('  • Arena feeds: Every 30 minutes');
-        console.log('  • Arena timeouts: Hourly at 45 minutes past');
-        console.log('  • Gacha Machine: Active and pinned');
+        console.log('🤖 Bot is ready!');
+        console.log('✅ All systems initialized:');
+        console.log('  • Gacha Machine and Store: Active with daily refresh');
+        console.log('  • Collection System: Enhanced trading with store integration');
         console.log('  • Combination System: Confirmation-based with alerts');
-        console.log('  • Collection Viewer: Enhanced trading with dropdown selection and public confirmations');
-        console.log('  • Trade Confirmations: Auto-expire in 5 minutes in trade channel (1379402075120730185)');
-        console.log('  • Emoji cache refresh: Every 30 minutes (non-blocking with timeout protection)');
-        console.log('  • Nominations: Enhanced with pagination and field splitting for large datasets');
-        console.log('  • Various other feeds: Hourly');
-        console.log('🎭 Emoji systems: Initialized with timeout protection and fallback emojis');
-        console.log('🎁 GP Reward System: Enhanced logging and error handling for nomination/vote rewards');
-        console.log('🛒 Collection Trading: Streamlined with dropdown menus and public confirmations');
-        console.log('🗳️ Nominations System: Pagination support and expired interaction handling');
+        console.log('  • GP Reward System: Enhanced with store purchases');
+        console.log('  • All scheduled tasks: Running on schedule');
         
     } catch (error) {
         console.error('❌ Error during initialization:', error);
         
-        // More specific error handling
         if (error.message.includes('buffering timed out')) {
-            console.error('🔧 Database timeout detected. Suggestions:');
-            console.error('   - Check MongoDB connection string');
-            console.error('   - Verify network connectivity');
-            console.error('   - Check if MongoDB Atlas IP whitelist includes your server');
+            console.error('🔧 Database timeout detected. Check MongoDB connection.');
         }
         
-        // Don't exit in development for easier debugging
         if (process.env.NODE_ENV === 'production') {
             process.exit(1);
         } else {
@@ -1178,13 +1005,13 @@ process.on('unhandledRejection', error => {
     console.error('Unhandled promise rejection:', error);
 });
 
-// ENHANCED: Graceful shutdown handling with GP reward service cleanup
+// Graceful shutdown
 process.on('SIGINT', () => {
     console.log('Shutting down...');
     monthlyGPService.stop();
     gachaMachine.stop();
     try {
-        gpRewardService.stop(); // ENHANCED: Properly stop the service with error handling
+        gpRewardService.stop();
         console.log('✅ GP reward service stopped cleanly');
     } catch (stopError) {
         console.error('❌ Error stopping GP reward service:', stopError);
@@ -1197,7 +1024,7 @@ process.on('SIGTERM', () => {
     monthlyGPService.stop();
     gachaMachine.stop();
     try {
-        gpRewardService.stop(); // ENHANCED: Properly stop the service with error handling
+        gpRewardService.stop();
         console.log('✅ GP reward service stopped cleanly');
     } catch (stopError) {
         console.error('❌ Error stopping GP reward service:', stopError);
