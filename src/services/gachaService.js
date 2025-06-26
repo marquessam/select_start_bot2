@@ -1,4 +1,4 @@
-// src/services/gachaService.js - COMPLETE with store_purchase integration
+// src/services/gachaService.js - UPDATED with flat rarity percentage system
 import { User } from '../models/User.js';
 import { GachaItem } from '../models/GachaItem.js';
 import combinationService from './combinationService.js';
@@ -9,8 +9,19 @@ const PULL_COSTS = {
     multi: 150
 };
 
+// UPDATED: Flat rarity percentages (ignores individual dropRate fields)
+const RARITY_PERCENTAGES = {
+    common: 45,      // 45%
+    uncommon: 35,    // 35%
+    rare: 15,        // 15%
+    epic: 4,         // 4%
+    legendary: 1,    // 1%
+    mythic: 0        // 0% - special events only
+};
+
 class GachaService {
     constructor() {
+        // Keep the old weights for reference, but they're not used anymore
         this.rarityWeights = {
             common: 50,
             uncommon: 30,
@@ -52,6 +63,7 @@ class GachaService {
                 console.log(`Selected item for pull ${i + 1}:`, {
                     itemId: item.itemId,
                     itemName: item.itemName,
+                    rarity: item.rarity,
                     emojiId: item.emojiId,
                     emojiName: item.emojiName,
                     isAnimated: item.isAnimated
@@ -92,14 +104,15 @@ class GachaService {
     }
 
     /**
-     * Select a random item based on drop rates (only items with dropRate > 0)
+     * COMPLETELY REWRITTEN: Flat rarity percentage system
+     * Select a random item based on flat rarity percentages (ignores individual dropRate)
      */
     async selectRandomItem() {
         try {
-            // Only get items that can actually be pulled from gacha
+            // Get all items that can be pulled (dropRate > 0 still excludes special items)
             const availableItems = await GachaItem.find({
                 isActive: true,
-                dropRate: { $gt: 0 }
+                dropRate: { $gt: 0 } // Still respect 0 = not available in gacha
             });
             
             if (availableItems.length === 0) {
@@ -107,31 +120,149 @@ class GachaService {
                 return null;
             }
 
-            console.log(`Found ${availableItems.length} available gacha items`);
-
-            // Calculate total weight
-            const totalWeight = availableItems.reduce((total, item) => total + item.dropRate, 0);
-            
-            // Generate random number
-            const random = Math.random() * totalWeight;
-            
-            // Find the selected item
-            let currentWeight = 0;
+            // Group items by rarity
+            const itemsByRarity = {};
             for (const item of availableItems) {
-                currentWeight += item.dropRate;
-                if (random <= currentWeight) {
-                    console.log(`Selected item: ${item.itemName} (${item.dropRate}% chance)`);
-                    console.log(`Item emoji data: emojiId=${item.emojiId}, emojiName=${item.emojiName}, isAnimated=${item.isAnimated}`);
-                    return item;
+                if (!itemsByRarity[item.rarity]) {
+                    itemsByRarity[item.rarity] = [];
+                }
+                itemsByRarity[item.rarity].push(item);
+            }
+
+            // Log current distribution for debugging
+            console.log('Available items by rarity:');
+            for (const [rarity, items] of Object.entries(itemsByRarity)) {
+                console.log(`  ${rarity}: ${items.length} items`);
+            }
+
+            // Calculate cumulative percentages for rarity selection
+            const rarityRoll = Math.random() * 100; // 0-100
+            let cumulativePercent = 0;
+            let selectedRarity = null;
+
+            // Go through rarities in order of percentage
+            const sortedRarities = Object.entries(RARITY_PERCENTAGES)
+                .sort(([,a], [,b]) => b - a); // Sort by percentage descending
+
+            for (const [rarity, percentage] of sortedRarities) {
+                cumulativePercent += percentage;
+                
+                // Skip if no items of this rarity exist
+                if (!itemsByRarity[rarity] || itemsByRarity[rarity].length === 0) {
+                    continue;
+                }
+
+                if (rarityRoll <= cumulativePercent) {
+                    selectedRarity = rarity;
+                    break;
                 }
             }
-            
-            // Fallback to last item
-            console.log('Using fallback item selection');
-            return availableItems[availableItems.length - 1];
+
+            // Fallback: if no rarity selected (shouldn't happen), pick common
+            if (!selectedRarity || !itemsByRarity[selectedRarity]) {
+                // Find the most common rarity that has items
+                for (const rarity of ['common', 'uncommon', 'rare', 'epic', 'legendary', 'mythic']) {
+                    if (itemsByRarity[rarity] && itemsByRarity[rarity].length > 0) {
+                        selectedRarity = rarity;
+                        break;
+                    }
+                }
+            }
+
+            if (!selectedRarity || !itemsByRarity[selectedRarity]) {
+                console.error('No valid rarity found with available items');
+                return availableItems[0]; // Ultimate fallback
+            }
+
+            // Randomly select an item from the chosen rarity
+            const rarityItems = itemsByRarity[selectedRarity];
+            const randomIndex = Math.floor(Math.random() * rarityItems.length);
+            const selectedItem = rarityItems[randomIndex];
+
+            console.log(`Rarity roll: ${rarityRoll.toFixed(2)}% → Selected: ${selectedRarity} (${RARITY_PERCENTAGES[selectedRarity]}% chance)`);
+            console.log(`Selected item: ${selectedItem.itemName} from ${rarityItems.length} available ${selectedRarity} items`);
+
+            return selectedItem;
         } catch (error) {
             console.error('Error selecting random item:', error);
             return null;
+        }
+    }
+
+    /**
+     * Get current rarity distribution statistics (for debugging/balancing)
+     */
+    async analyzeRarityDistribution() {
+        try {
+            const availableItems = await GachaItem.find({
+                isActive: true,
+                dropRate: { $gt: 0 }
+            });
+
+            const distribution = {};
+            for (const item of availableItems) {
+                if (!distribution[item.rarity]) {
+                    distribution[item.rarity] = 0;
+                }
+                distribution[item.rarity]++;
+            }
+
+            console.log('\n=== GACHA RARITY DISTRIBUTION ===');
+            console.log('Configured percentages vs Available items:');
+            
+            let totalItems = availableItems.length;
+            for (const [rarity, percentage] of Object.entries(RARITY_PERCENTAGES)) {
+                const itemCount = distribution[rarity] || 0;
+                const actualChancePerItem = itemCount > 0 ? (percentage / itemCount).toFixed(3) : 0;
+                console.log(`${rarity}: ${percentage}% chance → ${itemCount} items (${actualChancePerItem}% per item)`);
+            }
+            console.log(`Total items in gacha: ${totalItems}`);
+            console.log('===================================\n');
+
+            return distribution;
+        } catch (error) {
+            console.error('Error analyzing rarity distribution:', error);
+            return {};
+        }
+    }
+
+    /**
+     * Simulate pulls to test rarity percentages
+     */
+    async simulatePulls(count = 1000) {
+        try {
+            console.log(`\nSimulating ${count} pulls to test rarity distribution...`);
+            
+            const results = {
+                common: 0,
+                uncommon: 0,
+                rare: 0,
+                epic: 0,
+                legendary: 0,
+                mythic: 0
+            };
+
+            for (let i = 0; i < count; i++) {
+                const item = await this.selectRandomItem();
+                if (item && results[item.rarity] !== undefined) {
+                    results[item.rarity]++;
+                }
+            }
+
+            console.log('\n=== SIMULATION RESULTS ===');
+            console.log('Expected vs Actual percentages:');
+            for (const [rarity, expectedPercent] of Object.entries(RARITY_PERCENTAGES)) {
+                const actualCount = results[rarity] || 0;
+                const actualPercent = ((actualCount / count) * 100).toFixed(2);
+                const diff = (actualPercent - expectedPercent).toFixed(2);
+                console.log(`${rarity}: Expected ${expectedPercent}% | Actual ${actualPercent}% | Diff: ${diff > 0 ? '+' : ''}${diff}%`);
+            }
+            console.log('==========================\n');
+
+            return results;
+        } catch (error) {
+            console.error('Error simulating pulls:', error);
+            return {};
         }
     }
 
@@ -439,6 +570,21 @@ class GachaService {
             emojiName: item.emojiName || '❓',
             isAnimated: item.isAnimated || false
         };
+    }
+
+    /**
+     * NEW: Get current rarity configuration
+     */
+    getRarityPercentages() {
+        return { ...RARITY_PERCENTAGES };
+    }
+
+    /**
+     * NEW: Update rarity percentages (for admin use)
+     */
+    updateRarityPercentages(newPercentages) {
+        Object.assign(RARITY_PERCENTAGES, newPercentages);
+        console.log('Updated rarity percentages:', RARITY_PERCENTAGES);
     }
 }
 
