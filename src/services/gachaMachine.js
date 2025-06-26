@@ -1,4 +1,4 @@
-// src/services/gachaMachine.js - UPDATED with improved store design
+// src/services/gachaMachine.js - UPDATED: Removed message expiration for permanent alerts
 import { 
     EmbedBuilder, 
     ActionRowBuilder, 
@@ -634,7 +634,7 @@ class GachaMachine {
             )
             .setColor(COLORS.GOLD)
             .setFooter({ 
-                text: 'Pull results will expire after 1 minute • Use /profile to check your GP balance' 
+                text: 'Use /profile to check your GP balance • Combination alerts are permanent!' 
             })
             .setTimestamp();
 
@@ -880,15 +880,7 @@ class GachaMachine {
         return embed;
     }
 
-    scheduleMessageDeletion(message) {
-        setTimeout(async () => {
-            try {
-                await message.delete();
-            } catch (deleteError) {
-                console.log('Pull result already deleted or inaccessible');
-            }
-        }, 60000); // 60 seconds
-    }
+    // REMOVED: scheduleMessageDeletion method - no longer deleting messages
 
     async handleCollection(interaction, user) {
         const summary = gachaService.getUserCollectionSummary(user);
