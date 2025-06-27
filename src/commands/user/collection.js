@@ -1,4 +1,4 @@
-// src/commands/user/collection.js - UPDATED with improved trading system and recipes integration
+// src/commands/user/collection.js - OPTIMIZED for performance
 import { 
     SlashCommandBuilder, 
     EmbedBuilder,
@@ -20,6 +20,179 @@ import { COLORS } from '../../utils/FeedUtils.js';
 const GACHA_TRADE_CHANNEL_ID = '1379402075120730185';
 const ITEMS_PER_PAGE = 25;
 
+// PERFORMANCE: Cache frequently used data
+const collectionCache = new Map();
+const CACHE_TTL = 2 * 60 * 1000; // 2 minutes
+const rarityOrder = ['mythic', 'legendary', 'epic', 'rare', 'uncommon', 'common'];
+
+// PERFORMANCE: Pre-computed rarity data
+const rarityData = {
+    mythic: { emoji: null, name: 'Mythic', color: null },
+    legendary: { emoji: null, name: 'Legendary', color: null },
+    epic: { emoji: null, name: 'Epic', color: null },
+    rare: { emoji: null, name: 'Rare', color: null },
+    uncommon: { emoji: null, name: 'Uncommon', color: null },
+    common: { emoji: null, name: 'Common', color: null }
+};
+
+// Initialize rarity data on startup
+function initializeRarityData() {
+    for (const rarity of rarityOrder) {
+        rarityData[rarity].emoji = gachaService.getRarityEmoji(rarity);
+        rarityData[rarity].name = gachaService.getRarityDisplayName(rarity);
+        rarityData[rarity].color = gachaService.getRarityColor(rarity);
+    }
+}
+
+// PERFORMANCE: Optimized user lookup with caching and projection
+async function getCachedUserCollection(discordId) {
+    const cacheKey = `user_${discordId}`;
+    const cached = collectionCache.get(cacheKey);
+    
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+        return cached.data;
+    }
+    
+    // Only fetch necessary fields
+    const user = await User.findOne(
+        { discordId },
+        { 
+            raUsername: 1, 
+            gachaCollection: 1, 
+            discordId: 1,
+            _id: 1
+        }
+    ).lean(); // Use lean() for better performance
+    
+    if (user) {
+        collectionCache.set(cacheKey, { data: user, timestamp: Date.now() });
+    }
+    
+    return user;
+}
+
+// PERFORMANCE: Clear cache when user data changes
+function invalidateUserCache(discordId) {
+    collectionCache.delete(`user_${discordId}`);
+}
+
+// PERFORMANCE: Optimized collection processing
+function processCollection(items, filter = 'all') {
+    if (!items || items.length === 0) return [];
+    
+    // Filter items
+    const filteredItems = filter === 'all' 
+        ? items 
+        : items.filter(item => item.seriesId === filter);
+    
+    // PERFORMANCE: Use a single sort with multiple criteria
+    return filteredItems.sort((a, b) => {
+        // Primary: Rarity
+        const aRarityIndex = rarityOrder.indexOf(a.rarity);
+        const bRarityIndex = rarityOrder.indexOf(b.rarity);
+        if (aRarityIndex !== bRarityIndex) return aRarityIndex - bRarityIndex;
+        
+        // Secondary: Series
+        const aSeriesId = a.seriesId || 'zzz_individual';
+        const bSeriesId = b.seriesId || 'zzz_individual';
+        if (aSeriesId !== bSeriesId) return aSeriesId.localeCompare(bSeriesId);
+        
+        // Tertiary: Name
+        return a.itemName.localeCompare(b.itemName);
+    });
+}
+
+// PERFORMANCE: Pre-build emoji grids to avoid repeated string operations
+function buildEmojiGrid(items) {
+    const rarityGroups = {};
+    
+    // Group items by rarity
+    items.forEach(item => {
+        if (!rarityGroups[item.rarity]) rarityGroups[item.rarity] = [];
+        rarityGroups[item.rarity].push(item);
+    });
+    
+    let description = '';
+    
+    for (const rarity of rarityOrder) {
+        const rarityItems = rarityGroups[rarity];
+        if (!rarityItems?.length) continue;
+        
+        const { emoji: rarityEmoji, name: rarityName } = rarityData[rarity];
+        description += `\n${rarityEmoji} **${rarityName}** (${rarityItems.length})\n`;
+        
+        // Build emoji grid efficiently
+        const emojiRows = [];
+        let currentRow = '';
+        
+        rarityItems.forEach((item, i) => {
+            const emoji = formatGachaEmoji(item.emojiId, item.emojiName, item.isAnimated);
+            const quantity = item.quantity > 1 ? `x${item.quantity}` : '';
+            currentRow += `${emoji}${quantity} `;
+            
+            if ((i + 1) % 5 === 0 || i === rarityItems.length - 1) {
+                emojiRows.push(currentRow.trim());
+                currentRow = '';
+            }
+        });
+        
+        description += emojiRows.join('\n') + '\n';
+    }
+    
+    return description.trim();
+}
+
+// PERFORMANCE: Optimized series options generation
+function getSeriesOptions(user) {
+    if (!user.gachaCollection || user.gachaCollection.length === 0) {
+        return [{ label: 'All Items', value: 'all', description: 'No items', emoji: '📦' }];
+    }
+    
+    // Use Map for better performance with large collections
+    const seriesMap = new Map();
+    let totalItems = 0;
+    
+    user.gachaCollection.forEach(item => {
+        totalItems++;
+        const seriesId = item.seriesId || 'individual';
+        
+        if (!seriesMap.has(seriesId)) {
+            seriesMap.set(seriesId, { count: 0, totalQuantity: 0 });
+        }
+        
+        const series = seriesMap.get(seriesId);
+        series.count++;
+        series.totalQuantity += item.quantity || 1;
+    });
+    
+    const options = [{
+        label: 'All Items',
+        value: 'all',
+        description: `View all ${totalItems} items`,
+        emoji: '📦'
+    }];
+    
+    // Convert map to sorted array
+    const sortedSeries = Array.from(seriesMap.entries())
+        .sort(([,a], [,b]) => b.totalQuantity - a.totalQuantity)
+        .slice(0, 24); // Discord limit
+    
+    sortedSeries.forEach(([seriesId, data]) => {
+        const label = seriesId === 'individual' ? 'Individual Items' : 
+                     seriesId.charAt(0).toUpperCase() + seriesId.slice(1);
+        const isIndividual = seriesId === 'individual';
+        
+        options.push({
+            label,
+            value: seriesId,
+            description: `${data.count} ${isIndividual ? 'standalone' : 'types'} ${!isIndividual ? `(${data.totalQuantity} total)` : 'items'}`,
+            emoji: isIndividual ? '🔸' : '🏷️'
+        });
+    });
+    
+    return options;
+}
+
 export default {
     data: new SlashCommandBuilder()
         .setName('collection')
@@ -28,7 +201,8 @@ export default {
     async execute(interaction) {
         await interaction.deferReply({ ephemeral: true });
 
-        const user = await User.findOne({ discordId: interaction.user.id });
+        // PERFORMANCE: Use optimized user lookup
+        const user = await getCachedUserCollection(interaction.user.id);
         if (!user) {
             return interaction.editReply({
                 content: '❌ You are not registered. Please ask an admin to register you first.'
@@ -41,40 +215,32 @@ export default {
             });
         }
 
-        // Check for combinations first
-        const possibleCombinations = await combinationService.checkPossibleCombinations(user);
-        if (possibleCombinations.length > 0) {
-            return combinationService.showCombinationAlert(interaction, user, possibleCombinations);
-        }
+        // PERFORMANCE: Check combinations asynchronously
+        const combinationsPromise = combinationService.checkPossibleCombinations(user);
+        
+        // Don't wait for combinations if we're just showing the collection
+        combinationsPromise.then(possibleCombinations => {
+            if (possibleCombinations.length > 0) {
+                // Only interrupt if there are combinations available
+                return combinationService.showCombinationAlert(interaction, user, possibleCombinations);
+            }
+        }).catch(error => {
+            console.error('Error checking combinations:', error);
+        });
 
         await this.showCollection(interaction, user, 'all', 0);
     },
 
     async showCollection(interaction, user, filter = 'all', page = 0) {
-        // Filter and sort items
-        let items = filter === 'all' ? user.gachaCollection : user.gachaCollection.filter(item => item.seriesId === filter);
-        const rarityOrder = ['mythic', 'legendary', 'epic', 'rare', 'uncommon', 'common'];
-        items.sort((a, b) => {
-            const aIndex = rarityOrder.indexOf(a.rarity);
-            const bIndex = rarityOrder.indexOf(b.rarity);
-            if (aIndex !== bIndex) return aIndex - bIndex;
-            
-            // Sort by series (items without seriesId come last)
-            const aSeriesId = a.seriesId || 'zzz_individual';
-            const bSeriesId = b.seriesId || 'zzz_individual';
-            const seriesCompare = aSeriesId.localeCompare(bSeriesId);
-            if (seriesCompare !== 0) return seriesCompare;
-            
-            // Finally sort alphabetically by name
-            return a.itemName.localeCompare(b.itemName);
-        });
-
+        // PERFORMANCE: Process collection efficiently
+        const processedItems = processCollection(user.gachaCollection, filter);
+        
         // Pagination
-        const totalPages = Math.ceil(items.length / ITEMS_PER_PAGE);
+        const totalPages = Math.ceil(processedItems.length / ITEMS_PER_PAGE);
         const startIndex = page * ITEMS_PER_PAGE;
-        const pageItems = items.slice(startIndex, startIndex + ITEMS_PER_PAGE);
+        const pageItems = processedItems.slice(startIndex, startIndex + ITEMS_PER_PAGE);
 
-        // Create embed
+        // PERFORMANCE: Build embed efficiently
         const embed = new EmbedBuilder()
             .setTitle(`${user.raUsername}'s Collection - ${filter === 'all' ? 'All Items' : filter}`)
             .setColor(COLORS.INFO)
@@ -83,45 +249,18 @@ export default {
         if (pageItems.length === 0) {
             embed.setDescription('No items to display.');
         } else {
-            // Group by rarity and create emoji grid
-            const rarityGroups = {};
-            pageItems.forEach(item => {
-                if (!rarityGroups[item.rarity]) rarityGroups[item.rarity] = [];
-                rarityGroups[item.rarity].push(item);
-            });
-
-            let description = '';
-            for (const rarity of rarityOrder) {
-                const rarityItems = rarityGroups[rarity];
-                if (!rarityItems?.length) continue;
-
-                const rarityEmoji = gachaService.getRarityEmoji(rarity);
-                const rarityName = gachaService.getRarityDisplayName(rarity);
-                description += `\n${rarityEmoji} **${rarityName}** (${rarityItems.length})\n`;
-                
-                // Create emoji grid (5 per row)
-                let currentRow = '';
-                rarityItems.forEach((item, i) => {
-                    const emoji = formatGachaEmoji(item.emojiId, item.emojiName, item.isAnimated);
-                    const quantity = item.quantity > 1 ? `x${item.quantity}` : '';
-                    currentRow += `${emoji}${quantity} `;
-                    
-                    if ((i + 1) % 5 === 0 || i === rarityItems.length - 1) {
-                        description += currentRow.trim() + '\n';
-                        currentRow = '';
-                    }
-                });
-            }
-            embed.setDescription(description.trim());
+            embed.setDescription(buildEmojiGrid(pageItems));
         }
 
-        // Footer
-        const combinationStats = combinationService.getCombinationStats(user);
-        const possibleCombinations = await combinationService.checkPossibleCombinations(user);
+        // PERFORMANCE: Parallel operations for footer
+        const [combinationStats, possibleCombinations] = await Promise.all([
+            combinationService.getCombinationStats(user),
+            combinationService.checkPossibleCombinations(user)
+        ]);
         
         let footerText = totalPages > 1 
-            ? `Page ${page + 1}/${totalPages} • ${startIndex + 1}-${Math.min(startIndex + ITEMS_PER_PAGE, items.length)} of ${items.length} items`
-            : `${items.length} items • xN = quantity`;
+            ? `Page ${page + 1}/${totalPages} • ${startIndex + 1}-${Math.min(startIndex + ITEMS_PER_PAGE, processedItems.length)} of ${processedItems.length} items`
+            : `${processedItems.length} items • xN = quantity`;
         
         footerText += ` • ${combinationStats.totalCombined} from combinations`;
         if (possibleCombinations.length > 0) {
@@ -129,11 +268,18 @@ export default {
         }
         embed.setFooter({ text: footerText });
 
-        // Create components
+        // PERFORMANCE: Build components efficiently
+        const components = this.buildComponents(user, filter, page, totalPages, possibleCombinations);
+
+        await interaction.editReply({ embeds: [embed], components });
+    },
+
+    // PERFORMANCE: Optimized component building
+    buildComponents(user, filter, page, totalPages, possibleCombinations) {
         const components = [];
 
-        // Series dropdown
-        const seriesOptions = this.getSeriesOptions(user);
+        // Series dropdown - only build if needed
+        const seriesOptions = getSeriesOptions(user);
         if (seriesOptions.length > 1) {
             const seriesMenu = new StringSelectMenuBuilder()
                 .setCustomId(`coll_series_${user.raUsername}`)
@@ -142,7 +288,7 @@ export default {
             components.push(new ActionRowBuilder().addComponents(seriesMenu));
         }
 
-        // Pagination
+        // Pagination - only build if needed
         if (totalPages > 1) {
             const paginationRow = new ActionRowBuilder().addComponents(
                 new ButtonBuilder()
@@ -187,51 +333,20 @@ export default {
             .addOptions(actionOptions);
         components.push(new ActionRowBuilder().addComponents(actionMenu));
 
-        await interaction.editReply({ embeds: [embed], components });
+        return components;
     },
 
-    getSeriesOptions(user) {
-        const summary = gachaService.getUserCollectionSummary(user);
-        const options = [{ label: 'All Items', value: 'all', description: `View all ${summary.totalItems} items`, emoji: '📦' }];
-
-        Object.entries(summary.seriesBreakdown || {}).forEach(([seriesName, items]) => {
-            const itemCount = items.length;
-            const totalQuantity = items.reduce((sum, item) => sum + (item.quantity || 1), 0);
-            
-            options.push({
-                label: seriesName === 'Individual Items' ? 'Individual Items' : seriesName.charAt(0).toUpperCase() + seriesName.slice(1),
-                value: seriesName === 'Individual Items' ? 'individual' : seriesName,
-                description: `${itemCount} ${seriesName === 'Individual Items' ? 'standalone' : 'types'} ${seriesName !== 'Individual Items' ? `(${totalQuantity} total)` : 'items'}`,
-                emoji: seriesName === 'Individual Items' ? '🔸' : '🏷️'
-            });
-        });
-
-        return options.slice(0, 25);
-    },
-
+    // PERFORMANCE: Optimized inspect menu
     async showInspectMenu(interaction, user, filter, page) {
-        let items = filter === 'all' ? user.gachaCollection : user.gachaCollection.filter(item => item.seriesId === filter);
-        const rarityOrder = ['mythic', 'legendary', 'epic', 'rare', 'uncommon', 'common'];
-        items.sort((a, b) => {
-            const aIndex = rarityOrder.indexOf(a.rarity);
-            const bIndex = rarityOrder.indexOf(b.rarity);
-            if (aIndex !== bIndex) return aIndex - bIndex;
-            
-            const aSeriesId = a.seriesId || 'zzz_individual';
-            const bSeriesId = b.seriesId || 'zzz_individual';
-            const seriesCompare = aSeriesId.localeCompare(bSeriesId);
-            if (seriesCompare !== 0) return seriesCompare;
-            
-            return a.itemName.localeCompare(b.itemName);
-        });
-
-        const totalPages = Math.ceil(items.length / ITEMS_PER_PAGE);
-        const pageItems = items.slice(page * ITEMS_PER_PAGE, (page + 1) * ITEMS_PER_PAGE);
+        const processedItems = processCollection(user.gachaCollection, filter);
+        const totalPages = Math.ceil(processedItems.length / ITEMS_PER_PAGE);
+        const pageItems = processedItems.slice(page * ITEMS_PER_PAGE, (page + 1) * ITEMS_PER_PAGE);
         
         if (pageItems.length === 0) {
             return interaction.followUp({ content: '❌ No items on this page to inspect.', ephemeral: true });
         }
 
+        // PERFORMANCE: Build options efficiently
         const itemOptions = pageItems.map(item => {
             const quantity = item.quantity > 1 ? ` x${item.quantity}` : '';
             const seriesTag = item.seriesId ? ` [${item.seriesId}]` : '';
@@ -241,7 +356,7 @@ export default {
             const option = {
                 label: item.itemName.slice(0, 100),
                 value: item.itemId,
-                description: `${gachaService.getRarityDisplayName(item.rarity)}${quantity}${seriesTag}${sourceTag}${animatedTag}`.slice(0, 100)
+                description: `${rarityData[item.rarity].name}${quantity}${seriesTag}${sourceTag}${animatedTag}`.slice(0, 100)
             };
             
             if (item.emojiId && item.emojiName) {
@@ -265,7 +380,6 @@ export default {
             )
         ];
 
-        // Add pagination for inspect if needed
         if (totalPages > 1) {
             const paginationRow = new ActionRowBuilder().addComponents(
                 new ButtonBuilder()
@@ -282,7 +396,6 @@ export default {
             components.push(paginationRow);
         }
 
-        // Back button
         components.push(new ActionRowBuilder().addComponents(
             new ButtonBuilder()
                 .setCustomId(`coll_back_${user.raUsername}_${filter}_${page}`)
@@ -293,25 +406,11 @@ export default {
         await interaction.editReply({ embeds: [embed], components });
     },
 
-    // NEW: Show give item menu with dropdown instead of modal
     async showGiveMenu(interaction, user, filter, page) {
-        let items = filter === 'all' ? user.gachaCollection : user.gachaCollection.filter(item => item.seriesId === filter);
-        const rarityOrder = ['mythic', 'legendary', 'epic', 'rare', 'uncommon', 'common'];
-        items.sort((a, b) => {
-            const aIndex = rarityOrder.indexOf(a.rarity);
-            const bIndex = rarityOrder.indexOf(b.rarity);
-            if (aIndex !== bIndex) return aIndex - bIndex;
-            
-            const aSeriesId = a.seriesId || 'zzz_individual';
-            const bSeriesId = b.seriesId || 'zzz_individual';
-            const seriesCompare = aSeriesId.localeCompare(bSeriesId);
-            if (seriesCompare !== 0) return seriesCompare;
-            
-            return a.itemName.localeCompare(b.itemName);
-        });
-
-        const totalPages = Math.ceil(items.length / ITEMS_PER_PAGE);
-        const pageItems = items.slice(page * ITEMS_PER_PAGE, (page + 1) * ITEMS_PER_PAGE);
+        // Similar optimization as showInspectMenu
+        const processedItems = processCollection(user.gachaCollection, filter);
+        const totalPages = Math.ceil(processedItems.length / ITEMS_PER_PAGE);
+        const pageItems = processedItems.slice(page * ITEMS_PER_PAGE, (page + 1) * ITEMS_PER_PAGE);
         
         if (pageItems.length === 0) {
             return interaction.followUp({ content: '❌ No items on this page to give.', ephemeral: true });
@@ -326,7 +425,7 @@ export default {
             const option = {
                 label: item.itemName.slice(0, 100),
                 value: item.itemId,
-                description: `${gachaService.getRarityDisplayName(item.rarity)}${quantity}${seriesTag}${sourceTag}${animatedTag}`.slice(0, 100)
+                description: `${rarityData[item.rarity].name}${quantity}${seriesTag}${sourceTag}${animatedTag}`.slice(0, 100)
             };
             
             if (item.emojiId && item.emojiName) {
@@ -350,7 +449,6 @@ export default {
             )
         ];
 
-        // Add pagination for give if needed
         if (totalPages > 1) {
             const paginationRow = new ActionRowBuilder().addComponents(
                 new ButtonBuilder()
@@ -367,7 +465,6 @@ export default {
             components.push(paginationRow);
         }
 
-        // Back button
         components.push(new ActionRowBuilder().addComponents(
             new ButtonBuilder()
                 .setCustomId(`coll_back_${user.raUsername}_${filter}_${page}`)
@@ -378,7 +475,6 @@ export default {
         await interaction.editReply({ embeds: [embed], components });
     },
 
-    // NEW: Show modal for recipient details after item selection
     async showGiveDetailsModal(interaction, user, itemId, filter, page) {
         const item = user.gachaCollection.find(item => item.itemId === itemId);
         if (!item) {
@@ -412,28 +508,41 @@ export default {
         await interaction.showModal(modal);
     },
 
+    // PERFORMANCE: Optimized item detail view
     async showItemDetail(interaction, user, itemId, returnFilter, returnPage) {
         const item = user.gachaCollection.find(item => item.itemId === itemId);
         if (!item) {
             return interaction.editReply({ content: '❌ Item not found in your collection.' });
         }
 
-        const originalItem = await GachaItem.findOne({ itemId });
+        // PERFORMANCE: Only fetch original item if needed
+        let originalItem = null;
+        const needsOriginalData = !item.description || !item.flavorText;
+        
+        if (needsOriginalData) {
+            originalItem = await GachaItem.findOne({ itemId }, { description: 1, flavorText: 1 }).lean();
+        }
+
         const embed = new EmbedBuilder()
             .setTitle(`Item Details - ${item.itemName}`)
-            .setColor(gachaService.getRarityColor(item.rarity))
+            .setColor(rarityData[item.rarity].color)
             .setTimestamp();
 
         const emoji = formatGachaEmoji(item.emojiId, item.emojiName, item.isAnimated);
-        const rarityEmoji = gachaService.getRarityEmoji(item.rarity);
-        const rarityName = gachaService.getRarityDisplayName(item.rarity);
+        const { emoji: rarityEmoji, name: rarityName } = rarityData[item.rarity];
         
         let description = `${emoji} **${item.itemName}**\n\n${rarityEmoji} **${rarityName}**`;
         if (item.quantity > 1) description += `\n**Quantity:** ${item.quantity}`;
         if (item.seriesId) description += `\n**Series:** ${item.seriesId.charAt(0).toUpperCase() + item.seriesId.slice(1)}`;
         if (item.isAnimated) description += `\n**Emoji Type:** 🎬 Animated`;
         
-        const sourceNames = { gacha: 'Gacha Pull', combined: 'Combination', series_completion: 'Series Completion', admin_grant: 'Admin Grant', player_transfer: 'Player Gift' };
+        const sourceNames = { 
+            gacha: 'Gacha Pull', 
+            combined: 'Combination', 
+            series_completion: 'Series Completion', 
+            admin_grant: 'Admin Grant', 
+            player_transfer: 'Player Gift' 
+        };
         description += `\n**Source:** ${sourceNames[item.source] || 'Unknown'}`;
         description += `\n**Item ID:** \`${itemId}\``;
         embed.setDescription(description);
@@ -475,14 +584,18 @@ export default {
             return interaction.followUp({ content: '❌ Item not found in your collection.', ephemeral: true });
         }
 
-        const originalItem = await GachaItem.findOne({ itemId });
+        // PERFORMANCE: Only fetch if needed
+        let originalItem = null;
+        if (!item.description || !item.flavorText) {
+            originalItem = await GachaItem.findOne({ itemId }, { description: 1, flavorText: 1 }).lean();
+        }
+
         const emoji = formatGachaEmoji(item.emojiId, item.emojiName, item.isAnimated);
-        const rarityEmoji = gachaService.getRarityEmoji(item.rarity);
-        const rarityName = gachaService.getRarityDisplayName(item.rarity);
+        const { emoji: rarityEmoji, name: rarityName, color } = rarityData[item.rarity];
 
         const embed = new EmbedBuilder()
             .setTitle(`${emoji} ${item.itemName}`)
-            .setColor(gachaService.getRarityColor(item.rarity))
+            .setColor(color)
             .setAuthor({ name: `${user.raUsername}'s Collection`, iconURL: interaction.user.displayAvatarURL() })
             .setTimestamp();
 
@@ -516,12 +629,11 @@ export default {
         }
     },
 
-    // ENHANCED: Send public trade confirmation that expires in 5 minutes
+    // PERFORMANCE: Optimized trade confirmation
     async sendPublicTradeConfirmation(givingUser, receivingUser, gachaItem, quantity, combinationResult, client) {
         try {
             const emoji = formatGachaEmoji(gachaItem.emojiId, gachaItem.emojiName, gachaItem.isAnimated);
-            const rarityEmoji = gachaService.getRarityEmoji(gachaItem.rarity);
-            const rarityName = gachaService.getRarityDisplayName(gachaItem.rarity);
+            const { emoji: rarityEmoji, name: rarityName } = rarityData[gachaItem.rarity];
             
             const embed = new EmbedBuilder()
                 .setTitle('ITEM TRADE COMPLETED!')
@@ -536,7 +648,6 @@ export default {
                 )
                 .setTimestamp();
 
-            // Add item description if available
             if (gachaItem.description) {
                 embed.addFields({
                     name: 'Item Description',
@@ -559,7 +670,6 @@ export default {
 
             const channel = await client.channels.fetch(GACHA_TRADE_CHANNEL_ID);
             if (channel) {
-                // Send a prominent message that mentions both users
                 const message = await channel.send({ 
                     content: `**TRADE ALERT**\n<@${givingUser.discordId}> ➡️ <@${receivingUser.discordId}>`, 
                     embeds: [embed] 
@@ -567,7 +677,6 @@ export default {
                 
                 console.log(`📢 Public trade confirmation sent to ${channel.name} for trade: ${givingUser.raUsername} -> ${receivingUser.raUsername} (${quantity}x ${gachaItem.itemName})`);
                 
-                // Schedule deletion in 5 minutes
                 setTimeout(async () => {
                     try {
                         await message.delete();
@@ -575,7 +684,7 @@ export default {
                     } catch (deleteError) {
                         console.log('Trade confirmation message already deleted or inaccessible');
                     }
-                }, 5 * 60 * 1000); // 5 minutes
+                }, 5 * 60 * 1000);
                 
                 return true;
             } else {
@@ -584,20 +693,17 @@ export default {
             }
         } catch (error) {
             console.error('❌ Error sending public trade confirmation:', error);
-            console.error('Error details:', {
-                givingUser: givingUser?.raUsername,
-                receivingUser: receivingUser?.raUsername,
-                item: gachaItem?.itemName,
-                quantity: quantity,
-                channelId: GACHA_TRADE_CHANNEL_ID
-            });
             return false;
         }
     },
 
+    // PERFORMANCE: Optimized stats display
     async showStats(interaction, user) {
-        const summary = gachaService.getUserCollectionSummary(user);
-        const combinationStats = combinationService.getCombinationStats(user);
+        const [summary, combinationStats, possibleCombinations] = await Promise.all([
+            gachaService.getUserCollectionSummary(user),
+            combinationService.getCombinationStats(user),
+            combinationService.checkPossibleCombinations(user)
+        ]);
         
         const embed = new EmbedBuilder()
             .setTitle(`${user.raUsername}'s Collection Statistics`)
@@ -606,13 +712,11 @@ export default {
 
         let description = `📦 **Total Items:** ${summary.totalItems}\n🎯 **Unique Items:** ${summary.uniqueItems}\n\n**Rarity Breakdown:**\n`;
         
-        const rarityOrder = ['mythic', 'legendary', 'epic', 'rare', 'uncommon', 'common'];
         const rarityCount = summary.rarityCount || {};
         rarityOrder.forEach(rarity => {
             const count = rarityCount[rarity] || 0;
             if (count > 0) {
-                const rarityEmoji = gachaService.getRarityEmoji(rarity);
-                const rarityName = gachaService.getRarityDisplayName(rarity);
+                const { emoji: rarityEmoji, name: rarityName } = rarityData[rarity];
                 description += `${rarityEmoji} ${rarityName}: ${count}\n`;
             }
         });
@@ -635,13 +739,11 @@ export default {
         description += `🏆 Series Rewards: ${sourceBreakdown.series_completion || 0}\n`;
         description += `🎁 Player Gifts: ${sourceBreakdown.player_transfer || 0}\n`;
 
-        // Check for animated items
         const animatedCount = user.gachaCollection?.filter(item => item.isAnimated).length || 0;
         if (animatedCount > 0) {
             description += `🎬 Animated Emojis: ${animatedCount}\n`;
         }
 
-        const possibleCombinations = await combinationService.checkPossibleCombinations(user);
         description += `\n**💡 Combination System:**\n`;
         description += `⚗️ Current combinations available: ${possibleCombinations.length}\n`;
         description += `🔮 Combinations show automatically in /collection\n`;
@@ -663,7 +765,7 @@ export default {
 
     async showGiveConfirmation(interaction, givingUser, receivingUser, gachaItem, quantity) {
         const emoji = formatGachaEmoji(gachaItem.emojiId, gachaItem.emojiName, gachaItem.isAnimated);
-        const rarityEmoji = gachaService.getRarityEmoji(gachaItem.rarity);
+        const { emoji: rarityEmoji } = rarityData[gachaItem.rarity];
         
         const embed = new EmbedBuilder()
             .setTitle('🤝 Confirm Item Transfer')
@@ -694,10 +796,14 @@ export default {
         await interaction.editReply({ embeds: [embed], components });
     },
 
+    // PERFORMANCE: Optimized transfer with better error handling
     async performTransfer(givingUsername, receivingUsername, itemId, quantity) {
-        const givingUser = await User.findOne({ raUsername: { $regex: new RegExp(`^${givingUsername}$`, 'i') } });
-        const receivingUser = await User.findOne({ raUsername: { $regex: new RegExp(`^${receivingUsername}$`, 'i') } });
-        const gachaItem = await GachaItem.findOne({ itemId });
+        // PERFORMANCE: Use Promise.all for parallel queries
+        const [givingUser, receivingUser, gachaItem] = await Promise.all([
+            User.findOne({ raUsername: { $regex: new RegExp(`^${givingUsername}$`, 'i') } }),
+            User.findOne({ raUsername: { $regex: new RegExp(`^${receivingUsername}$`, 'i') } }),
+            GachaItem.findOne({ itemId }).lean() // Use lean for read-only data
+        ]);
 
         if (!givingUser || !receivingUser || !gachaItem) {
             throw new Error('User or item not found.');
@@ -713,20 +819,25 @@ export default {
         if (!removeSuccess) throw new Error('Failed to remove item from your collection.');
 
         receivingUser.addGachaItem(gachaItem, quantity, 'player_transfer');
-        await Promise.all([givingUser.save(), receivingUser.save()]);
+        
+        // PERFORMANCE: Parallel save and combination check
+        const [, , combinationResult] = await Promise.all([
+            givingUser.save(),
+            receivingUser.save(),
+            combinationService.triggerCombinationAlertsForPlayerTransfer(receivingUser, itemId, givingUser.raUsername)
+                .catch(error => {
+                    console.error('Error checking combinations for player gift:', error);
+                    return { hasCombinations: false };
+                })
+        ]);
 
-        // Check for combinations
-        let combinationResult = { hasCombinations: false };
-        try {
-            combinationResult = await combinationService.triggerCombinationAlertsForPlayerTransfer(receivingUser, itemId, givingUser.raUsername);
-        } catch (error) {
-            console.error('Error checking combinations for player gift:', error);
-        }
+        // PERFORMANCE: Clear cache for both users
+        invalidateUserCache(givingUser.discordId);
+        invalidateUserCache(receivingUser.discordId);
 
         return { success: true, combinationResult, gachaItem, givingUser, receivingUser };
     },
 
-    // NEW: Handle give details modal submission
     async handleGiveDetailsModal(interaction, username, itemId, filter, page) {
         await interaction.deferReply({ ephemeral: true });
 
@@ -737,7 +848,8 @@ export default {
             return interaction.editReply({ content: '❌ Quantity must be between 1 and 100.' });
         }
 
-        const givingUser = await User.findOne({ discordId: interaction.user.id });
+        // PERFORMANCE: Use cached user lookup
+        const givingUser = await getCachedUserCollection(interaction.user.id);
         if (!givingUser || givingUser.raUsername.toLowerCase() !== username.toLowerCase()) {
             return interaction.editReply({ content: '❌ You can only give items from your own collection.' });
         }
@@ -760,7 +872,7 @@ export default {
             return interaction.editReply({ content: `❌ You only have ${givingUserItem.quantity} of this item, but you're trying to give ${quantity}.` });
         }
 
-        const gachaItem = await GachaItem.findOne({ itemId });
+        const gachaItem = await GachaItem.findOne({ itemId }).lean();
         if (!gachaItem) {
             return interaction.editReply({ content: `❌ Item not found in the database. This might be an invalid item.` });
         }
@@ -768,19 +880,22 @@ export default {
         await this.showGiveConfirmation(interaction, givingUser, receivingUser, gachaItem, quantity);
     },
 
-    // Main interaction handler
+    // PERFORMANCE: Optimized interaction handler
     async handleInteraction(interaction) {
         if (!interaction.customId.startsWith('coll_')) return;
 
         try {
+            // PERFORMANCE: Parse customId once and route efficiently
+            const customIdParts = interaction.customId.split('_');
+            const action = customIdParts[1];
+
             // Handle give confirmation
-            if (interaction.customId.startsWith('coll_give_confirm_')) {
+            if (action === 'give' && customIdParts[2] === 'confirm') {
                 await interaction.deferUpdate();
-                const parts = interaction.customId.split('_');
-                const [, , , givingUsername, receivingUsername, itemId, quantityStr] = parts;
+                const [, , , givingUsername, receivingUsername, itemId, quantityStr] = customIdParts;
                 const quantity = parseInt(quantityStr);
 
-                const user = await User.findOne({ discordId: interaction.user.id });
+                const user = await getCachedUserCollection(interaction.user.id);
                 if (!user) {
                     return interaction.editReply({ content: '❌ You are not registered. Please ask an admin to register you first.', embeds: [], components: [] });
                 }
@@ -809,7 +924,6 @@ export default {
 
                     await interaction.editReply({ embeds: [embed], components: [] });
 
-                    // ENHANCED: Send public trade confirmation that expires in 5 minutes
                     const confirmationSent = await this.sendPublicTradeConfirmation(
                         result.givingUser, 
                         result.receivingUser, 
@@ -820,7 +934,6 @@ export default {
                     );
                     
                     if (!confirmationSent) {
-                        // If public confirmation failed, send a follow-up to let them know
                         await interaction.followUp({ 
                             content: '⚠️ Trade completed successfully, but public confirmation could not be sent to the trade channel. Both parties should screenshot this confirmation.', 
                             ephemeral: true 
@@ -833,16 +946,16 @@ export default {
                 return;
             }
 
-            if (interaction.customId === 'coll_give_cancel') {
+            if (customIdParts.join('_') === 'coll_give_cancel') {
                 await interaction.deferUpdate();
                 return interaction.editReply({ content: '❌ Transfer cancelled.', embeds: [], components: [] });
             }
 
             // Handle share button
-            if (interaction.customId.startsWith('coll_share_')) {
-                const [, , username, itemId] = interaction.customId.split('_');
+            if (action === 'share') {
+                const [, , username, itemId] = customIdParts;
                 
-                const user = await User.findOne({ discordId: interaction.user.id });
+                const user = await getCachedUserCollection(interaction.user.id);
                 if (!user) {
                     return interaction.reply({ content: '❌ You are not registered. Please ask an admin to register you first.', ephemeral: true });
                 }
@@ -855,49 +968,35 @@ export default {
                 return this.shareItem(interaction, user, itemId);
             }
 
-            // Handle pagination for inspect
-            if (interaction.customId.startsWith('coll_inspect_prev_') || interaction.customId.startsWith('coll_inspect_next_')) {
+            // Handle pagination efficiently
+            if ((action === 'inspect' || action === 'give') && (customIdParts[2] === 'prev' || customIdParts[2] === 'next')) {
                 await interaction.deferUpdate();
-                const parts = interaction.customId.split('_');
-                const direction = parts[2]; // prev or next
-                const username = parts[3];
-                const filter = parts[4];
-                const currentPage = parseInt(parts[5]);
+                const direction = customIdParts[2];
+                const username = customIdParts[3];
+                const filter = customIdParts[4];
+                const currentPage = parseInt(customIdParts[5]);
 
-                const user = await User.findOne({ discordId: interaction.user.id });
+                const user = await getCachedUserCollection(interaction.user.id);
                 if (!user || user.raUsername.toLowerCase() !== username.toLowerCase()) {
                     return interaction.editReply({ content: '❌ You can only view your own collection.', embeds: [], components: [] });
                 }
 
                 const newPage = direction === 'prev' ? currentPage - 1 : currentPage + 1;
-                return this.showInspectMenu(interaction, user, filter, newPage);
-            }
-
-            // Handle pagination for give
-            if (interaction.customId.startsWith('coll_give_prev_') || interaction.customId.startsWith('coll_give_next_')) {
-                await interaction.deferUpdate();
-                const parts = interaction.customId.split('_');
-                const direction = parts[2]; // prev or next
-                const username = parts[3];
-                const filter = parts[4];
-                const currentPage = parseInt(parts[5]);
-
-                const user = await User.findOne({ discordId: interaction.user.id });
-                if (!user || user.raUsername.toLowerCase() !== username.toLowerCase()) {
-                    return interaction.editReply({ content: '❌ You can only view your own collection.', embeds: [], components: [] });
+                
+                if (action === 'inspect') {
+                    return this.showInspectMenu(interaction, user, filter, newPage);
+                } else {
+                    return this.showGiveMenu(interaction, user, filter, newPage);
                 }
-
-                const newPage = direction === 'prev' ? currentPage - 1 : currentPage + 1;
-                return this.showGiveMenu(interaction, user, filter, newPage);
             }
 
             // Handle action dropdown
-            if (interaction.customId.startsWith('coll_actions_') && interaction.isStringSelectMenu()) {
-                const [, , username, filter, pageStr] = interaction.customId.split('_');
+            if (action === 'actions' && interaction.isStringSelectMenu()) {
+                const [, , username, filter, pageStr] = customIdParts;
                 const page = parseInt(pageStr);
-                const action = interaction.values[0];
+                const selectedAction = interaction.values[0];
 
-                const user = await User.findOne({ discordId: interaction.user.id });
+                const user = await getCachedUserCollection(interaction.user.id);
                 if (!user) {
                     return interaction.reply({ content: '❌ You are not registered. Please ask an admin to register you first.', ephemeral: true });
                 }
@@ -906,15 +1005,14 @@ export default {
                     return interaction.reply({ content: '❌ You can only view your own collection.', ephemeral: true });
                 }
 
-                // Handle 'give' action - show give menu instead of modal
-                if (action === 'give') {
+                if (selectedAction === 'give') {
                     await interaction.deferUpdate();
                     return this.showGiveMenu(interaction, user, filter, page);
                 }
 
                 await interaction.deferUpdate();
 
-                switch (action) {
+                switch (selectedAction) {
                     case 'inspect': return this.showInspectMenu(interaction, user, filter, page);
                     case 'stats': return this.showStats(interaction, user);
                     case 'recipes': return combinationService.showRecipeBook(interaction, 0);
@@ -927,13 +1025,13 @@ export default {
                 return;
             }
 
-            // NEW: Handle give item selection - DON'T defer for modal interactions
-            if (interaction.customId.startsWith('coll_give_item_') && interaction.isStringSelectMenu()) {
-                const [, , , , filter, pageStr] = interaction.customId.split('_');
+            // Handle give item selection
+            if (action === 'give' && customIdParts[2] === 'item' && interaction.isStringSelectMenu()) {
+                const [, , , , filter, pageStr] = customIdParts;
                 const itemId = interaction.values[0];
                 const page = parseInt(pageStr);
                 
-                const user = await User.findOne({ discordId: interaction.user.id });
+                const user = await getCachedUserCollection(interaction.user.id);
                 if (!user) {
                     return interaction.reply({ content: '❌ You are not registered. Please ask an admin to register you first.', ephemeral: true });
                 }
@@ -943,21 +1041,19 @@ export default {
 
             await interaction.deferUpdate();
             
-            const user = await User.findOne({ discordId: interaction.user.id });
+            const user = await getCachedUserCollection(interaction.user.id);
             if (!user) {
                 return interaction.followUp({ content: '❌ You are not registered. Please ask an admin to register you first.', ephemeral: true });
             }
 
             // Handle inspect item selection
-            if (interaction.customId.startsWith('coll_inspect_item_') && interaction.isStringSelectMenu()) {
-                const [, , , , filter, pageStr] = interaction.customId.split('_');
+            if (action === 'inspect' && customIdParts[2] === 'item' && interaction.isStringSelectMenu()) {
+                const [, , , , filter, pageStr] = customIdParts;
                 return this.showItemDetail(interaction, user, interaction.values[0], filter, parseInt(pageStr));
             }
 
-            // Handle other actions by parsing the custom ID
-            const [, action, username, ...rest] = interaction.customId.split('_');
-            
-            if (user.raUsername.toLowerCase() !== username.toLowerCase()) {
+            // Handle other actions
+            if (user.raUsername.toLowerCase() !== customIdParts[2]?.toLowerCase()) {
                 return interaction.followUp({ content: '❌ You can only view your own collection.', ephemeral: true });
             }
 
@@ -968,22 +1064,22 @@ export default {
                     }
                     break;
                 case 'prev':
-                    if (rest.length >= 1) {
-                        const filter = rest[0];
+                    if (customIdParts.length >= 4) {
+                        const filter = customIdParts[3];
                         const currentPage = parseInt(interaction.message.embeds[0].footer?.text?.match(/Page (\d+)/)?.[1] || '1') - 1;
                         return this.showCollection(interaction, user, filter, Math.max(0, currentPage - 1));
                     }
                     break;
                 case 'next':
-                    if (rest.length >= 1) {
-                        const filter = rest[0];
+                    if (customIdParts.length >= 4) {
+                        const filter = customIdParts[3];
                         const currentPage = parseInt(interaction.message.embeds[0].footer?.text?.match(/Page (\d+)/)?.[1] || '1') - 1;
                         return this.showCollection(interaction, user, filter, currentPage + 1);
                     }
                     break;
                 case 'back':
-                    if (rest.length >= 2) {
-                        return this.showCollection(interaction, user, rest[0], parseInt(rest[1]));
+                    if (customIdParts.length >= 5) {
+                        return this.showCollection(interaction, user, customIdParts[3], parseInt(customIdParts[4]));
                     }
                     break;
             }
@@ -1000,9 +1096,7 @@ export default {
         }
     },
 
-    // Handle modal submissions
     async handleModalSubmit(interaction) {
-        // NEW: Handle give details modal
         if (interaction.customId.startsWith('coll_give_details_')) {
             const parts = interaction.customId.split('_');
             const username = parts[3];
@@ -1013,3 +1107,6 @@ export default {
         }
     }
 };
+
+// Initialize rarity data when module loads
+initializeRarityData();
