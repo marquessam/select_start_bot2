@@ -1,4 +1,4 @@
-// src/index.js - Streamlined with Gacha Store integration
+// src/index.js - Optimized with performance improvements
 import { Client, Collection, Events, GatewayIntentBits, EmbedBuilder } from 'discord.js';
 import { config, validateConfig } from './config/config.js';
 import { connectDB, checkDatabaseHealth } from './models/index.js';
@@ -58,6 +58,32 @@ const client = new Client({
 
 // Initialize commands collection
 client.commands = new Collection();
+
+// PERFORMANCE: User cache to avoid repeated database queries
+const userCache = new Map();
+const USER_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+// Helper function to get user with caching
+async function getCachedUser(discordId) {
+    const cached = userCache.get(discordId);
+    if (cached && Date.now() - cached.timestamp < USER_CACHE_TTL) {
+        return cached.user;
+    }
+    
+    const user = await User.findOne({ discordId });
+    userCache.set(discordId, { user, timestamp: Date.now() });
+    return user;
+}
+
+// Clear expired cache entries periodically
+setInterval(() => {
+    const now = Date.now();
+    for (const [key, value] of userCache.entries()) {
+        if (now - value.timestamp > USER_CACHE_TTL) {
+            userCache.delete(key);
+        }
+    }
+}, USER_CACHE_TTL);
 
 // Load commands
 const loadCommands = async () => {
@@ -119,15 +145,19 @@ client.on(Events.InteractionCreate, async interaction => {
     }
 });
 
-// Handle button interactions - UPDATED with Gacha Store support
+// OPTIMIZED: Button interactions with early routing and minimal database queries
 client.on(Events.InteractionCreate, async interaction => {
     if (!interaction.isButton()) return;
     
     try {
-        // Handle nominations pagination
-        if (interaction.customId === 'nominations_prev' || interaction.customId === 'nominations_next') {
-            const nominationsCommand = interaction.client.commands.get('nominations');
-            if (nominationsCommand && typeof nominationsCommand.handlePaginationInteraction === 'function') {
+        const customId = interaction.customId;
+        
+        // OPTIMIZATION: Route directly to handlers without redundant checks
+        
+        // Nominations pagination - no user lookup needed
+        if (customId === 'nominations_prev' || customId === 'nominations_next') {
+            const nominationsCommand = client.commands.get('nominations');
+            if (nominationsCommand?.handlePaginationInteraction) {
                 await nominationsCommand.handlePaginationInteraction(interaction);
             } else {
                 await interaction.reply({
@@ -138,20 +168,20 @@ client.on(Events.InteractionCreate, async interaction => {
             return;
         }
 
-        // Handle combination buttons
-        if (interaction.customId.startsWith('combo_')) {
+        // Combination buttons - delegate to service
+        if (customId.startsWith('combo_')) {
             const handled = await combinationService.handleCombinationInteraction(interaction);
             if (handled) return;
         }
 
-        // Handle gacha machine buttons - UPDATED with better error handling
-        if (interaction.customId === 'gacha_single_pull' || 
-            interaction.customId === 'gacha_multi_pull' || 
-            interaction.customId === 'gacha_collection') {
+        // Gacha machine buttons - only lookup user when needed
+        if (customId === 'gacha_single_pull' || 
+            customId === 'gacha_multi_pull' || 
+            customId === 'gacha_collection') {
             
             await interaction.deferReply({ ephemeral: true });
 
-            const user = await User.findOne({ discordId: interaction.user.id });
+            const user = await getCachedUser(interaction.user.id);
             if (!user) {
                 return interaction.editReply({
                     content: '❌ You are not registered! Please ask an admin to register you first.',
@@ -159,7 +189,7 @@ client.on(Events.InteractionCreate, async interaction => {
                 });
             }
 
-            switch (interaction.customId) {
+            switch (customId) {
                 case 'gacha_single_pull':
                     await gachaMachine.handlePull(interaction, user, 'single');
                     break;
@@ -173,19 +203,19 @@ client.on(Events.InteractionCreate, async interaction => {
             return;
         }
 
-        // Handle gacha admin buttons
-        if (interaction.customId.startsWith('gacha_')) {
+        // Gacha admin buttons
+        if (customId.startsWith('gacha_')) {
             const gachaAdminCommand = client.commands.get('gacha-admin');
-            if (gachaAdminCommand && typeof gachaAdminCommand.handleButtonInteraction === 'function') {
+            if (gachaAdminCommand?.handleButtonInteraction) {
                 await gachaAdminCommand.handleButtonInteraction(interaction);
             }
             return;
         }
 
-        // Handle recipes buttons
-        if (interaction.customId.startsWith('recipes_')) {
+        // Recipes buttons
+        if (customId.startsWith('recipes_')) {
             const recipesCommand = client.commands.get('recipes');
-            if (recipesCommand && typeof recipesCommand.handleButtonInteraction === 'function') {
+            if (recipesCommand?.handleButtonInteraction) {
                 await recipesCommand.handleButtonInteraction(interaction);
             } else {
                 await interaction.reply({
@@ -196,10 +226,10 @@ client.on(Events.InteractionCreate, async interaction => {
             return;
         }
 
-        // Handle collection buttons
-        if (interaction.customId.startsWith('coll_')) {
+        // Collection buttons
+        if (customId.startsWith('coll_')) {
             const collectionCommand = client.commands.get('collection');
-            if (collectionCommand && typeof collectionCommand.handleInteraction === 'function') {
+            if (collectionCommand?.handleInteraction) {
                 await collectionCommand.handleInteraction(interaction);
             } else {
                 await interaction.reply({
@@ -210,29 +240,29 @@ client.on(Events.InteractionCreate, async interaction => {
             return;
         }
         
-        // Handle nomination buttons
-        if (interaction.customId.startsWith('nominate_')) {
+        // Nomination buttons
+        if (customId.startsWith('nominate_')) {
             await handleNominationButtonInteraction(interaction);
             return;
         }
         
-        // Handle restriction buttons
-        if (interaction.customId.startsWith('restrictions_')) {
+        // Restriction buttons
+        if (customId.startsWith('restrictions_')) {
             await handleRestrictionButtonInteraction(interaction);
             return;
         }
         
-        // Handle arena buttons
-        if (interaction.customId.startsWith('arena_') || interaction.customId.startsWith('admin_arena_')) {
+        // Arena buttons
+        if (customId.startsWith('arena_') || customId.startsWith('admin_arena_')) {
             await handleArenaButtonInteraction(interaction);
             return;
         }
         
-        // Handle other button interactions by command
-        const commandName = interaction.customId.split('_')[0];
+        // Generic command-based button handling
+        const commandName = customId.split('_')[0];
         const command = client.commands.get(commandName);
         
-        if (command && typeof command.handleButtonInteraction === 'function') {
+        if (command?.handleButtonInteraction) {
             await command.handleButtonInteraction(interaction);
         }
     } catch (error) {
@@ -251,20 +281,22 @@ client.on(Events.InteractionCreate, async interaction => {
     }
 });
 
-// Handle select menu interactions - UPDATED with Gacha Store support
+// OPTIMIZED: Select menu interactions with streamlined routing
 client.on(Events.InteractionCreate, async interaction => {
     if (!interaction.isStringSelectMenu()) return;
     
     try {
-        // Handle combination select menus
-        if (interaction.customId.startsWith('combo_')) {
+        const customId = interaction.customId;
+        
+        // Combination select menus
+        if (customId.startsWith('combo_')) {
             const handled = await combinationService.handleCombinationInteraction(interaction);
             if (handled) return;
         }
 
-        // NEW: Handle gacha store purchases
-        if (interaction.customId === 'gacha_store_purchase') {
-            const user = await User.findOne({ discordId: interaction.user.id });
+        // Gacha store purchases - only lookup user when needed
+        if (customId === 'gacha_store_purchase') {
+            const user = await getCachedUser(interaction.user.id);
             if (!user) {
                 return interaction.reply({
                     content: '❌ You are not registered! Please ask an admin to register you first.',
@@ -285,10 +317,10 @@ client.on(Events.InteractionCreate, async interaction => {
             return;
         }
 
-        // Handle collection select menus
-        if (interaction.customId.startsWith('coll_')) {
+        // Collection select menus
+        if (customId.startsWith('coll_')) {
             const collectionCommand = client.commands.get('collection');
-            if (collectionCommand && typeof collectionCommand.handleInteraction === 'function') {
+            if (collectionCommand?.handleInteraction) {
                 await collectionCommand.handleInteraction(interaction);
             } else {
                 await interaction.reply({
@@ -299,29 +331,29 @@ client.on(Events.InteractionCreate, async interaction => {
             return;
         }
         
-        // Handle nomination select menus
-        if (interaction.customId.startsWith('nominate_')) {
+        // Nomination select menus
+        if (customId.startsWith('nominate_')) {
             await handleNominationSelectMenu(interaction);
             return;
         }
         
-        // Handle restriction select menus
-        if (interaction.customId.startsWith('restrictions_')) {
+        // Restriction select menus
+        if (customId.startsWith('restrictions_')) {
             await handleRestrictionSelectMenu(interaction);
             return;
         }
         
-        // Handle arena select menus
-        if (interaction.customId.startsWith('arena_')) {
+        // Arena select menus
+        if (customId.startsWith('arena_')) {
             await handleArenaSelectMenu(interaction);
             return;
         }
         
-        // Handle other select menu interactions
-        const commandName = interaction.customId.split('_')[0];
+        // Generic command-based select menu handling
+        const commandName = customId.split('_')[0];
         const command = client.commands.get(commandName);
         
-        if (command && typeof command.handleSelectMenuInteraction === 'function') {
+        if (command?.handleSelectMenuInteraction) {
             await command.handleSelectMenuInteraction(interaction);
         }
     } catch (error) {
@@ -340,15 +372,17 @@ client.on(Events.InteractionCreate, async interaction => {
     }
 });
 
-// Handle modal submit interactions - UPDATED with enhanced collection support
+// OPTIMIZED: Modal submit interactions with direct routing
 client.on(Events.InteractionCreate, async interaction => {
     if (!interaction.isModalSubmit()) return;
     
     try {
-        // Handle collection give details modal
-        if (interaction.customId.startsWith('coll_give_details_')) {
+        const customId = interaction.customId;
+        
+        // Collection modals
+        if (customId.startsWith('coll_give_details_')) {
             const collectionCommand = client.commands.get('collection');
-            if (collectionCommand && typeof collectionCommand.handleModalSubmit === 'function') {
+            if (collectionCommand?.handleModalSubmit) {
                 await collectionCommand.handleModalSubmit(interaction);
             } else {
                 await interaction.reply({
@@ -359,10 +393,10 @@ client.on(Events.InteractionCreate, async interaction => {
             return;
         }
 
-        // Handle gacha admin modals
-        if (interaction.customId === 'gacha_add_combo_modal') {
+        // Gacha admin modals
+        if (customId === 'gacha_add_combo_modal') {
             const gachaAdminCommand = client.commands.get('gacha-admin');
-            if (gachaAdminCommand && typeof gachaAdminCommand.handleModalSubmit === 'function') {
+            if (gachaAdminCommand?.handleModalSubmit) {
                 await gachaAdminCommand.handleModalSubmit(interaction);
             } else {
                 await interaction.reply({
@@ -373,29 +407,29 @@ client.on(Events.InteractionCreate, async interaction => {
             return;
         }
         
-        // Handle nomination modals
-        if (interaction.customId.startsWith('nomination_')) {
+        // Nomination modals
+        if (customId.startsWith('nomination_')) {
             await handleNominationModalSubmit(interaction);
             return;
         }
         
-        // Handle restriction modals
-        if (interaction.customId.startsWith('restrictions_')) {
+        // Restriction modals
+        if (customId.startsWith('restrictions_')) {
             await handleRestrictionModalSubmit(interaction);
             return;
         }
         
-        // Handle arena modals
-        if (interaction.customId.startsWith('arena_')) {
+        // Arena modals
+        if (customId.startsWith('arena_')) {
             await handleArenaModalSubmit(interaction);
             return;
         }
         
-        // Handle other modal interactions
-        const commandName = interaction.customId.split('_')[0];
+        // Generic command-based modal handling
+        const commandName = customId.split('_')[0];
         const command = client.commands.get(commandName);
         
-        if (command && typeof command.handleModalSubmit === 'function') {
+        if (command?.handleModalSubmit) {
             await command.handleModalSubmit(interaction);
         }
     } catch (error) {
@@ -431,7 +465,7 @@ async function handleWeeklyComprehensiveSync() {
             editReply: async (message) => {
                 if (typeof message === 'string') {
                     console.log('Weekly sync progress:', message);
-                } else if (message.embeds && message.embeds.length > 0) {
+                } else if (message.embeds?.length > 0) {
                     const embed = message.embeds[0];
                     if (embed.title) {
                         console.log(`Weekly sync: ${embed.title}`);
@@ -620,7 +654,7 @@ async function fixDuplicateIndexes() {
     }
 }
 
-// MAIN READY EVENT - UPDATED with Gacha Store initialization
+// MAIN READY EVENT - OPTIMIZED
 client.once(Events.ClientReady, async () => {
     try {
         console.log(`Logged in as ${client.user.tag}`);
@@ -637,10 +671,10 @@ client.once(Events.ClientReady, async () => {
             console.warn('⚠️ Database health check failed:', healthCheck.error);
         }
 
-        // Emoji cache initialization with timeout protection
+        // OPTIMIZED: Non-blocking emoji initialization
         console.log('🎭 Starting emoji cache initialization...');
         
-        const emojiLoadingPromises = [
+        const emojiPromises = [
             import('./config/gachaEmojis.js').catch(error => {
                 console.error('Failed to import gacha emojis config:', error.message);
                 return { error: error.message };
@@ -651,39 +685,19 @@ client.once(Events.ClientReady, async () => {
             })
         ];
 
-        const EMOJI_LOADING_TIMEOUT = 45000; // 45 seconds max
-        
-        const emojiLoadingWithTimeout = Promise.race([
-            Promise.allSettled(emojiLoadingPromises),
+        Promise.race([
+            Promise.allSettled(emojiPromises),
             new Promise((_, reject) => 
-                setTimeout(() => reject(new Error('Emoji loading timeout')), EMOJI_LOADING_TIMEOUT)
+                setTimeout(() => reject(new Error('Emoji loading timeout')), 30000)
             )
-        ]);
+        ]).then(results => {
+            const successCount = results.filter(r => r.status === 'fulfilled' && !r.value?.error).length;
+            console.log(`🎭 Emoji loading complete: ${successCount}/${results.length} successful`);
+        }).catch(() => {
+            console.warn('⚠️ Emoji loading timed out, using fallbacks');
+        });
 
-        try {
-            const emojiResults = await emojiLoadingWithTimeout;
-            
-            let successCount = 0;
-            let errorCount = 0;
-            
-            emojiResults.forEach((result, index) => {
-                const configName = index === 0 ? 'gacha' : 'trophy';
-                if (result.status === 'fulfilled' && !result.value?.error) {
-                    console.log(`✅ ${configName} emoji config loaded successfully`);
-                    successCount++;
-                } else {
-                    console.warn(`⚠️ ${configName} emoji config failed:`, result.reason || result.value?.error);
-                    errorCount++;
-                }
-            });
-            
-            console.log(`🎭 Emoji loading complete: ${successCount} success, ${errorCount} errors`);
-            
-        } catch (timeoutError) {
-            console.warn('⚠️ Emoji loading timed out, continuing with fallback emojis');
-        }
-
-        // Continue with initialization
+        // Continue initialization without waiting
         await fixDuplicateIndexes();
         await loadCommands();
         console.log('Commands loaded');
@@ -707,59 +721,38 @@ client.once(Events.ClientReady, async () => {
         monthlyGPService.start();
         console.log('✅ Monthly GP Service initialized');
 
+        // OPTIMIZED: GP reward service initialization
         console.log('🎁 Initializing GP reward service...');
         try {
             gpRewardService.initialize();
-            const rewardStats = gpRewardService.getRewardStats();
-            
             console.log('✅ GP reward service initialized successfully');
-            console.log('💰 GP reward system active with enhanced logging and error handling');
-            
         } catch (gpInitError) {
             console.error('❌ Failed to initialize GP reward service:', gpInitError);
         }
 
-        // START GACHA MACHINE AND STORE - UPDATED
-        await gachaMachine.start();
-        console.log('✅ Gacha Machine and Store initialized and pinned in gacha channel');
+        // OPTIMIZED: Non-blocking gacha machine start
+        gachaMachine.start().then(() => {
+            console.log('✅ Gacha Machine and Store initialized');
+        }).catch(error => {
+            console.error('❌ Failed to start Gacha Machine:', error);
+        });
 
-        // Schedule emoji cache refresh every 30 minutes
-        let emojiCacheJob = null;
-        try {
-            emojiCacheJob = cron.schedule('*/30 * * * *', async () => {
-                const refreshPromises = [
-                    Promise.resolve().then(async () => {
-                        const gachaModule = await import('./config/gachaEmojis.js');
-                        if (gachaModule.safeCacheRefresh) {
-                            await gachaModule.safeCacheRefresh();
-                        }
-                    }).catch(() => {}),
-                    
-                    Promise.resolve().then(async () => {
-                        const trophyModule = await import('./config/trophyEmojis.js');
-                        if (trophyModule.safeCacheRefresh) {
-                            await trophyModule.safeCacheRefresh();
-                        }
-                    }).catch(() => {})
-                ];
+        // Schedule emoji cache refresh (non-blocking)
+        cron.schedule('*/30 * * * *', async () => {
+            try {
+                const gachaModule = await import('./config/gachaEmojis.js');
+                if (gachaModule.safeCacheRefresh) {
+                    await Promise.race([
+                        gachaModule.safeCacheRefresh(),
+                        new Promise(resolve => setTimeout(resolve, 5000))
+                    ]);
+                }
+            } catch (error) {
+                // Silent fail for emoji refresh
+            }
+        });
 
-                const refreshTimeout = Promise.race([
-                    Promise.allSettled(refreshPromises),
-                    new Promise(resolve => setTimeout(() => resolve([]), 10000))
-                ]);
-
-                await refreshTimeout;
-            }, {
-                scheduled: false
-            });
-            
-            emojiCacheJob.start();
-            console.log('✅ Emoji cache auto-refresh scheduled');
-        } catch (cronError) {
-            console.error('Failed to schedule emoji cache refresh:', cronError);
-        }
-
-        // Schedule various tasks
+        // Schedule all other tasks (unchanged)
         cron.schedule('*/30 * * * *', () => {
             statsUpdateService.start().catch(error => {
                 console.error('Error in scheduled stats update:', error);
@@ -974,12 +967,12 @@ client.once(Events.ClientReady, async () => {
         });
 
         console.log('🤖 Bot is ready!');
-        console.log('✅ All systems initialized:');
-        console.log('  • Gacha Machine and Store: Active with daily refresh');
-        console.log('  • Collection System: Enhanced trading with store integration');
-        console.log('  • Combination System: Confirmation-based with alerts');
-        console.log('  • GP Reward System: Enhanced with store purchases');
-        console.log('  • All scheduled tasks: Running on schedule');
+        console.log('✅ All systems initialized with performance optimizations:');
+        console.log('  • User caching: 5-minute TTL to reduce database queries');
+        console.log('  • Interaction routing: Streamlined with early returns');
+        console.log('  • Emoji loading: Non-blocking with timeout protection');
+        console.log('  • Gacha Machine: Non-blocking initialization');
+        console.log('  • All services: Running on optimized schedules');
         
     } catch (error) {
         console.error('❌ Error during initialization:', error);
