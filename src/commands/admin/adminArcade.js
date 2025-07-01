@@ -282,7 +282,7 @@ export default {
         await interaction.showModal(modal);
     },
 
-    // Consolidated Create Handler
+    // Consolidated Create Handler - FIXED with proper date handling
     async handleCreateModal(interaction, boardType) {
         await interaction.deferReply({ ephemeral: true });
         
@@ -313,10 +313,25 @@ export default {
                     }
                     fields.month = parseInt(parts[0]);
                     fields.year = parseInt(parts[1]);
+                    
+                    // Validate month is between 1-12
+                    if (fields.month < 1 || fields.month > 12) {
+                        return interaction.editReply('Invalid month. Please use a value between 01-12.');
+                    }
+                    
+                    // Validate year is reasonable (current year or future)
+                    if (fields.year < now.getFullYear()) {
+                        return interaction.editReply('Year cannot be in the past.');
+                    }
                 } else {
-                    fields.month = now.getMonth() + 1;
-                    fields.year = now.getFullYear();
+                    fields.month = now.getMonth() + 1; // Current month (1-12)
+                    fields.year = now.getFullYear(); // Current year
                 }
+                
+                // FIXED: Calculate proper start and end dates for the racing challenge
+                fields.startDate = new Date(fields.year, fields.month - 1, 1, 0, 0, 0); // First day of month at midnight
+                fields.endDate = new Date(fields.year, fields.month, 0, 23, 59, 59); // Last day of month at 11:59:59 PM
+                
                 fields.monthKey = `${fields.year}-${fields.month.toString().padStart(2, '0')}`;
                 fields.boardId = `racing-${fields.monthKey}`;
                 
@@ -324,6 +339,13 @@ export default {
                 if (await ArcadeBoard.findOne({ boardType: 'racing', monthKey: fields.monthKey })) {
                     return interaction.editReply(`A racing challenge already exists for ${fields.monthKey}.`);
                 }
+                
+                console.log(`Creating racing challenge for ${fields.monthKey}:`, {
+                    startDate: fields.startDate,
+                    endDate: fields.endDate,
+                    month: fields.month,
+                    year: fields.year
+                });
             }
 
             if (boardType === 'tiebreaker') {
@@ -384,8 +406,8 @@ export default {
             };
 
             if (fields.trackName) boardData.trackName = fields.trackName;
-            if (fields.startDate) boardData.startDate = fields.startDate;
-            if (fields.endDate) boardData.endDate = fields.endDate;
+            if (fields.startDate) boardData.startDate = fields.startDate; // FIXED: Add this line
+            if (fields.endDate) boardData.endDate = fields.endDate; // FIXED: Add this line
             if (fields.monthKey) boardData.monthKey = fields.monthKey;
 
             const newBoard = new ArcadeBoard(boardData);
