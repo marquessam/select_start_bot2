@@ -40,7 +40,7 @@ export const ALERT_TYPES = {
     DEFAULT: 'default'
 };
 
-// Channel routing configuration
+// Channel routing configuration - FIXED with correct announcement channel ID
 const CHANNEL_CONFIG = {
     // Position/Rank Changes
     [ALERT_TYPES.ARCADE_RANKS]: '1300941091335438471',      // Arcade channel
@@ -48,11 +48,11 @@ const CHANNEL_CONFIG = {
     [ALERT_TYPES.MONTHLY_RANKS]: '1313640664356880445',     // Monthly game channel
     [ALERT_TYPES.YEARLY_RANKS]: '1313640664356880445',      // Monthly game channel
     
-    // New Content Announcements
-    [ALERT_TYPES.NEW_CHALLENGE]: ['1304533467455012904', '1313640664356880445'], // Announcements + Monthly
-    [ALERT_TYPES.NEW_ARCADE_BOARD]: ['1304533467455012904', '1300941091335438471'], // Announcements + Arcade
-    [ALERT_TYPES.NEW_RACING_CHALLENGE]: ['1304533467455012904', '1300941091335438471'], // Announcements + Arcade
-    [ALERT_TYPES.NEW_TIEBREAKER]: ['1304533467455012904', '1300941091335438471'], // Announcements + Arcade
+    // New Content Announcements - FIXED: Updated to correct announcement channel
+    [ALERT_TYPES.NEW_CHALLENGE]: ['1360409399264416025', '1313640664356880445'], // Announcements + Monthly
+    [ALERT_TYPES.NEW_ARCADE_BOARD]: ['1360409399264416025', '1300941091335438471'], // Announcements + Arcade
+    [ALERT_TYPES.NEW_RACING_CHALLENGE]: ['1360409399264416025', '1300941091335438471'], // Announcements + Arcade
+    [ALERT_TYPES.NEW_TIEBREAKER]: ['1360409399264416025', '1300941091335438471'], // Announcements + Arcade
     [ALERT_TYPES.NEW_ARENA_CHALLENGE]: '1373570850912997476', // Arena channel
     
     // Achievement Types - CORRECTLY ROUTED
@@ -71,9 +71,9 @@ const CHANNEL_CONFIG = {
     [ALERT_TYPES.COMBINATION_ADMIN_GIFT]: '1379402075120730185', // gacha trade channel
     [ALERT_TYPES.RECIPE_DISCOVERY]: '1379402075120730185', // gacha trade channel
     
-    // System/Admin
-    [ALERT_TYPES.ADMIN]: '1304533467455012904',             // Announcements
-    [ALERT_TYPES.SYSTEM]: '1304533467455012904',            // Announcements  
+    // System/Admin - FIXED: Updated to correct announcement channel
+    [ALERT_TYPES.ADMIN]: '1360409399264416025',             // Announcements
+    [ALERT_TYPES.SYSTEM]: '1360409399264416025',            // Announcements  
     [ALERT_TYPES.DEFAULT]: '1326199972059680778'            // Fallback to achievements
 };
 
