@@ -599,6 +599,72 @@ class CombinationService {
         return `${ingredientsPart} = ${resultPart}${nonDestructiveFlag}`;
     }
 
+    /**
+     * FIXED: Special recipe formatting for alerts that ensures quantities and emojis display correctly
+     */
+    async formatRecipeForAlert(rule, resultItem = null) {
+        console.log('Formatting recipe for alert:', {
+            ruleId: rule.ruleId,
+            resultType: rule.resultType,
+            ingredientsCount: rule.ingredients?.length,
+            ingredients: rule.ingredients?.map(ing => ({ itemId: ing.itemId, quantity: ing.quantity }))
+        });
+
+        const ingredients = [];
+        for (const ingredient of rule.ingredients) {
+            const item = await GachaItem.findOne({ itemId: ingredient.itemId });
+            if (item) {
+                console.log(`Found ingredient item:`, {
+                    itemId: item.itemId,
+                    itemName: item.itemName,
+                    emojiId: item.emojiId,
+                    emojiName: item.emojiName,
+                    requiredQuantity: ingredient.quantity
+                });
+
+                const emoji = this.formatItemEmoji(item);
+                const ingredientQuantity = ingredient.quantity || 1;
+                
+                // Always show quantity if it's more than 1, and log it
+                if (ingredientQuantity > 1) {
+                    console.log(`Adding ingredient with quantity: ${emoji} x${ingredientQuantity}`);
+                    ingredients.push(`${emoji} x${ingredientQuantity}`);
+                } else {
+                    console.log(`Adding ingredient without quantity: ${emoji}`);
+                    ingredients.push(emoji);
+                }
+            } else {
+                console.error(`Could not find ingredient item with ID: ${ingredient.itemId}`);
+            }
+        }
+
+        const ingredientsPart = rule.isNonDestructive ? `(${ingredients.join(' + ')})` : ingredients.join(' + ');
+        
+        let resultPart = '';
+        switch (rule.resultType) {
+            case 'single':
+                if (resultItem) {
+                    const resultEmoji = this.formatItemEmoji(resultItem);
+                    const resultQuantity = (rule.result?.quantity || 1) > 1 ? ` x${rule.result.quantity}` : '';
+                    resultPart = `${resultEmoji}${resultQuantity}`;
+                    console.log(`Result part: ${resultPart}`);
+                }
+                break;
+            case 'choice':
+                resultPart = '🎯 Choice';
+                break;
+            case 'random':
+                resultPart = '🎲 Random';
+                break;
+        }
+        
+        const nonDestructiveFlag = rule.isNonDestructive ? ' 🔄' : '';
+        const finalRecipe = `${ingredientsPart} = ${resultPart}${nonDestructiveFlag}`;
+        
+        console.log(`Final recipe for alert: ${finalRecipe}`);
+        return finalRecipe;
+    }
+
     // Shadow unlock and alerts
     async checkForShadowUnlock(user, combinationResult) {
         const { resultItem } = combinationResult;
@@ -624,7 +690,9 @@ class CombinationService {
         const thumbnail = resultItem.imageUrl || null;
 
         if (wasNewDiscovery) {
-            const recipeText = await this.formatSingleRecipe(combinationResult.rule, resultItem);
+            // FIXED: Create detailed recipe text with proper emoji formatting
+            const recipeText = await this.formatRecipeForAlert(combinationResult.rule, resultItem);
+            
             await alertService.sendRecipeDiscoveryAlert({
                 combinationType: 'Recipe Discovery',
                 ruleId,
@@ -824,7 +892,14 @@ class CombinationService {
             // FIXED: Use enhanced emoji formatting
             const emoji = ing.item ? this.formatItemEmoji(ing.item) : '❓';
             const name = ing.item ? ing.item.itemName : ing.itemId;
-            return `${emoji} ${ing.quantity}x ${name}`;
+            const quantity = ing.quantity || 1;
+            
+            // FIXED: Always show quantity if more than 1
+            if (quantity > 1) {
+                return `${emoji} ${quantity}x ${name}`;
+            } else {
+                return `${emoji} ${name}`;
+            }
         }).join('\n');
     }
 
@@ -1274,7 +1349,16 @@ class CombinationService {
         const names = [];
         for (const ingredient of ingredients) {
             const item = await GachaItem.findOne({ itemId: ingredient.itemId });
-            if (item) names.push(item.itemName);
+            if (item) {
+                // FIXED: Include emojis in ingredient names for alerts
+                const emoji = this.formatItemEmoji(item);
+                const quantity = ingredient.quantity || 1;
+                if (quantity > 1) {
+                    names.push(`${emoji} ${quantity}x ${item.itemName}`);
+                } else {
+                    names.push(`${emoji} ${item.itemName}`);
+                }
+            }
         }
         return names;
     }
