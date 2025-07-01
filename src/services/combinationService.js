@@ -1,4 +1,4 @@
-// src/services/combinationService.js - Complete fixed version with all UI and error fixes
+// src/services/combinationService.js - FIXED: Proper emoji display throughout
 import { GachaItem, CombinationRule } from '../models/GachaItem.js';
 import { Challenge } from '../models/Challenge.js';
 import { config } from '../config/config.js';
@@ -31,6 +31,39 @@ class CombinationService {
     setClient(client) {
         this.client = client;
         alertService.setClient(client);
+    }
+
+    /**
+     * FIXED: Enhanced emoji formatting for items (prioritizes custom emojis)
+     */
+    formatItemEmoji(item) {
+        if (!item) return '❓';
+        
+        // If we have custom emoji data, use it
+        if (item.emojiId && item.emojiName) {
+            const prefix = item.isAnimated ? 'a' : '';
+            return `<${prefix}:${item.emojiName}:${item.emojiId}>`;
+        }
+        
+        // Fallback to formatGachaEmoji function
+        return formatGachaEmoji(item.emojiId, item.emojiName, item.isAnimated);
+    }
+
+    /**
+     * FIXED: Create proper emoji object for Discord components
+     */
+    createEmojiObject(item) {
+        if (!item) return null;
+        
+        if (item.emojiId && item.emojiName) {
+            return {
+                id: item.emojiId,
+                name: item.emojiName,
+                animated: item.isAnimated || false
+            };
+        }
+        
+        return null; // Let Discord use the fallback emoji name
     }
 
     // Core combination logic
@@ -536,7 +569,8 @@ class CombinationService {
         for (const ingredient of rule.ingredients) {
             const item = await GachaItem.findOne({ itemId: ingredient.itemId });
             if (item) {
-                const emoji = formatGachaEmoji(item.emojiId, item.emojiName, item.isAnimated);
+                // FIXED: Use enhanced emoji formatting
+                const emoji = this.formatItemEmoji(item);
                 ingredients.push(ingredient.quantity > 1 ? `${emoji} x${ingredient.quantity}` : emoji);
             }
         }
@@ -547,7 +581,8 @@ class CombinationService {
         switch (rule.resultType) {
             case 'single':
                 if (resultItem) {
-                    const resultEmoji = formatGachaEmoji(resultItem.emojiId, resultItem.emojiName, resultItem.isAnimated);
+                    // FIXED: Use enhanced emoji formatting
+                    const resultEmoji = this.formatItemEmoji(resultItem);
                     const resultQuantity = rule.result.quantity > 1 ? ` x${rule.result.quantity}` : '';
                     resultPart = `${resultEmoji}${resultQuantity}`;
                 }
@@ -622,7 +657,8 @@ class CombinationService {
                 fields: [
                     {
                         name: 'Result',
-                        value: `${formatGachaEmoji(resultItem.emojiId, resultItem.emojiName, resultItem.isAnimated)} ${resultQuantity}x **${resultItem.itemName}**`,
+                        // FIXED: Use enhanced emoji formatting
+                        value: `${this.formatItemEmoji(resultItem)} ${resultQuantity}x **${resultItem.itemName}**`,
                         inline: true
                     },
                     ...(resultItem.flavorText ? [{ name: 'Flavor Text', value: `*"${resultItem.flavorText}"*`, inline: false }] : [])
@@ -681,16 +717,16 @@ class CombinationService {
     }
 
     // UI Building utilities
-   createEmbed(title, color = COLORS.INFO, description = null) {
-    const embed = new EmbedBuilder().setTitle(title).setColor(color).setTimestamp();
-    
-    // Only set description if it's not null/undefined and has content
-    if (description && description.length > 0) {
-        embed.setDescription(description);
+    createEmbed(title, color = COLORS.INFO, description = null) {
+        const embed = new EmbedBuilder().setTitle(title).setColor(color).setTimestamp();
+        
+        // Only set description if it's not null/undefined and has content
+        if (description && description.length > 0) {
+            embed.setDescription(description);
+        }
+        
+        return embed;
     }
-    
-    return embed;
-}
 
     createResultSelectMenu(combination) {
         const options = combination.possibleResults.map(resultItem => {
@@ -700,12 +736,10 @@ class CombinationService {
                 description: `${this.getRarityDisplayName(resultItem.rarity)} - ${resultItem.description?.slice(0, 50) || 'No description'}...`.slice(0, 100)
             };
 
-            if (resultItem.emojiId && resultItem.emojiName) {
-                option.emoji = { 
-                    id: resultItem.emojiId, 
-                    name: resultItem.emojiName,
-                    animated: resultItem.isAnimated || false
-                };
+            // FIXED: Use proper emoji object creation
+            const emojiObj = this.createEmojiObject(resultItem);
+            if (emojiObj) {
+                option.emoji = emojiObj;
             }
             
             return option;
@@ -787,7 +821,8 @@ class CombinationService {
     // Helper methods
     formatIngredients(ingredients) {
         return ingredients.map(ing => {
-            const emoji = ing.item ? formatGachaEmoji(ing.item.emojiId, ing.item.emojiName, ing.item.isAnimated) : '❓';
+            // FIXED: Use enhanced emoji formatting
+            const emoji = ing.item ? this.formatItemEmoji(ing.item) : '❓';
             const name = ing.item ? ing.item.itemName : ing.itemId;
             return `${emoji} ${ing.quantity}x ${name}`;
         }).join('\n');
@@ -816,7 +851,8 @@ class CombinationService {
         } else {
             const resultItem = possibleResults[0];
             const isShadowUnlock = this.isShadowUnlockItem(resultItem);
-            const resultEmoji = formatGachaEmoji(resultItem.emojiId, resultItem.emojiName, resultItem.isAnimated);
+            // FIXED: Use enhanced emoji formatting
+            const resultEmoji = this.formatItemEmoji(resultItem);
             const rarityEmoji = this.getRarityEmoji(resultItem.rarity);
 
             const displayData = this.getCombinationDisplayData(isShadowUnlock, rule.isNonDestructive);
@@ -869,13 +905,15 @@ class CombinationService {
             
             description = `You performed ${result.randomResults.length} random combination(s) and got:\n\n`;
             result.randomResults.forEach((randomResult, index) => {
-                const emoji = formatGachaEmoji(randomResult.resultItem.emojiId, randomResult.resultItem.emojiName, randomResult.resultItem.isAnimated);
+                // FIXED: Use enhanced emoji formatting
+                const emoji = this.formatItemEmoji(randomResult.resultItem);
                 const rarityEmoji = this.getRarityEmoji(randomResult.resultItem.rarity);
                 description += `**${index + 1}.** ${emoji} ${rarityEmoji} **${randomResult.resultQuantity}x ${randomResult.resultItem.itemName}**\n`;
             });
         } else if (result.resultItem) {
             const { resultItem, resultQuantity } = result;
-            const resultEmoji = formatGachaEmoji(resultItem.emojiId, resultItem.emojiName, resultItem.isAnimated);
+            // FIXED: Use enhanced emoji formatting
+            const resultEmoji = this.formatItemEmoji(resultItem);
             const rarityEmoji = this.getRarityEmoji(resultItem.rarity);
             const isShadowUnlock = this.isShadowUnlockItem(resultItem);
             
@@ -988,12 +1026,10 @@ class CombinationService {
                 description: description.slice(0, 100)
             };
 
-            if (resultItem.emojiId && resultItem.emojiName) {
-                option.emoji = { 
-                    id: resultItem.emojiId, 
-                    name: resultItem.emojiName,
-                    animated: resultItem.isAnimated || false
-                };
+            // FIXED: Use proper emoji object creation
+            const emojiObj = this.createEmojiObject(resultItem);
+            if (emojiObj) {
+                option.emoji = emojiObj;
             }
             
             return option;
@@ -1375,7 +1411,8 @@ class CombinationService {
     formatAvailableCombinations(possibleCombinations) {
         const formatted = possibleCombinations.slice(0, 3).map(combo => {
             const resultItem = combo.possibleResults[0];
-            const resultEmoji = formatGachaEmoji(resultItem.emojiId, resultItem.emojiName, resultItem.isAnimated);
+            // FIXED: Use enhanced emoji formatting
+            const resultEmoji = this.formatItemEmoji(resultItem);
             const typeEmoji = RESULT_TYPE_CONFIG[combo.resultType]?.emoji || '';
             const isShadowUnlock = this.isShadowUnlockItem(resultItem);
             const isNonDestructive = combo.rule.isNonDestructive;
