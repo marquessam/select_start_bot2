@@ -1,4 +1,4 @@
-// src/services/gachaService.js - UPDATED with flat rarity percentage system
+// src/services/gachaService.js - FIXED: Added retry logic for version conflicts
 import { User } from '../models/User.js';
 import { GachaItem } from '../models/GachaItem.js';
 import combinationService from './combinationService.js';
@@ -32,12 +32,70 @@ class GachaService {
     }
 
     /**
-     * Perform a gacha pull for a user
-     * UPDATED: Check for possible combinations instead of auto-combining
+     * FIXED: Perform a gacha pull with retry logic to handle version conflicts
      */
     async performPull(user, pullType = 'single') {
+        const maxRetries = 3;
+        let lastError;
+
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                console.log(`Gacha pull attempt ${attempt}/${maxRetries} for user ${user.raUsername}`);
+                return await this.performPullInternal(user, pullType, attempt);
+            } catch (error) {
+                lastError = error;
+                
+                if (error.name === 'VersionError') {
+                    console.warn(`Version conflict on attempt ${attempt}/${maxRetries} for user ${user.raUsername}, retrying...`);
+                    
+                    if (attempt < maxRetries) {
+                        // Wait a bit and refetch the user for next attempt
+                        await new Promise(resolve => setTimeout(resolve, 100 * attempt)); // Progressive delay
+                        
+                        try {
+                            // Refetch the user with fresh data
+                            const freshUser = await User.findById(user._id);
+                            if (!freshUser) {
+                                throw new Error('User not found during retry');
+                            }
+                            
+                            // Update the user object with fresh data
+                            Object.assign(user, freshUser.toObject());
+                            user._doc = freshUser._doc;
+                            user.__v = freshUser.__v;
+                            user.isNew = false;
+                            
+                            console.log(`Refetched user data for retry ${attempt + 1}, version: ${user.__v}`);
+                        } catch (refetchError) {
+                            console.error('Error refetching user for retry:', refetchError);
+                            throw refetchError;
+                        }
+                        
+                        continue; // Try again
+                    }
+                } else {
+                    // Non-version error, don't retry
+                    console.error(`Non-retryable error on attempt ${attempt}:`, error);
+                    throw error;
+                }
+            }
+        }
+
+        // All retries failed
+        console.error(`All ${maxRetries} attempts failed for user ${user.raUsername}`);
+        throw new Error(`Gacha pull failed after ${maxRetries} attempts: ${lastError.message}`);
+    }
+
+    /**
+     * Internal method that performs the actual pull logic
+     */
+    async performPullInternal(user, pullType, attemptNumber) {
         const cost = PULL_COSTS[pullType];
         const pullCount = pullType === 'multi' ? 4 : 1;
+
+        console.log(`Performing ${pullType} pull for ${user.raUsername} (attempt ${attemptNumber})`);
+        console.log(`User version before pull: ${user.__v}`);
+        console.log(`User GP before pull: ${user.gpBalance}`);
 
         // Check if user has enough GP
         if (!user.hasEnoughGp(cost)) {
@@ -79,24 +137,44 @@ class GachaService {
         // Check for series completions
         const completions = await this.checkSeriesCompletions(user, results);
 
-        // Save user BEFORE checking combinations (important!)
-        await user.save();
-        console.log('User saved successfully after pull');
+        console.log(`User version before save: ${user.__v}`);
+        console.log(`User GP after transactions: ${user.gpBalance}`);
+
+        // FIXED: Save user with proper error handling
+        try {
+            await user.save();
+            console.log(`User saved successfully after pull (new version: ${user.__v})`);
+        } catch (saveError) {
+            console.error('Error saving user after gacha pull:', saveError);
+            // Re-throw to trigger retry logic
+            throw saveError;
+        }
 
         // UPDATED: Check for possible combinations instead of auto-combining
-        const possibleCombinations = await combinationService.checkPossibleCombinations(user);
-        
-        // Filter combinations that use newly obtained items
-        const relevantCombinations = possibleCombinations.filter(combo => 
-            combo.ingredients.some(ingredient => newItemIds.includes(ingredient.itemId))
-        );
+        // FIXED: Use a fresh user query to avoid stale data for combination checking
+        let possibleCombinations = [];
+        try {
+            // Get fresh user data for combination checking to avoid stale references
+            const freshUserForCombinations = await User.findById(user._id);
+            possibleCombinations = await combinationService.checkPossibleCombinations(freshUserForCombinations);
+            
+            // Filter combinations that use newly obtained items
+            const relevantCombinations = possibleCombinations.filter(combo => 
+                combo.ingredients.some(ingredient => newItemIds.includes(ingredient.itemId))
+            );
 
-        console.log(`Found ${relevantCombinations.length} relevant combinations for newly obtained items`);
+            console.log(`Found ${relevantCombinations.length} relevant combinations for newly obtained items`);
+            possibleCombinations = relevantCombinations;
+        } catch (combinationError) {
+            console.error('Error checking combinations after gacha pull:', combinationError);
+            // Don't fail the pull if combination checking fails
+            possibleCombinations = [];
+        }
 
         return {
             results,
             completions,
-            possibleCombinations: relevantCombinations, // Return possible combinations instead of performed ones
+            possibleCombinations,
             newBalance: user.gpBalance,
             cost,
             pullType
@@ -222,46 +300,6 @@ class GachaService {
             return distribution;
         } catch (error) {
             console.error('Error analyzing rarity distribution:', error);
-            return {};
-        }
-    }
-
-    /**
-     * Simulate pulls to test rarity percentages
-     */
-    async simulatePulls(count = 1000) {
-        try {
-            console.log(`\nSimulating ${count} pulls to test rarity distribution...`);
-            
-            const results = {
-                common: 0,
-                uncommon: 0,
-                rare: 0,
-                epic: 0,
-                legendary: 0,
-                mythic: 0
-            };
-
-            for (let i = 0; i < count; i++) {
-                const item = await this.selectRandomItem();
-                if (item && results[item.rarity] !== undefined) {
-                    results[item.rarity]++;
-                }
-            }
-
-            console.log('\n=== SIMULATION RESULTS ===');
-            console.log('Expected vs Actual percentages:');
-            for (const [rarity, expectedPercent] of Object.entries(RARITY_PERCENTAGES)) {
-                const actualCount = results[rarity] || 0;
-                const actualPercent = ((actualCount / count) * 100).toFixed(2);
-                const diff = (actualPercent - expectedPercent).toFixed(2);
-                console.log(`${rarity}: Expected ${expectedPercent}% | Actual ${actualPercent}% | Diff: ${diff > 0 ? '+' : ''}${diff}%`);
-            }
-            console.log('==========================\n');
-
-            return results;
-        } catch (error) {
-            console.error('Error simulating pulls:', error);
             return {};
         }
     }
