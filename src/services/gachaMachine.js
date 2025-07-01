@@ -1,4 +1,4 @@
-// src/services/gachaMachine.js - UPDATED: Removed message expiration for permanent alerts
+// src/services/gachaMachine.js - COMPLETE FIXED VERSION with enhanced emoji support
 import { 
     EmbedBuilder, 
     ActionRowBuilder, 
@@ -48,6 +48,22 @@ class GachaMachine {
     setClient(client) {
         this.client = client;
         console.log('Gacha Machine client configured');
+    }
+
+    /**
+     * FIXED: Enhanced emoji formatting for items (prioritizes custom emojis)
+     */
+    formatItemEmoji(item) {
+        if (!item) return '❓';
+        
+        // If we have custom emoji data, use it
+        if (item.emojiId && item.emojiName) {
+            const prefix = item.isAnimated ? 'a' : '';
+            return `<${prefix}:${item.emojiName}:${item.emojiId}>`;
+        }
+        
+        // Fallback to formatGachaEmoji function
+        return formatGachaEmoji(item.emojiId, item.emojiName, item.isAnimated);
     }
 
     async start() {
@@ -238,15 +254,15 @@ class GachaMachine {
     }
 
     /**
-     * UPDATED: Create store embed with cleaner design and 2-column layout
+     * FIXED: Create store embed with enhanced emoji display
      */
     async createStoreEmbed() {
         const embed = new EmbedBuilder()
-            .setTitle('Gacha Store') // UPDATED: Removed emoji from title
+            .setTitle('Gacha Store')
             .setColor(COLORS.INFO)
             .setTimestamp();
 
-        // UPDATED: Add store image as thumbnail (top-right corner)
+        // Add store image as thumbnail (top-right corner)
         let attachment = null;
         try {
             const imagePath = join(__dirname, '../../assets/store.png');
@@ -273,15 +289,16 @@ class GachaMachine {
 
         description += '**Today\'s Featured Items:**\n\n';
 
-        // UPDATED: Create 2-column layout for 4 items
+        // Create 2-column layout for 4 items
         const items = this.currentStoreItems;
         const leftColumn = items.slice(0, 2); // Items 0, 1
         const rightColumn = items.slice(2, 4); // Items 2, 3
 
-        // Helper function to format item display
+        // FIXED: Enhanced format item display with proper emoji formatting
         const formatItem = (item) => {
             const price = STORE_PRICES[item.rarity];
-            const emoji = gachaService.formatItemEmoji(item);
+            // FIXED: Use enhanced emoji formatting (prioritize custom emojis)
+            const emoji = this.formatItemEmoji(item);
             const rarityEmoji = gachaService.getRarityEmoji(item.rarity);
             const rarityName = gachaService.getRarityDisplayName(item.rarity);
             const seriesText = item.seriesId ? item.seriesId.charAt(0).toUpperCase() + item.seriesId.slice(1) : 'Individual';
@@ -324,7 +341,7 @@ class GachaMachine {
             });
         }
 
-        // UPDATED: Fix refresh timer in description instead of footer
+        // Fix refresh timer in description instead of footer
         const now = new Date();
         const nextRefresh = new Date();
         nextRefresh.setUTCHours(24, 0, 0, 0); // Next midnight UTC
@@ -336,7 +353,7 @@ class GachaMachine {
             inline: false
         });
 
-        // Create select menu components
+        // FIXED: Create select menu components with proper emoji handling
         const components = [];
         const selectOptions = [];
 
@@ -344,12 +361,22 @@ class GachaMachine {
             const price = STORE_PRICES[item.rarity];
             const rarityName = gachaService.getRarityDisplayName(item.rarity);
 
-            selectOptions.push({
+            const option = {
                 label: `${item.itemName} - ${price.toLocaleString()} GP`,
                 value: `store_buy_${item.itemId}`,
-                description: `${rarityName} ${item.seriesId ? `• ${item.seriesId}` : '• Individual item'}`,
-                emoji: item.emojiId ? { id: item.emojiId, name: item.emojiName, animated: item.isAnimated } : undefined
-            });
+                description: `${rarityName} ${item.seriesId ? `• ${item.seriesId}` : '• Individual item'}`
+            };
+
+            // FIXED: Enhanced emoji object creation for Discord components
+            if (item.emojiId && item.emojiName) {
+                option.emoji = { 
+                    id: item.emojiId, 
+                    name: item.emojiName, 
+                    animated: item.isAnimated || false 
+                };
+            }
+            
+            selectOptions.push(option);
         }
 
         if (selectOptions.length > 0) {
@@ -409,13 +436,14 @@ class GachaMachine {
 
             await user.save();
 
-            // Create success embed
+            // Create success embed with FIXED emoji display
             const successEmbed = new EmbedBuilder()
                 .setTitle('Purchase Successful!')
                 .setColor(gachaService.getRarityColor(storeItem.rarity))
                 .setTimestamp();
 
-            const emoji = gachaService.formatItemEmoji(storeItem);
+            // FIXED: Use enhanced emoji formatting
+            const emoji = this.formatItemEmoji(storeItem);
             const rarityEmoji = gachaService.getRarityEmoji(storeItem.rarity);
             
             let purchaseDescription = `${emoji} **${storeItem.itemName}** ${rarityEmoji}\n\n`;
@@ -448,7 +476,7 @@ class GachaMachine {
 
             await interaction.editReply({ embeds: [successEmbed] });
 
-            // UPDATED: Reset the store dropdown after purchase
+            // Reset the store dropdown after purchase
             try {
                 const channel = await this.getChannel();
                 if (channel && this.storeMessageId) {
@@ -656,7 +684,6 @@ class GachaMachine {
         return { embed, attachment };
     }
 
-    // ... rest of the existing methods remain the same ...
     createMachineButtons() {
         return new ActionRowBuilder()
             .addComponents(
@@ -773,12 +800,13 @@ class GachaMachine {
         }
     }
 
-    // Clean design without competing emojis
+    // FIXED: Clean design with enhanced emoji formatting
     async createSinglePullEmbed(item, user, result, pullNumber = null) {
         const rarityColor = gachaService.getRarityColor(item.rarity);
         const rarityEmoji = gachaService.getRarityEmoji(item.rarity);
         const rarityName = gachaService.getRarityDisplayName(item.rarity);
-        const itemEmoji = formatGachaEmoji(item.emojiId, item.emojiName);
+        // FIXED: Use enhanced emoji formatting
+        const itemEmoji = this.formatItemEmoji(item);
         
         const title = pullNumber ? 
             `Pull ${pullNumber} - ${item.itemName}` : 
@@ -789,7 +817,7 @@ class GachaMachine {
             .setColor(rarityColor)
             .setTimestamp();
 
-        // Main item display - BIG and prominent
+        // Main item display - BIG and prominent with FIXED emoji
         let description = `# ${itemEmoji} **${item.itemName}**\n\n`;
         
         // Rarity with emoji
@@ -853,6 +881,7 @@ class GachaMachine {
         return embed;
     }
 
+    // FIXED: Bonus embed with enhanced emoji formatting
     async createBonusEmbed(completions, autoCombinations) {
         const embed = new EmbedBuilder()
             .setTitle('🎉 Bonus Rewards!')
@@ -861,14 +890,12 @@ class GachaMachine {
 
         let description = '';
 
-        // Add series completions
+        // Add series completions with FIXED emoji formatting
         if (completions && completions.length > 0) {
             description += '🏆 **Series Completed!**\n\n';
             for (const completion of completions) {
-                const rewardEmoji = formatGachaEmoji(
-                    completion.rewardItem.emojiId, 
-                    completion.rewardItem.emojiName
-                );
+                // FIXED: Use enhanced emoji formatting
+                const rewardEmoji = this.formatItemEmoji(completion.rewardItem);
                 description += `**${completion.seriesName}** Complete!\n`;
                 description += `${rewardEmoji} Unlocked: **${completion.rewardItem.itemName}**\n\n`;
             }
@@ -879,8 +906,6 @@ class GachaMachine {
 
         return embed;
     }
-
-    // REMOVED: scheduleMessageDeletion method - no longer deleting messages
 
     async handleCollection(interaction, user) {
         const summary = gachaService.getUserCollectionSummary(user);
@@ -914,11 +939,12 @@ class GachaMachine {
             .setFooter({ text: 'Use /collection for detailed view with filters and giving interface!' })
             .setTimestamp();
 
-        // Add recent items
+        // Add recent items with FIXED emoji formatting
         if (summary.recentItems.length > 0) {
             let recentText = '';
             for (const item of summary.recentItems.slice(0, 5)) {
-                const emoji = formatGachaEmoji(item.emojiId, item.emojiName);
+                // FIXED: Use enhanced emoji formatting
+                const emoji = this.formatItemEmoji(item);
                 const rarityEmoji = gachaService.getRarityEmoji(item.rarity);
                 const stackInfo = (item.quantity || 1) > 1 ? ` x${item.quantity}` : '';
                 recentText += `${rarityEmoji} ${emoji} **${item.itemName}**${stackInfo}\n`;
