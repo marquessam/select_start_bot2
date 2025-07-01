@@ -9,7 +9,8 @@ import alertService, { ALERT_TYPES } from '../utils/AlertService.js'; // UPDATED
 
 class ArcadeService extends FeedManagerBase {
     constructor() {
-        super(null, config.discord.announcementChannelId);
+        // FIXED: Use the correct announcement channel ID
+        super(null, '1360409399264416025');
     }
 
     // UPDATED: Set client for AlertService when arcade service gets client
@@ -391,8 +392,8 @@ class ArcadeService extends FeedManagerBase {
      * Award points for arcade boards on December 1st
      * This happens once a year for all arcade boards
      */
-    async awardArcadePoints() {
-        console.log('Running annual arcade points awards (December 1st)');
+    async awardArcadePoints(year) {
+        console.log(`Running annual arcade points awards (December 1st) for year: ${year || 'current'}`);
         
         try {
             // Get all arcade boards (not racing or tiebreaker)
@@ -454,7 +455,7 @@ class ArcadeService extends FeedManagerBase {
                     
                     if (userObj) {
                         // Get the current year
-                        const currentYear = new Date().getFullYear();
+                        const currentYear = year || new Date().getFullYear();
                         
                         // Add community award
                         const placement = i === 0 ? '1st' : (i === 1 ? '2nd' : '3rd');
@@ -489,7 +490,7 @@ class ArcadeService extends FeedManagerBase {
             }
             
             // Announce the results using new AlertService
-            await this.announceArcadeResults(allResults);
+            await this.announceArcadeResults(allResults, year);
             
             console.log('Finished processing arcade boards');
         } catch (error) {
@@ -500,12 +501,12 @@ class ArcadeService extends FeedManagerBase {
     /**
      * UPDATED: Announce the results of the annual arcade points using new AlertService
      */
-    async announceArcadeResults(allResults) {
+    async announceArcadeResults(allResults, year) {
         if (!this.client || allResults.length === 0) return;
         
         try {
             // Get the current year
-            const currentYear = new Date().getFullYear();
+            const currentYear = year || new Date().getFullYear();
             
             // Build main announcement description
             const mainDescription = `The annual arcade leaderboard results are in!\n\n` +
