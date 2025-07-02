@@ -1,23 +1,21 @@
-// src/services/arenaAlertService.js - UPDATED with centralized AlertService
+// src/services/arenaAlertService.js - SIMPLIFIED with alert logic removed
 import { ArenaChallenge } from '../models/ArenaChallenge.js';
 import { User } from '../models/User.js';
 import { config } from '../config/config.js';
 import { FeedManagerBase } from '../utils/FeedManagerBase.js';
 import arenaUtils from '../utils/arenaUtils.js';
 import RetroAPIUtils from '../utils/RetroAPIUtils.js';
-import AlertService from '../utils/AlertService.js'; // NEW: Use centralized service
+import AlertService from '../utils/AlertService.js';
 
 class ArenaAlertService extends FeedManagerBase {
     constructor() {
         super(null, config.discord.arenaChannelId || '1373570850912997476');
-        // Store previous challenge states for comparison
         this.previousChallengeStates = new Map();
-        this.processedChallenges = new Set(); // Track new challenges we've already alerted about
+        this.processedChallenges = new Set();
     }
 
     setClient(client) {
         super.setClient(client);
-        // NEW: Set the client for AlertService when the service gets its client
         AlertService.setClient(client);
         console.log('AlertService configured for arena alerts via setClient');
     }
@@ -30,8 +28,6 @@ class ArenaAlertService extends FeedManagerBase {
 
         try {
             console.log('Starting arena alert service...');
-            
-            // Set the Discord client for AlertService
             AlertService.setClient(this.client);
             console.log('AlertService configured for arena alerts');
             
@@ -54,7 +50,6 @@ class ArenaAlertService extends FeedManagerBase {
         try {
             console.log(`Checking for arena changes (sendAlerts=${sendAlerts})...`);
             
-            // Get all active challenges
             const activeChallenges = await ArenaChallenge.find({
                 status: { $in: ['pending', 'active'] }
             });
@@ -66,9 +61,6 @@ class ArenaAlertService extends FeedManagerBase {
             // Process each challenge
             for (const challenge of activeChallenges) {
                 try {
-                    // NOTE: We DON'T check for new challenges here since immediate alerts
-                    // are sent directly from arenaService.js when challenges are created
-                    
                     // Check for participant changes and rank updates (only for active challenges)
                     if (challenge.status === 'active') {
                         await this.checkChallengeRankChanges(challenge, alerts, sendAlerts);
@@ -76,17 +68,15 @@ class ArenaAlertService extends FeedManagerBase {
                     
                 } catch (challengeError) {
                     console.error(`Error processing arena challenge ${challenge.challengeId}:`, challengeError);
-                    // Continue with next challenge
                 }
                 
-                // Add a small delay between challenges to avoid overwhelming the API
                 await new Promise(resolve => setTimeout(resolve, 500));
             }
             
-            // Send rank change alerts if any were found
+            // SIMPLIFIED: Send alerts using centralized AlertService
             if (sendAlerts && alerts.length > 0) {
                 console.log(`Found ${alerts.length} arena ranking changes to notify`);
-                await this.sendRankChangeAlerts(alerts);
+                await this.sendCentralizedAlerts(alerts);
             } else if (sendAlerts) {
                 console.log('No arena rank changes detected');
             } else {
@@ -136,14 +126,10 @@ class ArenaAlertService extends FeedManagerBase {
         }
     }
 
-    /**
-     * Use reliable API utilities like arcade system
-     */
     async fetchLeaderboardScoresFixed(gameId, leaderboardId, raUsernames) {
         try {
             console.log(`Fetching leaderboard scores for game ${gameId}, leaderboard ${leaderboardId}`);
 
-            // Use the same reliable API utilities as arcade system
             const rawEntries = await RetroAPIUtils.getLeaderboardEntries(leaderboardId, 1000);
             
             if (!rawEntries || rawEntries.length === 0) {
@@ -153,7 +139,6 @@ class ArenaAlertService extends FeedManagerBase {
 
             console.log(`Processed ${rawEntries.length} leaderboard entries`);
 
-            // Find entries for our target users
             const userScores = [];
             
             for (const username of raUsernames) {
@@ -218,8 +203,8 @@ class ArenaAlertService extends FeedManagerBase {
                         newRank: currentRank,
                         score: currentScore.score,
                         description: challenge.description,
-                        leaderboardId: challenge.leaderboardId, // For creating links
-                        gameId: challenge.gameId // For creating links
+                        leaderboardId: challenge.leaderboardId,
+                        gameId: challenge.gameId
                     });
                 }
             }
@@ -231,7 +216,8 @@ class ArenaAlertService extends FeedManagerBase {
         }
     }
 
-    async sendRankChangeAlerts(alerts) {
+    // SIMPLIFIED: Use centralized AlertService
+    async sendCentralizedAlerts(alerts) {
         if (!alerts || alerts.length === 0) {
             console.log('No arena rank change alerts to send');
             return;
@@ -249,17 +235,15 @@ class ArenaAlertService extends FeedManagerBase {
         
         // Process each challenge's alerts
         for (const [challengeId, challengeAlertsList] of challengeAlerts.entries()) {
-            await this.sendChallengeRankChangeAlerts(challengeAlertsList);
+            await this.sendChallengeAlert(challengeAlertsList);
             await new Promise(resolve => setTimeout(resolve, 1000));
         }
     }
 
-    // MASSIVELY SIMPLIFIED: Send challenge rank change alerts using AlertService
-    async sendChallengeRankChangeAlerts(challengeAlertsList) {
+    // ULTRA SIMPLIFIED: Single method call to AlertService
+    async sendChallengeAlert(challengeAlertsList) {
         try {
             const firstAlert = challengeAlertsList[0];
-            const challengeTitle = firstAlert.challengeTitle;
-            const leaderboardId = firstAlert.leaderboardId;
             
             // Get challenge details
             const challenge = await ArenaChallenge.findOne({ challengeId: firstAlert.challengeId });
@@ -279,20 +263,16 @@ class ArenaAlertService extends FeedManagerBase {
                 console.error('Error fetching game info for rank change alert:', error);
             }
             
-            // Prepare the position changes
-            const changes = [];
+            // Prepare position changes
+            const changes = challengeAlertsList
+                .filter(alert => alert.type === 'rank_improved')
+                .map(alert => ({
+                    username: alert.username,
+                    newRank: alert.newRank,
+                    type: 'overtake'
+                }));
             
-            // Process alerts to create change notifications
-            for (const alert of challengeAlertsList) {
-                if (alert.type === 'rank_improved') {
-                    changes.push({
-                        username: alert.username,
-                        newRank: alert.newRank
-                    });
-                }
-            }
-            
-            // Get current standings for the challenge using FIXED API
+            // Get current standings
             const currentStandings = [];
             try {
                 const participantUsernames = challenge.participants.map(p => p.raUsername);
@@ -303,23 +283,19 @@ class ArenaAlertService extends FeedManagerBase {
                 );
                 
                 if (scores && scores.length > 0) {
-                    // Sort by rank and convert to standings format
                     const sortedScores = scores
                         .filter(s => s.rank !== null)
                         .sort((a, b) => a.rank - b.rank);
                     
                     sortedScores.forEach((score, index) => {
                         const standing = index + 1;
-                        // Crown only for #1, gear for creator
-                        const positionEmoji = standing === 1 ? '👑' : `${standing}.`;
                         const creatorIndicator = score.raUsername === challenge.creatorRaUsername ? ' ⚙️' : '';
                         
                         currentStandings.push({
                             username: score.raUsername,
-                            rank: standing, // Community rank (1-based)
-                            score: `${score.score} (Global: #${score.rank})`, // Include global rank in score
-                            globalRank: score.rank, // Global RetroAchievements rank
-                            displayText: `${positionEmoji} ${score.raUsername}${creatorIndicator}`
+                            rank: standing,
+                            score: `${score.score} (Global: #${score.rank})`,
+                            globalRank: score.rank
                         });
                     });
                 }
@@ -327,24 +303,24 @@ class ArenaAlertService extends FeedManagerBase {
                 console.error('Error fetching current standings for alert:', error);
             }
             
-            // SIMPLIFIED: Single method call with all link generation handled automatically
+            // SINGLE LINE: Send alert using centralized service
             await AlertService.sendArenaRankAlert({
-                title: '🏟️ Arena Alert!',
-                description: `The leaderboard has been updated!`,
+                gameTitle: challenge.gameTitle,
+                gameId: challenge.gameId,
+                leaderboardTitle: challenge.leaderboardTitle,
+                leaderboardId: challenge.leaderboardId,
                 changes: changes,
                 currentStandings: currentStandings,
-                gameTitle: challenge.gameTitle,        // AlertService creates game link
-                gameId: challenge.gameId,              // AlertService creates game link
-                leaderboardTitle: challenge.leaderboardTitle, // AlertService creates leaderboard link
-                leaderboardId: challenge.leaderboardId, // AlertService creates leaderboard link
                 thumbnail: thumbnailUrl,
+                challengeId: challenge.challengeId,
+                description: challenge.description,
                 footer: { 
                     text: `Challenge ID: ${challenge.challengeId} • Data from RetroAchievements.org` 
                 }
             });
             
         } catch (error) {
-            console.error('Error sending challenge rank change alerts:', error);
+            console.error('Error sending challenge alert:', error);
         }
     }
 }
