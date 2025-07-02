@@ -60,6 +60,7 @@ async function getCachedUserCollection(discordId) {
             raUsername: 1, 
             gachaCollection: 1, 
             discordId: 1,
+            gpBalance: 1,
             _id: 1
         }
     ).lean(); // Use lean() for better performance
@@ -262,6 +263,8 @@ export default {
             ? `Page ${page + 1}/${totalPages} • ${startIndex + 1}-${Math.min(startIndex + ITEMS_PER_PAGE, processedItems.length)} of ${processedItems.length} items`
             : `${processedItems.length} items • xN = quantity`;
         
+        // Add GP balance to footer
+        footerText += ` • ${(user.gpBalance || 0).toLocaleString()} GP`;
         footerText += ` • ${combinationStats.totalCombined} from combinations`;
         if (possibleCombinations.length > 0) {
             footerText += ` • ⚗️ ${possibleCombinations.length} combination(s) available!`;
@@ -710,7 +713,7 @@ export default {
             .setColor(COLORS.INFO)
             .setTimestamp();
 
-        let description = `📦 **Total Items:** ${summary.totalItems}\n🎯 **Unique Items:** ${summary.uniqueItems}\n\n**Rarity Breakdown:**\n`;
+        let description = `📦 **Total Items:** ${summary.totalItems}\n🎯 **Unique Items:** ${summary.uniqueItems}\n💰 **GP Balance:** ${(user.gpBalance || 0).toLocaleString()} GP\n\n**Rarity Breakdown:**\n`;
         
         const rarityCount = summary.rarityCount || {};
         rarityOrder.forEach(rarity => {
