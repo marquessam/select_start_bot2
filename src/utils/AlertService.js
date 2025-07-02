@@ -1,9 +1,9 @@
-// src/utils/AlertService.js - COMPLETELY CENTRALIZED alert management
+// src/utils/AlertService.js - ENHANCED with auto-deletion for monthly alerts
 import { EmbedBuilder } from 'discord.js';
 import { config } from '../config/config.js';
 import { COLORS, EMOJIS, getDiscordTimestamp } from './FeedUtils.js';
 
-// Alert type constants - comprehensive coverage including combinations
+// Alert type constants
 export const ALERT_TYPES = {
     // Position/Rank Changes
     ARCADE_RANKS: 'arcade_ranks',
@@ -42,72 +42,72 @@ export const ALERT_TYPES = {
 
 // Channel routing configuration
 const CHANNEL_CONFIG = {
-    // Position/Rank Changes
-    [ALERT_TYPES.ARCADE_RANKS]: '1300941091335438471',      // Arcade channel
-    [ALERT_TYPES.ARENA_RANKS]: '1373570850912997476',       // Arena channel
-    [ALERT_TYPES.MONTHLY_RANKS]: '1313640664356880445',     // Monthly game channel
-    [ALERT_TYPES.YEARLY_RANKS]: '1313640664356880445',      // Monthly game channel
+    [ALERT_TYPES.ARCADE_RANKS]: '1300941091335438471',
+    [ALERT_TYPES.ARENA_RANKS]: '1373570850912997476',
+    [ALERT_TYPES.MONTHLY_RANKS]: '1313640664356880445',
+    [ALERT_TYPES.YEARLY_RANKS]: '1313640664356880445',
     
-    // New Content Announcements
-    [ALERT_TYPES.NEW_CHALLENGE]: ['1360409399264416025', '1313640664356880445'], // Announcements + Monthly
-    [ALERT_TYPES.NEW_ARCADE_BOARD]: ['1360409399264416025', '1300941091335438471'], // Announcements + Arcade
-    [ALERT_TYPES.NEW_RACING_CHALLENGE]: ['1360409399264416025', '1300941091335438471'], // Announcements + Arcade
-    [ALERT_TYPES.NEW_TIEBREAKER]: ['1360409399264416025', '1300941091335438471'], // Announcements + Arcade
-    [ALERT_TYPES.NEW_ARENA_CHALLENGE]: '1373570850912997476', // Arena channel
+    [ALERT_TYPES.NEW_CHALLENGE]: ['1360409399264416025', '1313640664356880445'],
+    [ALERT_TYPES.NEW_ARCADE_BOARD]: ['1360409399264416025', '1300941091335438471'],
+    [ALERT_TYPES.NEW_RACING_CHALLENGE]: ['1360409399264416025', '1300941091335438471'],
+    [ALERT_TYPES.NEW_TIEBREAKER]: ['1360409399264416025', '1300941091335438471'],
+    [ALERT_TYPES.NEW_ARENA_CHALLENGE]: '1373570850912997476',
     
-    // Achievement Types
-    [ALERT_TYPES.ACHIEVEMENT]: '1326199972059680778',       // Regular achievements → achievement feed
-    [ALERT_TYPES.MASTERY]: '1362227906343997583',           // Regular mastery/beaten → mastery channel
-    [ALERT_TYPES.BEATEN]: '1362227906343997583',            // Regular mastery/beaten → mastery channel
-    [ALERT_TYPES.MONTHLY_AWARD]: '1313640664356880445',     // Monthly mastery/beaten → monthly channel
-    [ALERT_TYPES.SHADOW_AWARD]: '1300941091335438470',      // Shadow mastery/beaten → shadow channel
-    [ALERT_TYPES.RACING_AWARD]: '1326199972059680778',      // Racing/arcade achievements → achievement feed
-    [ALERT_TYPES.ARCADE_AWARD]: '1326199972059680778',      // Arcade achievements → achievement feed
-    [ALERT_TYPES.ARENA_AWARD]: '1326199972059680778',       // Arena achievements → achievement feed
+    [ALERT_TYPES.ACHIEVEMENT]: '1326199972059680778',
+    [ALERT_TYPES.MASTERY]: '1362227906343997583',
+    [ALERT_TYPES.BEATEN]: '1362227906343997583',
+    [ALERT_TYPES.MONTHLY_AWARD]: '1313640664356880445',
+    [ALERT_TYPES.SHADOW_AWARD]: '1300941091335438470',
+    [ALERT_TYPES.RACING_AWARD]: '1326199972059680778',
+    [ALERT_TYPES.ARCADE_AWARD]: '1326199972059680778',
+    [ALERT_TYPES.ARENA_AWARD]: '1326199972059680778',
     
-    // Combination/Gacha Alerts
-    [ALERT_TYPES.COMBINATION_COMPLETE]: '1379402075120730185', // gacha trade channel 
-    [ALERT_TYPES.COMBINATION_TRANSFER]: '1379402075120730185', // gacha trade channel
-    [ALERT_TYPES.COMBINATION_ADMIN_GIFT]: '1379402075120730185', // gacha trade channel
-    [ALERT_TYPES.RECIPE_DISCOVERY]: '1379402075120730185', // gacha trade channel
+    [ALERT_TYPES.COMBINATION_COMPLETE]: '1379402075120730185',
+    [ALERT_TYPES.COMBINATION_TRANSFER]: '1379402075120730185',
+    [ALERT_TYPES.COMBINATION_ADMIN_GIFT]: '1379402075120730185',
+    [ALERT_TYPES.RECIPE_DISCOVERY]: '1379402075120730185',
     
-    // System/Admin
-    [ALERT_TYPES.ADMIN]: '1360409399264416025',             // Announcements
-    [ALERT_TYPES.SYSTEM]: '1360409399264416025',            // Announcements  
-    [ALERT_TYPES.DEFAULT]: '1326199972059680778'            // Fallback to achievements
+    [ALERT_TYPES.ADMIN]: '1360409399264416025',
+    [ALERT_TYPES.SYSTEM]: '1360409399264416025',
+    [ALERT_TYPES.DEFAULT]: '1326199972059680778'
 };
 
 // Color mapping for different alert types
 const ALERT_COLORS = {
-    [ALERT_TYPES.ARCADE_RANKS]: '#3498DB',        // Blue
-    [ALERT_TYPES.ARENA_RANKS]: '#FF5722',         // Red
-    [ALERT_TYPES.MONTHLY_RANKS]: '#9B59B6',       // Purple
-    [ALERT_TYPES.YEARLY_RANKS]: '#9B59B6',        // Purple
+    [ALERT_TYPES.ARCADE_RANKS]: '#3498DB',
+    [ALERT_TYPES.ARENA_RANKS]: '#FF5722',
+    [ALERT_TYPES.MONTHLY_RANKS]: '#9B59B6',
+    [ALERT_TYPES.YEARLY_RANKS]: '#9B59B6',
     
-    [ALERT_TYPES.NEW_CHALLENGE]: '#FFD700',       // Gold
-    [ALERT_TYPES.NEW_ARCADE_BOARD]: '#3498DB',    // Blue
-    [ALERT_TYPES.NEW_RACING_CHALLENGE]: '#FF9900', // Orange
-    [ALERT_TYPES.NEW_TIEBREAKER]: '#FF0000',      // Red
-    [ALERT_TYPES.NEW_ARENA_CHALLENGE]: '#FF5722', // Red
+    [ALERT_TYPES.NEW_CHALLENGE]: '#FFD700',
+    [ALERT_TYPES.NEW_ARCADE_BOARD]: '#3498DB',
+    [ALERT_TYPES.NEW_RACING_CHALLENGE]: '#FF9900',
+    [ALERT_TYPES.NEW_TIEBREAKER]: '#FF0000',
+    [ALERT_TYPES.NEW_ARENA_CHALLENGE]: '#FF5722',
     
-    [ALERT_TYPES.MASTERY]: '#FFD700',             // Gold
-    [ALERT_TYPES.BEATEN]: '#FFD700',              // Gold
-    [ALERT_TYPES.MONTHLY_AWARD]: '#9B59B6',       // Purple
-    [ALERT_TYPES.SHADOW_AWARD]: '#000000',        // Black
-    [ALERT_TYPES.RACING_AWARD]: '#FF9900',        // Orange
-    [ALERT_TYPES.ARCADE_AWARD]: '#3498DB',        // Blue
-    [ALERT_TYPES.ARENA_AWARD]: '#FF5722',         // Red
-    [ALERT_TYPES.ACHIEVEMENT]: '#808080',         // Grey
+    [ALERT_TYPES.MASTERY]: '#FFD700',
+    [ALERT_TYPES.BEATEN]: '#FFD700',
+    [ALERT_TYPES.MONTHLY_AWARD]: '#9B59B6',
+    [ALERT_TYPES.SHADOW_AWARD]: '#000000',
+    [ALERT_TYPES.RACING_AWARD]: '#FF9900',
+    [ALERT_TYPES.ARCADE_AWARD]: '#3498DB',
+    [ALERT_TYPES.ARENA_AWARD]: '#FF5722',
+    [ALERT_TYPES.ACHIEVEMENT]: '#808080',
     
-    // Combination/Gacha Colors
-    [ALERT_TYPES.COMBINATION_COMPLETE]: '#00FF00',     // Green
-    [ALERT_TYPES.COMBINATION_TRANSFER]: '#FFD700',     // Gold
-    [ALERT_TYPES.COMBINATION_ADMIN_GIFT]: '#FF69B4',   // Hot Pink
-    [ALERT_TYPES.RECIPE_DISCOVERY]: '#9932CC',         // Dark Orchid
+    [ALERT_TYPES.COMBINATION_COMPLETE]: '#00FF00',
+    [ALERT_TYPES.COMBINATION_TRANSFER]: '#FFD700',
+    [ALERT_TYPES.COMBINATION_ADMIN_GIFT]: '#FF69B4',
+    [ALERT_TYPES.RECIPE_DISCOVERY]: '#9932CC',
     
-    [ALERT_TYPES.ADMIN]: '#95A5A6',               // Grey
-    [ALERT_TYPES.SYSTEM]: '#95A5A6',              // Grey
-    [ALERT_TYPES.DEFAULT]: '#808080'              // Grey
+    [ALERT_TYPES.ADMIN]: '#95A5A6',
+    [ALERT_TYPES.SYSTEM]: '#95A5A6',
+    [ALERT_TYPES.DEFAULT]: '#808080'
+};
+
+// Auto-deletion configuration - NEW
+const AUTO_DELETE_CONFIG = {
+    [ALERT_TYPES.MONTHLY_RANKS]: 60 * 60 * 1000, // 1 hour for monthly alerts
+    // Add other alert types here if needed for auto-deletion
 };
 
 /**
@@ -139,19 +139,13 @@ export const LinkUtils = {
  * CENTRALIZED ranking display utilities - FIXED to eliminate duplicates
  */
 export const RankingUtils = {
-    /**
-     * Get the proper rank emoji/text - FIXED to only return ONE representation
-     */
     getRankDisplay(rank) {
         if (rank === 1) return '🥇';
         if (rank === 2) return '🥈';
         if (rank === 3) return '🥉';
-        return `#${rank}`; // FIXED: Only show rank number for 4+, no blue diamonds
+        return `#${rank}`;
     },
     
-    /**
-     * Format standings for display - CENTRALIZED and FIXED
-     */
     formatStandings(standings, alertType, options = {}) {
         const { showTiebreakers = false, maxEntries = 5 } = options;
         let standingsText = '';
@@ -164,13 +158,10 @@ export const RankingUtils = {
             const rankDisplay = this.getRankDisplay(user.rank);
             const userLink = LinkUtils.createUserLink(user.username);
             
-            // FIXED: Single line per user, no duplicates
             if (alertType === ALERT_TYPES.MONTHLY_RANKS) {
-                // Monthly challenge format with achievements
                 const score = user.score || '';
                 standingsText += `${rankDisplay} ${userLink}: ${score}\n`;
                 
-                // Add tiebreaker info on separate lines if available and requested
                 if (showTiebreakers && user.rank <= 5) {
                     if (user.tiebreakerInfo) {
                         standingsText += `   ⚔️ Tiebreaker: ${user.tiebreakerInfo}\n`;
@@ -180,7 +171,6 @@ export const RankingUtils = {
                     }
                 }
             } else {
-                // Arcade/Arena format
                 const globalRank = user.globalRank ? ` (Global: #${user.globalRank})` : '';
                 const score = user.score || user.value || '';
                 standingsText += `${rankDisplay} ${userLink}: ${score}${globalRank}\n`;
@@ -190,9 +180,6 @@ export const RankingUtils = {
         return standingsText;
     },
     
-    /**
-     * Format position changes for display
-     */
     formatPositionChanges(changes) {
         let changesText = '';
         
@@ -214,14 +201,15 @@ export const RankingUtils = {
 };
 
 /**
- * COMPLETELY CENTRALIZED AlertService class
+ * ENHANCED AlertService with auto-deletion capability
  */
 export class AlertService {
     constructor(client = null) {
         this.client = client;
         this.channelCache = new Map();
+        this.pendingDeletions = new Map(); // NEW: Track messages for auto-deletion
         
-        console.log('AlertService initialized with centralized alert management');
+        console.log('AlertService initialized with auto-deletion capability');
     }
     
     setClient(client) {
@@ -269,6 +257,35 @@ export class AlertService {
     }
     
     /**
+     * NEW: Schedule message for auto-deletion
+     */
+    scheduleMessageDeletion(message, alertType) {
+        const deleteAfter = AUTO_DELETE_CONFIG[alertType];
+        if (!deleteAfter) return;
+        
+        // Cancel any existing deletion for this channel
+        const channelId = message.channel.id;
+        if (this.pendingDeletions.has(channelId)) {
+            clearTimeout(this.pendingDeletions.get(channelId).timeout);
+        }
+        
+        // Schedule new deletion
+        const timeout = setTimeout(async () => {
+            try {
+                await message.delete();
+                console.log(`AlertService: Auto-deleted ${alertType} alert after ${deleteAfter / 1000 / 60} minutes`);
+            } catch (error) {
+                console.error('AlertService: Error auto-deleting message:', error);
+            } finally {
+                this.pendingDeletions.delete(channelId);
+            }
+        }, deleteAfter);
+        
+        this.pendingDeletions.set(channelId, { timeout, messageId: message.id });
+        console.log(`AlertService: Scheduled ${alertType} alert for deletion in ${deleteAfter / 1000 / 60} minutes`);
+    }
+    
+    /**
      * CENTRALIZED rank change alert - handles ALL ranking systems
      */
     async sendRankChangeAlert(options) {
@@ -289,8 +306,6 @@ export class AlertService {
         } = options;
         
         try {
-            console.log(`AlertService: Sending centralized rank change alert - Type: ${alertType}`);
-            
             const channels = await this.getChannelsForAlert(alertType);
             if (channels.length === 0) {
                 console.error(`AlertService: No channels found for alert type ${alertType}`);
@@ -353,7 +368,7 @@ export class AlertService {
                 embed.setThumbnail(thumbnail);
             }
             
-            // FIXED: Add position changes using centralized formatting
+            // Add position changes using centralized formatting
             if (changes && changes.length > 0) {
                 const changesText = RankingUtils.formatPositionChanges(changes);
                 embed.addFields({ 
@@ -363,7 +378,7 @@ export class AlertService {
                 });
             }
             
-            // FIXED: Add current standings using centralized formatting
+            // Add current standings using centralized formatting
             if (currentStandings && currentStandings.length > 0) {
                 const standingsText = RankingUtils.formatStandings(currentStandings, alertType, {
                     showTiebreakers: alertType === ALERT_TYPES.MONTHLY_RANKS
@@ -387,10 +402,14 @@ export class AlertService {
                 embed.setFooter({ text: footerText });
             }
             
-            // Send to all target channels
+            // Send to all target channels with auto-deletion scheduling
             for (const channel of channels) {
-                await channel.send({ embeds: [embed] });
-                console.log(`AlertService: Sent rank change alert to ${channel.name}`);
+                const message = await channel.send({ embeds: [embed] });
+                
+                // NEW: Schedule auto-deletion for specific alert types
+                this.scheduleMessageDeletion(message, alertType);
+                
+                console.log(`AlertService: Sent ${alertType} alert to ${channel.name}`);
             }
             
         } catch (error) {
@@ -402,7 +421,6 @@ export class AlertService {
      * Send combination/gacha alert
      */
     async sendCombinationAlert(options) {
-        // Previous combination alert code remains unchanged
         const {
             alertType,
             combinationType,
@@ -418,8 +436,6 @@ export class AlertService {
         } = options;
         
         try {
-            console.log(`AlertService: Sending combination alert - Type: ${alertType}`);
-            
             const channels = await this.getChannelsForAlert(alertType);
             if (channels.length === 0) {
                 console.error(`AlertService: No channels found for alert type ${alertType}`);
@@ -428,10 +444,7 @@ export class AlertService {
             
             const color = this.getAlertColor(alertType);
             
-            // Build embed based on combination type
-            let title;
-            let embedDescription;
-            let emoji;
+            let title, embedDescription, emoji;
             
             switch (alertType) {
                 case ALERT_TYPES.COMBINATION_COMPLETE:
@@ -478,7 +491,6 @@ export class AlertService {
                 embed.setThumbnail(thumbnail);
             }
             
-            // Add combination details as fields
             if (characterNames.length > 0) {
                 embed.addFields({
                     name: 'Characters Used',
@@ -503,12 +515,10 @@ export class AlertService {
                 });
             }
             
-            // Add custom fields
             if (fields && fields.length > 0) {
                 embed.addFields(fields);
             }
             
-            // Add footer
             let footerText = '';
             if (ruleId) {
                 footerText = `Combination ID: ${ruleId}`;
@@ -524,7 +534,6 @@ export class AlertService {
                 embed.setFooter({ text: footerText });
             }
             
-            // Send to all target channels
             for (const channel of channels) {
                 await channel.send({ embeds: [embed] });
                 console.log(`AlertService: Sent combination alert to ${channel.name}`);
@@ -559,8 +568,6 @@ export class AlertService {
         } = options;
         
         try {
-            console.log(`AlertService: Sending achievement alert - Type: ${alertType}`);
-            
             const channels = await this.getChannelsForAlert(alertType);
             if (channels.length === 0) {
                 console.error(`AlertService: No channels found for alert type ${alertType}`);
@@ -577,8 +584,7 @@ export class AlertService {
                     LinkUtils.createGameLink(gameTitle, gameId) : gameTitle;
                 const userLink = LinkUtils.createUserLink(username);
                 
-                let embedTitle;
-                let embedDescription;
+                let embedTitle, embedDescription;
                 
                 if (alertType === ALERT_TYPES.MASTERY || 
                     (alertType === ALERT_TYPES.MONTHLY_AWARD && awardType === 'mastery') ||
@@ -655,14 +661,9 @@ export class AlertService {
             }
             
             if (iconURL) {
-                embed.setAuthor({
-                    name: authorName,
-                    iconURL: iconURL
-                });
+                embed.setAuthor({ name: authorName, iconURL: iconURL });
             } else {
-                embed.setAuthor({
-                    name: authorName
-                });
+                embed.setAuthor({ name: authorName });
             }
             
             if (thumbnail) {
@@ -684,14 +685,9 @@ export class AlertService {
             }
             
             if (userProfileImageUrl) {
-                embed.setFooter({
-                    text: footerText,
-                    iconURL: userProfileImageUrl
-                });
+                embed.setFooter({ text: footerText, iconURL: userProfileImageUrl });
             } else if (footerText) {
-                embed.setFooter({
-                    text: footerText
-                });
+                embed.setFooter({ text: footerText });
             }
             
             for (const channel of channels) {
@@ -722,8 +718,6 @@ export class AlertService {
         } = options;
         
         try {
-            console.log(`AlertService: Sending announcement alert - Type: ${alertType}`);
-            
             const channels = await this.getChannelsForAlert(alertType);
             if (channels.length === 0) {
                 console.error(`AlertService: No channels found for alert type ${alertType}`);
@@ -759,9 +753,7 @@ export class AlertService {
             if (footer) {
                 embed.setFooter(footer);
             } else {
-                embed.setFooter({ 
-                    text: 'Data provided by RetroAchievements' 
-                });
+                embed.setFooter({ text: 'Data provided by RetroAchievements' });
             }
             
             for (const channel of channels) {
