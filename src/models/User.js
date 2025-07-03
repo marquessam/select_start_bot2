@@ -101,14 +101,14 @@ const userSchema = new mongoose.Schema({
     discordId: { 
         type: String, 
         required: true, 
-        unique: true, 
-        index: true 
+        unique: true
+        // FIXED: Removed redundant index: true to avoid conflicts
     },
     raUsername: { 
         type: String, 
         required: true, 
-        unique: true, 
-        index: true 
+        unique: true
+        // FIXED: Removed redundant index: true to avoid conflicts
     },
     raUserId: { 
         type: Number, 
@@ -198,9 +198,7 @@ const userSchema = new mongoose.Schema({
     collection: 'users'
 });
 
-// Indexes for performance
-userSchema.index({ discordId: 1 });
-userSchema.index({ raUsername: 1 });
+// FIXED: Indexes for performance (removed duplicate unique field indexes to avoid conflicts)
 userSchema.index({ raUserId: 1 }, { sparse: true });
 userSchema.index({ totalPoints: -1 });
 userSchema.index({ totalAchievements: -1 });
