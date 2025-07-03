@@ -77,7 +77,7 @@ export const config = {
             
             // DEPLOYMENT SAFETY: Critical - disable buffering for faster failures
             bufferCommands: false,
-            bufferMaxEntries: 0,
+            // Note: bufferMaxEntries removed in Mongoose 8.x
             
             // SSL for production (Atlas)
             ssl: isProduction,
