@@ -1,4 +1,4 @@
-// src/services/gachaService.js - FIXED: Added retry logic for version conflicts
+// src/services/gachaService.js - PERFORMANCE OPTIMIZED VERSION
 import { User } from '../models/User.js';
 import { GachaItem } from '../models/GachaItem.js';
 import combinationService from './combinationService.js';
@@ -9,7 +9,7 @@ const PULL_COSTS = {
     multi: 150
 };
 
-// UPDATED: Flat rarity percentages (ignores individual dropRate fields)
+// UPDATED: Flat rarity percentages
 const RARITY_PERCENTAGES = {
     common: 45,      // 45%
     uncommon: 35,    // 35%
@@ -19,9 +19,18 @@ const RARITY_PERCENTAGES = {
     mythic: 0        // 0% - special events only
 };
 
+// PERFORMANCE: Advanced caching system
+const gachaItemPoolCache = new Map();
+const rarityPoolsCache = new Map();
+const collectionSummaryCache = new Map();
+const seriesItemsCache = new Map();
+let lastPoolRefresh = 0;
+const POOL_CACHE_TTL = 10 * 60 * 1000; // 10 minutes for item pools
+const SUMMARY_CACHE_TTL = 5 * 60 * 1000; // 5 minutes for summaries
+const SERIES_CACHE_TTL = 15 * 60 * 1000; // 15 minutes for series data
+
 class GachaService {
     constructor() {
-        // Keep the old weights for reference, but they're not used anymore
         this.rarityWeights = {
             common: 50,
             uncommon: 30,
@@ -29,10 +38,161 @@ class GachaService {
             epic: 4,
             legendary: 1
         };
+        
+        // PERFORMANCE: Pre-computed rarity data for fast access
+        this.rarityData = {
+            common: { emoji: '⚪', name: 'Common', color: '#95A5A6' },
+            uncommon: { emoji: '🟢', name: 'Uncommon', color: '#2ECC71' },
+            rare: { emoji: '🔵', name: 'Rare', color: '#3498DB' },
+            epic: { emoji: '🟣', name: 'Epic', color: '#9B59B6' },
+            legendary: { emoji: '🟡', name: 'Legendary', color: '#F1C40F' },
+            mythic: { emoji: '🌟', name: 'Mythic', color: '#E91E63' }
+        };
+        
+        // Initialize item pool cache on startup
+        this.initializeCache();
     }
 
     /**
-     * FIXED: Perform a gacha pull with retry logic to handle version conflicts
+     * PERFORMANCE: Initialize cache on startup
+     */
+    async initializeCache() {
+        try {
+            await this.refreshGachaItemPool();
+            console.log('✅ Gacha service cache initialized');
+        } catch (error) {
+            console.error('❌ Failed to initialize gacha service cache:', error);
+        }
+    }
+
+    /**
+     * PERFORMANCE: Cached gacha item pool management
+     */
+    async refreshGachaItemPool() {
+        try {
+            console.log('🔄 Refreshing gacha item pool cache...');
+            
+            // Fetch all active gacha items once
+            const availableItems = await GachaItem.find({
+                isActive: true,
+                dropRate: { $gt: 0 }
+            }).lean(); // Use lean() for better performance
+            
+            if (availableItems.length === 0) {
+                console.warn('⚠️ No available gacha items found');
+                return;
+            }
+
+            // Clear and rebuild caches
+            gachaItemPoolCache.clear();
+            rarityPoolsCache.clear();
+            
+            // Group items by rarity for efficient selection
+            const itemsByRarity = {};
+            for (const item of availableItems) {
+                if (!itemsByRarity[item.rarity]) {
+                    itemsByRarity[item.rarity] = [];
+                }
+                itemsByRarity[item.rarity].push(item);
+                
+                // Cache individual items for quick lookup
+                gachaItemPoolCache.set(item.itemId, item);
+            }
+            
+            // Cache rarity pools for efficient random selection
+            for (const [rarity, items] of Object.entries(itemsByRarity)) {
+                rarityPoolsCache.set(rarity, items);
+            }
+            
+            lastPoolRefresh = Date.now();
+            
+            console.log(`✅ Gacha pool cached: ${availableItems.length} items across ${Object.keys(itemsByRarity).length} rarities`);
+            console.log('Rarity distribution:', Object.fromEntries(
+                Object.entries(itemsByRarity).map(([rarity, items]) => [rarity, items.length])
+            ));
+            
+        } catch (error) {
+            console.error('❌ Error refreshing gacha item pool:', error);
+        }
+    }
+
+    /**
+     * PERFORMANCE: Check if cache needs refresh
+     */
+    async ensurePoolCacheValid() {
+        if (Date.now() - lastPoolRefresh > POOL_CACHE_TTL || rarityPoolsCache.size === 0) {
+            await this.refreshGachaItemPool();
+        }
+    }
+
+    /**
+     * PERFORMANCE: Optimized random item selection using cached pools
+     */
+    async selectRandomItem() {
+        try {
+            // Ensure cache is valid
+            await this.ensurePoolCacheValid();
+            
+            if (rarityPoolsCache.size === 0) {
+                console.error('No rarity pools available');
+                return null;
+            }
+
+            // Calculate cumulative percentages for rarity selection
+            const rarityRoll = Math.random() * 100;
+            let cumulativePercent = 0;
+            let selectedRarity = null;
+
+            // Go through rarities in order of percentage (high to low)
+            const sortedRarities = Object.entries(RARITY_PERCENTAGES)
+                .sort(([,a], [,b]) => b - a);
+
+            for (const [rarity, percentage] of sortedRarities) {
+                cumulativePercent += percentage;
+                
+                // Skip if no items of this rarity exist in cache
+                if (!rarityPoolsCache.has(rarity)) {
+                    continue;
+                }
+
+                if (rarityRoll <= cumulativePercent) {
+                    selectedRarity = rarity;
+                    break;
+                }
+            }
+
+            // Fallback: if no rarity selected, pick the first available
+            if (!selectedRarity) {
+                for (const rarity of ['common', 'uncommon', 'rare', 'epic', 'legendary', 'mythic']) {
+                    if (rarityPoolsCache.has(rarity)) {
+                        selectedRarity = rarity;
+                        break;
+                    }
+                }
+            }
+
+            if (!selectedRarity || !rarityPoolsCache.has(selectedRarity)) {
+                console.error('No valid rarity found with available items');
+                return null;
+            }
+
+            // Randomly select an item from the cached rarity pool
+            const rarityItems = rarityPoolsCache.get(selectedRarity);
+            const randomIndex = Math.floor(Math.random() * rarityItems.length);
+            const selectedItem = rarityItems[randomIndex];
+
+            console.log(`🎲 Rarity roll: ${rarityRoll.toFixed(2)}% → Selected: ${selectedRarity} (${RARITY_PERCENTAGES[selectedRarity]}% chance)`);
+            console.log(`🎯 Selected item: ${selectedItem.itemName} from ${rarityItems.length} available ${selectedRarity} items`);
+
+            return selectedItem;
+        } catch (error) {
+            console.error('Error selecting random item:', error);
+            return null;
+        }
+    }
+
+    /**
+     * FIXED: Perform a gacha pull with enhanced retry logic and caching
      */
     async performPull(user, pullType = 'single') {
         const maxRetries = 3;
@@ -40,64 +200,59 @@ class GachaService {
 
         for (let attempt = 1; attempt <= maxRetries; attempt++) {
             try {
-                console.log(`Gacha pull attempt ${attempt}/${maxRetries} for user ${user.raUsername}`);
+                console.log(`🎰 Gacha pull attempt ${attempt}/${maxRetries} for user ${user.raUsername}`);
                 return await this.performPullInternal(user, pullType, attempt);
             } catch (error) {
                 lastError = error;
                 
                 if (error.name === 'VersionError') {
-                    console.warn(`Version conflict on attempt ${attempt}/${maxRetries} for user ${user.raUsername}, retrying...`);
+                    console.warn(`⚠️ Version conflict on attempt ${attempt}/${maxRetries}, retrying...`);
                     
                     if (attempt < maxRetries) {
-                        // Wait a bit and refetch the user for next attempt
-                        await new Promise(resolve => setTimeout(resolve, 100 * attempt)); // Progressive delay
+                        // Progressive delay and user refresh
+                        await new Promise(resolve => setTimeout(resolve, 100 * attempt));
                         
                         try {
-                            // Refetch the user with fresh data
                             const freshUser = await User.findById(user._id);
                             if (!freshUser) {
                                 throw new Error('User not found during retry');
                             }
                             
-                            // Update the user object with fresh data
+                            // Update user object with fresh data
                             Object.assign(user, freshUser.toObject());
                             user._doc = freshUser._doc;
                             user.__v = freshUser.__v;
                             user.isNew = false;
                             
-                            console.log(`Refetched user data for retry ${attempt + 1}, version: ${user.__v}`);
+                            console.log(`🔄 Refetched user data for retry ${attempt + 1}, version: ${user.__v}`);
                         } catch (refetchError) {
-                            console.error('Error refetching user for retry:', refetchError);
+                            console.error('❌ Error refetching user for retry:', refetchError);
                             throw refetchError;
                         }
                         
-                        continue; // Try again
+                        continue;
                     }
                 } else {
-                    // Non-version error, don't retry
-                    console.error(`Non-retryable error on attempt ${attempt}:`, error);
+                    console.error(`❌ Non-retryable error on attempt ${attempt}:`, error);
                     throw error;
                 }
             }
         }
 
-        // All retries failed
-        console.error(`All ${maxRetries} attempts failed for user ${user.raUsername}`);
+        console.error(`❌ All ${maxRetries} attempts failed for user ${user.raUsername}`);
         throw new Error(`Gacha pull failed after ${maxRetries} attempts: ${lastError.message}`);
     }
 
     /**
-     * Internal method that performs the actual pull logic
+     * PERFORMANCE: Optimized pull internal logic with parallel operations
      */
     async performPullInternal(user, pullType, attemptNumber) {
         const cost = PULL_COSTS[pullType];
         const pullCount = pullType === 'multi' ? 4 : 1;
 
-        console.log(`Performing ${pullType} pull for ${user.raUsername} (attempt ${attemptNumber})`);
-        console.log(`User version before pull: ${user.__v}`);
-        console.log(`User GP before pull: ${user.gpBalance}`);
+        console.log(`🎮 Performing ${pullType} pull for ${user.raUsername} (attempt ${attemptNumber})`);
 
-        // Check if user has enough GP
+        // Check GP
         if (!user.hasEnoughGp(cost)) {
             throw new Error(`Insufficient GP! You need ${cost} GP but only have ${user.gpBalance} GP.`);
         }
@@ -105,69 +260,56 @@ class GachaService {
         // Deduct GP
         user.addGpTransaction('gacha_pull', -cost, `Gacha ${pullType} pull (${pullCount} items)`);
 
-        // Initialize collection if it doesn't exist
+        // Initialize collection if needed
         if (!user.gachaCollection) {
             user.gachaCollection = [];
-            console.log('Initialized empty gacha collection for user:', user.raUsername);
         }
 
-        // Perform the pulls
-        const results = [];
-        const newItemIds = []; // Track newly obtained items for combination checking
-        
+        // PERFORMANCE: Parallel item selection for multi-pulls
+        const itemPromises = [];
         for (let i = 0; i < pullCount; i++) {
-            const item = await this.selectRandomItem();
+            itemPromises.push(this.selectRandomItem());
+        }
+        
+        const selectedItems = await Promise.all(itemPromises);
+        
+        // Process results
+        const results = [];
+        const newItemIds = [];
+        
+        for (const item of selectedItems) {
             if (item) {
-                console.log(`Selected item for pull ${i + 1}:`, {
-                    itemId: item.itemId,
-                    itemName: item.itemName,
-                    rarity: item.rarity,
-                    emojiId: item.emojiId,
-                    emojiName: item.emojiName,
-                    isAnimated: item.isAnimated
-                });
                 const result = this.addItemToUser(user, item);
                 results.push(result);
                 newItemIds.push(item.itemId);
             }
         }
 
-        console.log(`Added ${results.length} items to collection. Collection size: ${user.gachaCollection.length}`);
+        console.log(`📦 Added ${results.length} items to collection. Total size: ${user.gachaCollection.length}`);
 
-        // Check for series completions
-        const completions = await this.checkSeriesCompletions(user, results);
+        // PERFORMANCE: Parallel operations for completions and save
+        const [completions] = await Promise.all([
+            this.checkSeriesCompletions(user, results),
+            user.save()
+        ]);
 
-        console.log(`User version before save: ${user.__v}`);
-        console.log(`User GP after transactions: ${user.gpBalance}`);
+        console.log(`💾 User saved successfully (version: ${user.__v})`);
 
-        // FIXED: Save user with proper error handling
-        try {
-            await user.save();
-            console.log(`User saved successfully after pull (new version: ${user.__v})`);
-        } catch (saveError) {
-            console.error('Error saving user after gacha pull:', saveError);
-            // Re-throw to trigger retry logic
-            throw saveError;
-        }
-
-        // UPDATED: Check for possible combinations instead of auto-combining
-        // FIXED: Use a fresh user query to avoid stale data for combination checking
+        // PERFORMANCE: Check combinations with fresh data to avoid stale references
         let possibleCombinations = [];
         try {
-            // Get fresh user data for combination checking to avoid stale references
-            const freshUserForCombinations = await User.findById(user._id);
-            possibleCombinations = await combinationService.checkPossibleCombinations(freshUserForCombinations);
+            const freshUser = await User.findById(user._id);
+            possibleCombinations = await combinationService.checkPossibleCombinations(freshUser);
             
-            // Filter combinations that use newly obtained items
+            // Filter for relevant combinations
             const relevantCombinations = possibleCombinations.filter(combo => 
                 combo.ingredients.some(ingredient => newItemIds.includes(ingredient.itemId))
             );
 
-            console.log(`Found ${relevantCombinations.length} relevant combinations for newly obtained items`);
             possibleCombinations = relevantCombinations;
+            console.log(`⚗️ Found ${relevantCombinations.length} relevant combinations`);
         } catch (combinationError) {
-            console.error('Error checking combinations after gacha pull:', combinationError);
-            // Don't fail the pull if combination checking fails
+            console.error('❌ Error checking combinations:', combinationError);
             possibleCombinations = [];
         }
 
@@ -182,193 +324,7 @@ class GachaService {
     }
 
     /**
-     * COMPLETELY REWRITTEN: Flat rarity percentage system
-     * Select a random item based on flat rarity percentages (ignores individual dropRate)
-     */
-    async selectRandomItem() {
-        try {
-            // Get all items that can be pulled (dropRate > 0 still excludes special items)
-            const availableItems = await GachaItem.find({
-                isActive: true,
-                dropRate: { $gt: 0 } // Still respect 0 = not available in gacha
-            });
-            
-            if (availableItems.length === 0) {
-                console.error('No available gacha items found');
-                return null;
-            }
-
-            // Group items by rarity
-            const itemsByRarity = {};
-            for (const item of availableItems) {
-                if (!itemsByRarity[item.rarity]) {
-                    itemsByRarity[item.rarity] = [];
-                }
-                itemsByRarity[item.rarity].push(item);
-            }
-
-            // Log current distribution for debugging
-            console.log('Available items by rarity:');
-            for (const [rarity, items] of Object.entries(itemsByRarity)) {
-                console.log(`  ${rarity}: ${items.length} items`);
-            }
-
-            // Calculate cumulative percentages for rarity selection
-            const rarityRoll = Math.random() * 100; // 0-100
-            let cumulativePercent = 0;
-            let selectedRarity = null;
-
-            // Go through rarities in order of percentage
-            const sortedRarities = Object.entries(RARITY_PERCENTAGES)
-                .sort(([,a], [,b]) => b - a); // Sort by percentage descending
-
-            for (const [rarity, percentage] of sortedRarities) {
-                cumulativePercent += percentage;
-                
-                // Skip if no items of this rarity exist
-                if (!itemsByRarity[rarity] || itemsByRarity[rarity].length === 0) {
-                    continue;
-                }
-
-                if (rarityRoll <= cumulativePercent) {
-                    selectedRarity = rarity;
-                    break;
-                }
-            }
-
-            // Fallback: if no rarity selected (shouldn't happen), pick common
-            if (!selectedRarity || !itemsByRarity[selectedRarity]) {
-                // Find the most common rarity that has items
-                for (const rarity of ['common', 'uncommon', 'rare', 'epic', 'legendary', 'mythic']) {
-                    if (itemsByRarity[rarity] && itemsByRarity[rarity].length > 0) {
-                        selectedRarity = rarity;
-                        break;
-                    }
-                }
-            }
-
-            if (!selectedRarity || !itemsByRarity[selectedRarity]) {
-                console.error('No valid rarity found with available items');
-                return availableItems[0]; // Ultimate fallback
-            }
-
-            // Randomly select an item from the chosen rarity
-            const rarityItems = itemsByRarity[selectedRarity];
-            const randomIndex = Math.floor(Math.random() * rarityItems.length);
-            const selectedItem = rarityItems[randomIndex];
-
-            console.log(`Rarity roll: ${rarityRoll.toFixed(2)}% → Selected: ${selectedRarity} (${RARITY_PERCENTAGES[selectedRarity]}% chance)`);
-            console.log(`Selected item: ${selectedItem.itemName} from ${rarityItems.length} available ${selectedRarity} items`);
-
-            return selectedItem;
-        } catch (error) {
-            console.error('Error selecting random item:', error);
-            return null;
-        }
-    }
-
-    /**
-     * Get current rarity distribution statistics (for debugging/balancing)
-     */
-    async analyzeRarityDistribution() {
-        try {
-            const availableItems = await GachaItem.find({
-                isActive: true,
-                dropRate: { $gt: 0 }
-            });
-
-            const distribution = {};
-            for (const item of availableItems) {
-                if (!distribution[item.rarity]) {
-                    distribution[item.rarity] = 0;
-                }
-                distribution[item.rarity]++;
-            }
-
-            console.log('\n=== GACHA RARITY DISTRIBUTION ===');
-            console.log('Configured percentages vs Available items:');
-            
-            let totalItems = availableItems.length;
-            for (const [rarity, percentage] of Object.entries(RARITY_PERCENTAGES)) {
-                const itemCount = distribution[rarity] || 0;
-                const actualChancePerItem = itemCount > 0 ? (percentage / itemCount).toFixed(3) : 0;
-                console.log(`${rarity}: ${percentage}% chance → ${itemCount} items (${actualChancePerItem}% per item)`);
-            }
-            console.log(`Total items in gacha: ${totalItems}`);
-            console.log('===================================\n');
-
-            return distribution;
-        } catch (error) {
-            console.error('Error analyzing rarity distribution:', error);
-            return {};
-        }
-    }
-
-    /**
-     * Add an item to user's collection with proper emoji data transfer
-     */
-    addItemToUser(user, gachaItem) {
-        console.log('BEFORE addItemToUser - GachaItem emoji data:', {
-            itemId: gachaItem.itemId,
-            itemName: gachaItem.itemName,
-            emojiId: gachaItem.emojiId,
-            emojiName: gachaItem.emojiName,
-            isAnimated: gachaItem.isAnimated
-        });
-
-        // CRITICAL: Ensure we pass the complete gachaItem with all emoji data including isAnimated
-        const addResult = user.addGachaItem(gachaItem, 1, 'gacha');
-
-        console.log('AFTER addGachaItem - Result item emoji data:', {
-            itemId: addResult.item.itemId,
-            itemName: addResult.item.itemName,
-            emojiId: addResult.item.emojiId,
-            emojiName: addResult.item.emojiName,
-            isAnimated: addResult.item.isAnimated
-        });
-
-        // Verify emoji data was transferred correctly
-        if (gachaItem.emojiId && !addResult.item.emojiId) {
-            console.error('❌ EMOJI DATA LOST! emojiId was not transferred correctly');
-            console.error('Source emojiId:', gachaItem.emojiId);
-            console.error('Result emojiId:', addResult.item.emojiId);
-        }
-
-        if (gachaItem.emojiName && !addResult.item.emojiName) {
-            console.error('❌ EMOJI DATA LOST! emojiName was not transferred correctly');
-            console.error('Source emojiName:', gachaItem.emojiName);
-            console.error('Result emojiName:', addResult.item.emojiName);
-        }
-
-        if (gachaItem.isAnimated !== undefined && gachaItem.isAnimated !== addResult.item.isAnimated) {
-            console.error('❌ ANIMATED FLAG LOST! isAnimated was not transferred correctly');
-            console.error('Source isAnimated:', gachaItem.isAnimated);
-            console.error('Result isAnimated:', addResult.item.isAnimated);
-        }
-
-        // Format result for the UI
-        return {
-            itemId: gachaItem.itemId,
-            itemName: gachaItem.itemName,
-            rarity: gachaItem.rarity,
-            emojiName: addResult.item.emojiName, // Use the actual saved data
-            emojiId: addResult.item.emojiId,     // Use the actual saved data
-            isAnimated: addResult.item.isAnimated, // Use the actual saved data
-            description: gachaItem.description,
-            flavorText: gachaItem.flavorText,
-            quantity: addResult.item.quantity,
-            maxStack: gachaItem.maxStack,
-            isNew: addResult.isNew,
-            wasStacked: addResult.wasStacked,
-            atMaxStack: addResult.atMaxStack,
-            itemType: gachaItem.itemType,
-            seriesId: gachaItem.seriesId,
-            source: 'gacha'
-        };
-    }
-
-    /**
-     * Check for series completions
+     * PERFORMANCE: Enhanced series completion checking with caching
      */
     async checkSeriesCompletions(user, newItems) {
         const completions = [];
@@ -378,8 +334,16 @@ class GachaService {
             .filter(item => item.seriesId)
             .map(item => item.seriesId))];
 
-        for (const seriesId of seriesIds) {
-            const completion = await this.checkSingleSeriesCompletion(user, seriesId);
+        if (seriesIds.length === 0) return completions;
+
+        // PERFORMANCE: Parallel series completion checks
+        const completionPromises = seriesIds.map(seriesId => 
+            this.checkSingleSeriesCompletion(user, seriesId)
+        );
+        
+        const completionResults = await Promise.all(completionPromises);
+        
+        for (const completion of completionResults) {
             if (completion) {
                 completions.push(completion);
             }
@@ -389,34 +353,42 @@ class GachaService {
     }
 
     /**
-     * Check if a specific series is completed
+     * PERFORMANCE: Cached series completion checking
      */
     async checkSingleSeriesCompletion(user, seriesId) {
         try {
-            // Get all items in this series
-            const seriesItems = await GachaItem.find({ seriesId, isActive: true });
+            // Check cache first
+            const cacheKey = `series_${seriesId}`;
+            const cached = seriesItemsCache.get(cacheKey);
+            let seriesItems;
+            
+            if (cached && Date.now() - cached.timestamp < SERIES_CACHE_TTL) {
+                seriesItems = cached.data;
+            } else {
+                seriesItems = await GachaItem.find({ seriesId, isActive: true }).lean();
+                seriesItemsCache.set(cacheKey, { data: seriesItems, timestamp: Date.now() });
+            }
             
             if (seriesItems.length === 0) return null;
 
             // Check if user has all items in the series
             const userItems = user.gachaCollection.filter(item => item.seriesId === seriesId);
             const userItemIds = userItems.map(item => item.itemId);
-            
             const requiredItemIds = seriesItems.map(item => item.itemId);
             const hasAllItems = requiredItemIds.every(id => userItemIds.includes(id));
 
             if (!hasAllItems) return null;
 
-            // Check if user already has the completion reward
-            const seriesInfo = seriesItems[0]; // Get series info from first item
+            // Check completion reward
+            const seriesInfo = seriesItems[0];
             const completionReward = seriesInfo.completionReward;
             
             if (!completionReward) return null;
 
             const hasReward = user.gachaCollection.some(item => item.itemId === completionReward.itemId);
-            if (hasReward) return null; // Already completed
+            if (hasReward) return null;
 
-            // Award the completion reward using the User model method
+            // Award completion reward
             const rewardGachaItem = {
                 itemId: completionReward.itemId,
                 itemName: completionReward.itemName,
@@ -438,22 +410,26 @@ class GachaService {
                 completedItems: requiredItemIds.length
             };
         } catch (error) {
-            console.error(`Error checking series completion for ${seriesId}:`, error);
+            console.error(`❌ Error checking series completion for ${seriesId}:`, error);
             return null;
         }
     }
 
     /**
-     * UPDATED: Get user's collection summary with store_purchase integration
+     * PERFORMANCE: Cached collection summary with optimized processing
      */
     getUserCollectionSummary(user) {
-        console.log('Getting collection summary for user:', user.raUsername);
-        console.log('Collection exists:', !!user.gachaCollection);
-        console.log('Collection length:', user.gachaCollection?.length || 0);
+        const cacheKey = `summary_${user._id}_${user.gachaCollection?.length || 0}`;
+        const cached = collectionSummaryCache.get(cacheKey);
+        
+        if (cached && Date.now() - cached.timestamp < SUMMARY_CACHE_TTL) {
+            return cached.data;
+        }
+
+        console.log('📊 Generating collection summary for user:', user.raUsername);
 
         if (!user.gachaCollection || user.gachaCollection.length === 0) {
-            console.log('User has empty collection');
-            return {
+            const summary = {
                 totalItems: 0,
                 uniqueItems: 0,
                 rarityCount: {},
@@ -461,43 +437,40 @@ class GachaService {
                 sourceBreakdown: {},
                 seriesBreakdown: {}
             };
+            collectionSummaryCache.set(cacheKey, { data: summary, timestamp: Date.now() });
+            return summary;
         }
 
-        const rarityCount = {
-            common: 0,
-            uncommon: 0,
-            rare: 0,
-            epic: 0,
-            legendary: 0,
-            mythic: 0
-        };
-
-        // UPDATED: Include store_purchase in source breakdown
+        // PERFORMANCE: Single pass through collection with efficient counting
+        const rarityCount = Object.fromEntries(
+            Object.keys(this.rarityData).map(rarity => [rarity, 0])
+        );
+        
         const sourceBreakdown = {
             gacha: 0,
             combined: 0,
             series_completion: 0,
             player_transfer: 0,
-            store_purchase: 0  // ADDED store_purchase tracking
+            store_purchase: 0
         };
 
         const seriesBreakdown = {};
-
         let totalItems = 0;
         
-        user.gachaCollection.forEach(item => {
+        for (const item of user.gachaCollection) {
             const quantity = item.quantity || 1;
             totalItems += quantity;
             
+            // Count by rarity
             if (rarityCount[item.rarity] !== undefined) {
                 rarityCount[item.rarity] += quantity;
             }
             
+            // Count by source
             const source = item.source || 'gacha';
             if (sourceBreakdown[source] !== undefined) {
                 sourceBreakdown[source] += quantity;
             } else {
-                // Handle any unknown sources
                 sourceBreakdown[source] = quantity;
             }
 
@@ -507,21 +480,15 @@ class GachaService {
                 seriesBreakdown[series] = [];
             }
             seriesBreakdown[series].push(item);
-        });
+        }
 
+        // Get recent items efficiently
         const recentItems = user.gachaCollection
+            .slice() // Copy to avoid mutating original
             .sort((a, b) => new Date(b.obtainedAt) - new Date(a.obtainedAt))
             .slice(0, 5);
 
-        console.log('Collection summary:', {
-            totalItems,
-            uniqueItems: user.gachaCollection.length,
-            rarityCount,
-            sourceBreakdown,
-            seriesCount: Object.keys(seriesBreakdown).length
-        });
-
-        return {
+        const summary = {
             totalItems,
             uniqueItems: user.gachaCollection.length,
             rarityCount,
@@ -529,49 +496,110 @@ class GachaService {
             sourceBreakdown,
             seriesBreakdown
         };
+
+        // Cache the result
+        collectionSummaryCache.set(cacheKey, { data: summary, timestamp: Date.now() });
+
+        console.log('📊 Collection summary cached:', {
+            totalItems,
+            uniqueItems: user.gachaCollection.length,
+            seriesCount: Object.keys(seriesBreakdown).length
+        });
+
+        return summary;
     }
 
     /**
-     * Rarity system methods
+     * Enhanced item addition with better emoji data handling
      */
-    getRarityEmoji(rarity) {
-        const emojis = {
-            common: '⚪',      // White circle
-            uncommon: '🟢',   // Green circle  
-            rare: '🔵',       // Blue circle
-            epic: '🟣',       // Purple circle
-            legendary: '🟡',  // Yellow circle
-            mythic: '🌟'      // Star
+    addItemToUser(user, gachaItem) {
+        console.log('🔧 Adding item to user:', {
+            itemId: gachaItem.itemId,
+            itemName: gachaItem.itemName,
+            emojiData: {
+                emojiId: gachaItem.emojiId,
+                emojiName: gachaItem.emojiName,
+                isAnimated: gachaItem.isAnimated
+            }
+        });
+
+        const addResult = user.addGachaItem(gachaItem, 1, 'gacha');
+
+        // Invalidate summary cache for this user
+        for (const [key] of collectionSummaryCache.entries()) {
+            if (key.includes(user._id)) {
+                collectionSummaryCache.delete(key);
+            }
+        }
+
+        return {
+            itemId: gachaItem.itemId,
+            itemName: gachaItem.itemName,
+            rarity: gachaItem.rarity,
+            emojiName: addResult.item.emojiName,
+            emojiId: addResult.item.emojiId,
+            isAnimated: addResult.item.isAnimated,
+            description: gachaItem.description,
+            flavorText: gachaItem.flavorText,
+            quantity: addResult.item.quantity,
+            maxStack: gachaItem.maxStack,
+            isNew: addResult.isNew,
+            wasStacked: addResult.wasStacked,
+            atMaxStack: addResult.atMaxStack,
+            itemType: gachaItem.itemType,
+            seriesId: gachaItem.seriesId,
+            source: 'gacha'
         };
-        return emojis[rarity] || emojis.common;
+    }
+
+    /**
+     * PERFORMANCE: Cached rarity distribution analysis
+     */
+    async analyzeRarityDistribution() {
+        try {
+            await this.ensurePoolCacheValid();
+            
+            const distribution = {};
+            let totalItems = 0;
+            
+            for (const [rarity, items] of rarityPoolsCache.entries()) {
+                distribution[rarity] = items.length;
+                totalItems += items.length;
+            }
+
+            console.log('\n=== CACHED GACHA RARITY DISTRIBUTION ===');
+            console.log('Configured percentages vs Available items:');
+            
+            for (const [rarity, percentage] of Object.entries(RARITY_PERCENTAGES)) {
+                const itemCount = distribution[rarity] || 0;
+                const actualChancePerItem = itemCount > 0 ? (percentage / itemCount).toFixed(3) : 0;
+                console.log(`${rarity}: ${percentage}% chance → ${itemCount} items (${actualChancePerItem}% per item)`);
+            }
+            console.log(`Total items in gacha: ${totalItems}`);
+            console.log('=========================================\n');
+
+            return distribution;
+        } catch (error) {
+            console.error('Error analyzing rarity distribution:', error);
+            return {};
+        }
+    }
+
+    // Rarity system methods with cached data
+    getRarityEmoji(rarity) {
+        return this.rarityData[rarity]?.emoji || this.rarityData.common.emoji;
     }
 
     getRarityColor(rarity) {
-        const colors = {
-            common: '#95A5A6',     // Gray
-            uncommon: '#2ECC71',   // Green  
-            rare: '#3498DB',       // Blue
-            epic: '#9B59B6',       // Purple
-            legendary: '#F1C40F',  // Gold
-            mythic: '#E91E63'      // Pink
-        };
-        return colors[rarity] || colors.common;
+        return this.rarityData[rarity]?.color || this.rarityData.common.color;
     }
 
     getRarityDisplayName(rarity) {
-        const names = {
-            common: 'Common',
-            uncommon: 'Uncommon',
-            rare: 'Rare',
-            epic: 'Epic',
-            legendary: 'Legendary',
-            mythic: 'Mythic'
-        };
-        return names[rarity] || 'Unknown';
+        return this.rarityData[rarity]?.name || 'Unknown';
     }
 
     /**
-     * UPDATED: Format emoji for display (handles animated emojis)
+     * Enhanced emoji formatting methods
      */
     formatEmoji(emojiId, emojiName, isAnimated = false) {
         if (emojiId && emojiName) {
@@ -583,24 +611,15 @@ class GachaService {
         return '❓';
     }
 
-    /**
-     * UPDATED: Format collection item emoji (handles animated emojis)
-     */
     formatCollectionItemEmoji(item) {
         return this.formatEmoji(item.emojiId, item.emojiName, item.isAnimated);
     }
 
-    /**
-     * NEW: Format emoji from item object (convenience method)
-     */
     formatItemEmoji(item) {
         if (!item) return '❓';
         return this.formatEmoji(item.emojiId, item.emojiName, item.isAnimated);
     }
 
-    /**
-     * NEW: Get emoji data from item
-     */
     getEmojiData(item) {
         if (!item) return { emojiId: null, emojiName: '❓', isAnimated: false };
         return {
@@ -610,20 +629,72 @@ class GachaService {
         };
     }
 
-    /**
-     * NEW: Get current rarity configuration
-     */
     getRarityPercentages() {
         return { ...RARITY_PERCENTAGES };
     }
 
-    /**
-     * NEW: Update rarity percentages (for admin use)
-     */
     updateRarityPercentages(newPercentages) {
         Object.assign(RARITY_PERCENTAGES, newPercentages);
         console.log('Updated rarity percentages:', RARITY_PERCENTAGES);
     }
+
+    /**
+     * PERFORMANCE: Manual cache refresh for admin use
+     */
+    async refreshAllCaches() {
+        console.log('🔄 Manual refresh of all gacha service caches...');
+        
+        await this.refreshGachaItemPool();
+        
+        // Clear other caches
+        collectionSummaryCache.clear();
+        seriesItemsCache.clear();
+        
+        console.log('✅ All gacha service caches refreshed');
+    }
+
+    /**
+     * Get cache statistics for monitoring
+     */
+    getCacheStats() {
+        return {
+            gachaPool: {
+                size: gachaItemPoolCache.size,
+                lastRefresh: lastPoolRefresh,
+                age: Date.now() - lastPoolRefresh
+            },
+            rarityPools: {
+                size: rarityPoolsCache.size,
+                rarities: Array.from(rarityPoolsCache.keys())
+            },
+            summaries: {
+                size: collectionSummaryCache.size
+            },
+            series: {
+                size: seriesItemsCache.size
+            }
+        };
+    }
 }
+
+// PERFORMANCE: Periodic cache cleanup
+setInterval(() => {
+    const now = Date.now();
+    
+    // Clean expired collection summaries
+    for (const [key, value] of collectionSummaryCache.entries()) {
+        if (now - value.timestamp > SUMMARY_CACHE_TTL) {
+            collectionSummaryCache.delete(key);
+        }
+    }
+    
+    // Clean expired series data
+    for (const [key, value] of seriesItemsCache.entries()) {
+        if (now - value.timestamp > SERIES_CACHE_TTL) {
+            seriesItemsCache.delete(key);
+        }
+    }
+    
+}, 60000); // Clean every minute
 
 export default new GachaService();
