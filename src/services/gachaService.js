@@ -1,7 +1,24 @@
-// src/services/gachaService.js - DEPLOYMENT-SAFE VERSION with non-blocking initialization
+// src/services/gachaService.js - DEPLOYMENT-SAFE VERSION with FIXED cache invalidation
 import { User } from '../models/User.js';
 import { GachaItem } from '../models/GachaItem.js';
 import combinationService from './combinationService.js';
+
+// FIXED: Import cache invalidation function
+let invalidateUserCollectionCache = null;
+
+// Lazy load cache invalidation to avoid circular imports
+async function getInvalidateFunction() {
+    if (!invalidateUserCollectionCache) {
+        try {
+            const collectionModule = await import('../commands/user/collection.js');
+            invalidateUserCollectionCache = collectionModule.invalidateUserCollectionCache;
+        } catch (error) {
+            console.warn('Could not import cache invalidation function:', error.message);
+            invalidateUserCollectionCache = () => {}; // No-op fallback
+        }
+    }
+    return invalidateUserCollectionCache;
+}
 
 // Pull costs
 const PULL_COSTS = {
@@ -487,7 +504,7 @@ class GachaService {
     }
 
     /**
-     * DEPLOYMENT SAFETY: Simplified series completion checking
+     * DEPLOYMENT SAFETY: Simplified series completion checking with FIXED cache invalidation
      */
     async checkSingleSeriesCompletion(user, seriesId) {
         try {
@@ -544,6 +561,9 @@ class GachaService {
             };
 
             user.addGachaItem(rewardGachaItem, 1, 'series_completion');
+            
+            // FIXED: Invalidate caches after adding series completion reward
+            this.invalidateUserCaches(user);
 
             return {
                 seriesId,
@@ -638,17 +658,13 @@ class GachaService {
     }
 
     /**
-     * Enhanced item addition with better emoji data handling
+     * FIXED: Enhanced item addition with comprehensive cache invalidation
      */
     addItemToUser(user, gachaItem) {
         const addResult = user.addGachaItem(gachaItem, 1, 'gacha');
 
-        // Invalidate summary cache for this user
-        for (const [key] of collectionSummaryCache.entries()) {
-            if (key.includes(user._id)) {
-                collectionSummaryCache.delete(key);
-            }
-        }
+        // FIXED: Invalidate ALL user caches when collection changes
+        this.invalidateUserCaches(user);
 
         return {
             itemId: gachaItem.itemId,
@@ -668,6 +684,35 @@ class GachaService {
             seriesId: gachaItem.seriesId,
             source: 'gacha'
         };
+    }
+
+    /**
+     * FIXED: Comprehensive cache invalidation for user
+     */
+    invalidateUserCaches(user) {
+        try {
+            // Invalidate collection summary cache
+            for (const [key] of collectionSummaryCache.entries()) {
+                if (key.includes(user._id)) {
+                    collectionSummaryCache.delete(key);
+                }
+            }
+            
+            // FIXED: Invalidate collection command caches using async function
+            setImmediate(async () => {
+                try {
+                    const invalidateFn = await getInvalidateFunction();
+                    if (invalidateFn && typeof invalidateFn === 'function') {
+                        invalidateFn(user);
+                        console.log(`🗑️ Invalidated collection caches for ${user.raUsername}`);
+                    }
+                } catch (error) {
+                    console.warn('Error invalidating collection cache:', error.message);
+                }
+            });
+        } catch (error) {
+            console.error('❌ Error invalidating user caches:', error);
+        }
     }
 
     // Rarity system methods with cached data
