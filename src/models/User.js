@@ -1,827 +1,648 @@
-// src/models/User.js - COMPLETE with store_purchase integration
+// src/models/User.js - COMPLETE VERSION with FIXED cache invalidation
 import mongoose from 'mongoose';
 
+// FIXED: Lazy load cache invalidation function to avoid circular imports
+let invalidateUserCollectionCache = null;
+
+async function getInvalidateFunction() {
+    if (!invalidateUserCollectionCache) {
+        try {
+            const collectionModule = await import('../commands/user/collection.js');
+            invalidateUserCollectionCache = collectionModule.invalidateUserCollectionCache;
+        } catch (error) {
+            console.warn('Could not import cache invalidation function:', error.message);
+            invalidateUserCollectionCache = () => {}; // No-op fallback
+        }
+    }
+    return invalidateUserCollectionCache;
+}
+
+// Gacha collection item schema
+const gachaCollectionItemSchema = new mongoose.Schema({
+    itemId: { type: String, required: true },
+    itemName: { type: String, required: true },
+    emojiId: String,
+    emojiName: String,
+    isAnimated: { type: Boolean, default: false },
+    rarity: { 
+        type: String, 
+        enum: ['common', 'uncommon', 'rare', 'epic', 'legendary', 'mythic'], 
+        required: true 
+    },
+    itemType: { 
+        type: String, 
+        enum: ['trinket', 'collectible', 'series', 'special', 'trophy', 'combined'], 
+        required: true 
+    },
+    seriesId: String,
+    description: String,
+    flavorText: String,
+    quantity: { type: Number, default: 1, min: 1 },
+    source: { 
+        type: String, 
+        enum: ['gacha', 'combined', 'series_completion', 'admin_grant', 'player_transfer', 'store_purchase'], 
+        default: 'gacha' 
+    },
+    obtainedAt: { type: Date, default: Date.now }
+}, { _id: false });
+
+// Trophy case item schema
+const trophyCaseItemSchema = new mongoose.Schema({
+    gameId: { type: String, required: true },
+    gameTitle: { type: String, required: true },
+    consoleName: String,
+    awardLevel: { 
+        type: String, 
+        enum: ['mastery', 'beaten', 'participation', 'special'], 
+        required: true 
+    },
+    challengeType: { 
+        type: String, 
+        enum: ['monthly', 'shadow', 'community'], 
+        required: true 
+    },
+    emojiId: String,
+    emojiName: String,
+    isAnimated: { type: Boolean, default: false },
+    earnedAt: { type: Date, default: Date.now },
+    monthKey: String // Format: "2024-01" for monthly/shadow challenges
+}, { _id: false });
+
+// GP transaction schema
+const gpTransactionSchema = new mongoose.Schema({
+    type: { 
+        type: String, 
+        enum: [
+            'gacha_pull', 'monthly_bonus', 'achievement_bonus', 'admin_adjustment', 
+            'combination_reward', 'series_completion', 'player_gift', 'store_purchase',
+            'challenge_reward', 'leaderboard_reward', 'event_reward'
+        ], 
+        required: true 
+    },
+    amount: { type: Number, required: true },
+    description: String,
+    timestamp: { type: Date, default: Date.now },
+    relatedItemId: String,
+    relatedUserId: String
+}, { _id: false });
+
+// Community award schema
 const communityAwardSchema = new mongoose.Schema({
-    title: {
-        type: String,
-        required: true
-    },
-    points: {
-        type: Number,
-        required: true,
-        min: 1
-    },
-    awardedAt: {
-        type: Date,
-        default: Date.now
-    },
-    awardedBy: {
-        type: String,
-        required: true
-    }
-});
+    title: { type: String, required: true },
+    description: String,
+    category: String,
+    awardedAt: { type: Date, default: Date.now },
+    awardedBy: String,
+    year: { type: Number, required: true }
+}, { _id: false });
 
-const nominationSchema = new mongoose.Schema({
-    gameId: {
-        type: String,
-        required: true
-    },
-    gameTitle: {
-        type: String
-    },
-    consoleName: {
-        type: String
-    },
-    nominatedAt: {
-        type: Date,
-        default: Date.now
-    }
-});
-
-// Trophy case schema
-const trophyCaseSchema = new mongoose.Schema({
-    gameId: {
-        type: String,
-        required: true
-    },
-    gameTitle: {
-        type: String,
-        required: true
-    },
-    consoleName: {
-        type: String,
-        default: 'Unknown'
-    },
-    awardLevel: {
-        type: String,
-        enum: ['mastery', 'beaten', 'participation', 'special'],
-        required: true
-    },
-    challengeType: {
-        type: String,
-        enum: ['monthly', 'shadow', 'community', 'regular'],
-        required: true
-    },
-    emojiId: String,        // Discord emoji ID
-    emojiName: String,      // Emoji name for fallback
-    earnedAt: {
-        type: Date,
-        default: Date.now
-    },
-    monthKey: String        // YYYY-MM format (null for community awards)
-});
-
-// UPDATED: Enhanced gacha collection schema with store_purchase source
-const gachaCollectionSchema = new mongoose.Schema({
-    itemId: {
-        type: String,
-        required: true
-    },
-    itemName: {
-        type: String,
-        required: true
-    },
-    itemType: {
-        type: String,
-        enum: ['trinket', 'collectible', 'series', 'special', 'trophy', 'combined'],
-        required: true
-    },
-    seriesId: String,       // For collection series (e.g., "triforce")
-    rarity: {
-        type: String,
-        enum: ['common', 'uncommon', 'rare', 'epic', 'legendary', 'mythic'],
-        required: true
-    },
-    // Enhanced emoji support with animation flag
-    emojiId: {
-        type: String,
-        default: null       // Discord custom emoji ID
-    },
-    emojiName: {
-        type: String,
-        required: true      // Fallback emoji name (Unicode or custom name)
-    },
-    isAnimated: {
-        type: Boolean,
-        default: false      // Whether the emoji is animated
-    },
-    description: String,    // Item description for reference
-    flavorText: String,     // Item flavor text for reference
-    obtainedAt: {
-        type: Date,
-        default: Date.now
-    },
-    quantity: {             // For stackable items
-        type: Number,
-        default: 1,
-        min: 1
-    },
-    source: {
-        type: String,
-        enum: ['gacha', 'combined', 'series_completion', 'admin_grant', 'admin_test', 'player_transfer', 'store_purchase'], // ADDED store_purchase
-        default: 'gacha'
-    }
-});
-
-// Collection progress schema
-const collectionProgressSchema = new mongoose.Schema({
-    seriesId: {
-        type: String,
-        required: true
-    },
-    seriesName: {
-        type: String,
-        required: true
-    },
-    itemsOwned: [String],   // Array of itemIds
-    itemsNeeded: [String],  // Array of itemIds still needed
-    isComplete: {
-        type: Boolean,
-        default: false
-    },
-    completedAt: Date,
-    rewardItemId: String    // Special item awarded for completion
-});
-
+// User schema
 const userSchema = new mongoose.Schema({
-    raUsername: {
-        type: String,
-        required: true,
-        unique: true
+    discordId: { 
+        type: String, 
+        required: true, 
+        unique: true, 
+        index: true 
     },
-    discordId: {
-        type: String,
-        required: true,
-        sparse: true
+    raUsername: { 
+        type: String, 
+        required: true, 
+        unique: true, 
+        index: true 
     },
+    raUserId: { 
+        type: Number, 
+        unique: true, 
+        sparse: true 
+    },
+    discordUsername: String,
+    
+    // Achievements and points
+    totalAchievements: { type: Number, default: 0 },
+    totalPoints: { type: Number, default: 0 },
+    totalRetroPoints: { type: Number, default: 0 },
+    totalTruePoints: { type: Number, default: 0 },
+    
+    // Rankings
+    achievementRank: Number,
+    pointsRank: Number,
+    
+    // Monthly challenge progress
     monthlyChallenges: {
         type: Map,
         of: {
-            progress: Number,
-            achievements: Number,
-            totalAchievements: Number,
-            percentage: Number,
+            gameId: Number,
             gameTitle: String,
-            gameIconUrl: String
+            progress: { type: Number, default: 0 },
+            lastUpdated: { type: Date, default: Date.now },
+            isCompleted: { type: Boolean, default: false }
         },
         default: () => new Map()
     },
+    
+    // Shadow challenge progress
     shadowChallenges: {
         type: Map,
         of: {
-            progress: Number,
-            achievements: Number,
-            totalAchievements: Number,
-            percentage: Number,
+            gameId: Number,
             gameTitle: String,
-            gameIconUrl: String
-    },
-    default: () => new Map()
-},
-    announcedAchievements: {
-        type: [{ type: String }],
-        default: []
-    },
-    // Field for tracking announced awards (mastery/beaten) to prevent duplicates
-    announcedAwards: {
-        type: [{ type: String }],
-        default: []
-    },
-    // Add this field to track the last time achievements were checked
-    lastAchievementCheck: {
-        type: Date,
-        default: function() {
-            return new Date(0); // Default to start of epoch
-        }
-    },
-    communityAwards: [communityAwardSchema],
-    nominations: [nominationSchema],
-    // Field to track if historical data has been processed
-    historicalDataProcessed: {
-        type: Boolean,
-        default: false
-    },
-    // Field to store annual records for yearly leaderboard caching
-    annualRecords: {
-        type: Map,
-        of: {
-            year: Number,
-            totalPoints: Number,
-            challengePoints: Number,
-            communityPoints: Number,
-            rank: Number,
-            stats: Object
+            progress: { type: Number, default: 0 },
+            lastUpdated: { type: Date, default: Date.now },
+            isCompleted: { type: Boolean, default: false }
         },
         default: () => new Map()
     },
-    // Field for tracking mastered games
-    masteredGames: {
-        type: [{
-            gameId: {
-                type: String,
-                required: true
-            },
-            gameTitle: {
-                type: String,
-                required: true
-            },
-            consoleName: {
-                type: String,
-                default: 'Unknown'
-            },
-            totalAchievements: {
-                type: Number,
-                required: true
-            },
-            masteredAt: {
-                type: Date,
-                default: Date.now
-            }
-        }],
-        default: []
-    },
-
-    // ===== ARENA SYSTEM FIELDS =====
     
-    // GP (Game Points) balance for Arena system
-    gpBalance: {
-        type: Number,
-        default: 0,
-        min: 0
-    },
+    // Gacha system
+    gachaCollection: [gachaCollectionItemSchema],
+    gpBalance: { type: Number, default: 0 },
+    gpTransactions: [gpTransactionSchema],
     
-    // Monthly GP grant tracking (AUTOMATIC - replaces manual claims)
-    lastMonthlyGpGrant: {
-        type: Date,
-        default: null
-    },
+    // Trophy case
+    trophyCase: [trophyCaseItemSchema],
     
-    // GP transaction history with ALL reward types included
-    gpTransactions: [{
-        type: {
-            type: String,
-            enum: [
-                'monthly_grant', 'wager', 'bet', 'win', 'refund', 'admin_adjust', 'gacha_pull',
-                // GP REWARD TYPES
-                'nomination', 'vote', 'challenge_award', 'game_completion', 'admin_award', 'admin_mass_distribution'
-            ],
-            required: true
-        },
-        amount: {
-            type: Number,
-            required: true
-        },
-        description: {
-            type: String,
-            required: true
-        },
-        challengeId: {
-            type: String,
-            default: null
-        },
-        timestamp: {
-            type: Date,
-            default: Date.now
-        }
+    // Community awards
+    communityAwards: [communityAwardSchema],
+    
+    // Arcade and arena tracking
+    arcadeBoards: [{
+        gameId: Number,
+        gameTitle: String,
+        position: Number,
+        score: Number,
+        lastUpdated: Date
     }],
     
-    // Arena statistics
-    arenaStats: {
-        challengesCreated: {
-            type: Number,
-            default: 0
-        },
-        challengesWon: {
-            type: Number,
-            default: 0
-        },
-        challengesParticipated: {
-            type: Number,
-            default: 0
-        },
-        totalGpWon: {
-            type: Number,
-            default: 0
-        },
-        totalGpWagered: {
-            type: Number,
-            default: 0
-        },
-        totalGpBet: {
-            type: Number,
-            default: 0
-        },
-        betsWon: {
-            type: Number,
-            default: 0
-        },
-        betsPlaced: {
-            type: Number,
-            default: 0
-        }
+    arenaParticipation: [{
+        seasonId: String,
+        gameId: Number,
+        gameTitle: String,
+        position: Number,
+        score: Number,
+        lastUpdated: Date
+    }],
+    
+    // User preferences and settings
+    preferences: {
+        notifications: { type: Boolean, default: true },
+        publicProfile: { type: Boolean, default: true },
+        showTrophies: { type: Boolean, default: true }
     },
-
-    // ===== TROPHY SYSTEM FIELDS =====
     
-    // Trophy Case - stores earned trophies from all sources
-    trophyCase: [trophyCaseSchema],
-
-    // ===== GACHA SYSTEM FIELDS =====
-    
-    // UPDATED: Gacha collection with enhanced emoji support including animation
-    gachaCollection: [gachaCollectionSchema]
-
+    // Membership and status
+    isActive: { type: Boolean, default: true },
+    lastSeen: { type: Date, default: Date.now },
+    registeredAt: { type: Date, default: Date.now }
 }, {
     timestamps: true,
-    strict: false // Allow additional fields to be added
+    collection: 'users'
 });
 
-// ===== INDEXES =====
-// Add indexes for Arena system
-userSchema.index({ 'arenaStats.challengesWon': -1 });
-userSchema.index({ 'arenaStats.totalGpWon': -1 });
-userSchema.index({ gpBalance: -1 });
-userSchema.index({ lastMonthlyGpGrant: 1 });
+// Indexes for performance
+userSchema.index({ discordId: 1 });
+userSchema.index({ raUsername: 1 });
+userSchema.index({ raUserId: 1 }, { sparse: true });
+userSchema.index({ totalPoints: -1 });
+userSchema.index({ totalAchievements: -1 });
+userSchema.index({ totalRetroPoints: -1 });
+userSchema.index({ lastSeen: -1 });
+userSchema.index({ 'gachaCollection.itemId': 1 });
+userSchema.index({ 'gpTransactions.timestamp': -1 });
 
-// Add indexes for trophy system
-userSchema.index({ 'trophyCase.challengeType': 1 });
-userSchema.index({ 'trophyCase.earnedAt': -1 });
-
-// ===== STATIC METHODS =====
-
-// Static method to find user by RetroAchievements username (case insensitive)
-userSchema.statics.findByRAUsername = function(username) {
-    return this.findOne({ raUsername: username });
-};
-
-// Static method to find user by Discord ID
-userSchema.statics.findByDiscordId = function(discordId) {
-    return this.findOne({ discordId });
-};
-
-// Helper method for consistent date key formatting
-userSchema.statics.formatDateKey = function(date) {
-    return date.toISOString().split('T')[0];
-};
-
-// ===== INSTANCE METHODS =====
-
-// Method to update standard challenge points
-userSchema.methods.updatePoints = function(date, points) {
-    const dateKey = this.constructor.formatDateKey(date instanceof Date ? date : new Date(date));
-    this.monthlyChallenges.set(dateKey, points);
-};
-
-// Method to update shadow challenge points
-userSchema.methods.updateShadowPoints = function(date, points) {
-    const dateKey = this.constructor.formatDateKey(date instanceof Date ? date : new Date(date));
-    this.shadowChallenges.set(dateKey, points);
-};
-
-// Method to get user's points for a specific challenge (by date)
-userSchema.methods.getPoints = function(date) {
-    const dateKey = this.constructor.formatDateKey(date instanceof Date ? date : new Date(date));
-    return this.monthlyChallenges.get(dateKey) || 0;
-};
-
-// Method to get user's points for a specific shadow challenge (by date)
-userSchema.methods.getShadowPoints = function(date) {
-    const dateKey = this.constructor.formatDateKey(date instanceof Date ? date : new Date(date));
-    return this.shadowChallenges.get(dateKey) || 0;
-};
-
-// Method to get user's community awards for a specific year
-userSchema.methods.getCommunityAwardsForYear = function(year) {
-    return this.communityAwards.filter(award => 
-        award.awardedAt.getFullYear() === year
-    );
-};
-
-// Method to get total community points for a specific year
-userSchema.methods.getCommunityPointsForYear = function(year) {
-    return this.getCommunityAwardsForYear(year)
-        .reduce((total, award) => total + award.points, 0);
-};
-
-// Method to get current month's nominations with validation
-userSchema.methods.getCurrentNominations = function() {
-    if (!this.nominations || !Array.isArray(this.nominations)) {
-        return [];
+// FIXED: Enhanced addGachaItem method with cache invalidation
+userSchema.methods.addGachaItem = function(gachaItem, quantity = 1, source = 'gacha') {
+    if (!this.gachaCollection) {
+        this.gachaCollection = [];
     }
 
-    const now = new Date();
-    const currentMonth = now.getMonth();
-    const currentYear = now.getFullYear();
-    
-    // Filter nominations for current month and validate required fields
-    const currentNominations = this.nominations
-        .filter(nomination => {
-            // Check if nomination is from current month
-            const nomMonth = nomination.nominatedAt.getMonth();
-            const nomYear = nomination.nominatedAt.getFullYear();
-            const isCurrentMonth = nomMonth === currentMonth && nomYear === currentYear;
-            
-            if (!isCurrentMonth) return false;
-            
-            // Validate required fields exist
-            if (!nomination.gameId) {
-                console.warn(`Invalid nomination without gameId for user ${this.raUsername}:`, nomination);
-                return false;
-            }
-            
-            // Check if title exists
-            if (!nomination.gameTitle) {
-                console.warn(`Invalid nomination without gameTitle for user ${this.raUsername}:`, nomination);
-                return false;
-            }
-            
-            if (!nomination.consoleName) {
-                console.warn(`Invalid nomination without consoleName for user ${this.raUsername}:`, nomination);
-                return false;
-            }
-            
-            return true;
-        });
-    
-    return currentNominations;
-};
+    let existingItem = null;
+    let existingIndex = -1;
 
-// Method to clear nominations for the current month
-userSchema.methods.clearCurrentNominations = function() {
-    const now = new Date();
-    const currentMonth = now.getMonth();
-    const currentYear = now.getFullYear();
-    
-    this.nominations = this.nominations.filter(nom => {
-        const nomMonth = nom.nominatedAt.getMonth();
-        const nomYear = nom.nominatedAt.getFullYear();
-        return !(nomMonth === currentMonth && nomYear === currentYear);
-    });
-};
-
-// Method to check if a game is mastered
-userSchema.methods.isGameMastered = function(gameId) {
-    if (!this.masteredGames) return false;
-    
-    return this.masteredGames.some(game => game.gameId === String(gameId));
-};
-
-// Method to get all mastered games
-userSchema.methods.getMasteredGames = function() {
-    return this.masteredGames || [];
-};
-
-// Method to count mastered games
-userSchema.methods.getMasteredGameCount = function() {
-    return this.masteredGames?.length || 0;
-};
-
-// Method to add a mastered game
-userSchema.methods.addMasteredGame = function(gameId, gameTitle, consoleName, totalAchievements) {
-    if (this.isGameMastered(gameId)) return false;
-    
-    if (!this.masteredGames) {
-        this.masteredGames = [];
+    // Check for existing item if stackable
+    if (gachaItem.maxStack > 1) {
+        existingIndex = this.gachaCollection.findIndex(item => item.itemId === gachaItem.itemId);
+        if (existingIndex !== -1) {
+            existingItem = this.gachaCollection[existingIndex];
+        }
     }
+
+    let resultItem;
+    let isNew = false;
+    let wasStacked = false;
+    let atMaxStack = false;
+
+    if (existingItem && gachaItem.maxStack > 1) {
+        // Stack with existing item
+        const currentQuantity = existingItem.quantity || 1;
+        const newQuantity = Math.min(currentQuantity + quantity, gachaItem.maxStack);
+        const actualAdded = newQuantity - currentQuantity;
+        
+        existingItem.quantity = newQuantity;
+        existingItem.obtainedAt = new Date();
+        
+        // Update source if we actually added items
+        if (actualAdded > 0) {
+            existingItem.source = source;
+        }
+        
+        wasStacked = true;
+        atMaxStack = newQuantity >= gachaItem.maxStack;
+        resultItem = existingItem;
+        
+        console.log(`📚 Stacked ${actualAdded} ${gachaItem.itemName} (total: ${newQuantity})`);
+    } else {
+        // Add as new item
+        const newItem = {
+            itemId: gachaItem.itemId,
+            itemName: gachaItem.itemName,
+            emojiId: gachaItem.emojiId,
+            emojiName: gachaItem.emojiName,
+            isAnimated: gachaItem.isAnimated || false,
+            rarity: gachaItem.rarity,
+            itemType: gachaItem.itemType,
+            seriesId: gachaItem.seriesId,
+            description: gachaItem.description,
+            flavorText: gachaItem.flavorText,
+            quantity: Math.min(quantity, gachaItem.maxStack || 1),
+            source: source,
+            obtainedAt: new Date()
+        };
+        
+        this.gachaCollection.push(newItem);
+        isNew = true;
+        resultItem = newItem;
+        atMaxStack = newItem.quantity >= (gachaItem.maxStack || 1);
+        
+        console.log(`✨ Added new item ${gachaItem.itemName} (quantity: ${newItem.quantity})`);
+    }
+
+    this.markModified('gachaCollection');
     
-    this.masteredGames.push({
-        gameId: String(gameId),
-        gameTitle: gameTitle || `Game ${gameId}`,
-        consoleName: consoleName || 'Unknown',
-        totalAchievements: totalAchievements || 0,
-        masteredAt: new Date()
+    // FIXED: Invalidate caches when collection changes (async, non-blocking)
+    setImmediate(async () => {
+        try {
+            const invalidateFn = await getInvalidateFunction();
+            if (invalidateFn && typeof invalidateFn === 'function') {
+                invalidateFn(this);
+            }
+        } catch (error) {
+            console.warn('Error invalidating collection cache:', error.message);
+        }
     });
+
+    return {
+        item: resultItem,
+        isNew,
+        wasStacked,
+        atMaxStack,
+        actualQuantityAdded: wasStacked ? 
+            (resultItem.quantity - (existingItem ? (existingItem.quantity || 1) - quantity : 0)) : 
+            resultItem.quantity
+    };
+};
+
+// FIXED: Enhanced removeGachaItem method with cache invalidation
+userSchema.methods.removeGachaItem = function(itemId, quantityToRemove = 1) {
+    if (!this.gachaCollection || this.gachaCollection.length === 0) {
+        console.warn(`⚠️ Cannot remove ${itemId}: collection is empty`);
+        return false;
+    }
+
+    const itemIndex = this.gachaCollection.findIndex(item => item.itemId === itemId);
+    if (itemIndex === -1) {
+        console.warn(`⚠️ Cannot remove ${itemId}: item not found in collection`);
+        return false;
+    }
+
+    const item = this.gachaCollection[itemIndex];
+    const currentQuantity = item.quantity || 1;
+
+    if (currentQuantity < quantityToRemove) {
+        console.warn(`⚠️ Cannot remove ${quantityToRemove}x ${itemId}: only have ${currentQuantity}`);
+        return false;
+    }
+
+    if (currentQuantity === quantityToRemove) {
+        // Remove the entire item
+        this.gachaCollection.splice(itemIndex, 1);
+        console.log(`🗑️ Removed ${item.itemName} completely`);
+    } else {
+        // Reduce quantity
+        item.quantity = currentQuantity - quantityToRemove;
+        console.log(`📉 Reduced ${item.itemName} quantity to ${item.quantity}`);
+    }
+
+    this.markModified('gachaCollection');
     
+    // FIXED: Invalidate caches when collection changes (async, non-blocking)
+    setImmediate(async () => {
+        try {
+            const invalidateFn = await getInvalidateFunction();
+            if (invalidateFn && typeof invalidateFn === 'function') {
+                invalidateFn(this);
+            }
+        } catch (error) {
+            console.warn('Error invalidating collection cache:', error.message);
+        }
+    });
+
     return true;
 };
 
-// ===== ARENA SYSTEM METHODS =====
+// GP management methods
+userSchema.methods.hasEnoughGp = function(amount) {
+    return (this.gpBalance || 0) >= amount;
+};
 
-// Add GP transaction and update balance with enhanced logging
-userSchema.methods.addGpTransaction = function(type, amount, description, challengeId = null) {
+userSchema.methods.addGpTransaction = function(type, amount, description = '', relatedItemId = null, relatedUserId = null) {
     if (!this.gpTransactions) {
         this.gpTransactions = [];
     }
+
+    // Update balance
+    this.gpBalance = (this.gpBalance || 0) + amount;
     
-    // Log the transaction for debugging
-    console.log(`💰 Adding GP transaction: ${amount} GP for ${this.raUsername} (${type}: ${description})`);
-    
-    this.gpTransactions.push({
+    // Add transaction record
+    const transaction = {
         type,
         amount,
         description,
-        challengeId,
-        timestamp: new Date()
-    });
+        timestamp: new Date(),
+        relatedItemId,
+        relatedUserId
+    };
     
-    // Keep only the last 100 transactions
+    this.gpTransactions.push(transaction);
+    
+    // Keep only last 100 transactions per user
     if (this.gpTransactions.length > 100) {
         this.gpTransactions = this.gpTransactions.slice(-100);
     }
     
-    // Update balance
-    const oldBalance = this.gpBalance || 0;
-    this.gpBalance = oldBalance + amount;
+    this.markModified('gpTransactions');
     
-    // Ensure balance doesn't go below 0
+    console.log(`💰 GP transaction for ${this.raUsername}: ${amount > 0 ? '+' : ''}${amount} GP (${type})`);
+    console.log(`💰 New balance: ${this.gpBalance} GP`);
+    
+    return transaction;
+};
+
+// Challenge management methods
+userSchema.methods.updateMonthlyChallenge = function(monthKey, gameId, gameTitle, progress) {
+    if (!this.monthlyChallenges) {
+        this.monthlyChallenges = new Map();
+    }
+    
+    const existing = this.monthlyChallenges.get(monthKey) || {};
+    const updated = {
+        gameId: gameId || existing.gameId,
+        gameTitle: gameTitle || existing.gameTitle,
+        progress: progress !== undefined ? progress : existing.progress,
+        lastUpdated: new Date(),
+        isCompleted: progress >= 3
+    };
+    
+    this.monthlyChallenges.set(monthKey, updated);
+    this.markModified('monthlyChallenges');
+    
+    return updated;
+};
+
+userSchema.methods.updateShadowChallenge = function(monthKey, gameId, gameTitle, progress) {
+    if (!this.shadowChallenges) {
+        this.shadowChallenges = new Map();
+    }
+    
+    const existing = this.shadowChallenges.get(monthKey) || {};
+    const updated = {
+        gameId: gameId || existing.gameId,
+        gameTitle: gameTitle || existing.gameTitle,
+        progress: progress !== undefined ? progress : existing.progress,
+        lastUpdated: new Date(),
+        isCompleted: progress >= 2 // Shadow challenges complete at 2
+    };
+    
+    this.shadowChallenges.set(monthKey, updated);
+    this.markModified('shadowChallenges');
+    
+    return updated;
+};
+
+// Trophy management methods
+userSchema.methods.addTrophy = function(gameId, gameTitle, awardLevel, challengeType, monthKey = null, emojiData = {}) {
+    if (!this.trophyCase) {
+        this.trophyCase = [];
+    }
+    
+    // Check if trophy already exists
+    const existingTrophy = this.trophyCase.find(trophy => 
+        trophy.gameId === String(gameId) && 
+        trophy.challengeType === challengeType &&
+        trophy.monthKey === monthKey
+    );
+    
+    if (existingTrophy) {
+        console.log(`Trophy already exists for ${this.raUsername}: ${gameTitle} (${challengeType})`);
+        return false;
+    }
+    
+    const trophy = {
+        gameId: String(gameId),
+        gameTitle,
+        consoleName: 'Unknown',
+        awardLevel,
+        challengeType,
+        emojiId: emojiData.emojiId || null,
+        emojiName: emojiData.emojiName || this.getDefaultTrophyEmoji(awardLevel),
+        isAnimated: emojiData.isAnimated || false,
+        earnedAt: new Date(),
+        monthKey
+    };
+    
+    this.trophyCase.push(trophy);
+    this.markModified('trophyCase');
+    
+    console.log(`🏆 Added trophy for ${this.raUsername}: ${gameTitle} (${awardLevel})`);
+    return true;
+};
+
+userSchema.methods.getDefaultTrophyEmoji = function(awardLevel) {
+    const emojiMap = {
+        mastery: '✨',
+        beaten: '⭐',
+        participation: '🏁',
+        special: '🏆'
+    };
+    return emojiMap[awardLevel] || '🏆';
+};
+
+// Community award methods
+userSchema.methods.addCommunityAward = function(title, description, category, awardedBy) {
+    if (!this.communityAwards) {
+        this.communityAwards = [];
+    }
+    
+    const currentYear = new Date().getFullYear();
+    
+    // Check if award already exists for this year
+    const existingAward = this.communityAwards.find(award => 
+        award.title === title && award.year === currentYear
+    );
+    
+    if (existingAward) {
+        console.log(`Community award already exists for ${this.raUsername}: ${title} (${currentYear})`);
+        return false;
+    }
+    
+    const award = {
+        title,
+        description,
+        category,
+        awardedBy,
+        awardedAt: new Date(),
+        year: currentYear
+    };
+    
+    this.communityAwards.push(award);
+    this.markModified('communityAwards');
+    
+    console.log(`🌟 Added community award for ${this.raUsername}: ${title}`);
+    return true;
+};
+
+userSchema.methods.getCommunityAwardsForYear = function(year) {
+    if (!this.communityAwards) return [];
+    return this.communityAwards.filter(award => award.year === year);
+};
+
+// Utility methods
+userSchema.methods.getCollectionValue = function() {
+    if (!this.gachaCollection) return 0;
+    
+    const rarityValues = {
+        common: 1,
+        uncommon: 2,
+        rare: 5,
+        epic: 10,
+        legendary: 25,
+        mythic: 50
+    };
+    
+    return this.gachaCollection.reduce((total, item) => {
+        const value = rarityValues[item.rarity] || 1;
+        return total + (value * (item.quantity || 1));
+    }, 0);
+};
+
+userSchema.methods.getCollectionStats = function() {
+    if (!this.gachaCollection || this.gachaCollection.length === 0) {
+        return {
+            totalItems: 0,
+            uniqueItems: 0,
+            rarityBreakdown: {},
+            seriesBreakdown: {},
+            sourceBreakdown: {}
+        };
+    }
+    
+    const stats = {
+        totalItems: 0,
+        uniqueItems: this.gachaCollection.length,
+        rarityBreakdown: {},
+        seriesBreakdown: {},
+        sourceBreakdown: {}
+    };
+    
+    this.gachaCollection.forEach(item => {
+        const quantity = item.quantity || 1;
+        stats.totalItems += quantity;
+        
+        // Rarity breakdown
+        stats.rarityBreakdown[item.rarity] = (stats.rarityBreakdown[item.rarity] || 0) + quantity;
+        
+        // Series breakdown
+        const series = item.seriesId || 'Individual';
+        stats.seriesBreakdown[series] = (stats.seriesBreakdown[series] || 0) + quantity;
+        
+        // Source breakdown
+        const source = item.source || 'gacha';
+        stats.sourceBreakdown[source] = (stats.sourceBreakdown[source] || 0) + quantity;
+    });
+    
+    return stats;
+};
+
+userSchema.methods.updateLastSeen = function() {
+    this.lastSeen = new Date();
+    this.markModified('lastSeen');
+};
+
+// Virtual properties
+userSchema.virtual('profileUrl').get(function() {
+    return `https://retroachievements.org/user/${this.raUsername}`;
+});
+
+userSchema.virtual('totalTrophies').get(function() {
+    return this.trophyCase ? this.trophyCase.length : 0;
+});
+
+userSchema.virtual('gpBalanceFormatted').get(function() {
+    return (this.gpBalance || 0).toLocaleString();
+});
+
+// Static methods
+userSchema.statics.findByDiscordId = function(discordId) {
+    return this.findOne({ discordId });
+};
+
+userSchema.statics.findByRAUsername = function(raUsername) {
+    return this.findOne({ raUsername: { $regex: new RegExp(`^${raUsername}$`, 'i') } });
+};
+
+userSchema.statics.getTopByPoints = function(limit = 10) {
+    return this.find({ isActive: true })
+        .sort({ totalPoints: -1 })
+        .limit(limit)
+        .select('raUsername totalPoints totalAchievements pointsRank');
+};
+
+userSchema.statics.getTopByAchievements = function(limit = 10) {
+    return this.find({ isActive: true })
+        .sort({ totalAchievements: -1 })
+        .limit(limit)
+        .select('raUsername totalAchievements totalPoints achievementRank');
+};
+
+userSchema.statics.findWithGachaItems = function() {
+    return this.find({ 
+        gachaCollection: { $exists: true, $ne: [] },
+        isActive: true 
+    });
+};
+
+// Pre-save middleware
+userSchema.pre('save', function(next) {
+    // Update last seen on any save
+    if (!this.isNew) {
+        this.lastSeen = new Date();
+    }
+    
+    // Ensure GP balance is never negative
     if (this.gpBalance < 0) {
+        console.warn(`⚠️ Negative GP balance detected for ${this.raUsername}: ${this.gpBalance}, setting to 0`);
         this.gpBalance = 0;
     }
     
-    console.log(`💰 GP Balance updated: ${oldBalance} → ${this.gpBalance} (${amount >= 0 ? '+' : ''}${amount})`);
-};
-
-// Check if user has enough GP
-userSchema.methods.hasEnoughGp = function(amount) {
-    return this.gpBalance >= amount;
-};
-
-// Get win rate percentage
-userSchema.methods.getGpWinRate = function() {
-    if (!this.arenaStats || this.arenaStats.challengesParticipated === 0) return 0;
-    return (this.arenaStats.challengesWon / this.arenaStats.challengesParticipated * 100).toFixed(1);
-};
-
-// Get bet win rate percentage
-userSchema.methods.getBetWinRate = function() {
-    if (!this.arenaStats || this.arenaStats.betsPlaced === 0) return 0;
-    return (this.arenaStats.betsWon / this.arenaStats.betsPlaced * 100).toFixed(1);
-};
-
-// Method to reload user from database (for testing)
-userSchema.methods.reload = async function() {
-    const updated = await this.constructor.findById(this._id);
-    if (updated) {
-        Object.assign(this, updated.toObject());
-    }
-    return this;
-};
-
-// ===== TROPHY SYSTEM METHODS =====
-
-// Get user's trophies with filtering
-userSchema.methods.getTrophies = function(filters = {}) {
-    if (!this.trophyCase || this.trophyCase.length === 0) {
-        return [];
-    }
-
-    let trophies = [...this.trophyCase];
-
-    // Apply filters
-    if (filters.challengeType) {
-        trophies = trophies.filter(t => t.challengeType === filters.challengeType);
-    }
-
-    if (filters.awardLevel) {
-        trophies = trophies.filter(t => t.awardLevel === filters.awardLevel);
-    }
-
-    if (filters.year) {
-        trophies = trophies.filter(t => {
-            const year = new Date(t.earnedAt).getFullYear();
-            return year === filters.year;
-        });
-    }
-
-    // Sort by earned date (most recent first)
-    trophies.sort((a, b) => new Date(b.earnedAt) - new Date(a.earnedAt));
-
-    return trophies;
-};
-
-// Get trophy count by type
-userSchema.methods.getTrophyCount = function() {
-    if (!this.trophyCase) return { total: 0, monthly: 0, shadow: 0, community: 0 };
-    
-    const counts = {
-        total: this.trophyCase.length,
-        monthly: 0,
-        shadow: 0,
-        community: 0,
-        regular: 0
-    };
-    
-    this.trophyCase.forEach(trophy => {
-        if (counts[trophy.challengeType] !== undefined) {
-            counts[trophy.challengeType]++;
-        }
-    });
-    
-    return counts;
-};
-
-// ===== GACHA SYSTEM METHODS =====
-
-// UPDATED: Format gacha item emoji for display with animated support
-userSchema.methods.formatGachaItemEmoji = function(item) {
-    if (item.emojiId && item.emojiName) {
-        const prefix = item.isAnimated ? 'a' : '';
-        return `<${prefix}:${item.emojiName}:${item.emojiId}>`;
-    } else if (item.emojiName) {
-        return item.emojiName; // Fallback to Unicode emoji
-    }
-    return '❓'; // Ultimate fallback
-};
-
-// Get gacha item by ID from collection
-userSchema.methods.getGachaItem = function(itemId) {
-    if (!this.gachaCollection) return null;
-    return this.gachaCollection.find(item => item.itemId === itemId);
-};
-
-// UPDATED: Add or update gacha item in collection with animated emoji support
-userSchema.methods.addGachaItem = function(gachaItem, quantity = 1, source = 'gacha') {
-    console.log('🔧 addGachaItem called with:', {
-        itemId: gachaItem.itemId,
-        itemName: gachaItem.itemName,
-        emojiId: gachaItem.emojiId,
-        emojiName: gachaItem.emojiName,
-        isAnimated: gachaItem.isAnimated,
-        quantity: quantity,
-        source: source
-    });
-
-    if (!this.gachaCollection) {
-        this.gachaCollection = [];
-        console.log('📦 Initialized empty gachaCollection');
-    }
-
-    const existingItem = this.gachaCollection.find(item => item.itemId === gachaItem.itemId);
-    
-    if (existingItem && gachaItem.maxStack > 1) {
-        // Stack the item
-        const newQuantity = Math.min(existingItem.quantity + quantity, gachaItem.maxStack);
-        const previousQuantity = existingItem.quantity;
-        existingItem.quantity = newQuantity;
-        
-        // IMPORTANT: Update emoji data even when stacking in case it changed
-        if (gachaItem.emojiId) {
-            existingItem.emojiId = gachaItem.emojiId;
-        }
-        if (gachaItem.emojiName) {
-            existingItem.emojiName = gachaItem.emojiName;
-        }
-        if (gachaItem.isAnimated !== undefined) {
-            existingItem.isAnimated = gachaItem.isAnimated;
-        }
-        
-        console.log('📚 Stacked item:', {
-            itemName: existingItem.itemName,
-            newQuantity: newQuantity,
-            emojiId: existingItem.emojiId,
-            emojiName: existingItem.emojiName,
-            isAnimated: existingItem.isAnimated
-        });
-        
-        return {
-            item: existingItem,
-            isNew: false,
-            wasStacked: true,
-            previousQuantity: previousQuantity
-        };
-    } else if (!existingItem) {
-        // Add new item with COMPLETE emoji data transfer including animation
-        const newItem = {
-            itemId: gachaItem.itemId,
-            itemName: gachaItem.itemName,
-            itemType: gachaItem.itemType,
-            seriesId: gachaItem.seriesId,
-            rarity: gachaItem.rarity,
-            description: gachaItem.description,
-            flavorText: gachaItem.flavorText,
-            // CRITICAL: Ensure ALL emoji data is properly copied
-            emojiId: gachaItem.emojiId || null,
-            emojiName: gachaItem.emojiName || '❓',
-            isAnimated: gachaItem.isAnimated || false,  // UPDATED: Copy animation flag
-            obtainedAt: new Date(),
-            quantity: quantity,
-            source: source
-        };
-
-        console.log('✨ Creating new collection item:', {
-            itemId: newItem.itemId,
-            itemName: newItem.itemName,
-            emojiId: newItem.emojiId,
-            emojiName: newItem.emojiName,
-            isAnimated: newItem.isAnimated,
-            source: newItem.source
-        });
-
-        this.gachaCollection.push(newItem);
-        
-        // VERIFICATION: Check that emoji data was saved correctly
-        const savedItem = this.gachaCollection[this.gachaCollection.length - 1];
-        console.log('🔍 Verification - saved item emoji data:', {
-            emojiId: savedItem.emojiId,
-            emojiName: savedItem.emojiName,
-            isAnimated: savedItem.isAnimated
-        });
-        
-        if (gachaItem.emojiId && !savedItem.emojiId) {
-            console.error('❌ CRITICAL: emojiId was not saved correctly!');
-            console.error('Source emojiId:', gachaItem.emojiId);
-            console.error('Saved emojiId:', savedItem.emojiId);
-        }
-        
-        if (gachaItem.isAnimated !== undefined && gachaItem.isAnimated !== savedItem.isAnimated) {
-            console.error('❌ CRITICAL: isAnimated was not saved correctly!');
-            console.error('Source isAnimated:', gachaItem.isAnimated);
-            console.error('Saved isAnimated:', savedItem.isAnimated);
-        }
-        
-        return {
-            item: savedItem, // Return the actual saved item
-            isNew: true,
-            wasStacked: false
-        };
-    } else {
-        // Item exists but can't stack more
-        console.log('🚫 Item exists but cannot stack more:', existingItem.itemName);
-        return {
-            item: existingItem,
-            isNew: false,
-            wasStacked: false,
-            atMaxStack: true
-        };
-    }
-};
-
-// Remove gacha item from collection with enhanced debug logging
-userSchema.methods.removeGachaItem = function(itemId, quantity = 1) {
-    console.log(`🗑️ removeGachaItem called: itemId=${itemId}, quantity=${quantity}`);
-    
-    if (!this.gachaCollection) {
-        console.log('❌ No gachaCollection found');
-        return false;
-    }
-    
-    console.log('📦 Current collection before removal:', this.gachaCollection.map(item => ({
-        itemId: item.itemId,
-        itemName: item.itemName,
-        quantity: item.quantity || 1
-    })));
-    
-    const item = this.gachaCollection.find(item => item.itemId === itemId);
-    if (!item) {
-        console.log(`❌ Item ${itemId} not found in collection`);
-        return false;
-    }
-    
-    const currentQuantity = item.quantity || 1;
-    console.log(`📦 Found item: ${item.itemName} with quantity ${currentQuantity}`);
-    console.log(`🔢 Trying to remove ${quantity} from ${currentQuantity}`);
-    
-    if (currentQuantity <= quantity) {
-        // Remove item completely
-        console.log(`🗑️ Removing item completely (${currentQuantity} <= ${quantity})`);
-        const beforeLength = this.gachaCollection.length;
-        
-        // More robust filtering to ensure removal
-        this.gachaCollection = this.gachaCollection.filter(collectionItem => {
-            const shouldKeep = collectionItem.itemId !== itemId;
-            if (!shouldKeep) {
-                console.log(`🗑️ Filtering out item: ${collectionItem.itemName} (ID: ${collectionItem.itemId})`);
-            }
-            return shouldKeep;
-        });
-        
-        const afterLength = this.gachaCollection.length;
-        console.log(`📊 Collection length: ${beforeLength} → ${afterLength}`);
-        
-        if (beforeLength === afterLength) {
-            console.log('❌ WARNING: Item was not actually removed from collection!');
-            // Additional debugging
-            console.log('Items in collection with same ID:', this.gachaCollection.filter(i => i.itemId === itemId));
-            return false;
-        }
-        
-        console.log(`✅ Successfully removed ${item.itemName} completely`);
-        console.log('📦 Collection after removal:', this.gachaCollection.map(item => ({
-            itemId: item.itemId,
-            itemName: item.itemName,
-            quantity: item.quantity || 1
-        })));
-        return true;
-    } else {
-        // Reduce quantity
-        console.log(`🔢 Reducing quantity: ${currentQuantity} → ${currentQuantity - quantity}`);
-        item.quantity = currentQuantity - quantity;
-        console.log(`✅ Successfully reduced ${item.itemName} quantity to ${item.quantity}`);
-        console.log('📦 Collection after quantity reduction:', this.gachaCollection.map(item => ({
-            itemId: item.itemId,
-            itemName: item.itemName,
-            quantity: item.quantity || 1
-        })));
-        return true;
-    }
-};
-
-// Virtual field for backwards compatibility with existing `gp` field references
-userSchema.virtual('gp').get(function() {
-    return this.gpBalance;
-}).set(function(value) {
-    this.gpBalance = value;
+    next();
 });
 
+// Post-save middleware for logging
+userSchema.post('save', function(doc) {
+    if (doc.isNew) {
+        console.log(`✅ New user registered: ${doc.raUsername} (${doc.discordId})`);
+    }
+});
+
+// Export model
 export const User = mongoose.model('User', userSchema);
-export default User;
+export { userSchema };
