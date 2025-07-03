@@ -1,4 +1,4 @@
-// src/services/gameAwardService.js - CLEANED UP - Only passes data to AlertService
+// src/services/gameAwardService.js - UPDATED WITH IMPROVED AWARD DETECTION
 import { User } from '../models/User.js';
 import { Challenge } from '../models/Challenge.js';
 import retroAPI from './retroAPI.js';
@@ -232,7 +232,7 @@ class GameAwardService {
     }
 
     /**
-     * Check if a user has mastered a game
+     * IMPROVED: Check if a user has mastered a game - announces ALL recent awards
      */
     async checkForGameMastery(user, gameId, achievement) {
         try {
@@ -265,66 +265,80 @@ class GameAwardService {
                 return false;
             }
             
-            // Find the highest award for this game
-            let highestAward = null;
-            let isMastery = false;
-            let isBeaten = false;
+            // IMPROVED: Instead of finding just the highest award, 
+            // find ALL recent awards and announce each one separately
+            const recentAwards = [];
+            const now = new Date();
             
             for (const award of gameAwards) {
                 const awardType = award.awardType || award.AwardType || '';
                 const awardExtra = award.awardDataExtra || award.AwardDataExtra || 0;
+                const awardDate = new Date(award.awardedAt || award.AwardedAt);
+                const ageInMs = now - awardDate;
+                
+                // Skip old awards
+                if (ageInMs > this.maxAwardAge) {
+                    continue;
+                }
                 
                 const normalizedType = this.normalizeAwardKind(awardType);
                 
-                if (normalizedType === 'mastery') {
-                    if (awardExtra === 1) { // Hardcore
-                        isMastery = true;
-                        highestAward = award;
-                        break; // Mastery is highest, stop looking
+                // Only process hardcore awards
+                if (awardExtra === 1) {
+                    if (normalizedType === 'mastery') {
+                        recentAwards.push({
+                            award,
+                            type: 'mastery',
+                            date: awardDate,
+                            age: ageInMs
+                        });
+                    } else if (normalizedType === 'completion') {
+                        recentAwards.push({
+                            award,
+                            type: 'completion',
+                            date: awardDate,
+                            age: ageInMs
+                        });
                     }
                 }
-                
-                if (normalizedType === 'completion') {
-                    if (awardExtra === 1) { // Hardcore beaten
-                        isBeaten = true;
-                        if (!highestAward) highestAward = award;
-                    }
-                }
             }
             
-            if (!highestAward) {
+            if (recentAwards.length === 0) {
                 return false;
             }
             
-            // Check award age to prevent announcing old awards
-            const awardDate = new Date(highestAward.awardedAt || highestAward.AwardedAt);
-            const now = new Date();
-            const ageInMs = now - awardDate;
+            // Sort by date (oldest first) to announce in chronological order
+            recentAwards.sort((a, b) => a.date - b.date);
             
-            if (ageInMs > this.maxAwardAge) {
-                return false;
-            }
-            
-            // Create a unique identifier for this award with timestamp
-            const awardType = isMastery ? 'mastery' : 'completion';
-            const awardIdentifier = `${user.raUsername}:${systemType}:${gameId}:${awardType}:${awardDate.getTime()}`;
-            
-            // Check for duplicates
-            if (this.isDuplicateAward(awardIdentifier, user)) {
-                return false;
-            }
-            
-            // Get game info
+            // Get game info once for all announcements
             const gameInfo = await RetroAPIUtils.getGameInfo(gameId);
             
-            // Add award to history
-            await this.addAwardToHistory(awardIdentifier, user);
+            let announcedCount = 0;
             
-            // CLEANED UP: Just pass data to AlertService
-            await this.announceRegularAward(user, gameInfo, gameId, isMastery, isBeaten);
+            // IMPROVED: Announce each recent award separately
+            for (const recentAward of recentAwards) {
+                const awardIdentifier = `${user.raUsername}:${systemType}:${gameId}:${recentAward.type}:${recentAward.date.getTime()}`;
+                
+                // Check for duplicates
+                if (this.isDuplicateAward(awardIdentifier, user)) {
+                    console.log(`Skipping duplicate award: ${awardIdentifier}`);
+                    continue;
+                }
+                
+                // Add award to history
+                await this.addAwardToHistory(awardIdentifier, user);
+                
+                // Announce the award
+                const isMastery = recentAward.type === 'mastery';
+                const isBeaten = recentAward.type === 'completion';
+                
+                await this.announceRegularAward(user, gameInfo, gameId, isMastery, isBeaten);
+                
+                console.log(`✅ Successfully announced ${recentAward.type} award for ${user.raUsername} on regular game ${gameInfo.title} (awarded ${recentAward.date.toISOString()})`);
+                announcedCount++;
+            }
             
-            console.log(`✅ Successfully announced ${awardType} award for ${user.raUsername} on regular game ${gameInfo.title}`);
-            return true;
+            return announcedCount > 0;
             
         } catch (error) {
             console.error(`Error checking for game mastery for ${user.raUsername} on game ${gameId}:`, error);
@@ -333,7 +347,7 @@ class GameAwardService {
     }
 
     /**
-     * Check for monthly/shadow game awards
+     * IMPROVED: Check for monthly/shadow game awards - announces ALL recent awards
      */
     async checkForGameAwards(user, gameId, isShadow) {
         try {
@@ -357,65 +371,79 @@ class GameAwardService {
                 return false;
             }
             
-            // Find the highest award for this game
-            let highestAward = null;
-            let awardType = '';
+            // IMPROVED: Find ALL recent awards and announce each one separately
+            const recentAwards = [];
+            const now = new Date();
             
             for (const award of gameAwards) {
                 const type = award.awardType || award.AwardType || '';
                 const extra = award.awardDataExtra || award.AwardDataExtra || 0;
+                const awardDate = new Date(award.awardedAt || award.AwardedAt);
+                const ageInMs = now - awardDate;
+                
+                // Skip old awards
+                if (ageInMs > this.maxAwardAge) {
+                    continue;
+                }
                 
                 const normalizedType = this.normalizeAwardKind(type);
                 
-                if (normalizedType === 'mastery') {
-                    if (extra === 1) { // Hardcore
-                        awardType = 'mastery';
-                        highestAward = award;
-                        break;
-                    }
-                }
-                
-                if (normalizedType === 'completion') {
-                    if (extra === 1) { // Hardcore
-                        awardType = 'beaten';
-                        if (!highestAward) highestAward = award;
-                    }
-                }
-                
-                if (normalizedType === 'participation') {
-                    awardType = 'participation';
-                    if (!highestAward) highestAward = award;
+                // Process different award types
+                if (normalizedType === 'mastery' && extra === 1) {
+                    recentAwards.push({
+                        award,
+                        type: 'mastery',
+                        date: awardDate,
+                        age: ageInMs
+                    });
+                } else if (normalizedType === 'completion' && extra === 1) {
+                    recentAwards.push({
+                        award,
+                        type: 'beaten',
+                        date: awardDate,
+                        age: ageInMs
+                    });
+                } else if (normalizedType === 'participation') {
+                    recentAwards.push({
+                        award,
+                        type: 'participation',
+                        date: awardDate,
+                        age: ageInMs
+                    });
                 }
             }
             
-            if (!highestAward) {
+            if (recentAwards.length === 0) {
                 return false;
             }
             
-            // Check award age
-            const awardDate = new Date(highestAward.awardedAt || highestAward.AwardedAt);
-            const now = new Date();
-            const ageInMs = now - awardDate;
+            // Sort by date (oldest first) to announce in chronological order
+            recentAwards.sort((a, b) => a.date - b.date);
             
-            if (ageInMs > this.maxAwardAge) {
-                return false;
-            }
-            
-            const awardIdentifier = `${user.raUsername}:${systemType}:${gameId}:${awardType}:${awardDate.getTime()}`;
-            
-            if (this.isDuplicateAward(awardIdentifier, user)) {
-                return false;
-            }
-            
-            // Get game info and announce
+            // Get game info once for all announcements
             const gameInfo = await RetroAPIUtils.getGameInfo(gameId);
-            await this.addAwardToHistory(awardIdentifier, user);
             
-            // CLEANED UP: Just pass data to AlertService
-            await this.announceMonthlyAward(user, gameInfo, gameId, awardType, systemType);
+            let announcedCount = 0;
             
-            console.log(`✅ Successfully announced ${awardType} award for ${user.raUsername} on ${systemType} game ${gameInfo.title}`);
-            return true;
+            // IMPROVED: Announce each recent award separately
+            for (const recentAward of recentAwards) {
+                const awardIdentifier = `${user.raUsername}:${systemType}:${gameId}:${recentAward.type}:${recentAward.date.getTime()}`;
+                
+                // Check for duplicates
+                if (this.isDuplicateAward(awardIdentifier, user)) {
+                    console.log(`Skipping duplicate ${systemType} award: ${awardIdentifier}`);
+                    continue;
+                }
+                
+                // Add to history and announce
+                await this.addAwardToHistory(awardIdentifier, user);
+                await this.announceMonthlyAward(user, gameInfo, gameId, recentAward.type, systemType);
+                
+                console.log(`✅ Successfully announced ${recentAward.type} award for ${user.raUsername} on ${systemType} game ${gameInfo.title} (awarded ${recentAward.date.toISOString()})`);
+                announcedCount++;
+            }
+            
+            return announcedCount > 0;
             
         } catch (error) {
             console.error(`Error checking for ${isShadow ? 'shadow' : 'monthly'} game awards for ${user.raUsername} on game ${gameId}:`, error);
@@ -424,11 +452,12 @@ class GameAwardService {
     }
 
     /**
-     * Check for duplicate awards
+     * ENHANCED: More robust duplicate detection with better logging
      */
     isDuplicateAward(awardIdentifier, user) {
         // Check session history first
         if (this.sessionAwardHistory.has(awardIdentifier)) {
+            console.log(`Duplicate found in session history: ${awardIdentifier}`);
             return true;
         }
         
@@ -441,7 +470,7 @@ class GameAwardService {
         const [username, systemType, gameId, awardType] = parts;
         const newTimestamp = parts.length >= 5 ? parseInt(parts[4]) : null;
         
-        // Check user's announced awards with flexible matching
+        // Check user's announced awards with more precise matching
         if (user.announcedAwards && Array.isArray(user.announcedAwards)) {
             for (const existingAward of user.announcedAwards) {
                 const existingParts = existingAward.split(':');
@@ -457,19 +486,23 @@ class GameAwardService {
                         
                         // For exact duplicates, always skip
                         if (existingAward === awardIdentifier) {
+                            console.log(`Exact duplicate found: ${awardIdentifier}`);
                             return true;
                         }
                         
-                        // Check timestamp difference
+                        // Check timestamp difference - be more lenient for different award types
                         if (existingTimestamp && newTimestamp) {
                             const timeDiff = Math.abs(newTimestamp - existingTimestamp);
-                            const maxTimeDiff = 7 * 24 * 60 * 60 * 1000; // 7 days in milliseconds
+                            // Reduce time window for same award type to 24 hours instead of 7 days
+                            const maxTimeDiff = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
                             
                             if (timeDiff < maxTimeDiff) {
+                                console.log(`Time-based duplicate found (${timeDiff}ms apart): ${awardIdentifier}`);
                                 return true;
                             }
                         } else {
-                            // If no timestamps, treat any matching award as duplicate
+                            // If no timestamps, be more conservative and treat as duplicate
+                            console.log(`Timestamp-less duplicate found: ${awardIdentifier}`);
                             return true;
                         }
                     }
@@ -477,7 +510,7 @@ class GameAwardService {
             }
         }
         
-        // Check for similar awards in session history
+        // Check for similar awards in session history with more precise matching
         for (const sessionAward of this.sessionAwardHistory) {
             const sessionParts = sessionAward.split(':');
             if (sessionParts.length >= 4) {
@@ -492,12 +525,14 @@ class GameAwardService {
                     // If we have timestamps, check if they're within a reasonable timeframe
                     if (sessionTimestamp && newTimestamp) {
                         const timeDiff = Math.abs(newTimestamp - sessionTimestamp);
-                        const maxTimeDiff = 24 * 60 * 60 * 1000; // 24 hours
+                        const maxTimeDiff = 12 * 60 * 60 * 1000; // 12 hours for session history
                         
                         if (timeDiff < maxTimeDiff) {
+                            console.log(`Session duplicate found (${timeDiff}ms apart): ${awardIdentifier}`);
                             return true;
                         }
                     } else {
+                        console.log(`Session duplicate found (no timestamps): ${awardIdentifier}`);
                         return true;
                     }
                 }
@@ -530,6 +565,83 @@ class GameAwardService {
         }
         
         await user.save();
+    }
+
+    /**
+     * HELPER: Manual check for potentially missed awards for a specific user/game
+     * Useful for debugging or fixing missed announcements
+     */
+    async checkMissedAwards(username, gameId, maxDaysBack = 30) {
+        try {
+            const user = await User.findOne({ 
+                raUsername: { $regex: new RegExp('^' + username + '$', 'i') }
+            });
+            
+            if (!user) {
+                throw new Error(`User ${username} not found`);
+            }
+            
+            const userAwards = await this.getUserAwards(username);
+            if (!userAwards || !userAwards.visibleUserAwards) {
+                return { found: false, message: 'No awards found' };
+            }
+            
+            const gameAwards = userAwards.visibleUserAwards.filter(award => {
+                return String(award.awardData || award.AwardData) === String(gameId);
+            });
+            
+            if (gameAwards.length === 0) {
+                return { found: false, message: 'No awards for this game' };
+            }
+            
+            const now = new Date();
+            const maxAge = maxDaysBack * 24 * 60 * 60 * 1000;
+            const results = [];
+            
+            for (const award of gameAwards) {
+                const awardType = award.awardType || award.AwardType || '';
+                const awardExtra = award.awardDataExtra || award.AwardDataExtra || 0;
+                const awardDate = new Date(award.awardedAt || award.AwardedAt);
+                const ageInMs = now - awardDate;
+                
+                if (ageInMs > maxAge || awardExtra !== 1) continue;
+                
+                const normalizedType = this.normalizeAwardKind(awardType);
+                if (!['mastery', 'completion', 'participation'].includes(normalizedType)) continue;
+                
+                const systemType = this.getGameSystemType(gameId);
+                const awardTypeForId = normalizedType === 'completion' ? 'completion' : normalizedType;
+                const awardIdentifier = `${username}:${systemType}:${gameId}:${awardTypeForId}:${awardDate.getTime()}`;
+                
+                const isDuplicate = this.isDuplicateAward(awardIdentifier, user);
+                
+                results.push({
+                    awardType: normalizedType,
+                    awardDate: awardDate,
+                    awardIdentifier,
+                    isDuplicate,
+                    ageInDays: Math.floor(ageInMs / (24 * 60 * 60 * 1000)),
+                    wouldAnnounce: !isDuplicate && ageInMs <= this.maxAwardAge
+                });
+            }
+            
+            return {
+                found: true,
+                gameId,
+                username,
+                awards: results,
+                summary: {
+                    total: results.length,
+                    duplicates: results.filter(r => r.isDuplicate).length,
+                    wouldAnnounce: results.filter(r => r.wouldAnnounce).length,
+                    tooOld: results.filter(r => !r.wouldAnnounce && !r.isDuplicate).length
+                }
+            };
+            
+        } catch (error) {
+            console.error(`Error checking missed awards for ${username} on game ${gameId}:`, error);
+            throw error;
+        }
     }
 
     /**
