@@ -1,6 +1,6 @@
-// src/models/index.js - UPDATED with all models and timeout fixes
+// src/models/index.js - DEPLOYMENT-SAFE VERSION with all models and enhanced timeout handling
 import mongoose from 'mongoose';
-import { config } from '../config/config.js';
+import { config, getTimeout, getDatabaseConfig, getEnvironmentSettings } from '../config/config.js';
 
 // Import all models
 import Challenge from './Challenge.js';
@@ -8,103 +8,116 @@ import User from './User.js';
 import ArcadeBoard from './ArcadeBoard.js';
 import Poll from './Poll.js';
 import { HistoricalLeaderboard } from './HistoricalLeaderboard.js';
-import { GachaItem, CombinationRule } from './GachaItem.js';  // ← MISSING!
-import { TrophyEmoji } from './TrophyEmoji.js';              // ← MISSING!
+import { GachaItem, CombinationRule } from './GachaItem.js';
+import { TrophyEmoji } from './TrophyEmoji.js';
 
-// CRITICAL: Disable buffering to prevent timeout issues
+// DEPLOYMENT SAFETY: Global mongoose configuration
 mongoose.set('strictQuery', true);
-mongoose.set('bufferCommands', false);  // ← CRITICAL FIX
+mongoose.set('bufferCommands', false); // CRITICAL: Disable buffering to prevent hangs
+mongoose.set('bufferMaxEntries', 0);
 
+// DEPLOYMENT SAFETY: Connection state tracking
+let connectionState = {
+    isConnected: false,
+    isConnecting: false,
+    connectionAttempts: 0,
+    lastError: null,
+    connectionTime: null,
+    initializationComplete: false
+};
+
+/**
+ * DEPLOYMENT SAFETY: Enhanced database connection with aggressive timeouts and error handling
+ */
 export const connectDB = async () => {
-    try {
-        console.log('🔌 Connecting to MongoDB...');
-        
-        // IMPROVED connection options to prevent timeouts
-        const options = {
-            // Timeout settings
-            serverSelectionTimeoutMS: 30000, // 30 seconds to select server
-            socketTimeoutMS: 45000,          // 45 seconds for socket operations  
-            connectTimeoutMS: 30000,         // 30 seconds to establish connection
-            heartbeatFrequencyMS: 10000,     // 10 seconds heartbeat
-            
-            // Connection pool settings
-            maxPoolSize: 10,        // Maximum connections
-            minPoolSize: 2,         // Minimum connections
-            maxIdleTimeMS: 30000,   // Close connections after 30s idle
-            
-            // Retry and reliability
-            retryWrites: true,
-            retryReads: true,
-            
-            // For production/Atlas
-            ssl: true,
-            
-            // Additional reliability settings
-            family: 4, // Use IPv4, skip trying IPv6
-        };
+    const envSettings = getEnvironmentSettings();
+    const maxRetries = envSettings.isProduction ? 3 : 5;
+    
+    // Prevent multiple simultaneous connection attempts
+    if (connectionState.isConnecting) {
+        console.log('🔗 Database connection already in progress, waiting...');
+        return await waitForConnection();
+    }
 
-        const conn = await mongoose.connect(config.mongodb.uri, options);
+    if (connectionState.isConnected) {
+        console.log('✅ Database already connected');
+        return mongoose.connection;
+    }
+
+    connectionState.isConnecting = true;
+    connectionState.connectionAttempts++;
+
+    try {
+        console.log(`🔌 Connecting to MongoDB (attempt ${connectionState.connectionAttempts}/${maxRetries})...`);
+        
+        // DEPLOYMENT SAFETY: Get environment-optimized database config
+        const dbConfig = getDatabaseConfig();
+        const connectTimeout = getTimeout('database');
+        
+        console.log(`⏱️ Using ${envSettings.isProduction ? 'PRODUCTION' : 'DEVELOPMENT'} timeouts (${connectTimeout}ms)`);
+        
+        // Create connection promise with timeout
+        const connectPromise = mongoose.connect(dbConfig.uri, dbConfig.options);
+        const timeoutPromise = new Promise((_, reject) => {
+            setTimeout(() => reject(new Error(`Database connection timeout after ${connectTimeout}ms`)), connectTimeout);
+        });
+
+        // Race connection against timeout
+        const conn = await Promise.race([connectPromise, timeoutPromise]);
 
         console.log(`✅ MongoDB Connected: ${conn.connection.host}`);
         console.log(`📊 Database: ${conn.connection.name}`);
         
-        // Test connection immediately
+        // DEPLOYMENT SAFETY: Immediate connection health check
         const pingStart = Date.now();
-        await mongoose.connection.db.admin().ping();
-        const pingTime = Date.now() - pingStart;
-        console.log(`🏓 Database ping: ${pingTime}ms`);
+        const healthCheckTimeout = getTimeout('healthCheck');
         
-        if (pingTime > 3000) {
-            console.warn('⚠️ High database latency detected');
+        try {
+            const pingPromise = mongoose.connection.db.admin().ping();
+            const pingTimeoutPromise = new Promise((_, reject) => {
+                setTimeout(() => reject(new Error('Ping timeout')), healthCheckTimeout);
+            });
+            
+            await Promise.race([pingPromise, pingTimeoutPromise]);
+            const pingTime = Date.now() - pingStart;
+            
+            console.log(`🏓 Database ping: ${pingTime}ms`);
+            
+            if (pingTime > 3000) {
+                console.warn('⚠️ High database latency detected');
+            }
+        } catch (pingError) {
+            console.warn('⚠️ Database ping failed (non-critical):', pingError.message);
         }
 
-        // CRITICAL: Set bufferCommands to false AFTER connection is established
-        mongoose.set('bufferCommands', false);
-        console.log('🔧 Disabled command buffering after connection established');
+        // Update connection state
+        connectionState.isConnected = true;
+        connectionState.isConnecting = false;
+        connectionState.connectionTime = new Date();
+        connectionState.lastError = null;
 
-        // Initialize ALL models with proper error handling and timeouts
-        console.log('🔧 Initializing database indexes...');
-        
-        const modelInitPromises = [
-            // Original models
-            initModelSafely('Challenge', Challenge),
-            initModelSafely('User', User),
-            initModelSafely('ArcadeBoard', ArcadeBoard),
-            initModelSafely('Poll', Poll),
-            initModelSafely('HistoricalLeaderboard', HistoricalLeaderboard),
-            
-            // MISSING MODELS - These were causing the timeout errors!
-            initModelSafely('GachaItem', GachaItem),
-            initModelSafely('CombinationRule', CombinationRule),
-            initModelSafely('TrophyEmoji', TrophyEmoji),
-        ];
-        
-        // Wait for all models to initialize with timeout
-        const initResults = await Promise.allSettled(modelInitPromises);
-        
-        // Report initialization results
-        initResults.forEach((result, index) => {
-            const modelNames = ['Challenge', 'User', 'ArcadeBoard', 'Poll', 'HistoricalLeaderboard', 'GachaItem', 'CombinationRule', 'TrophyEmoji'];
-            const modelName = modelNames[index];
-            
-            if (result.status === 'fulfilled') {
-                console.log(`  ✅ ${modelName} initialized`);
-            } else {
-                console.error(`  ❌ ${modelName} failed:`, result.reason.message);
-            }
-        });
-        
-        console.log('✅ Database indexes ensured');
-        
-        // Set up connection event handlers AFTER successful connection
+        // DEPLOYMENT SAFETY: Re-disable buffering after connection (critical)
+        mongoose.set('bufferCommands', false);
+        console.log('🔧 Confirmed command buffering disabled after connection');
+
+        // DEPLOYMENT SAFETY: Initialize models with timeout protection
+        await initializeAllModels(envSettings);
+
+        // Set up connection monitoring
         setupConnectionHandlers();
+        
+        connectionState.initializationComplete = true;
+        console.log('✅ Database connection and initialization complete');
         
         return conn;
         
     } catch (error) {
-        console.error('❌ Error connecting to MongoDB:', error.message);
+        connectionState.isConnecting = false;
+        connectionState.lastError = error;
         
-        // Provide specific error guidance
+        console.error(`❌ MongoDB connection failed (attempt ${connectionState.connectionAttempts}/${maxRetries}):`, error.message);
+        
+        // DEPLOYMENT SAFETY: Provide specific error guidance
         if (error.message.includes('ENOTFOUND') || error.message.includes('ECONNREFUSED')) {
             console.error('💡 Connection failed - check:');
             console.error('   - MongoDB server is running');
@@ -116,106 +129,245 @@ export const connectDB = async () => {
             console.error('💡 Authentication failed - check username/password');
         }
         
-        if (error.message.includes('IP')) {
+        if (error.message.includes('IP') || error.message.includes('whitelist')) {
             console.error('💡 If using Atlas, check IP whitelist settings');
         }
+
+        if (error.message.includes('timeout')) {
+            console.error('💡 Connection timeout - possible network issues or server overload');
+        }
         
-        // Don't exit immediately in development, but do in production
-        if (process.env.NODE_ENV === 'production') {
-            process.exit(1);
+        // DEPLOYMENT SAFETY: Fail fast in production, retry in development
+        if (envSettings.isProduction || connectionState.connectionAttempts >= maxRetries) {
+            console.error('❌ Maximum connection attempts reached or production mode - exiting');
+            throw error;
         } else {
-            console.log('🔄 Retrying connection in 5 seconds...');
-            setTimeout(() => connectDB(), 5000);
+            console.log('🔄 Retrying connection in 3 seconds...');
+            await new Promise(resolve => setTimeout(resolve, 3000));
+            return await connectDB();
         }
     }
 };
 
-// Safe model initialization with timeout
-async function initModelSafely(modelName, model, timeoutMs = 15000) {
+/**
+ * DEPLOYMENT SAFETY: Wait for existing connection attempt with timeout
+ */
+async function waitForConnection(maxWait = 30000) {
+    const startTime = Date.now();
+    
+    while (connectionState.isConnecting && (Date.now() - startTime) < maxWait) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    
+    if (connectionState.isConnected) {
+        return mongoose.connection;
+    }
+    
+    if (connectionState.lastError) {
+        throw connectionState.lastError;
+    }
+    
+    throw new Error('Database connection wait timeout');
+}
+
+/**
+ * DEPLOYMENT SAFETY: Initialize all models with enhanced timeout protection and fallback handling
+ */
+async function initializeAllModels(envSettings) {
+    console.log('🔧 Initializing database models and indexes...');
+    
+    const models = [
+        { name: 'Challenge', model: Challenge, critical: true },
+        { name: 'User', model: User, critical: true },
+        { name: 'ArcadeBoard', model: ArcadeBoard, critical: true },
+        { name: 'Poll', model: Poll, critical: false },
+        { name: 'HistoricalLeaderboard', model: HistoricalLeaderboard, critical: false },
+        { name: 'GachaItem', model: GachaItem, critical: false },
+        { name: 'CombinationRule', model: CombinationRule, critical: false },
+        { name: 'TrophyEmoji', model: TrophyEmoji, critical: false }
+    ];
+
+    // DEPLOYMENT SAFETY: Use different timeouts for production vs development
+    const initTimeout = envSettings.isProduction ? 8000 : 15000;
+    
+    if (envSettings.isProduction) {
+        // PRODUCTION: Initialize critical models first, then non-critical in parallel
+        console.log('🚀 Production mode: Prioritizing critical models');
+        await initializeCriticalModels(models.filter(m => m.critical), initTimeout);
+        await initializeNonCriticalModels(models.filter(m => !m.critical), initTimeout);
+    } else {
+        // DEVELOPMENT: Initialize all models in parallel with longer timeout
+        console.log('🛠️ Development mode: Initializing all models in parallel');
+        const initPromises = models.map(({ name, model, critical }) => 
+            initModelSafely(name, model, initTimeout, critical)
+        );
+        
+        await Promise.allSettled(initPromises);
+    }
+    
+    console.log('✅ Model initialization complete');
+}
+
+/**
+ * DEPLOYMENT SAFETY: Initialize critical models sequentially for reliability
+ */
+async function initializeCriticalModels(criticalModels, timeout) {
+    console.log('⚡ Initializing critical models sequentially...');
+    
+    for (const { name, model } of criticalModels) {
+        try {
+            await initModelSafely(name, model, timeout, true);
+        } catch (error) {
+            console.error(`❌ Critical model ${name} failed to initialize:`, error.message);
+            throw error; // Fail fast for critical models
+        }
+    }
+}
+
+/**
+ * DEPLOYMENT SAFETY: Initialize non-critical models in parallel with fallbacks
+ */
+async function initializeNonCriticalModels(nonCriticalModels, timeout) {
+    console.log('🔄 Initializing non-critical models in parallel...');
+    
+    const initPromises = nonCriticalModels.map(({ name, model }) => 
+        initModelSafely(name, model, timeout, false).catch(error => {
+            console.warn(`⚠️ Non-critical model ${name} failed (continuing):`, error.message);
+            return { success: false, modelName: name, error: error.message };
+        })
+    );
+    
+    await Promise.allSettled(initPromises);
+}
+
+/**
+ * DEPLOYMENT SAFETY: Safe model initialization with aggressive timeout and error handling
+ */
+async function initModelSafely(modelName, model, timeoutMs, isCritical = false) {
     try {
-        // Create timeout promise
+        console.log(`  🔧 Initializing ${modelName}${isCritical ? ' (critical)' : ''}...`);
+        
+        // DEPLOYMENT SAFETY: Create timeout promise
         const timeoutPromise = new Promise((_, reject) => {
-            setTimeout(() => reject(new Error(`${modelName} init timed out`)), timeoutMs);
+            setTimeout(() => reject(new Error(`${modelName} initialization timeout after ${timeoutMs}ms`)), timeoutMs);
         });
         
-        // Race between model init and timeout
+        // DEPLOYMENT SAFETY: Race model initialization against timeout
         await Promise.race([
             model.init(),
             timeoutPromise
         ]);
         
-        return { success: true, modelName };
+        console.log(`  ✅ ${modelName} initialized successfully`);
+        return { success: true, modelName, isCritical };
         
     } catch (error) {
-        console.error(`⚠️ ${modelName} init failed:`, error.message);
+        const errorMsg = `${modelName} initialization failed: ${error.message}`;
         
-        // For non-critical models, continue anyway
-        if (['TrophyEmoji', 'GachaItem'].includes(modelName)) {
-            console.log(`   ↩️ Continuing without ${modelName} (non-critical)`);
-            return { success: false, modelName, error: error.message };
+        if (isCritical) {
+            console.error(`  ❌ CRITICAL: ${errorMsg}`);
+            throw error;
+        } else {
+            console.warn(`  ⚠️ NON-CRITICAL: ${errorMsg}`);
+            console.log(`     ↩️ Continuing without ${modelName}`);
+            return { success: false, modelName, error: error.message, isCritical };
         }
-        
-        throw error;
     }
 }
 
-// Connection event handlers
+/**
+ * DEPLOYMENT SAFETY: Enhanced connection event handlers with monitoring
+ */
 function setupConnectionHandlers() {
-    // Error handler
+    // Error handler with classification
     mongoose.connection.on('error', (err) => {
         console.error('❌ MongoDB connection error:', err.message);
+        connectionState.lastError = err;
         
-        // Attempt to reconnect for certain errors
+        // Classify error types for different handling
         if (err.message.includes('timeout') || err.message.includes('ECONNRESET')) {
-            console.log('🔄 Attempting to reconnect...');
+            console.log('🔄 Network error detected - automatic reconnection will be attempted');
+        } else if (err.message.includes('Authentication')) {
+            console.error('🔐 Authentication error - check credentials');
+        } else if (err.message.includes('ENOTFOUND')) {
+            console.error('🌐 DNS resolution error - check connection string');
         }
     });
     
-    // Disconnection handler
+    // Disconnection handler with auto-reconnect logic
     mongoose.connection.on('disconnected', () => {
         console.warn('⚠️ MongoDB disconnected');
+        connectionState.isConnected = false;
+        connectionState.initializationComplete = false;
         
-        // Auto-reconnect logic (Mongoose handles this automatically, but we can add custom logic)
-        setTimeout(() => {
-            if (mongoose.connection.readyState === 0) {
-                console.log('🔄 Attempting manual reconnection...');
-                connectDB().catch(console.error);
-            }
-        }, 5000);
+        // DEPLOYMENT SAFETY: Auto-reconnect only in development or for network errors
+        if (!getEnvironmentSettings().isProduction) {
+            setTimeout(() => {
+                if (mongoose.connection.readyState === 0) {
+                    console.log('🔄 Attempting automatic reconnection...');
+                    connectDB().catch(reconnectError => {
+                        console.error('❌ Auto-reconnection failed:', reconnectError.message);
+                    });
+                }
+            }, 5000);
+        }
     });
     
     // Reconnection handler
     mongoose.connection.on('reconnected', () => {
         console.log('✅ MongoDB reconnected successfully');
+        connectionState.isConnected = true;
+        connectionState.lastError = null;
     });
     
-    // Connection state changes
+    // Connection established handler
     mongoose.connection.on('connected', () => {
-        console.log('🔗 MongoDB connected');
+        console.log('🔗 MongoDB connection established');
+        connectionState.isConnected = true;
     });
     
-    // SIGINT handler for graceful shutdown
-    process.on('SIGINT', async () => {
+    // DEPLOYMENT SAFETY: Graceful shutdown handlers
+    const gracefulShutdown = async (signal) => {
+        console.log(`\n📴 Received ${signal}, closing database connection...`);
         try {
             await mongoose.connection.close();
-            console.log('🔌 MongoDB connection closed through app termination');
+            console.log('🔌 MongoDB connection closed successfully');
             process.exit(0);
         } catch (error) {
-            console.error('Error closing MongoDB connection:', error);
+            console.error('❌ Error closing MongoDB connection:', error);
             process.exit(1);
         }
-    });
+    };
+    
+    process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+    process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+    process.on('SIGUSR2', () => gracefulShutdown('SIGUSR2')); // nodemon restart
 }
 
-// Health check function
+/**
+ * DEPLOYMENT SAFETY: Enhanced health check with detailed diagnostics
+ */
 export const checkDatabaseHealth = async () => {
     try {
         if (mongoose.connection.readyState !== 1) {
-            return { healthy: false, error: 'Not connected' };
+            return { 
+                healthy: false, 
+                error: 'Not connected',
+                readyState: mongoose.connection.readyState,
+                connectionState: connectionState
+            };
         }
         
         const start = Date.now();
-        await mongoose.connection.db.admin().ping();
+        const healthTimeout = getTimeout('healthCheck');
+        
+        // Create ping promise with timeout
+        const pingPromise = mongoose.connection.db.admin().ping();
+        const timeoutPromise = new Promise((_, reject) => {
+            setTimeout(() => reject(new Error('Health check timeout')), healthTimeout);
+        });
+        
+        await Promise.race([pingPromise, timeoutPromise]);
         const latency = Date.now() - start;
         
         return { 
@@ -223,38 +375,150 @@ export const checkDatabaseHealth = async () => {
             latency,
             connectionState: mongoose.connection.readyState,
             host: mongoose.connection.host,
-            database: mongoose.connection.name
+            database: mongoose.connection.name,
+            initializationComplete: connectionState.initializationComplete,
+            connectionTime: connectionState.connectionTime,
+            connectionAttempts: connectionState.connectionAttempts
         };
     } catch (error) {
-        return { healthy: false, error: error.message };
+        return { 
+            healthy: false, 
+            error: error.message,
+            connectionState: mongoose.connection.readyState,
+            lastError: connectionState.lastError?.message
+        };
     }
 };
 
-// Safe query wrapper for operations that might timeout
-export const safeQuery = async (queryFn, timeoutMs = 15000, fallback = null) => {
+/**
+ * DEPLOYMENT SAFETY: Enhanced safe query wrapper with environment-specific timeouts
+ */
+export const safeQuery = async (queryFn, customTimeout = null, fallback = null) => {
     try {
-        // Check connection first
+        // Check connection state first
         if (mongoose.connection.readyState !== 1) {
-            if (fallback !== null) return fallback;
+            if (fallback !== null) {
+                console.warn('Database not connected, using fallback value');
+                return fallback;
+            }
             throw new Error('Database not connected');
         }
         
+        // Use custom timeout or get environment-appropriate timeout
+        const timeout = customTimeout || getTimeout('query');
+        
         // Create timeout promise
         const timeoutPromise = new Promise((_, reject) => {
-            setTimeout(() => reject(new Error('Query timed out')), timeoutMs);
+            setTimeout(() => reject(new Error(`Query timeout after ${timeout}ms`)), timeout);
         });
         
-        // Race between query and timeout
-        return await Promise.race([queryFn(), timeoutPromise]);
+        // Race query against timeout
+        const result = await Promise.race([queryFn(), timeoutPromise]);
+        return result;
         
     } catch (error) {
-        console.error('Query failed:', error.message);
+        console.error('Safe query failed:', error.message);
         
         if (fallback !== null) {
-            console.log('Using fallback value');
+            console.log('Using fallback value due to query failure');
             return fallback;
         }
         
+        throw error;
+    }
+};
+
+/**
+ * DEPLOYMENT SAFETY: Batch query executor with concurrency control
+ */
+export const safeBatchQuery = async (queryFunctions, options = {}) => {
+    const {
+        concurrency = getEnvironmentSettings().isProduction ? 3 : 5,
+        timeout = getTimeout('query'),
+        continueOnError = true
+    } = options;
+    
+    const results = [];
+    const errors = [];
+    
+    // Process queries in batches
+    for (let i = 0; i < queryFunctions.length; i += concurrency) {
+        const batch = queryFunctions.slice(i, i + concurrency);
+        
+        const batchPromises = batch.map(async (queryFn, index) => {
+            try {
+                const result = await safeQuery(queryFn, timeout);
+                return { success: true, index: i + index, result };
+            } catch (error) {
+                const errorResult = { success: false, index: i + index, error: error.message };
+                if (continueOnError) {
+                    return errorResult;
+                } else {
+                    throw error;
+                }
+            }
+        });
+        
+        const batchResults = await Promise.allSettled(batchPromises);
+        
+        batchResults.forEach((result, batchIndex) => {
+            if (result.status === 'fulfilled') {
+                results.push(result.value);
+            } else {
+                errors.push({ index: i + batchIndex, error: result.reason.message });
+            }
+        });
+    }
+    
+    return { results, errors, totalProcessed: queryFunctions.length };
+};
+
+/**
+ * DEPLOYMENT SAFETY: Get connection statistics for monitoring
+ */
+export const getConnectionStats = () => {
+    return {
+        ...connectionState,
+        mongooseReadyState: mongoose.connection.readyState,
+        readyStateDescription: {
+            0: 'disconnected',
+            1: 'connected',
+            2: 'connecting',
+            3: 'disconnecting'
+        }[mongoose.connection.readyState] || 'unknown',
+        host: mongoose.connection.host,
+        database: mongoose.connection.name,
+        collections: Object.keys(mongoose.connection.collections || {}),
+        environment: getEnvironmentSettings()
+    };
+};
+
+/**
+ * DEPLOYMENT SAFETY: Force database reconnection with cleanup
+ */
+export const forceReconnect = async () => {
+    console.log('🔄 Forcing database reconnection...');
+    
+    try {
+        // Close existing connection
+        if (mongoose.connection.readyState !== 0) {
+            await mongoose.disconnect();
+        }
+        
+        // Reset connection state
+        connectionState = {
+            isConnected: false,
+            isConnecting: false,
+            connectionAttempts: 0,
+            lastError: null,
+            connectionTime: null,
+            initializationComplete: false
+        };
+        
+        // Reconnect
+        return await connectDB();
+    } catch (error) {
+        console.error('❌ Force reconnection failed:', error);
         throw error;
     }
 };
@@ -266,22 +530,30 @@ export {
     ArcadeBoard,
     Poll,
     HistoricalLeaderboard,
-    GachaItem,        // ← NOW EXPORTED
-    CombinationRule,  // ← NOW EXPORTED  
-    TrophyEmoji       // ← NOW EXPORTED
+    GachaItem,
+    CombinationRule,
+    TrophyEmoji
 };
 
-// Default export
+// Default export with enhanced functionality
 export default {
+    // Models
     Challenge,
     User,
     ArcadeBoard,
     Poll,
     HistoricalLeaderboard,
-    GachaItem,        // ← NOW INCLUDED
-    CombinationRule,  // ← NOW INCLUDED
-    TrophyEmoji,      // ← NOW INCLUDED
+    GachaItem,
+    CombinationRule,
+    TrophyEmoji,
+    
+    // Connection functions
     connectDB,
     checkDatabaseHealth,
-    safeQuery
+    getConnectionStats,
+    forceReconnect,
+    
+    // Query functions
+    safeQuery,
+    safeBatchQuery
 };
