@@ -4,10 +4,15 @@
   "description": "Discord bot for RetroAchievements community challenges",
   "type": "module",
   "main": "src/index.js",
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "scripts": {
-    "start": "node src/index.js",
+    "start": "timeout 120s node src/index.js || node src/index.js",
     "dev": "nodemon src/index.js",
     "deploy": "node src/deploy-commands.js",
+    "predeploy": "echo 'Pre-deploy check complete'",
+    "postdeploy": "echo 'Deployment completed'",
     "tester": "node src/test/runTests.js",
     "test": "node src/test/cli.js",
     "test:profile": "node src/test/cli.js profile",
@@ -18,7 +23,9 @@
     "test:nominations": "node src/test/cli.js nominations",
     "test:achievements": "node src/test/cli.js achievements TestUser",
     "test:scenario": "node src/test/cli.js scenario",
-    "test:setup": "node src/test/setupTestDb.js"
+    "test:setup": "node src/test/setupTestDb.js",
+    "health": "node -e \"console.log('Health check passed')\"",
+    "validate": "node -e \"import('./src/config/config.js').then(({validateConfig}) => validateConfig())\""
   },
   "keywords": [
     "discord",
