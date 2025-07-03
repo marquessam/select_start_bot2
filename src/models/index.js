@@ -1,10 +1,10 @@
-// src/models/index.js - DEPLOYMENT-SAFE VERSION with all models and enhanced timeout handling
+// src/models/index.js - FIXED: Correct import syntax for all models
 import mongoose from 'mongoose';
 import { config, getTimeout, getDatabaseConfig, getEnvironmentSettings } from '../config/config.js';
 
-// Import all models
+// FIXED: Import all models with correct syntax (named imports instead of default imports)
 import Challenge from './Challenge.js';
-import User from './User.js';
+import { User } from './User.js'; // FIXED: Named import
 import ArcadeBoard from './ArcadeBoard.js';
 import Poll from './Poll.js';
 import { HistoricalLeaderboard } from './HistoricalLeaderboard.js';
@@ -14,7 +14,6 @@ import { TrophyEmoji } from './TrophyEmoji.js';
 // DEPLOYMENT SAFETY: Global mongoose configuration
 mongoose.set('strictQuery', true);
 mongoose.set('bufferCommands', false); // CRITICAL: Disable buffering to prevent hangs
-// Note: bufferMaxEntries is deprecated in Mongoose 8.x - removed
 
 // DEPLOYMENT SAFETY: Connection state tracking
 let connectionState = {
@@ -523,7 +522,7 @@ export const forceReconnect = async () => {
     }
 };
 
-// Export all models
+// Export all models with correct references
 export {
     Challenge,
     User,
