@@ -14,7 +14,7 @@ import { TrophyEmoji } from './TrophyEmoji.js';
 // DEPLOYMENT SAFETY: Global mongoose configuration
 mongoose.set('strictQuery', true);
 mongoose.set('bufferCommands', false); // CRITICAL: Disable buffering to prevent hangs
-mongoose.set('bufferMaxEntries', 0);
+// Note: bufferMaxEntries is deprecated in Mongoose 8.x - removed
 
 // DEPLOYMENT SAFETY: Connection state tracking
 let connectionState = {
