@@ -1,4 +1,4 @@
-// src/utils/AlertService.js - ENHANCED with auto-deletion for monthly alerts
+// src/utils/AlertService.js - FIXED with proper alert replacement logic
 import { EmbedBuilder } from 'discord.js';
 import { config } from '../config/config.js';
 import { COLORS, EMOJIS, getDiscordTimestamp } from './FeedUtils.js';
@@ -104,11 +104,12 @@ const ALERT_COLORS = {
     [ALERT_TYPES.DEFAULT]: '#808080'
 };
 
-// Auto-deletion configuration - NEW
-const AUTO_DELETE_CONFIG = {
-    [ALERT_TYPES.MONTHLY_RANKS]: 60 * 60 * 1000, // 1 hour for monthly alerts
-    // Add other alert types here if needed for auto-deletion
-};
+// Alert types that should replace previous messages (only one at a time)
+const REPLACEABLE_ALERTS = [
+    ALERT_TYPES.MONTHLY_RANKS,
+    ALERT_TYPES.ARCADE_RANKS,
+    ALERT_TYPES.ARENA_RANKS
+];
 
 /**
  * Link creation utilities
@@ -201,15 +202,15 @@ export const RankingUtils = {
 };
 
 /**
- * ENHANCED AlertService with auto-deletion capability
+ * ENHANCED AlertService with proper message replacement
  */
 export class AlertService {
     constructor(client = null) {
         this.client = client;
         this.channelCache = new Map();
-        this.pendingDeletions = new Map(); // NEW: Track messages for auto-deletion
+        this.previousMessages = new Map(); // NEW: Track previous messages per channel/alert type
         
-        console.log('AlertService initialized with auto-deletion capability');
+        console.log('AlertService initialized with message replacement capability');
     }
     
     setClient(client) {
@@ -257,32 +258,34 @@ export class AlertService {
     }
     
     /**
-     * NEW: Schedule message for auto-deletion
+     * NEW: Delete previous message if this alert type should replace
      */
-    scheduleMessageDeletion(message, alertType) {
-        const deleteAfter = AUTO_DELETE_CONFIG[alertType];
-        if (!deleteAfter) return;
+    async deletePreviousMessage(channel, alertType) {
+        if (!REPLACEABLE_ALERTS.includes(alertType)) return;
         
-        // Cancel any existing deletion for this channel
-        const channelId = message.channel.id;
-        if (this.pendingDeletions.has(channelId)) {
-            clearTimeout(this.pendingDeletions.get(channelId).timeout);
-        }
+        const messageKey = `${channel.id}_${alertType}`;
+        const previousMessageId = this.previousMessages.get(messageKey);
         
-        // Schedule new deletion
-        const timeout = setTimeout(async () => {
+        if (previousMessageId) {
             try {
-                await message.delete();
-                console.log(`AlertService: Auto-deleted ${alertType} alert after ${deleteAfter / 1000 / 60} minutes`);
+                const previousMessage = await channel.messages.fetch(previousMessageId);
+                await previousMessage.delete();
+                console.log(`AlertService: Deleted previous ${alertType} alert`);
             } catch (error) {
-                console.error('AlertService: Error auto-deleting message:', error);
-            } finally {
-                this.pendingDeletions.delete(channelId);
+                // Message might already be deleted or not found - that's okay
+                console.log(`AlertService: Previous message already deleted or not found`);
             }
-        }, deleteAfter);
+        }
+    }
+    
+    /**
+     * NEW: Store message ID for potential future deletion
+     */
+    storePreviousMessage(channel, alertType, messageId) {
+        if (!REPLACEABLE_ALERTS.includes(alertType)) return;
         
-        this.pendingDeletions.set(channelId, { timeout, messageId: message.id });
-        console.log(`AlertService: Scheduled ${alertType} alert for deletion in ${deleteAfter / 1000 / 60} minutes`);
+        const messageKey = `${channel.id}_${alertType}`;
+        this.previousMessages.set(messageKey, messageId);
     }
     
     /**
@@ -306,6 +309,8 @@ export class AlertService {
         } = options;
         
         try {
+            console.log(`AlertService: Sending ${alertType} alert with ${changes.length} changes`);
+            
             const channels = await this.getChannelsForAlert(alertType);
             if (channels.length === 0) {
                 console.error(`AlertService: No channels found for alert type ${alertType}`);
@@ -402,12 +407,15 @@ export class AlertService {
                 embed.setFooter({ text: footerText });
             }
             
-            // Send to all target channels with auto-deletion scheduling
+            // Send to all target channels with message replacement
             for (const channel of channels) {
+                // NEW: Delete previous message if this alert type should replace
+                await this.deletePreviousMessage(channel, alertType);
+                
                 const message = await channel.send({ embeds: [embed] });
                 
-                // NEW: Schedule auto-deletion for specific alert types
-                this.scheduleMessageDeletion(message, alertType);
+                // NEW: Store message ID for future replacement
+                this.storePreviousMessage(channel, alertType, message.id);
                 
                 console.log(`AlertService: Sent ${alertType} alert to ${channel.name}`);
             }
