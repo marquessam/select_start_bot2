@@ -637,22 +637,32 @@ class LeaderboardFeedService extends FeedManagerBase {
     async checkForRankChanges(currentRanks) {
         try {
             if (!this.previousDetailedRanks.size) {
+                console.log('LeaderboardFeed: No previous ranks stored, establishing baseline');
                 this.storeDetailedRanks(currentRanks);
                 return;
             }
 
             const now = Date.now();
-            if (now - this.lastGlobalAlertTime < this.globalAlertCooldown) {
+            const timeSinceLastAlert = now - this.lastGlobalAlertTime;
+            
+            if (timeSinceLastAlert < this.globalAlertCooldown) {
+                const remainingMinutes = Math.round((this.globalAlertCooldown - timeSinceLastAlert) / 1000 / 60);
+                console.log(`LeaderboardFeed: Global cooldown active - ${remainingMinutes} minutes remaining`);
                 this.storeDetailedRanks(currentRanks);
                 return;
             }
 
             const alerts = this.detectRankChanges(currentRanks, now);
+            console.log(`LeaderboardFeed: Detected ${alerts.length} potential alerts`);
 
             if (alerts.length > 0) {
+                console.log('LeaderboardFeed: Sending alerts to AlertService');
                 await this.sendRankChangesToAlertService(alerts, currentRanks);
                 this.lastGlobalAlertTime = now;
                 alerts.forEach(alert => this.lastAlertTime.set(alert.username, now));
+                console.log('LeaderboardFeed: Alerts sent successfully');
+            } else {
+                console.log('LeaderboardFeed: No significant changes detected');
             }
 
             this.storeDetailedRanks(currentRanks);
@@ -664,14 +674,21 @@ class LeaderboardFeedService extends FeedManagerBase {
     detectRankChanges(currentRanks, now) {
         const alerts = [];
         const topUsers = currentRanks.filter(user => user.displayRank <= 5);
+        
+        console.log(`LeaderboardFeed: Checking ${topUsers.length} top users for changes`);
 
         for (const user of topUsers) {
             const currentState = this.getUserState(user);
             const previousState = this.previousDetailedRanks.get(user.username);
             
-            if (now - (this.lastAlertTime.get(user.username) || 0) < this.alertCooldown) continue;
+            const timeSinceLastUserAlert = now - (this.lastAlertTime.get(user.username) || 0);
+            if (timeSinceLastUserAlert < this.alertCooldown) {
+                console.log(`LeaderboardFeed: Skipping ${user.username} - user cooldown active`);
+                continue;
+            }
             
             if (!previousState && user.displayRank <= 3) {
+                console.log(`LeaderboardFeed: New user ${user.username} entered top 3 at rank ${user.displayRank}`);
                 alerts.push({
                     type: 'newEntry',
                     username: user.username,
@@ -680,6 +697,7 @@ class LeaderboardFeedService extends FeedManagerBase {
                     reason: `Entered top rankings with ${user.achieved} achievements`
                 });
             } else if (previousState && currentState.displayRank < previousState.displayRank) {
+                console.log(`LeaderboardFeed: ${user.username} improved from rank ${previousState.displayRank} to ${currentState.displayRank}`);
                 alerts.push({
                     type: 'overtake',
                     username: user.username,
@@ -688,6 +706,8 @@ class LeaderboardFeedService extends FeedManagerBase {
                     achievementCount: currentState.achieved,
                     reason: this.determineChangeReason(previousState, currentState)
                 });
+            } else if (previousState) {
+                console.log(`LeaderboardFeed: ${user.username} unchanged (${previousState.displayRank} -> ${currentState.displayRank})`);
             }
         }
 
@@ -697,6 +717,7 @@ class LeaderboardFeedService extends FeedManagerBase {
                 const currentUser = currentRanks.find(u => u.username === username);
                 if ((!currentUser || currentUser.displayRank > 5) && 
                     now - (this.lastAlertTime.get(username) || 0) >= this.alertCooldown) {
+                    console.log(`LeaderboardFeed: ${username} fell out of top 5 from rank ${previousState.displayRank}`);
                     alerts.push({
                         type: 'fallOut',
                         username: username,
@@ -707,13 +728,19 @@ class LeaderboardFeedService extends FeedManagerBase {
             }
         }
 
+        console.log(`LeaderboardFeed: Generated ${alerts.length} alerts`);
         return alerts;
     }
 
     async sendRankChangesToAlertService(alerts, currentRanks) {
         try {
+            console.log('LeaderboardFeed: Preparing to send alerts to AlertService');
+            
             const currentChallenge = await this.getCurrentChallenge();
-            if (!currentChallenge) return;
+            if (!currentChallenge) {
+                console.log('LeaderboardFeed: No current challenge found, cannot send alerts');
+                return;
+            }
 
             const monthName = new Date().toLocaleString('default', { month: 'long' });
             const changes = alerts.map(alert => ({
@@ -736,6 +763,9 @@ class LeaderboardFeedService extends FeedManagerBase {
                 thumbnailUrl = `https://retroachievements.org${currentChallenge.monthly_game_icon_url}`;
             }
 
+            console.log(`LeaderboardFeed: Sending ${changes.length} changes for ${monthName} challenge`);
+            console.log('LeaderboardFeed: Changes:', changes.map(c => `${c.username}: ${c.type} to rank ${c.newRank}`));
+
             await AlertService.sendMonthlyRankAlert({
                 monthName: monthName,
                 gameTitle: currentChallenge.monthly_game_title || currentChallenge.monthly_challange_title,
@@ -745,8 +775,10 @@ class LeaderboardFeedService extends FeedManagerBase {
                 thumbnail: thumbnailUrl,
                 footer: { text: 'Alerts sent hourly • Leaderboard updates every 15 minutes • Data from RetroAchievements' }
             });
+            
+            console.log('LeaderboardFeed: Successfully called AlertService.sendMonthlyRankAlert');
         } catch (error) {
-            console.error('Error sending rank changes to AlertService:', error);
+            console.error('LeaderboardFeed: Error sending rank changes to AlertService:', error);
         }
     }
 
