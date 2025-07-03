@@ -1,4 +1,4 @@
-// src/models/User.js - COMPLETE VERSION with FIXED cache invalidation
+// src/models/User.js - FIXED: Resolved index conflicts and duplicate schema warnings
 import mongoose from 'mongoose';
 
 // FIXED: Lazy load cache invalidation function to avoid circular imports
@@ -96,24 +96,22 @@ const communityAwardSchema = new mongoose.Schema({
     year: { type: Number, required: true }
 }, { _id: false });
 
-// User schema
+// FIXED: User schema with proper index definitions (no conflicts)
 const userSchema = new mongoose.Schema({
+    // FIXED: No automatic index creation - we'll handle indexes manually
     discordId: { 
         type: String, 
-        required: true, 
-        unique: true
-        // FIXED: Removed redundant index: true to avoid conflicts
+        required: true
+        // REMOVED: unique: true and index: true to prevent conflicts
     },
     raUsername: { 
         type: String, 
-        required: true, 
-        unique: true
-        // FIXED: Removed redundant index: true to avoid conflicts
+        required: true
+        // REMOVED: unique: true and index: true to prevent conflicts
     },
     raUserId: { 
-        type: Number, 
-        unique: true, 
-        sparse: true 
+        type: Number
+        // REMOVED: unique: true, sparse: true to prevent conflicts
     },
     discordUsername: String,
     
@@ -198,14 +196,56 @@ const userSchema = new mongoose.Schema({
     collection: 'users'
 });
 
-// FIXED: Indexes for performance (removed duplicate unique field indexes to avoid conflicts)
-userSchema.index({ raUserId: 1 }, { sparse: true });
-userSchema.index({ totalPoints: -1 });
-userSchema.index({ totalAchievements: -1 });
-userSchema.index({ totalRetroPoints: -1 });
-userSchema.index({ lastSeen: -1 });
-userSchema.index({ 'gachaCollection.itemId': 1 });
-userSchema.index({ 'gpTransactions.timestamp': -1 });
+// FIXED: Manual index creation with proper names to avoid conflicts
+userSchema.index({ discordId: 1 }, { 
+    unique: true, 
+    name: 'discordId_unique_idx',
+    background: true 
+});
+
+userSchema.index({ raUsername: 1 }, { 
+    unique: true, 
+    name: 'raUsername_unique_idx',
+    background: true 
+});
+
+userSchema.index({ raUserId: 1 }, { 
+    unique: true, 
+    sparse: true, 
+    name: 'raUserId_unique_sparse_idx',
+    background: true 
+});
+
+// Performance indexes with custom names
+userSchema.index({ totalPoints: -1 }, { 
+    name: 'totalPoints_desc_idx',
+    background: true 
+});
+
+userSchema.index({ totalAchievements: -1 }, { 
+    name: 'totalAchievements_desc_idx',
+    background: true 
+});
+
+userSchema.index({ totalRetroPoints: -1 }, { 
+    name: 'totalRetroPoints_desc_idx',
+    background: true 
+});
+
+userSchema.index({ lastSeen: -1 }, { 
+    name: 'lastSeen_desc_idx',
+    background: true 
+});
+
+userSchema.index({ 'gachaCollection.itemId': 1 }, { 
+    name: 'gachaCollection_itemId_idx',
+    background: true 
+});
+
+userSchema.index({ 'gpTransactions.timestamp': -1 }, { 
+    name: 'gpTransactions_timestamp_desc_idx',
+    background: true 
+});
 
 // FIXED: Enhanced addGachaItem method with cache invalidation
 userSchema.methods.addGachaItem = function(gachaItem, quantity = 1, source = 'gacha') {
@@ -641,6 +681,6 @@ userSchema.post('save', function(doc) {
     }
 });
 
-// Export model
+// FIXED: Export model
 export const User = mongoose.model('User', userSchema);
 export { userSchema };
