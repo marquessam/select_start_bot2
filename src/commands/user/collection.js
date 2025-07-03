@@ -1,4 +1,4 @@
-// src/commands/user/collection.js - COMPLETE PERFORMANCE OPTIMIZED VERSION
+// src/commands/user/collection.js - COMPLETE PERFORMANCE OPTIMIZED VERSION with FIXED cache invalidation
 import { 
     SlashCommandBuilder, 
     EmbedBuilder,
@@ -20,13 +20,13 @@ import { COLORS } from '../../utils/FeedUtils.js';
 const GACHA_TRADE_CHANNEL_ID = '1379402075120730185';
 const ITEMS_PER_PAGE = 25;
 
-// PERFORMANCE: Enhanced multi-level caching system
+// PERFORMANCE: Enhanced multi-level caching system with FIXED cache invalidation
 const collectionCache = new Map();
 const combinationCache = new Map(); 
 const seriesCache = new Map(); 
 const processedCache = new Map();
 const CACHE_TTL = 3 * 60 * 1000; // 3 minutes
-const COMBO_CACHE_TTL = 1 * 60 * 1000; // 1 minute for combinations
+const COMBO_CACHE_TTL = 30 * 1000; // FIXED: Reduced from 1 minute to 30 seconds for better responsiveness
 const PROCESSED_CACHE_TTL = 2 * 60 * 1000; // 2 minutes for processed data
 const rarityOrder = ['mythic', 'legendary', 'epic', 'rare', 'uncommon', 'common'];
 
@@ -49,6 +49,51 @@ function initializeRarityData() {
     }
 }
 
+// FIXED: Comprehensive cache invalidation function
+function invalidateUserCacheComplete(discordId, userId = null) {
+    const userKey = `user_${discordId}`;
+    collectionCache.delete(userKey);
+    
+    // Clear processed cache
+    const keysToDelete = [];
+    for (const [key] of processedCache.entries()) {
+        if (key.includes('processed_')) {
+            keysToDelete.push(key);
+        }
+    }
+    for (const key of keysToDelete) {
+        processedCache.delete(key);
+    }
+    
+    // FIXED: Clear combination cache by both discordId and userId
+    for (const [key] of combinationCache.entries()) {
+        if (key.includes(discordId) || (userId && key.includes(userId))) {
+            combinationCache.delete(key);
+        }
+    }
+    
+    // Clear series cache
+    for (const [key] of seriesCache.entries()) {
+        if (key.includes(discordId) || (userId && key.includes(userId))) {
+            seriesCache.delete(key);
+        }
+    }
+    
+    console.log(`🗑️ Invalidated all caches for user ${discordId}${userId ? ` (${userId})` : ''}`);
+}
+
+// PERFORMANCE: Selective cache invalidation instead of clearing everything
+function invalidateUserCache(discordId) {
+    invalidateUserCacheComplete(discordId);
+}
+
+// FIXED: Export cache invalidation function for use by other services
+export function invalidateUserCollectionCache(user) {
+    if (user && user.discordId) {
+        invalidateUserCacheComplete(user.discordId, user._id ? user._id.toString() : null);
+    }
+}
+
 // PERFORMANCE: Optimized user lookup with enhanced caching
 async function getCachedUserCollection(discordId) {
     const cacheKey = `user_${discordId}`;
@@ -65,7 +110,9 @@ async function getCachedUserCollection(discordId) {
             gachaCollection: 1, 
             discordId: 1,
             gpBalance: 1,
-            _id: 1
+            _id: 1,
+            updatedAt: 1,
+            createdAt: 1
         }
     ).lean();
     
@@ -76,7 +123,7 @@ async function getCachedUserCollection(discordId) {
     return user;
 }
 
-// PERFORMANCE: Enhanced combination caching
+// PERFORMANCE: Enhanced combination caching with better freshness checking
 async function getCachedCombinations(userId) {
     const cacheKey = `combo_${userId}`;
     const cached = combinationCache.get(cacheKey);
@@ -89,13 +136,20 @@ async function getCachedCombinations(userId) {
         const user = await User.findById(userId);
         if (!user) return { stats: { totalCombined: 0 }, possible: [] };
         
+        console.log(`🔍 Checking combinations for ${user.raUsername} (cache miss)`);
+        
         const [stats, possible] = await Promise.all([
             combinationService.getCombinationStats(user).catch(() => ({ totalCombined: 0 })),
-            combinationService.checkPossibleCombinations(user).catch(() => [])
+            combinationService.checkPossibleCombinations(user).catch((error) => {
+                console.error('Error checking combinations:', error);
+                return [];
+            })
         ]);
         
         const result = { stats, possible };
         combinationCache.set(cacheKey, { data: result, timestamp: Date.now() });
+        
+        console.log(`✅ Found ${possible.length} combinations for ${user.raUsername}`);
         return result;
     } catch (error) {
         console.error('Error getting cached combinations:', error);
@@ -293,36 +347,6 @@ function buildEmojiGrid(items, maxLength = 3800) { // Conservative limit for Dis
     return description.trim();
 }
 
-// PERFORMANCE: Selective cache invalidation instead of clearing everything
-function invalidateUserCache(discordId) {
-    const userKey = `user_${discordId}`;
-    collectionCache.delete(userKey);
-    
-    // Clear related caches efficiently
-    const keysToDelete = [];
-    for (const [key] of processedCache.entries()) {
-        if (key.includes('processed_')) {
-            keysToDelete.push(key);
-        }
-    }
-    for (const key of keysToDelete) {
-        processedCache.delete(key);
-    }
-    
-    // Clear user-specific combination and series caches
-    for (const [key] of combinationCache.entries()) {
-        if (key.includes(discordId)) {
-            combinationCache.delete(key);
-        }
-    }
-    
-    for (const [key] of seriesCache.entries()) {
-        if (key.includes(discordId)) {
-            seriesCache.delete(key);
-        }
-    }
-}
-
 // PERFORMANCE: Comprehensive periodic cache cleanup with size limits
 setInterval(() => {
     const now = Date.now();
@@ -383,7 +407,19 @@ export default {
         await this.showCollection(interaction, user, 'all', 0);
     },
 
+    // FIXED: Enhanced showCollection with stale data detection
     async showCollection(interaction, user, filter = 'all', page = 0) {
+        // FIXED: Check if user data is fresh and invalidate stale combination cache
+        const userLastModified = user.updatedAt || user.createdAt;
+        const cacheAge = Date.now() - new Date(userLastModified).getTime();
+        
+        // If user was recently modified, invalidate combination cache to ensure fresh results
+        if (cacheAge < 60000) { // 1 minute
+            const comboKey = `combo_${user._id}`;
+            combinationCache.delete(comboKey);
+            console.log(`🔄 Invalidated stale combination cache for recently modified user ${user.raUsername}`);
+        }
+        
         // PERFORMANCE: Process collection with caching
         const processedItems = processCollection(user.gachaCollection, filter);
         
@@ -404,7 +440,7 @@ export default {
             embed.setDescription(buildEmojiGrid(pageItems));
         }
 
-        // PERFORMANCE: Single cached call for combination data
+        // PERFORMANCE: Single cached call for combination data with freshness check
         const { stats, possible } = await getCachedCombinations(user._id);
         
         // Build footer efficiently
@@ -980,9 +1016,8 @@ export default {
                 })
         ]);
 
-        // PERFORMANCE: Invalidate cache for both users
-        invalidateUserCache(givingUser.discordId);
-        invalidateUserCache(receivingUser.discordId);
+        // PERFORMANCE: Cache invalidation is now handled automatically by User model methods
+        console.log(`✅ Transfer completed: ${givingUsername} -> ${receivingUsername} (${quantity}x ${gachaItem.itemName})`);
 
         return { success: true, combinationResult, gachaItem, givingUser, receivingUser };
     },
