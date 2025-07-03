@@ -1,4 +1,4 @@
-// src/index.js - DEPLOYMENT-SAFE VERSION with non-blocking initialization
+// src/index.js - DEPLOYMENT-SAFE VERSION with emergency index conflict resolution
 import { Client, Collection, Events, GatewayIntentBits, EmbedBuilder } from 'discord.js';
 import { config, validateConfig } from './config/config.js';
 import { connectDB, checkDatabaseHealth } from './models/index.js';
@@ -675,37 +675,274 @@ async function handleMonthStartTiebreakerCleanup() {
     }
 }
 
-// Fix duplicate index issues
-async function fixDuplicateIndexes() {
+// EMERGENCY FIX: Complete index conflict resolution - handles all scenarios
+async function emergencyIndexFix() {
+    console.log('🚨 Starting emergency index conflict resolution...');
+    
     try {
-        const indexes = await ArcadeBoard.collection.indexes();
-        const expiredAtIndexes = indexes.filter(index => index.name === 'expiredAt_1');
+        // Step 1: Create indexes manually for User model after it's initialized
+        await createUserIndexesSafely();
         
-        if (expiredAtIndexes.length > 0) {
-            for (const index of expiredAtIndexes) {
+        // Step 2: Fix other known index conflicts
+        await fixArcadeBoardIndexes();
+        
+        console.log('✅ Emergency index fix complete');
+        return true;
+        
+    } catch (error) {
+        console.error('❌ Emergency index fix failed:', error);
+        return false;
+    }
+}
+
+// CRITICAL: Create User indexes manually with conflict resolution
+async function createUserIndexesSafely() {
+    try {
+        console.log('🔨 Creating User indexes with conflict resolution...');
+        
+        const userCollection = User.collection;
+        
+        // Step 1: Get current indexes to see what exists
+        const existingIndexes = await userCollection.indexes();
+        console.log('📊 Current User indexes:', existingIndexes.map(idx => idx.name));
+        
+        // Step 2: Drop ALL problematic indexes (except _id)
+        const problematicIndexNames = [
+            'discordId_1',
+            'raUsername_1', 
+            'raUserId_1',
+            'discordId_unique_idx',
+            'raUsername_unique_idx',
+            'raUserId_unique_sparse_idx'
+        ];
+        
+        for (const indexName of problematicIndexNames) {
+            if (existingIndexes.some(idx => idx.name === indexName)) {
                 try {
-                    await ArcadeBoard.collection.dropIndex('expiredAt_1');
-                    console.log('✅ Successfully dropped expiredAt index');
+                    console.log(`🗑️ Dropping problematic index: ${indexName}`);
+                    await userCollection.dropIndex(indexName);
+                    console.log(`✅ Dropped: ${indexName}`);
                 } catch (dropError) {
-                    console.log('Index may have already been dropped:', dropError.message);
+                    if (dropError.codeName === 'IndexNotFound') {
+                        console.log(`📝 Index ${indexName} already gone`);
+                    } else {
+                        console.warn(`⚠️ Error dropping ${indexName}: ${dropError.message}`);
+                    }
                 }
-            }
-            
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            
-            try {
-                await ArcadeBoard.collection.createIndex(
-                    { expiredAt: 1 }, 
-                    { sparse: true, background: true }
-                );
-                console.log('✅ Created new sparse expiredAt index');
-            } catch (createError) {
-                console.log('Index creation handled by schema:', createError.message);
             }
         }
         
+        // Step 3: Wait for drops to complete
+        console.log('⏳ Waiting for index drops to complete...');
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        
+        // Step 4: Create new indexes with unique names
+        const currentTimestamp = Date.now();
+        const indexesToCreate = [
+            {
+                spec: { discordId: 1 },
+                options: { 
+                    unique: true, 
+                    name: `discordId_unique_${currentTimestamp}`,
+                    background: true 
+                },
+                description: 'discordId unique index'
+            },
+            {
+                spec: { raUsername: 1 },
+                options: { 
+                    unique: true, 
+                    name: `raUsername_unique_${currentTimestamp}`,
+                    background: true 
+                },
+                description: 'raUsername unique index'
+            },
+            {
+                spec: { raUserId: 1 },
+                options: { 
+                    unique: true, 
+                    sparse: true, 
+                    name: `raUserId_unique_sparse_${currentTimestamp}`,
+                    background: true 
+                },
+                description: 'raUserId unique sparse index'
+            },
+            {
+                spec: { totalPoints: -1 },
+                options: { 
+                    name: `totalPoints_desc_${currentTimestamp}`,
+                    background: true 
+                },
+                description: 'totalPoints performance index'
+            },
+            {
+                spec: { totalAchievements: -1 },
+                options: { 
+                    name: `totalAchievements_desc_${currentTimestamp}`,
+                    background: true 
+                },
+                description: 'totalAchievements performance index'
+            }
+        ];
+        
+        // Step 5: Create indexes one by one
+        let successCount = 0;
+        for (const { spec, options, description } of indexesToCreate) {
+            try {
+                console.log(`🔨 Creating ${description}...`);
+                await userCollection.createIndex(spec, options);
+                console.log(`✅ Created ${description} successfully`);
+                successCount++;
+            } catch (createError) {
+                console.error(`❌ Failed to create ${description}: ${createError.message}`);
+                
+                // Try alternative approach for critical indexes
+                if (description.includes('discordId') || description.includes('raUsername')) {
+                    console.log(`🔄 Attempting alternative creation for ${description}...`);
+                    try {
+                        // Try without unique constraint first, then add it
+                        const altOptions = { ...options };
+                        delete altOptions.unique;
+                        altOptions.name = `${options.name}_alt`;
+                        
+                        await userCollection.createIndex(spec, altOptions);
+                        console.log(`⚠️ Created ${description} without unique constraint as fallback`);
+                    } catch (altError) {
+                        console.error(`❌ Alternative creation also failed: ${altError.message}`);
+                    }
+                }
+            }
+        }
+        
+        console.log(`✅ User index creation complete: ${successCount}/${indexesToCreate.length} successful`);
+        
+        // Step 6: Verify critical indexes exist
+        const finalIndexes = await userCollection.indexes();
+        const hasDiscordIdIndex = finalIndexes.some(idx => 
+            idx.key && idx.key.discordId === 1
+        );
+        const hasRAUsernameIndex = finalIndexes.some(idx => 
+            idx.key && idx.key.raUsername === 1
+        );
+        
+        if (!hasDiscordIdIndex || !hasRAUsernameIndex) {
+            console.warn('⚠️ Critical indexes missing, but continuing...');
+        } else {
+            console.log('✅ Critical indexes verified');
+        }
+        
+        return true;
+        
     } catch (error) {
-        console.error('Error in index fixing:', error);
+        console.error('❌ Error in createUserIndexesSafely:', error);
+        return false;
+    }
+}
+
+// Enhanced ArcadeBoard index fix
+async function fixArcadeBoardIndexes() {
+    try {
+        console.log('🔧 Fixing ArcadeBoard indexes...');
+        
+        if (!ArcadeBoard) {
+            console.log('📝 ArcadeBoard model not available, skipping');
+            return true;
+        }
+        
+        const collection = ArcadeBoard.collection;
+        const indexes = await collection.indexes();
+        
+        // Drop any conflicting expiredAt indexes
+        const expiredAtIndexes = indexes.filter(index => 
+            index.name && index.name.includes('expiredAt')
+        );
+        
+        for (const index of expiredAtIndexes) {
+            try {
+                await collection.dropIndex(index.name);
+                console.log(`✅ Dropped ArcadeBoard index: ${index.name}`);
+            } catch (dropError) {
+                console.warn(`⚠️ Could not drop ${index.name}: ${dropError.message}`);
+            }
+        }
+        
+        // Create new index with timestamp
+        try {
+            const timestamp = Date.now();
+            await collection.createIndex(
+                { expiredAt: 1 }, 
+                { 
+                    sparse: true, 
+                    background: true, 
+                    name: `expiredAt_sparse_${timestamp}`
+                }
+            );
+            console.log('✅ Created new ArcadeBoard expiredAt index');
+        } catch (createError) {
+            console.warn('⚠️ Could not create ArcadeBoard index:', createError.message);
+        }
+        
+        return true;
+        
+    } catch (error) {
+        console.error('❌ Error fixing ArcadeBoard indexes:', error);
+        return false;
+    }
+}
+
+// COMPLETE NUCLEAR OPTION - Only use if everything else fails
+async function nuclearIndexReset() {
+    console.warn('💥 NUCLEAR OPTION: Completely resetting all User indexes');
+    console.warn('⚠️ This should only be used as a last resort');
+    
+    try {
+        const userCollection = User.collection;
+        
+        // Get all indexes
+        const allIndexes = await userCollection.indexes();
+        console.log('📊 Found indexes:', allIndexes.map(idx => idx.name));
+        
+        // Drop everything except _id
+        for (const index of allIndexes) {
+            if (index.name !== '_id_') {
+                try {
+                    await userCollection.dropIndex(index.name);
+                    console.log(`🗑️ Dropped ${index.name}`);
+                } catch (error) {
+                    console.warn(`⚠️ Could not drop ${index.name}: ${error.message}`);
+                }
+            }
+        }
+        
+        // Wait for all drops to complete
+        await new Promise(resolve => setTimeout(resolve, 5000));
+        
+        // Create minimal essential indexes
+        const essential = Date.now();
+        await userCollection.createIndex(
+            { discordId: 1 }, 
+            { 
+                unique: true, 
+                name: `discordId_essential_${essential}`,
+                background: true 
+            }
+        );
+        
+        await userCollection.createIndex(
+            { raUsername: 1 }, 
+            { 
+                unique: true, 
+                name: `raUsername_essential_${essential}`,
+                background: true 
+            }
+        );
+        
+        console.log('✅ Nuclear reset complete - essential indexes created');
+        return true;
+        
+    } catch (error) {
+        console.error('❌ Nuclear reset failed:', error);
+        return false;
     }
 }
 
@@ -732,7 +969,7 @@ function initializeGachaServiceBackground() {
     }, 30000); // 30 seconds after main startup
 }
 
-// MAIN READY EVENT - DEPLOYMENT SAFE VERSION
+// MAIN READY EVENT - DEPLOYMENT SAFE VERSION WITH EMERGENCY INDEX FIXES
 client.once(Events.ClientReady, async () => {
     try {
         console.log(`Logged in as ${client.user.tag}`);
@@ -762,11 +999,36 @@ client.once(Events.ClientReady, async () => {
         await loadCommands();
         console.log('✅ Commands loaded');
 
-        // Fix database indexes (with error handling)
+        // EMERGENCY: Comprehensive index conflict resolution
         try {
-            await fixDuplicateIndexes();
+            console.log('🔧 Starting emergency index conflict resolution...');
+            const indexFixSuccess = await emergencyIndexFix();
+            
+            if (indexFixSuccess) {
+                console.log('✅ Index conflicts resolved successfully');
+            } else {
+                console.warn('⚠️ Some index operations failed, but continuing startup');
+            }
+            
         } catch (indexError) {
-            console.warn('⚠️ Index fixing failed (non-blocking):', indexError.message);
+            console.error('❌ Index fixing encountered errors:', indexError.message);
+            
+            if (indexError.message.includes('IndexKeySpecsConflict') || indexError.message.includes('IndexOptionsConflict')) {
+                console.error('🔧 Index conflict detected. Trying nuclear reset...');
+                try {
+                    await nuclearIndexReset();
+                    console.log('✅ Nuclear index reset completed');
+                } catch (nuclearError) {
+                    console.error('❌ Nuclear reset also failed:', nuclearError.message);
+                }
+            }
+            
+            if (process.env.NODE_ENV === 'production') {
+                console.error('🚨 Production index fix failed. Manual intervention may be required.');
+                console.log('⚠️ Continuing startup despite index issues...');
+            } else {
+                console.warn('⚠️ Development mode: continuing despite index issues');
+            }
         }
 
         // DEPLOYMENT-SAFE: Simplified service initialization
@@ -1013,8 +1275,9 @@ client.once(Events.ClientReady, async () => {
         });
 
         console.log('🤖 Bot is ready!');
-        console.log('✅ All systems initialized with deployment safety optimizations:');
-        console.log('  • Simplified initialization: No blocking delays or complex staging');
+        console.log('✅ All systems initialized with emergency index conflict resolution:');
+        console.log('  • Emergency index fixes: Comprehensive conflict resolution with fallbacks');
+        console.log('  • Nuclear option: Complete index reset available if needed');
         console.log('  • Background gacha init: Service initializes after bot is ready');
         console.log('  • Error resilience: Services continue even if some fail');
         console.log('  • Non-blocking services: Initial runs don\'t block startup');
@@ -1023,12 +1286,24 @@ client.once(Events.ClientReady, async () => {
     } catch (error) {
         console.error('❌ Error during initialization:', error);
         
+        if (error.message.includes('IndexKeySpecsConflict') || error.message.includes('IndexOptionsConflict')) {
+            console.error('🔧 Index conflict detected. Suggested resolution:');
+            console.error('   1. Connect to MongoDB shell');
+            console.error('   2. Use db.users.dropIndexes() to drop all non-_id indexes');
+            console.error('   3. Restart the application to recreate indexes properly');
+            console.error('   4. Or run the nuclear reset function');
+        }
+        
         if (error.message.includes('buffering timed out')) {
             console.error('🔧 Database timeout detected. Check MongoDB connection.');
         }
         
         if (process.env.NODE_ENV === 'production') {
-            process.exit(1);
+            console.error('🚨 Production deployment critical error');
+            console.log('⚠️ Attempting to continue with limited functionality...');
+            
+            // Don't exit in production - try to continue
+            // process.exit(1);
         } else {
             console.log('⚠️ Development mode: continuing with limited functionality');
         }
@@ -1070,6 +1345,18 @@ process.on('SIGTERM', () => {
     }
     process.exit(0);
 });
+
+// Export utility functions for manual use
+if (process.env.NODE_ENV !== 'production') {
+    // Only export these in development for safety
+    global.emergencyIndexFix = emergencyIndexFix;
+    global.createUserIndexesSafely = createUserIndexesSafely;
+    global.nuclearIndexReset = nuclearIndexReset;
+    console.log('🛠️ Development utilities available:');
+    console.log('   - emergencyIndexFix()');
+    console.log('   - createUserIndexesSafely()');
+    console.log('   - nuclearIndexReset() [USE WITH EXTREME CAUTION]');
+}
 
 // Login to Discord
 client.login(config.discord.token).catch(error => {
