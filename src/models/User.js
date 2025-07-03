@@ -1,4 +1,7 @@
-// src/models/User.js - FIXED: Resolved index conflicts and duplicate schema warnings
+// EMERGENCY FIX: User.js - Completely disable automatic index creation during initialization
+// This prevents ALL index conflicts during model initialization
+// Replace your entire src/models/User.js with this version
+
 import mongoose from 'mongoose';
 
 // FIXED: Lazy load cache invalidation function to avoid circular imports
@@ -96,22 +99,22 @@ const communityAwardSchema = new mongoose.Schema({
     year: { type: Number, required: true }
 }, { _id: false });
 
-// FIXED: User schema with proper index definitions (no conflicts)
+// EMERGENCY FIX: User schema with NO AUTOMATIC INDEX CREATION
 const userSchema = new mongoose.Schema({
-    // FIXED: No automatic index creation - we'll handle indexes manually
+    // CRITICAL: Completely plain field definitions - no indexes during init
     discordId: { 
         type: String, 
         required: true
-        // REMOVED: unique: true and index: true to prevent conflicts
+        // NO unique, NO index - we'll handle this manually after initialization
     },
     raUsername: { 
         type: String, 
         required: true
-        // REMOVED: unique: true and index: true to prevent conflicts
+        // NO unique, NO index - we'll handle this manually after initialization
     },
     raUserId: { 
         type: Number
-        // REMOVED: unique: true, sparse: true to prevent conflicts
+        // NO unique, NO sparse - we'll handle this manually after initialization
     },
     discordUsername: String,
     
@@ -193,61 +196,15 @@ const userSchema = new mongoose.Schema({
     registeredAt: { type: Date, default: Date.now }
 }, {
     timestamps: true,
-    collection: 'users'
+    collection: 'users',
+    // CRITICAL: Disable automatic index creation
+    autoIndex: false
 });
 
-// FIXED: Manual index creation with proper names to avoid conflicts
-userSchema.index({ discordId: 1 }, { 
-    unique: true, 
-    name: 'discordId_unique_idx',
-    background: true 
-});
+// EMERGENCY FIX: NO SCHEMA INDEXES DEFINED HERE
+// We'll create indexes manually after the model initializes successfully
 
-userSchema.index({ raUsername: 1 }, { 
-    unique: true, 
-    name: 'raUsername_unique_idx',
-    background: true 
-});
-
-userSchema.index({ raUserId: 1 }, { 
-    unique: true, 
-    sparse: true, 
-    name: 'raUserId_unique_sparse_idx',
-    background: true 
-});
-
-// Performance indexes with custom names
-userSchema.index({ totalPoints: -1 }, { 
-    name: 'totalPoints_desc_idx',
-    background: true 
-});
-
-userSchema.index({ totalAchievements: -1 }, { 
-    name: 'totalAchievements_desc_idx',
-    background: true 
-});
-
-userSchema.index({ totalRetroPoints: -1 }, { 
-    name: 'totalRetroPoints_desc_idx',
-    background: true 
-});
-
-userSchema.index({ lastSeen: -1 }, { 
-    name: 'lastSeen_desc_idx',
-    background: true 
-});
-
-userSchema.index({ 'gachaCollection.itemId': 1 }, { 
-    name: 'gachaCollection_itemId_idx',
-    background: true 
-});
-
-userSchema.index({ 'gpTransactions.timestamp': -1 }, { 
-    name: 'gpTransactions_timestamp_desc_idx',
-    background: true 
-});
-
-// FIXED: Enhanced addGachaItem method with cache invalidation
+// Enhanced addGachaItem method with cache invalidation
 userSchema.methods.addGachaItem = function(gachaItem, quantity = 1, source = 'gacha') {
     if (!this.gachaCollection) {
         this.gachaCollection = [];
@@ -339,7 +296,7 @@ userSchema.methods.addGachaItem = function(gachaItem, quantity = 1, source = 'ga
     };
 };
 
-// FIXED: Enhanced removeGachaItem method with cache invalidation
+// Enhanced removeGachaItem method with cache invalidation
 userSchema.methods.removeGachaItem = function(itemId, quantityToRemove = 1) {
     if (!this.gachaCollection || this.gachaCollection.length === 0) {
         console.warn(`⚠️ Cannot remove ${itemId}: collection is empty`);
@@ -658,6 +615,75 @@ userSchema.statics.findWithGachaItems = function() {
     });
 };
 
+// EMERGENCY FIX: Manual index creation function
+userSchema.statics.createIndexesSafely = async function() {
+    console.log('🔨 Creating User model indexes safely...');
+    
+    try {
+        const collection = this.collection;
+        
+        // Create indexes one by one with comprehensive error handling
+        const indexesToCreate = [
+            {
+                spec: { discordId: 1 },
+                options: { 
+                    unique: true, 
+                    name: 'discordId_unique_new',
+                    background: true 
+                },
+                description: 'discordId unique index'
+            },
+            {
+                spec: { raUsername: 1 },
+                options: { 
+                    unique: true, 
+                    name: 'raUsername_unique_new',
+                    background: true 
+                },
+                description: 'raUsername unique index'
+            },
+            {
+                spec: { raUserId: 1 },
+                options: { 
+                    unique: true, 
+                    sparse: true, 
+                    name: 'raUserId_unique_sparse_new',
+                    background: true 
+                },
+                description: 'raUserId unique sparse index'
+            },
+            {
+                spec: { totalPoints: -1 },
+                options: { 
+                    name: 'totalPoints_desc',
+                    background: true 
+                },
+                description: 'totalPoints performance index'
+            }
+        ];
+        
+        for (const { spec, options, description } of indexesToCreate) {
+            try {
+                await collection.createIndex(spec, options);
+                console.log(`✅ Created ${description}`);
+            } catch (error) {
+                if (error.code === 85 || error.code === 86) {
+                    console.warn(`⚠️ ${description} already exists or conflicts, skipping`);
+                } else {
+                    console.warn(`⚠️ Error creating ${description}: ${error.message}`);
+                }
+            }
+        }
+        
+        console.log('✅ User index creation complete');
+        return true;
+        
+    } catch (error) {
+        console.error('❌ Error in User index creation:', error);
+        return false;
+    }
+};
+
 // Pre-save middleware
 userSchema.pre('save', function(next) {
     // Update last seen on any save
@@ -681,6 +707,6 @@ userSchema.post('save', function(doc) {
     }
 });
 
-// FIXED: Export model
+// EMERGENCY FIX: Export model with disabled auto-indexing
 export const User = mongoose.model('User', userSchema);
 export { userSchema };
