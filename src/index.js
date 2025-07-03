@@ -1,4 +1,4 @@
-// src/index.js - STARTUP-SAFE VERSION with staggered initialization
+// src/index.js - DEPLOYMENT-SAFE VERSION with non-blocking initialization
 import { Client, Collection, Events, GatewayIntentBits, EmbedBuilder } from 'discord.js';
 import { config, validateConfig } from './config/config.js';
 import { connectDB, checkDatabaseHealth } from './models/index.js';
@@ -70,9 +70,14 @@ async function getCachedUser(discordId) {
         return cached.user;
     }
     
-    const user = await User.findOne({ discordId });
-    userCache.set(discordId, { user, timestamp: Date.now() });
-    return user;
+    try {
+        const user = await User.findOne({ discordId });
+        userCache.set(discordId, { user, timestamp: Date.now() });
+        return user;
+    } catch (error) {
+        console.error('Error fetching user:', error);
+        return null;
+    }
 }
 
 // Clear expired cache entries periodically
@@ -448,48 +453,24 @@ client.on(Events.InteractionCreate, async interaction => {
     }
 });
 
-// STARTUP SAFETY: Staggered service initialization to prevent database contention
-async function initializeServicesStaggered() {
-    console.log('🚀 Starting staggered service initialization...');
+// DEPLOYMENT-SAFE: Simplified non-blocking service initialization
+async function initializeServicesSimple() {
+    console.log('🚀 Starting simplified service initialization...');
     
     try {
-        // PHASE 1: Core services (no database cache initialization)
-        console.log('📦 Phase 1: Core services');
+        // Initialize core services immediately (no delays)
+        console.log('📦 Initializing core services...');
         monthlyGPService.start();
-        console.log('✅ Monthly GP Service initialized');
-
-        // Small delay between phases
-        await new Promise(resolve => setTimeout(resolve, 2000));
-
-        // PHASE 2: GP reward service (minimal DB usage)
-        console.log('🎁 Phase 2: GP reward service');
+        
+        // Initialize GP reward service with error handling
         try {
             gpRewardService.initialize();
-            console.log('✅ GP reward service initialized successfully');
+            console.log('✅ GP reward service initialized');
         } catch (gpInitError) {
             console.error('❌ Failed to initialize GP reward service:', gpInitError);
         }
 
-        await new Promise(resolve => setTimeout(resolve, 3000));
-
-        // PHASE 3: Gacha machine (deferred cache initialization)
-        console.log('🎰 Phase 3: Gacha Machine');
-        try {
-            gachaMachine.setClient(client);
-            // Start gacha machine but don't wait for cache initialization
-            gachaMachine.start().then(() => {
-                console.log('✅ Gacha Machine initialized');
-            }).catch(error => {
-                console.error('❌ Failed to start Gacha Machine:', error);
-            });
-        } catch (error) {
-            console.error('❌ Error setting up Gacha Machine:', error);
-        }
-
-        await new Promise(resolve => setTimeout(resolve, 5000));
-
-        // PHASE 4: Other services
-        console.log('⚙️ Phase 4: Other services');
+        // Set clients for all services (non-blocking)
         achievementFeedService.setClient(client);
         monthlyTasksService.setClient(client);
         arcadeService.setClient(client);
@@ -503,25 +484,22 @@ async function initializeServicesStaggered() {
         gameAwardService.setClient(client);
         combinationService.setClient(client);
 
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        // Initialize gacha machine (non-blocking)
+        try {
+            gachaMachine.setClient(client);
+            // Start in background without waiting
+            gachaMachine.start().catch(error => {
+                console.error('❌ Gacha Machine startup error (non-blocking):', error);
+            });
+            console.log('✅ Gacha Machine setup initiated');
+        } catch (error) {
+            console.error('❌ Error setting up Gacha Machine:', error);
+        }
 
-        // PHASE 5: Background cache initialization (non-blocking)
-        console.log('🔄 Phase 5: Background cache initialization');
-        setTimeout(async () => {
-            try {
-                console.log('🎰 Starting background gacha service initialization...');
-                const gachaService = await import('./services/gachaService.js');
-                await gachaService.default.safeInitialize();
-                console.log('✅ Gacha service background initialization complete');
-            } catch (error) {
-                console.error('❌ Background gacha service initialization failed:', error);
-            }
-        }, 10000); // 10 seconds after main startup
-
-        console.log('✅ Staggered service initialization complete');
+        console.log('✅ Simplified service initialization complete');
 
     } catch (error) {
-        console.error('❌ Error in staggered service initialization:', error);
+        console.error('❌ Error in simplified service initialization:', error);
     }
 }
 
@@ -731,7 +709,30 @@ async function fixDuplicateIndexes() {
     }
 }
 
-// MAIN READY EVENT - STARTUP SAFE VERSION
+// DEPLOYMENT-SAFE: Simplified background initialization
+function initializeGachaServiceBackground() {
+    // Wait 30 seconds after full startup before attempting gacha service initialization
+    setTimeout(async () => {
+        try {
+            console.log('🎰 Starting background gacha service initialization...');
+            const gachaService = await import('./services/gachaService.js');
+            
+            // Use a shorter timeout for background initialization
+            const initPromise = gachaService.default.safeInitialize();
+            const timeoutPromise = new Promise((_, reject) => 
+                setTimeout(() => reject(new Error('Background init timeout')), 20000)
+            );
+            
+            await Promise.race([initPromise, timeoutPromise]);
+            console.log('✅ Gacha service background initialization complete');
+        } catch (error) {
+            console.error('❌ Background gacha service initialization failed (non-blocking):', error);
+            // This is non-blocking, so the bot continues normally
+        }
+    }, 30000); // 30 seconds after main startup
+}
+
+// MAIN READY EVENT - DEPLOYMENT SAFE VERSION
 client.once(Events.ClientReady, async () => {
     try {
         console.log(`Logged in as ${client.user.tag}`);
@@ -740,27 +741,39 @@ client.once(Events.ClientReady, async () => {
         await connectDB();
         console.log('✅ Connected to MongoDB with all models initialized');
 
-        // Database health check
-        const healthCheck = await checkDatabaseHealth();
-        if (healthCheck.healthy) {
-            console.log(`🏥 Database health: OK (${healthCheck.latency}ms ping)`);
-        } else {
-            console.warn('⚠️ Database health check failed:', healthCheck.error);
+        // Database health check with timeout
+        try {
+            const healthCheckPromise = checkDatabaseHealth();
+            const timeoutPromise = new Promise((_, reject) => 
+                setTimeout(() => reject(new Error('Health check timeout')), 10000)
+            );
+            
+            const healthCheck = await Promise.race([healthCheckPromise, timeoutPromise]);
+            if (healthCheck.healthy) {
+                console.log(`🏥 Database health: OK (${healthCheck.latency}ms ping)`);
+            } else {
+                console.warn('⚠️ Database health check failed:', healthCheck.error);
+            }
+        } catch (healthError) {
+            console.warn('⚠️ Database health check timeout (non-blocking):', healthError.message);
         }
-
-        // STARTUP SAFETY: Wait a bit for database to fully settle
-        console.log('⏳ Allowing database connection to stabilize...');
-        await new Promise(resolve => setTimeout(resolve, 5000));
 
         // Load commands first (doesn't require DB)
         await loadCommands();
         console.log('✅ Commands loaded');
 
-        // Fix database indexes
-        await fixDuplicateIndexes();
+        // Fix database indexes (with error handling)
+        try {
+            await fixDuplicateIndexes();
+        } catch (indexError) {
+            console.warn('⚠️ Index fixing failed (non-blocking):', indexError.message);
+        }
 
-        // STARTUP SAFETY: Initialize services in staggered phases
-        await initializeServicesStaggered();
+        // DEPLOYMENT-SAFE: Simplified service initialization
+        await initializeServicesSimple();
+
+        // Start background gacha service initialization (non-blocking)
+        initializeGachaServiceBackground();
 
         // Schedule all cron jobs (these don't run immediately)
         console.log('⏰ Setting up scheduled tasks...');
@@ -888,30 +901,37 @@ client.once(Events.ClientReady, async () => {
             }
         });
 
-        // Run initial services (non-blocking)
-        console.log('🚀 Starting initial service runs...');
+        // Run initial services (non-blocking with better error handling)
+        console.log('🚀 Starting initial service runs (non-blocking)...');
         const initialServices = [
-            statsUpdateService.start(),
-            achievementFeedService.start(),
-            arcadeService.start(),
-            leaderboardFeedService.start(),
-            arcadeAlertService.start(),
-            arcadeFeedService.start(),
-            membershipCheckService.start(),
-            arenaService.start(),
-            arenaAlertService.start(),
-            arenaFeedService.start(),
-            gameAwardService.initialize()
+            statsUpdateService.start().catch(err => ({ error: err, service: 'statsUpdate' })),
+            achievementFeedService.start().catch(err => ({ error: err, service: 'achievementFeed' })),
+            arcadeService.start().catch(err => ({ error: err, service: 'arcade' })),
+            leaderboardFeedService.start().catch(err => ({ error: err, service: 'leaderboardFeed' })),
+            arcadeAlertService.start().catch(err => ({ error: err, service: 'arcadeAlert' })),
+            arcadeFeedService.start().catch(err => ({ error: err, service: 'arcadeFeed' })),
+            membershipCheckService.start().catch(err => ({ error: err, service: 'membershipCheck' })),
+            arenaService.start().catch(err => ({ error: err, service: 'arena' })),
+            arenaAlertService.start().catch(err => ({ error: err, service: 'arenaAlert' })),
+            arenaFeedService.start().catch(err => ({ error: err, service: 'arenaFeed' })),
+            gameAwardService.initialize().catch(err => ({ error: err, service: 'gameAward' }))
         ];
 
         // Run services but don't block startup if they fail
         Promise.allSettled(initialServices).then(results => {
-            const successful = results.filter(r => r.status === 'fulfilled').length;
-            const failed = results.filter(r => r.status === 'rejected').length;
+            const successful = results.filter(r => r.status === 'fulfilled' && !r.value?.error).length;
+            const failed = results.filter(r => r.status === 'rejected' || r.value?.error).length;
             console.log(`✅ Initial services completed: ${successful} successful, ${failed} failed`);
             
             if (failed > 0) {
                 console.log('⚠️ Some services failed to start initially, but this is non-blocking');
+                results.forEach((result, index) => {
+                    if (result.status === 'rejected' || result.value?.error) {
+                        const serviceName = result.value?.service || `service_${index}`;
+                        const error = result.status === 'rejected' ? result.reason : result.value.error;
+                        console.log(`  - ${serviceName}: ${error.message}`);
+                    }
+                });
             }
         });
 
@@ -993,12 +1013,12 @@ client.once(Events.ClientReady, async () => {
         });
 
         console.log('🤖 Bot is ready!');
-        console.log('✅ All systems initialized with startup safety optimizations:');
-        console.log('  • Staggered initialization: Prevents database contention');
-        console.log('  • Deferred cache loading: Non-blocking service startup');
-        console.log('  • Background initialization: Cache loading happens after startup');
+        console.log('✅ All systems initialized with deployment safety optimizations:');
+        console.log('  • Simplified initialization: No blocking delays or complex staging');
+        console.log('  • Background gacha init: Service initializes after bot is ready');
         console.log('  • Error resilience: Services continue even if some fail');
-        console.log('  • Database stabilization: 5-second grace period after connection');
+        console.log('  • Non-blocking services: Initial runs don\'t block startup');
+        console.log('  • Timeout protection: Health checks and inits have timeouts');
         
     } catch (error) {
         console.error('❌ Error during initialization:', error);
