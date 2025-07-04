@@ -1,4 +1,4 @@
-// src/commands/user/collection.js - COMPLETE PERFORMANCE OPTIMIZED VERSION with FIXED cache invalidation
+// src/commands/user/collection.js - OPTIMIZED for performance
 import { 
     SlashCommandBuilder, 
     EmbedBuilder,
@@ -20,14 +20,9 @@ import { COLORS } from '../../utils/FeedUtils.js';
 const GACHA_TRADE_CHANNEL_ID = '1379402075120730185';
 const ITEMS_PER_PAGE = 25;
 
-// PERFORMANCE: Enhanced multi-level caching system with FIXED cache invalidation
+// PERFORMANCE: Cache frequently used data
 const collectionCache = new Map();
-const combinationCache = new Map(); 
-const seriesCache = new Map(); 
-const processedCache = new Map();
-const CACHE_TTL = 3 * 60 * 1000; // 3 minutes
-const COMBO_CACHE_TTL = 30 * 1000; // FIXED: Reduced from 1 minute to 30 seconds for better responsiveness
-const PROCESSED_CACHE_TTL = 2 * 60 * 1000; // 2 minutes for processed data
+const CACHE_TTL = 2 * 60 * 1000; // 2 minutes
 const rarityOrder = ['mythic', 'legendary', 'epic', 'rare', 'uncommon', 'common'];
 
 // PERFORMANCE: Pre-computed rarity data
@@ -49,52 +44,7 @@ function initializeRarityData() {
     }
 }
 
-// FIXED: Comprehensive cache invalidation function
-function invalidateUserCacheComplete(discordId, userId = null) {
-    const userKey = `user_${discordId}`;
-    collectionCache.delete(userKey);
-    
-    // Clear processed cache
-    const keysToDelete = [];
-    for (const [key] of processedCache.entries()) {
-        if (key.includes('processed_')) {
-            keysToDelete.push(key);
-        }
-    }
-    for (const key of keysToDelete) {
-        processedCache.delete(key);
-    }
-    
-    // FIXED: Clear combination cache by both discordId and userId
-    for (const [key] of combinationCache.entries()) {
-        if (key.includes(discordId) || (userId && key.includes(userId))) {
-            combinationCache.delete(key);
-        }
-    }
-    
-    // Clear series cache
-    for (const [key] of seriesCache.entries()) {
-        if (key.includes(discordId) || (userId && key.includes(userId))) {
-            seriesCache.delete(key);
-        }
-    }
-    
-    console.log(`🗑️ Invalidated all caches for user ${discordId}${userId ? ` (${userId})` : ''}`);
-}
-
-// PERFORMANCE: Selective cache invalidation instead of clearing everything
-function invalidateUserCache(discordId) {
-    invalidateUserCacheComplete(discordId);
-}
-
-// FIXED: Export cache invalidation function for use by other services
-export function invalidateUserCollectionCache(user) {
-    if (user && user.discordId) {
-        invalidateUserCacheComplete(user.discordId, user._id ? user._id.toString() : null);
-    }
-}
-
-// PERFORMANCE: Optimized user lookup with enhanced caching
+// PERFORMANCE: Optimized user lookup with caching and projection
 async function getCachedUserCollection(discordId) {
     const cacheKey = `user_${discordId}`;
     const cached = collectionCache.get(cacheKey);
@@ -103,6 +53,7 @@ async function getCachedUserCollection(discordId) {
         return cached.data;
     }
     
+    // Only fetch necessary fields
     const user = await User.findOne(
         { discordId },
         { 
@@ -110,11 +61,9 @@ async function getCachedUserCollection(discordId) {
             gachaCollection: 1, 
             discordId: 1,
             gpBalance: 1,
-            _id: 1,
-            updatedAt: 1,
-            createdAt: 1
+            _id: 1
         }
-    ).lean();
+    ).lean(); // Use lean() for better performance
     
     if (user) {
         collectionCache.set(cacheKey, { data: user, timestamp: Date.now() });
@@ -123,128 +72,22 @@ async function getCachedUserCollection(discordId) {
     return user;
 }
 
-// PERFORMANCE: Enhanced combination caching with better freshness checking
-async function getCachedCombinations(userId) {
-    const cacheKey = `combo_${userId}`;
-    const cached = combinationCache.get(cacheKey);
-    
-    if (cached && Date.now() - cached.timestamp < COMBO_CACHE_TTL) {
-        return cached.data;
-    }
-    
-    try {
-        const user = await User.findById(userId);
-        if (!user) return { stats: { totalCombined: 0 }, possible: [] };
-        
-        console.log(`🔍 Checking combinations for ${user.raUsername} (cache miss)`);
-        
-        const [stats, possible] = await Promise.all([
-            combinationService.getCombinationStats(user).catch(() => ({ totalCombined: 0 })),
-            combinationService.checkPossibleCombinations(user).catch((error) => {
-                console.error('Error checking combinations:', error);
-                return [];
-            })
-        ]);
-        
-        const result = { stats, possible };
-        combinationCache.set(cacheKey, { data: result, timestamp: Date.now() });
-        
-        console.log(`✅ Found ${possible.length} combinations for ${user.raUsername}`);
-        return result;
-    } catch (error) {
-        console.error('Error getting cached combinations:', error);
-        return { stats: { totalCombined: 0 }, possible: [] };
-    }
+// PERFORMANCE: Clear cache when user data changes
+function invalidateUserCache(discordId) {
+    collectionCache.delete(`user_${discordId}`);
 }
 
-// PERFORMANCE: Cached series options generation
-function getCachedSeriesOptions(user) {
-    const cacheKey = `series_${user._id}_${user.gachaCollection?.length || 0}`;
-    const cached = seriesCache.get(cacheKey);
-    
-    if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
-        return cached.data;
-    }
-    
-    const options = generateSeriesOptions(user);
-    seriesCache.set(cacheKey, { data: options, timestamp: Date.now() });
-    return options;
-}
-
-// PERFORMANCE: Optimized series options generation with Map-based O(1) lookups
-function generateSeriesOptions(user) {
-    if (!user.gachaCollection || user.gachaCollection.length === 0) {
-        return [{ label: 'All Items', value: 'all', description: 'No items', emoji: '📦' }];
-    }
-    
-    const seriesMap = new Map();
-    let totalItems = 0;
-    
-    // Single pass through collection with O(1) operations
-    for (const item of user.gachaCollection) {
-        totalItems++;
-        const seriesId = item.seriesId || 'individual';
-        
-        if (!seriesMap.has(seriesId)) {
-            seriesMap.set(seriesId, { count: 0, totalQuantity: 0 });
-        }
-        
-        const series = seriesMap.get(seriesId);
-        series.count++;
-        series.totalQuantity += item.quantity || 1;
-    }
-    
-    const options = [{
-        label: 'All Items',
-        value: 'all',
-        description: `View all ${totalItems} items`,
-        emoji: '📦'
-    }];
-    
-    // Convert and sort efficiently - limit to Discord's 25 option limit
-    const sortedSeries = Array.from(seriesMap.entries())
-        .sort(([,a], [,b]) => b.totalQuantity - a.totalQuantity)
-        .slice(0, 24);
-    
-    for (const [seriesId, data] of sortedSeries) {
-        const label = seriesId === 'individual' ? 'Individual Items' : 
-                     seriesId.charAt(0).toUpperCase() + seriesId.slice(1);
-        const isIndividual = seriesId === 'individual';
-        
-        options.push({
-            label,
-            value: seriesId,
-            description: `${data.count} ${isIndividual ? 'standalone' : 'types'} ${!isIndividual ? `(${data.totalQuantity} total)` : 'items'}`,
-            emoji: isIndividual ? '🔸' : '🏷️'
-        });
-    }
-    
-    return options;
-}
-
-// PERFORMANCE: Optimized collection processing with aggressive caching
+// PERFORMANCE: Optimized collection processing
 function processCollection(items, filter = 'all') {
     if (!items || items.length === 0) return [];
     
-    // Create cache key based on items length and filter for better cache hits
-    const itemsHash = items.length + '_' + (items[0]?.itemId || 'empty');
-    const cacheKey = `processed_${filter}_${itemsHash}`;
-    const cached = processedCache.get(cacheKey);
+    // Filter items
+    const filteredItems = filter === 'all' 
+        ? items 
+        : items.filter(item => item.seriesId === filter);
     
-    if (cached && Date.now() - cached.timestamp < PROCESSED_CACHE_TTL) {
-        return cached.data;
-    }
-    
-    // Filter items efficiently
-    let filteredItems;
-    if (filter === 'all') {
-        filteredItems = items;
-    } else {
-        filteredItems = items.filter(item => item.seriesId === filter);
-    }
-    
-    // Single sort with multiple criteria - most expensive operation
-    const processedItems = filteredItems.sort((a, b) => {
+    // PERFORMANCE: Use a single sort with multiple criteria
+    return filteredItems.sort((a, b) => {
         // Primary: Rarity
         const aRarityIndex = rarityOrder.indexOf(a.rarity);
         const bRarityIndex = rarityOrder.indexOf(b.rarity);
@@ -258,128 +101,98 @@ function processCollection(items, filter = 'all') {
         // Tertiary: Name
         return a.itemName.localeCompare(b.itemName);
     });
-    
-    // Cache the expensive result
-    processedCache.set(cacheKey, { data: processedItems, timestamp: Date.now() });
-    
-    return processedItems;
 }
 
-// PERFORMANCE: Chunked emoji grid building with length limits and early termination
-function buildEmojiGrid(items, maxLength = 3800) { // Conservative limit for Discord
-    if (!items || items.length === 0) return '';
-    
+// PERFORMANCE: Pre-build emoji grids to avoid repeated string operations
+function buildEmojiGrid(items) {
     const rarityGroups = {};
     
-    // Group items by rarity efficiently
-    for (const item of items) {
+    // Group items by rarity
+    items.forEach(item => {
         if (!rarityGroups[item.rarity]) rarityGroups[item.rarity] = [];
         rarityGroups[item.rarity].push(item);
-    }
+    });
     
     let description = '';
-    let currentLength = 0;
-    let totalItemsShown = 0;
-    const maxItemsToShow = 100; // Prevent extremely long displays
     
     for (const rarity of rarityOrder) {
         const rarityItems = rarityGroups[rarity];
         if (!rarityItems?.length) continue;
         
         const { emoji: rarityEmoji, name: rarityName } = rarityData[rarity];
-        const headerText = `\n${rarityEmoji} **${rarityName}** (${rarityItems.length})\n`;
+        description += `\n${rarityEmoji} **${rarityName}** (${rarityItems.length})\n`;
         
-        // Check if we have space for this section
-        if (currentLength + headerText.length > maxLength || totalItemsShown >= maxItemsToShow) {
-            description += '\n*...and more items (use filters to see specific series)*';
-            break;
-        }
-        
-        description += headerText;
-        currentLength += headerText.length;
-        
-        // Build emoji rows efficiently with early termination
+        // Build emoji grid efficiently
         const emojiRows = [];
         let currentRow = '';
-        let itemsInRarity = 0;
-        const maxItemsPerRarity = 25; // Limit items per rarity section
         
-        for (const item of rarityItems) {
-            if (itemsInRarity >= maxItemsPerRarity || totalItemsShown >= maxItemsToShow) {
-                if (itemsInRarity < rarityItems.length) {
-                    emojiRows.push('*...and more*');
-                }
-                break;
-            }
-            
+        rarityItems.forEach((item, i) => {
             const emoji = formatGachaEmoji(item.emojiId, item.emojiName, item.isAnimated);
             const quantity = item.quantity > 1 ? `x${item.quantity}` : '';
-            const itemText = `${emoji}${quantity} `;
+            currentRow += `${emoji}${quantity} `;
             
-            // Check length before adding
-            if (currentLength + currentRow.length + itemText.length > maxLength) {
-                if (currentRow) emojiRows.push(currentRow.trim());
-                emojiRows.push('*...truncated for length*');
-                break;
-            }
-            
-            currentRow += itemText;
-            itemsInRarity++;
-            totalItemsShown++;
-            
-            // 5 items per row for better formatting
-            if (itemsInRarity % 5 === 0) {
+            if ((i + 1) % 5 === 0 || i === rarityItems.length - 1) {
                 emojiRows.push(currentRow.trim());
                 currentRow = '';
             }
-        }
+        });
         
-        // Add remaining items in current row
-        if (currentRow.trim()) {
-            emojiRows.push(currentRow.trim());
-        }
-        
-        const sectionText = emojiRows.join('\n') + '\n';
-        currentLength += sectionText.length;
-        description += sectionText;
+        description += emojiRows.join('\n') + '\n';
     }
     
     return description.trim();
 }
 
-// PERFORMANCE: Comprehensive periodic cache cleanup with size limits
-setInterval(() => {
-    const now = Date.now();
+// PERFORMANCE: Optimized series options generation
+function getSeriesOptions(user) {
+    if (!user.gachaCollection || user.gachaCollection.length === 0) {
+        return [{ label: 'All Items', value: 'all', description: 'No items', emoji: '📦' }];
+    }
     
-    // Clean expired entries and enforce size limits
-    const cleanCache = (cache, ttl, maxSize = 1000) => {
-        const entries = Array.from(cache.entries());
+    // Use Map for better performance with large collections
+    const seriesMap = new Map();
+    let totalItems = 0;
+    
+    user.gachaCollection.forEach(item => {
+        totalItems++;
+        const seriesId = item.seriesId || 'individual';
         
-        // Remove expired entries
-        for (const [key, value] of entries) {
-            if (now - value.timestamp > ttl) {
-                cache.delete(key);
-            }
+        if (!seriesMap.has(seriesId)) {
+            seriesMap.set(seriesId, { count: 0, totalQuantity: 0 });
         }
         
-        // Enforce size limit by removing oldest entries
-        if (cache.size > maxSize) {
-            const sortedEntries = Array.from(cache.entries())
-                .sort(([,a], [,b]) => a.timestamp - b.timestamp);
-            
-            const entriesToRemove = sortedEntries.slice(0, cache.size - maxSize);
-            for (const [key] of entriesToRemove) {
-                cache.delete(key);
-            }
-        }
-    };
+        const series = seriesMap.get(seriesId);
+        series.count++;
+        series.totalQuantity += item.quantity || 1;
+    });
     
-    cleanCache(collectionCache, CACHE_TTL, 500);
-    cleanCache(combinationCache, COMBO_CACHE_TTL, 300);
-    cleanCache(seriesCache, CACHE_TTL, 200);
-    cleanCache(processedCache, PROCESSED_CACHE_TTL, 400);
+    const options = [{
+        label: 'All Items',
+        value: 'all',
+        description: `View all ${totalItems} items`,
+        emoji: '📦'
+    }];
     
-}, 60000); // Clean every minute
+    // Convert map to sorted array
+    const sortedSeries = Array.from(seriesMap.entries())
+        .sort(([,a], [,b]) => b.totalQuantity - a.totalQuantity)
+        .slice(0, 24); // Discord limit
+    
+    sortedSeries.forEach(([seriesId, data]) => {
+        const label = seriesId === 'individual' ? 'Individual Items' : 
+                     seriesId.charAt(0).toUpperCase() + seriesId.slice(1);
+        const isIndividual = seriesId === 'individual';
+        
+        options.push({
+            label,
+            value: seriesId,
+            description: `${data.count} ${isIndividual ? 'standalone' : 'types'} ${!isIndividual ? `(${data.totalQuantity} total)` : 'items'}`,
+            emoji: isIndividual ? '🔸' : '🏷️'
+        });
+    });
+    
+    return options;
+}
 
 export default {
     data: new SlashCommandBuilder()
@@ -389,7 +202,7 @@ export default {
     async execute(interaction) {
         await interaction.deferReply({ ephemeral: true });
 
-        // PERFORMANCE: Single optimized user lookup
+        // PERFORMANCE: Use optimized user lookup
         const user = await getCachedUserCollection(interaction.user.id);
         if (!user) {
             return interaction.editReply({
@@ -403,32 +216,32 @@ export default {
             });
         }
 
-        // PERFORMANCE: Direct call to showCollection (no redundant combination checking)
+        // PERFORMANCE: Check combinations asynchronously
+        const combinationsPromise = combinationService.checkPossibleCombinations(user);
+        
+        // Don't wait for combinations if we're just showing the collection
+        combinationsPromise.then(possibleCombinations => {
+            if (possibleCombinations.length > 0) {
+                // Only interrupt if there are combinations available
+                return combinationService.showCombinationAlert(interaction, user, possibleCombinations);
+            }
+        }).catch(error => {
+            console.error('Error checking combinations:', error);
+        });
+
         await this.showCollection(interaction, user, 'all', 0);
     },
 
-    // FIXED: Enhanced showCollection with stale data detection
     async showCollection(interaction, user, filter = 'all', page = 0) {
-        // FIXED: Check if user data is fresh and invalidate stale combination cache
-        const userLastModified = user.updatedAt || user.createdAt;
-        const cacheAge = Date.now() - new Date(userLastModified).getTime();
-        
-        // If user was recently modified, invalidate combination cache to ensure fresh results
-        if (cacheAge < 60000) { // 1 minute
-            const comboKey = `combo_${user._id}`;
-            combinationCache.delete(comboKey);
-            console.log(`🔄 Invalidated stale combination cache for recently modified user ${user.raUsername}`);
-        }
-        
-        // PERFORMANCE: Process collection with caching
+        // PERFORMANCE: Process collection efficiently
         const processedItems = processCollection(user.gachaCollection, filter);
         
-        // Calculate pagination efficiently
+        // Pagination
         const totalPages = Math.ceil(processedItems.length / ITEMS_PER_PAGE);
         const startIndex = page * ITEMS_PER_PAGE;
         const pageItems = processedItems.slice(startIndex, startIndex + ITEMS_PER_PAGE);
 
-        // PERFORMANCE: Build embed with optimized content
+        // PERFORMANCE: Build embed efficiently
         const embed = new EmbedBuilder()
             .setTitle(`${user.raUsername}'s Collection - ${filter === 'all' ? 'All Items' : filter}`)
             .setColor(COLORS.INFO)
@@ -440,33 +253,36 @@ export default {
             embed.setDescription(buildEmojiGrid(pageItems));
         }
 
-        // PERFORMANCE: Single cached call for combination data with freshness check
-        const { stats, possible } = await getCachedCombinations(user._id);
+        // PERFORMANCE: Parallel operations for footer
+        const [combinationStats, possibleCombinations] = await Promise.all([
+            combinationService.getCombinationStats(user),
+            combinationService.checkPossibleCombinations(user)
+        ]);
         
-        // Build footer efficiently
         let footerText = totalPages > 1 
             ? `Page ${page + 1}/${totalPages} • ${startIndex + 1}-${Math.min(startIndex + ITEMS_PER_PAGE, processedItems.length)} of ${processedItems.length} items`
             : `${processedItems.length} items • xN = quantity`;
         
+        // Add GP balance to footer
         footerText += ` • ${(user.gpBalance || 0).toLocaleString()} GP`;
-        footerText += ` • ${stats.totalCombined} from combinations`;
-        if (possible.length > 0) {
-            footerText += ` • ⚗️ ${possible.length} combination(s) available!`;
+        footerText += ` • ${combinationStats.totalCombined} from combinations`;
+        if (possibleCombinations.length > 0) {
+            footerText += ` • ⚗️ ${possibleCombinations.length} combination(s) available!`;
         }
         embed.setFooter({ text: footerText });
 
-        // PERFORMANCE: Build components with cached data
-        const components = this.buildComponents(user, filter, page, totalPages, possible);
+        // PERFORMANCE: Build components efficiently
+        const components = this.buildComponents(user, filter, page, totalPages, possibleCombinations);
 
         await interaction.editReply({ embeds: [embed], components });
     },
 
-    // PERFORMANCE: Optimized component building with conditional rendering
+    // PERFORMANCE: Optimized component building
     buildComponents(user, filter, page, totalPages, possibleCombinations) {
         const components = [];
 
-        // Series dropdown - use cached options
-        const seriesOptions = getCachedSeriesOptions(user);
+        // Series dropdown - only build if needed
+        const seriesOptions = getSeriesOptions(user);
         if (seriesOptions.length > 1) {
             const seriesMenu = new StringSelectMenuBuilder()
                 .setCustomId(`coll_series_${user.raUsername}`)
@@ -523,7 +339,7 @@ export default {
         return components;
     },
 
-    // PERFORMANCE: Optimized inspect menu with cached processing
+    // PERFORMANCE: Optimized inspect menu
     async showInspectMenu(interaction, user, filter, page) {
         const processedItems = processCollection(user.gachaCollection, filter);
         const totalPages = Math.ceil(processedItems.length / ITEMS_PER_PAGE);
@@ -533,7 +349,7 @@ export default {
             return interaction.followUp({ content: '❌ No items on this page to inspect.', ephemeral: true });
         }
 
-        // Build options efficiently with minimal object creation
+        // PERFORMANCE: Build options efficiently
         const itemOptions = pageItems.map(item => {
             const quantity = item.quantity > 1 ? ` x${item.quantity}` : '';
             const seriesTag = item.seriesId ? ` [${item.seriesId}]` : '';
@@ -594,6 +410,7 @@ export default {
     },
 
     async showGiveMenu(interaction, user, filter, page) {
+        // Similar optimization as showInspectMenu
         const processedItems = processCollection(user.gachaCollection, filter);
         const totalPages = Math.ceil(processedItems.length / ITEMS_PER_PAGE);
         const pageItems = processedItems.slice(page * ITEMS_PER_PAGE, (page + 1) * ITEMS_PER_PAGE);
@@ -694,14 +511,14 @@ export default {
         await interaction.showModal(modal);
     },
 
-    // PERFORMANCE: Optimized item detail view with minimal database queries
+    // PERFORMANCE: Optimized item detail view
     async showItemDetail(interaction, user, itemId, returnFilter, returnPage) {
         const item = user.gachaCollection.find(item => item.itemId === itemId);
         if (!item) {
             return interaction.editReply({ content: '❌ Item not found in your collection.' });
         }
 
-        // Only fetch original item if needed (reduce database queries)
+        // PERFORMANCE: Only fetch original item if needed
         let originalItem = null;
         const needsOriginalData = !item.description || !item.flavorText;
         
@@ -727,8 +544,7 @@ export default {
             combined: 'Combination', 
             series_completion: 'Series Completion', 
             admin_grant: 'Admin Grant', 
-            player_transfer: 'Player Gift',
-            store_purchase: 'Store Purchase'
+            player_transfer: 'Player Gift' 
         };
         description += `\n**Source:** ${sourceNames[item.source] || 'Unknown'}`;
         description += `\n**Item ID:** \`${itemId}\``;
@@ -771,7 +587,7 @@ export default {
             return interaction.followUp({ content: '❌ Item not found in your collection.', ephemeral: true });
         }
 
-        // Only fetch if needed
+        // PERFORMANCE: Only fetch if needed
         let originalItem = null;
         if (!item.description || !item.flavorText) {
             originalItem = await GachaItem.findOne({ itemId }, { description: 1, flavorText: 1 }).lean();
@@ -791,7 +607,7 @@ export default {
         if (item.seriesId) description += `\n**Series:** ${item.seriesId.charAt(0).toUpperCase() + item.seriesId.slice(1)}`;
         if (item.isAnimated) description += `\n**Type:** 🎬 Animated Emoji`;
         
-        const sourceNames = { gacha: 'Gacha Pull', combined: 'Combination', series_completion: 'Series Completion', admin_grant: 'Admin Grant', player_transfer: 'Player Gift', store_purchase: 'Store Purchase' };
+        const sourceNames = { gacha: 'Gacha Pull', combined: 'Combination', series_completion: 'Series Completion', admin_grant: 'Admin Grant', player_transfer: 'Player Gift' };
         description += `\n**Source:** ${sourceNames[item.source] || 'Unknown'}`;
         embed.setDescription(description);
 
@@ -816,7 +632,7 @@ export default {
         }
     },
 
-    // Trade confirmation and transfer methods remain the same
+    // PERFORMANCE: Optimized trade confirmation
     async sendPublicTradeConfirmation(givingUser, receivingUser, gachaItem, quantity, combinationResult, client) {
         try {
             const emoji = formatGachaEmoji(gachaItem.emojiId, gachaItem.emojiName, gachaItem.isAnimated);
@@ -884,11 +700,12 @@ export default {
         }
     },
 
-    // PERFORMANCE: Optimized stats display with cached data
+    // PERFORMANCE: Optimized stats display
     async showStats(interaction, user) {
-        const [summary, { stats, possible }] = await Promise.all([
+        const [summary, combinationStats, possibleCombinations] = await Promise.all([
             gachaService.getUserCollectionSummary(user),
-            getCachedCombinations(user._id)
+            combinationService.getCombinationStats(user),
+            combinationService.checkPossibleCombinations(user)
         ]);
         
         const embed = new EmbedBuilder()
@@ -923,7 +740,6 @@ export default {
         description += `🎰 Gacha Pulls: ${sourceBreakdown.gacha || 0}\n`;
         description += `⚗️ Combinations: ${sourceBreakdown.combined || 0}\n`;
         description += `🏆 Series Rewards: ${sourceBreakdown.series_completion || 0}\n`;
-        description += `🛒 Store Purchases: ${sourceBreakdown.store_purchase || 0}\n`;
         description += `🎁 Player Gifts: ${sourceBreakdown.player_transfer || 0}\n`;
 
         const animatedCount = user.gachaCollection?.filter(item => item.isAnimated).length || 0;
@@ -932,7 +748,7 @@ export default {
         }
 
         description += `\n**💡 Combination System:**\n`;
-        description += `⚗️ Current combinations available: ${possible.length}\n`;
+        description += `⚗️ Current combinations available: ${possibleCombinations.length}\n`;
         description += `🔮 Combinations show automatically in /collection\n`;
         description += `📢 Public alerts posted when new combinations unlock`;
 
@@ -983,12 +799,13 @@ export default {
         await interaction.editReply({ embeds: [embed], components });
     },
 
-    // PERFORMANCE: Optimized transfer with cache invalidation
+    // PERFORMANCE: Optimized transfer with better error handling
     async performTransfer(givingUsername, receivingUsername, itemId, quantity) {
+        // PERFORMANCE: Use Promise.all for parallel queries
         const [givingUser, receivingUser, gachaItem] = await Promise.all([
             User.findOne({ raUsername: { $regex: new RegExp(`^${givingUsername}$`, 'i') } }),
             User.findOne({ raUsername: { $regex: new RegExp(`^${receivingUsername}$`, 'i') } }),
-            GachaItem.findOne({ itemId }).lean()
+            GachaItem.findOne({ itemId }).lean() // Use lean for read-only data
         ]);
 
         if (!givingUser || !receivingUser || !gachaItem) {
@@ -1006,6 +823,7 @@ export default {
 
         receivingUser.addGachaItem(gachaItem, quantity, 'player_transfer');
         
+        // PERFORMANCE: Parallel save and combination check
         const [, , combinationResult] = await Promise.all([
             givingUser.save(),
             receivingUser.save(),
@@ -1016,8 +834,9 @@ export default {
                 })
         ]);
 
-        // PERFORMANCE: Cache invalidation is now handled automatically by User model methods
-        console.log(`✅ Transfer completed: ${givingUsername} -> ${receivingUsername} (${quantity}x ${gachaItem.itemName})`);
+        // PERFORMANCE: Clear cache for both users
+        invalidateUserCache(givingUser.discordId);
+        invalidateUserCache(receivingUser.discordId);
 
         return { success: true, combinationResult, gachaItem, givingUser, receivingUser };
     },
@@ -1032,6 +851,7 @@ export default {
             return interaction.editReply({ content: '❌ Quantity must be between 1 and 100.' });
         }
 
+        // PERFORMANCE: Use cached user lookup
         const givingUser = await getCachedUserCollection(interaction.user.id);
         if (!givingUser || givingUser.raUsername.toLowerCase() !== username.toLowerCase()) {
             return interaction.editReply({ content: '❌ You can only give items from your own collection.' });
@@ -1063,11 +883,12 @@ export default {
         await this.showGiveConfirmation(interaction, givingUser, receivingUser, gachaItem, quantity);
     },
 
-    // PERFORMANCE: Enhanced interaction handler with optimized routing
+    // PERFORMANCE: Optimized interaction handler
     async handleInteraction(interaction) {
         if (!interaction.customId.startsWith('coll_')) return;
 
         try {
+            // PERFORMANCE: Parse customId once and route efficiently
             const customIdParts = interaction.customId.split('_');
             const action = customIdParts[1];
 
@@ -1199,9 +1020,9 @@ export default {
                     case 'stats': return this.showStats(interaction, user);
                     case 'recipes': return combinationService.showRecipeBook(interaction, 0);
                     case 'combinations':
-                        const { possible } = await getCachedCombinations(user._id);
-                        return possible.length > 0 
-                            ? combinationService.showCombinationAlert(interaction, user, possible)
+                        const combinations = await combinationService.checkPossibleCombinations(user);
+                        return combinations.length > 0 
+                            ? combinationService.showCombinationAlert(interaction, user, combinations)
                             : interaction.editReply({ content: '❌ No combinations currently available.', embeds: [], components: [] });
                 }
                 return;
@@ -1234,7 +1055,7 @@ export default {
                 return this.showItemDetail(interaction, user, interaction.values[0], filter, parseInt(pageStr));
             }
 
-            // Handle other actions with cached user data
+            // Handle other actions
             if (user.raUsername.toLowerCase() !== customIdParts[2]?.toLowerCase()) {
                 return interaction.followUp({ content: '❌ You can only view your own collection.', ephemeral: true });
             }
