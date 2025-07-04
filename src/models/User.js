@@ -1,7 +1,4 @@
-// EMERGENCY FIX: User.js - Completely disable automatic index creation during initialization
-// This prevents ALL index conflicts during model initialization
-// Replace your entire src/models/User.js with this version
-
+// src/models/User.js - FIXED VERSION: Resolves validation errors
 import mongoose from 'mongoose';
 
 // FIXED: Lazy load cache invalidation function to avoid circular imports
@@ -71,14 +68,21 @@ const trophyCaseItemSchema = new mongoose.Schema({
     monthKey: String // Format: "2024-01" for monthly/shadow challenges
 }, { _id: false });
 
-// GP transaction schema
+// FIXED: GP transaction schema with comprehensive enum values
 const gpTransactionSchema = new mongoose.Schema({
     type: { 
         type: String, 
         enum: [
+            // Original enum values
             'gacha_pull', 'monthly_bonus', 'achievement_bonus', 'admin_adjustment', 
             'combination_reward', 'series_completion', 'player_gift', 'store_purchase',
-            'challenge_reward', 'leaderboard_reward', 'event_reward'
+            'challenge_reward', 'leaderboard_reward', 'event_reward',
+            // FIXED: Add missing enum values found in error
+            'monthly_grant', 'wager', 'admin_award', 'game_completion', 
+            'refund', 'challenge_award', 'bet', 'vote',
+            // Additional common values for completeness
+            'arena_win', 'arena_participation', 'daily_bonus', 'special_event',
+            'compensation', 'manual_adjustment', 'system_adjustment'
         ], 
         required: true 
     },
@@ -89,32 +93,37 @@ const gpTransactionSchema = new mongoose.Schema({
     relatedUserId: String
 }, { _id: false });
 
-// Community award schema
+// FIXED: Community award schema with optional year and automatic calculation
 const communityAwardSchema = new mongoose.Schema({
     title: { type: String, required: true },
     description: String,
     category: String,
     awardedAt: { type: Date, default: Date.now },
     awardedBy: String,
-    year: { type: Number, required: true }
+    // FIXED: Make year optional with automatic calculation from awardedAt
+    year: { 
+        type: Number, 
+        required: false,  // Changed to false to prevent validation errors
+        default: function() {
+            // Automatically calculate year from awardedAt if not provided
+            return this.awardedAt ? this.awardedAt.getFullYear() : new Date().getFullYear();
+        }
+    }
 }, { _id: false });
 
-// EMERGENCY FIX: User schema with NO AUTOMATIC INDEX CREATION
+// FIXED: User schema with validation error prevention
 const userSchema = new mongoose.Schema({
-    // CRITICAL: Completely plain field definitions - no indexes during init
+    // Core user identification
     discordId: { 
         type: String, 
         required: true
-        // NO unique, NO index - we'll handle this manually after initialization
     },
     raUsername: { 
         type: String, 
         required: true
-        // NO unique, NO index - we'll handle this manually after initialization
     },
     raUserId: { 
         type: Number
-        // NO unique, NO sparse - we'll handle this manually after initialization
     },
     discordUsername: String,
     
@@ -162,7 +171,7 @@ const userSchema = new mongoose.Schema({
     // Trophy case
     trophyCase: [trophyCaseItemSchema],
     
-    // Community awards
+    // FIXED: Community awards with proper validation
     communityAwards: [communityAwardSchema],
     
     // Arcade and arena tracking
@@ -197,12 +206,39 @@ const userSchema = new mongoose.Schema({
 }, {
     timestamps: true,
     collection: 'users',
-    // CRITICAL: Disable automatic index creation
+    // Disable automatic index creation (handled manually)
     autoIndex: false
 });
 
-// EMERGENCY FIX: NO SCHEMA INDEXES DEFINED HERE
-// We'll create indexes manually after the model initializes successfully
+// FIXED: Pre-save middleware to ensure data integrity
+userSchema.pre('save', function(next) {
+    // Update last seen on any save
+    if (!this.isNew) {
+        this.lastSeen = new Date();
+    }
+    
+    // Ensure GP balance is never negative
+    if (this.gpBalance < 0) {
+        console.warn(`⚠️ Negative GP balance detected for ${this.raUsername}: ${this.gpBalance}, setting to 0`);
+        this.gpBalance = 0;
+    }
+    
+    // FIXED: Ensure all community awards have a year
+    if (this.communityAwards && this.communityAwards.length > 0) {
+        this.communityAwards.forEach(award => {
+            if (!award.year && award.awardedAt) {
+                award.year = award.awardedAt.getFullYear();
+                console.log(`🔧 Auto-assigned year ${award.year} to community award: ${award.title}`);
+            } else if (!award.year) {
+                award.year = new Date().getFullYear();
+                console.log(`🔧 Auto-assigned current year ${award.year} to community award: ${award.title}`);
+            }
+        });
+        this.markModified('communityAwards');
+    }
+    
+    next();
+});
 
 // Enhanced addGachaItem method with cache invalidation
 userSchema.methods.addGachaItem = function(gachaItem, quantity = 1, source = 'gacha') {
@@ -344,14 +380,26 @@ userSchema.methods.removeGachaItem = function(itemId, quantityToRemove = 1) {
     return true;
 };
 
-// GP management methods
-userSchema.methods.hasEnoughGp = function(amount) {
-    return (this.gpBalance || 0) >= amount;
-};
-
+// FIXED: Enhanced GP transaction method with better type validation
 userSchema.methods.addGpTransaction = function(type, amount, description = '', relatedItemId = null, relatedUserId = null) {
     if (!this.gpTransactions) {
         this.gpTransactions = [];
+    }
+
+    // FIXED: Validate transaction type against enum
+    const validTypes = [
+        'gacha_pull', 'monthly_bonus', 'achievement_bonus', 'admin_adjustment', 
+        'combination_reward', 'series_completion', 'player_gift', 'store_purchase',
+        'challenge_reward', 'leaderboard_reward', 'event_reward',
+        'monthly_grant', 'wager', 'admin_award', 'game_completion', 
+        'refund', 'challenge_award', 'bet', 'vote',
+        'arena_win', 'arena_participation', 'daily_bonus', 'special_event',
+        'compensation', 'manual_adjustment', 'system_adjustment'
+    ];
+
+    if (!validTypes.includes(type)) {
+        console.warn(`⚠️ Unknown GP transaction type: ${type}, using 'manual_adjustment'`);
+        type = 'manual_adjustment';
     }
 
     // Update balance
@@ -380,6 +428,11 @@ userSchema.methods.addGpTransaction = function(type, amount, description = '', r
     console.log(`💰 New balance: ${this.gpBalance} GP`);
     
     return transaction;
+};
+
+// GP management methods
+userSchema.methods.hasEnoughGp = function(amount) {
+    return (this.gpBalance || 0) >= amount;
 };
 
 // Challenge management methods
@@ -471,21 +524,22 @@ userSchema.methods.getDefaultTrophyEmoji = function(awardLevel) {
     return emojiMap[awardLevel] || '🏆';
 };
 
-// Community award methods
-userSchema.methods.addCommunityAward = function(title, description, category, awardedBy) {
+// FIXED: Enhanced community award methods with automatic year handling
+userSchema.methods.addCommunityAward = function(title, description, category, awardedBy, year = null) {
     if (!this.communityAwards) {
         this.communityAwards = [];
     }
     
-    const currentYear = new Date().getFullYear();
+    // Use provided year or calculate from current date
+    const awardYear = year || new Date().getFullYear();
     
     // Check if award already exists for this year
     const existingAward = this.communityAwards.find(award => 
-        award.title === title && award.year === currentYear
+        award.title === title && award.year === awardYear
     );
     
     if (existingAward) {
-        console.log(`Community award already exists for ${this.raUsername}: ${title} (${currentYear})`);
+        console.log(`Community award already exists for ${this.raUsername}: ${title} (${awardYear})`);
         return false;
     }
     
@@ -495,19 +549,29 @@ userSchema.methods.addCommunityAward = function(title, description, category, aw
         category,
         awardedBy,
         awardedAt: new Date(),
-        year: currentYear
+        year: awardYear  // Explicitly set the year
     };
     
     this.communityAwards.push(award);
     this.markModified('communityAwards');
     
-    console.log(`🌟 Added community award for ${this.raUsername}: ${title}`);
+    console.log(`🌟 Added community award for ${this.raUsername}: ${title} (${awardYear})`);
     return true;
 };
 
 userSchema.methods.getCommunityAwardsForYear = function(year) {
     if (!this.communityAwards) return [];
     return this.communityAwards.filter(award => award.year === year);
+};
+
+// FIXED: Method to get community points with year validation
+userSchema.methods.getCommunityPointsForYear = function(year) {
+    const awards = this.getCommunityAwardsForYear(year);
+    return awards.reduce((total, award) => {
+        // Assign points based on award type or use default
+        const defaultPoints = 5; // Default points per community award
+        return total + (award.points || defaultPoints);
+    }, 0);
 };
 
 // Utility methods
@@ -615,20 +679,101 @@ userSchema.statics.findWithGachaItems = function() {
     });
 };
 
-// EMERGENCY FIX: Manual index creation function
+// FIXED: Data migration static method
+userSchema.statics.fixValidationIssues = async function() {
+    console.log('🔧 Starting User model validation fixes...');
+    
+    try {
+        // Fix missing years in community awards
+        const usersWithAwards = await this.find({ 
+            'communityAwards.0': { $exists: true } 
+        });
+        
+        let fixedUsers = 0;
+        
+        for (const user of usersWithAwards) {
+            let needsSave = false;
+            
+            if (user.communityAwards) {
+                user.communityAwards.forEach(award => {
+                    if (!award.year && award.awardedAt) {
+                        award.year = award.awardedAt.getFullYear();
+                        needsSave = true;
+                        console.log(`🔧 Fixed year for ${user.raUsername}: ${award.title} -> ${award.year}`);
+                    } else if (!award.year) {
+                        award.year = new Date().getFullYear();
+                        needsSave = true;
+                        console.log(`🔧 Set current year for ${user.raUsername}: ${award.title} -> ${award.year}`);
+                    }
+                });
+            }
+            
+            if (needsSave) {
+                user.markModified('communityAwards');
+                await user.save();
+                fixedUsers++;
+            }
+        }
+        
+        console.log(`✅ Fixed community awards for ${fixedUsers} users`);
+        
+        // Report on GP transaction types that might cause issues
+        const allUsers = await this.find({ 'gpTransactions.0': { $exists: true } });
+        const unknownTypes = new Set();
+        
+        const validTypes = [
+            'gacha_pull', 'monthly_bonus', 'achievement_bonus', 'admin_adjustment', 
+            'combination_reward', 'series_completion', 'player_gift', 'store_purchase',
+            'challenge_reward', 'leaderboard_reward', 'event_reward',
+            'monthly_grant', 'wager', 'admin_award', 'game_completion', 
+            'refund', 'challenge_award', 'bet', 'vote',
+            'arena_win', 'arena_participation', 'daily_bonus', 'special_event',
+            'compensation', 'manual_adjustment', 'system_adjustment'
+        ];
+        
+        allUsers.forEach(user => {
+            if (user.gpTransactions) {
+                user.gpTransactions.forEach(transaction => {
+                    if (!validTypes.includes(transaction.type)) {
+                        unknownTypes.add(transaction.type);
+                    }
+                });
+            }
+        });
+        
+        if (unknownTypes.size > 0) {
+            console.warn('⚠️ Found unknown GP transaction types:', Array.from(unknownTypes));
+            console.warn('These should be added to the enum in the schema');
+        } else {
+            console.log('✅ All GP transaction types are valid');
+        }
+        
+        return { 
+            success: true, 
+            fixedUsers,
+            unknownTransactionTypes: Array.from(unknownTypes)
+        };
+        
+    } catch (error) {
+        console.error('❌ Error fixing validation issues:', error);
+        return { success: false, error: error.message };
+    }
+};
+
+// EMERGENCY: Index creation function
 userSchema.statics.createIndexesSafely = async function() {
     console.log('🔨 Creating User model indexes safely...');
     
     try {
         const collection = this.collection;
+        const timestamp = Date.now();
         
-        // Create indexes one by one with comprehensive error handling
         const indexesToCreate = [
             {
                 spec: { discordId: 1 },
                 options: { 
                     unique: true, 
-                    name: 'discordId_unique_new',
+                    name: `discordId_unique_${timestamp}`,
                     background: true 
                 },
                 description: 'discordId unique index'
@@ -637,7 +782,7 @@ userSchema.statics.createIndexesSafely = async function() {
                 spec: { raUsername: 1 },
                 options: { 
                     unique: true, 
-                    name: 'raUsername_unique_new',
+                    name: `raUsername_unique_${timestamp}`,
                     background: true 
                 },
                 description: 'raUsername unique index'
@@ -647,7 +792,7 @@ userSchema.statics.createIndexesSafely = async function() {
                 options: { 
                     unique: true, 
                     sparse: true, 
-                    name: 'raUserId_unique_sparse_new',
+                    name: `raUserId_unique_sparse_${timestamp}`,
                     background: true 
                 },
                 description: 'raUserId unique sparse index'
@@ -655,7 +800,7 @@ userSchema.statics.createIndexesSafely = async function() {
             {
                 spec: { totalPoints: -1 },
                 options: { 
-                    name: 'totalPoints_desc',
+                    name: `totalPoints_desc_${timestamp}`,
                     background: true 
                 },
                 description: 'totalPoints performance index'
@@ -684,22 +829,6 @@ userSchema.statics.createIndexesSafely = async function() {
     }
 };
 
-// Pre-save middleware
-userSchema.pre('save', function(next) {
-    // Update last seen on any save
-    if (!this.isNew) {
-        this.lastSeen = new Date();
-    }
-    
-    // Ensure GP balance is never negative
-    if (this.gpBalance < 0) {
-        console.warn(`⚠️ Negative GP balance detected for ${this.raUsername}: ${this.gpBalance}, setting to 0`);
-        this.gpBalance = 0;
-    }
-    
-    next();
-});
-
 // Post-save middleware for logging
 userSchema.post('save', function(doc) {
     if (doc.isNew) {
@@ -707,6 +836,6 @@ userSchema.post('save', function(doc) {
     }
 });
 
-// EMERGENCY FIX: Export model with disabled auto-indexing
+// Export model with fixes applied
 export const User = mongoose.model('User', userSchema);
 export { userSchema };
