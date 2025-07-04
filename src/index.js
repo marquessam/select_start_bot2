@@ -1,4 +1,4 @@
-// src/index.js - Optimized with performance improvements
+// src/index.js - Optimized with performance improvements and index fix
 import { Client, Collection, Events, GatewayIntentBits, EmbedBuilder } from 'discord.js';
 import { config, validateConfig } from './config/config.js';
 import { connectDB, checkDatabaseHealth } from './models/index.js';
@@ -654,10 +654,99 @@ async function fixDuplicateIndexes() {
     }
 }
 
-// MAIN READY EVENT - OPTIMIZED
+// Fix User model index conflicts
+async function fixUserIndexConflicts() {
+    try {
+        console.log('🔧 Checking User model indexes...');
+        
+        // Get all existing indexes
+        const indexes = await User.collection.indexes();
+        console.log('📋 Current User indexes:', indexes.map(idx => idx.name));
+        
+        // Look for conflicting raUsername indexes
+        const raUsernameIndexes = indexes.filter(index => 
+            index.name.includes('raUsername') && index.name !== 'raUsername_1'
+        );
+        
+        if (raUsernameIndexes.length > 0) {
+            console.log('🚨 Found conflicting raUsername indexes:', raUsernameIndexes.map(idx => idx.name));
+            
+            for (const index of raUsernameIndexes) {
+                try {
+                    console.log(`🗑️ Dropping conflicting index: ${index.name}`);
+                    await User.collection.dropIndex(index.name);
+                    console.log(`✅ Successfully dropped index: ${index.name}`);
+                } catch (dropError) {
+                    if (dropError.code === 27 || dropError.message.includes('index not found')) {
+                        console.log(`ℹ️ Index ${index.name} was already dropped`);
+                    } else {
+                        console.error(`❌ Error dropping index ${index.name}:`, dropError.message);
+                    }
+                }
+            }
+            
+            // Wait a moment for the drops to complete
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            
+            // Let Mongoose recreate the index properly
+            console.log('🔄 Allowing Mongoose to recreate raUsername index...');
+            try {
+                await User.collection.createIndex(
+                    { raUsername: 1 }, 
+                    { unique: true, background: true }
+                );
+                console.log('✅ Successfully recreated raUsername unique index');
+            } catch (createError) {
+                if (createError.code === 85) {
+                    console.log('ℹ️ Index already exists with correct specification');
+                } else {
+                    console.error('❌ Error creating raUsername index:', createError.message);
+                }
+            }
+        } else {
+            console.log('✅ No conflicting raUsername indexes found');
+        }
+        
+        // Also check for discordId index conflicts
+        const discordIdIndexes = indexes.filter(index => 
+            index.name.includes('discordId') && 
+            index.name !== 'discordId_1' && 
+            !index.name.includes('sparse')
+        );
+        
+        if (discordIdIndexes.length > 0) {
+            console.log('🚨 Found conflicting discordId indexes:', discordIdIndexes.map(idx => idx.name));
+            
+            for (const index of discordIdIndexes) {
+                try {
+                    console.log(`🗑️ Dropping conflicting discordId index: ${index.name}`);
+                    await User.collection.dropIndex(index.name);
+                    console.log(`✅ Successfully dropped discordId index: ${index.name}`);
+                } catch (dropError) {
+                    if (dropError.code === 27 || dropError.message.includes('index not found')) {
+                        console.log(`ℹ️ Index ${index.name} was already dropped`);
+                    } else {
+                        console.error(`❌ Error dropping discordId index ${index.name}:`, dropError.message);
+                    }
+                }
+            }
+        }
+        
+        console.log('✅ User index conflict resolution complete');
+        
+    } catch (error) {
+        console.error('❌ Error in User index conflict resolution:', error.message);
+        // Don't throw - allow the app to continue
+    }
+}
+
+// MAIN READY EVENT - OPTIMIZED WITH INDEX FIX
 client.once(Events.ClientReady, async () => {
     try {
         console.log(`Logged in as ${client.user.tag}`);
+
+        // FIX: Add User index conflict resolution BEFORE connecting to MongoDB
+        await fixUserIndexConflicts();
 
         // Connect to MongoDB
         await connectDB();
@@ -972,6 +1061,7 @@ client.once(Events.ClientReady, async () => {
         console.log('  • Interaction routing: Streamlined with early returns');
         console.log('  • Emoji loading: Non-blocking with timeout protection');
         console.log('  • Gacha Machine: Non-blocking initialization');
+        console.log('  • Index conflicts: Automatically resolved on startup');
         console.log('  • All services: Running on optimized schedules');
         
     } catch (error) {
