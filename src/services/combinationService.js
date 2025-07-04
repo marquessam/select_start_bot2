@@ -1,4 +1,4 @@
-// src/services/combinationService.js - COMPLETE VERSION with FIXED cache integration and enhanced combination checking
+// src/services/combinationService.js - FIXED: Proper emoji display throughout
 import { GachaItem, CombinationRule } from '../models/GachaItem.js';
 import { Challenge } from '../models/Challenge.js';
 import { config } from '../config/config.js';
@@ -66,134 +66,55 @@ class CombinationService {
         return null; // Let Discord use the fallback emoji name
     }
 
-    /**
-     * FIXED: Enhanced combination checking with fresh data validation
-     */
+    // Core combination logic
     async checkPossibleCombinations(user, triggerItemId = null) {
-        if (!user || !user.gachaCollection?.length) {
-            console.log('No user or empty collection for combination check');
-            return [];
+        if (!user.gachaCollection?.length) return [];
+
+        const rules = await CombinationRule.find({ isActive: true });
+        const combinations = [];
+
+        for (const rule of rules) {
+            const ruleCombinations = await this.findPossibleCombinationsForRule(user, rule, triggerItemId);
+            combinations.push(...ruleCombinations);
         }
 
-        try {
-            // FIXED: Ensure we have fresh collection data
-            let freshUser = user;
-            
-            // If user object might be stale (no recent save timestamp), refetch
-            const userLastModified = user.updatedAt || user.createdAt;
-            const dataAge = Date.now() - new Date(userLastModified).getTime();
-            
-            if (dataAge > 60000) { // If data is older than 1 minute, refetch
-                console.log(`🔄 Refetching user data for combination check (data age: ${Math.round(dataAge/1000)}s)`);
-                const { User } = await import('../models/User.js');
-                const refetchedUser = await User.findById(user._id);
-                if (refetchedUser) {
-                    freshUser = refetchedUser;
-                    console.log(`✅ Using fresh user data with ${freshUser.gachaCollection?.length || 0} items`);
-                } else {
-                    console.warn('⚠️ Could not refetch user, using existing data');
-                }
-            }
-
-            const rules = await CombinationRule.find({ isActive: true });
-            const combinations = [];
-
-            console.log(`🔍 Checking ${rules.length} combination rules for ${freshUser.raUsername || freshUser._id}`);
-
-            for (const rule of rules) {
-                try {
-                    const ruleCombinations = await this.findPossibleCombinationsForRule(freshUser, rule, triggerItemId);
-                    combinations.push(...ruleCombinations);
-                } catch (ruleError) {
-                    console.error(`❌ Error checking rule ${rule.ruleId}:`, ruleError.message);
-                }
-            }
-
-            console.log(`🎯 Found ${combinations.length} possible combinations for ${freshUser.raUsername || freshUser._id}`);
-            return combinations.sort((a, b) => (b.rule.priority || 0) - (a.rule.priority || 0));
-
-        } catch (error) {
-            console.error('❌ Error in checkPossibleCombinations:', error);
-            return [];
-        }
+        return combinations.sort((a, b) => (b.rule.priority || 0) - (a.rule.priority || 0));
     }
 
-    /**
-     * FIXED: Enhanced rule checking with better logging
-     */
     async findPossibleCombinationsForRule(user, rule, triggerItemId = null) {
-        try {
-            const userItemMap = this.buildUserItemMap(user);
-            console.log(`🧪 Checking rule ${rule.ruleId} for ${user.raUsername || user._id} (${userItemMap.size} unique items)`);
-            
-            // FIXED: Better error handling for result items
-            let possibleResults;
-            try {
-                possibleResults = await this.getPossibleResultItems(rule);
-                if (!possibleResults || possibleResults.length === 0) {
-                    console.warn(`⚠️ No result items found for rule ${rule.ruleId}`);
-                    return [];
-                }
-            } catch (resultError) {
-                console.error(`❌ Error getting result items for rule ${rule.ruleId}:`, resultError.message);
-                return [];
-            }
-            
-            // Skip non-destructive if user already has any result
-            if (rule.isNonDestructive && possibleResults.some(item => userItemMap.has(item.itemId))) {
-                console.log(`⏭️ Skipping non-destructive rule ${rule.ruleId} - user already has result`);
-                return [];
-            }
-
-            // Check ingredient availability
-            const availableQuantities = rule.ingredients.map(ingredient => {
-                const userItem = userItemMap.get(ingredient.itemId);
-                const available = userItem && userItem.quantity >= ingredient.quantity 
-                    ? Math.floor(userItem.quantity / ingredient.quantity) 
-                    : 0;
-                
-                if (available === 0) {
-                    console.log(`❌ Missing ingredient ${ingredient.itemId} for rule ${rule.ruleId}`);
-                } else {
-                    console.log(`✅ Have ${available} sets of ingredient ${ingredient.itemId} for rule ${rule.ruleId}`);
-                }
-                
-                return available;
-            });
-
-            if (availableQuantities.some(qty => qty === 0)) {
-                console.log(`⏭️ Skipping rule ${rule.ruleId} - missing ingredients`);
-                return [];
-            }
-            
-            // Check trigger item requirement
-            if (triggerItemId && !rule.ingredients.some(ing => ing.itemId === triggerItemId)) {
-                console.log(`⏭️ Skipping rule ${rule.ruleId} - doesn't use trigger item ${triggerItemId}`);
-                return [];
-            }
-
-            const maxCombinations = Math.min(...availableQuantities);
-            
-            console.log(`🎉 Rule ${rule.ruleId} is possible! Max combinations: ${maxCombinations}`);
-            
-            return [{
-                ruleId: rule.ruleId,
-                rule,
-                resultType: rule.resultType || 'single',
-                possibleResults,
-                maxCombinations,
-                ingredients: rule.ingredients.map(ing => ({
-                    itemId: ing.itemId,
-                    quantity: ing.quantity,
-                    available: userItemMap.get(ing.itemId)?.quantity || 0,
-                    item: userItemMap.get(ing.itemId)?.item
-                }))
-            }];
-
-        } catch (error) {
-            console.error(`❌ Error in findPossibleCombinationsForRule for ${rule.ruleId}:`, error);
+        const userItemMap = this.buildUserItemMap(user);
+        const possibleResults = await this.getPossibleResultItems(rule);
+        
+        // Skip non-destructive if user already has any result
+        if (rule.isNonDestructive && possibleResults.some(item => userItemMap.has(item.itemId))) {
             return [];
         }
+
+        const availableQuantities = rule.ingredients.map(ingredient => {
+            const userItem = userItemMap.get(ingredient.itemId);
+            return userItem && userItem.quantity >= ingredient.quantity 
+                ? Math.floor(userItem.quantity / ingredient.quantity) 
+                : 0;
+        });
+
+        if (availableQuantities.some(qty => qty === 0)) return [];
+        if (triggerItemId && !rule.ingredients.some(ing => ing.itemId === triggerItemId)) return [];
+
+        const maxCombinations = Math.min(...availableQuantities);
+        
+        return [{
+            ruleId: rule.ruleId,
+            rule,
+            resultType: rule.resultType || 'single',
+            possibleResults,
+            maxCombinations,
+            ingredients: rule.ingredients.map(ing => ({
+                itemId: ing.itemId,
+                quantity: ing.quantity,
+                available: userItemMap.get(ing.itemId)?.quantity || 0,
+                item: userItemMap.get(ing.itemId)?.item
+            }))
+        }];
     }
 
     async getPossibleResultItems(rule) {
@@ -220,31 +141,13 @@ class CombinationService {
         }
     }
 
-    /**
-     * FIXED: Enhanced user item mapping with validation
-     */
     buildUserItemMap(user) {
         const map = new Map();
-        
-        if (!user.gachaCollection || !Array.isArray(user.gachaCollection)) {
-            console.warn('⚠️ Invalid or empty gachaCollection for user mapping');
-            return map;
-        }
-        
-        let itemCount = 0;
         user.gachaCollection.forEach(item => {
-            if (!item.itemId) {
-                console.warn('⚠️ Found item without itemId in collection');
-                return;
-            }
-            
             const existing = map.get(item.itemId) || { quantity: 0, item };
             existing.quantity += (item.quantity || 1);
             map.set(item.itemId, existing);
-            itemCount++;
         });
-        
-        console.log(`📊 Built user item map: ${map.size} unique items, ${itemCount} total items`);
         return map;
     }
 
@@ -760,40 +663,6 @@ class CombinationService {
         
         console.log(`Final recipe for alert: ${finalRecipe}`);
         return finalRecipe;
-    }
-
-    /**
-     * FIXED: Add method to manually trigger combination check (for testing/debugging)
-     */
-    async manualCombinationCheck(user) {
-        console.log(`🔍 Manual combination check requested for ${user.raUsername || user._id}`);
-        
-        try {
-            // Force fresh data by refetching user
-            const { User } = await import('../models/User.js');
-            const freshUser = await User.findById(user._id);
-            
-            if (!freshUser) {
-                console.error('❌ Could not refetch user for manual check');
-                return { error: 'User not found' };
-            }
-            
-            const combinations = await this.checkPossibleCombinations(freshUser);
-            
-            return {
-                success: true,
-                combinations,
-                userItemCount: freshUser.gachaCollection?.length || 0,
-                message: `Found ${combinations.length} possible combinations`
-            };
-            
-        } catch (error) {
-            console.error('❌ Error in manual combination check:', error);
-            return { 
-                error: error.message,
-                success: false 
-            };
-        }
     }
 
     // Shadow unlock and alerts
@@ -1517,7 +1386,7 @@ class CombinationService {
         const monthName = monthNames[month - 1];
 
         const embed = this.createEmbed('🌙 SHADOW CHALLENGE REVEALED!', COMBINATION_COLORS.shadow);
-        embed.setDescription(
+        this.setEmbedDescription(embed,
             `**${user.raUsername}** has unlocked the secrets!\n\n` +
             `🔓 The shadow challenge for **${monthName} ${year}** has been revealed!\n\n` +
             `**Shadow Game:** ${challenge.shadow_game_title || 'Mystery Game'}\n\n` +
