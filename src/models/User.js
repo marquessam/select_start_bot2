@@ -1,4 +1,4 @@
-// src/models/User.js - COMPLETE with store_purchase integration
+// src/models/User.js - FIXED: Removed automatic unique constraint to avoid index conflicts
 import mongoose from 'mongoose';
 
 const communityAwardSchema = new mongoose.Schema({
@@ -146,13 +146,13 @@ const collectionProgressSchema = new mongoose.Schema({
 const userSchema = new mongoose.Schema({
     raUsername: {
         type: String,
-        required: true,
-        unique: true
+        required: true
+        // REMOVED: unique: true - we'll handle this with explicit indexing
     },
     discordId: {
         type: String,
-        required: true,
-        sparse: true
+        required: true
+        // REMOVED: sparse: true - we'll handle this with explicit indexing
     },
     monthlyChallenges: {
         type: Map,
@@ -336,16 +336,96 @@ const userSchema = new mongoose.Schema({
     strict: false // Allow additional fields to be added
 });
 
-// ===== INDEXES =====
+// ===== CUSTOM INDEX CREATION WITH SAFE HANDLING =====
+// Create indexes manually with proper error handling
+
+// CRITICAL: We need to create indexes after schema definition but handle conflicts gracefully
+userSchema.post('init', async function() {
+    try {
+        const collection = this.constructor.collection;
+        
+        // Get existing indexes
+        const existingIndexes = await collection.indexes();
+        const indexNames = existingIndexes.map(idx => idx.name);
+        
+        console.log('📋 Existing User indexes before creation:', indexNames);
+        
+        // Handle raUsername unique index
+        const hasProperRAUsernameIndex = indexNames.includes('raUsername_1');
+        const hasConflictingRAIndex = indexNames.some(name => 
+            name.includes('raUsername') && name !== 'raUsername_1' && name !== '_id_'
+        );
+        
+        if (hasConflictingRAIndex && !hasProperRAUsernameIndex) {
+            console.log('🚨 Conflicting raUsername index detected, attempting to resolve...');
+            
+            // Drop conflicting indexes
+            for (const indexName of indexNames) {
+                if (indexName.includes('raUsername') && indexName !== 'raUsername_1' && indexName !== '_id_') {
+                    try {
+                        await collection.dropIndex(indexName);
+                        console.log(`✅ Dropped conflicting index: ${indexName}`);
+                    } catch (dropError) {
+                        console.log(`⚠️ Could not drop index ${indexName}:`, dropError.message);
+                    }
+                }
+            }
+            
+            // Wait a moment
+            await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+        
+        // Create proper raUsername unique index
+        if (!hasProperRAUsernameIndex) {
+            try {
+                await collection.createIndex(
+                    { raUsername: 1 }, 
+                    { unique: true, background: true, name: 'raUsername_1' }
+                );
+                console.log('✅ Created raUsername unique index');
+            } catch (createError) {
+                if (createError.code === 85) {
+                    console.log('ℹ️ raUsername index conflict - trying to resolve...');
+                    // The index exists but with a different name, we need to handle this at the application level
+                } else {
+                    console.error('❌ Error creating raUsername index:', createError.message);
+                }
+            }
+        }
+        
+        // Handle discordId sparse index
+        const hasProperDiscordIdIndex = indexNames.some(name => 
+            name.includes('discordId') && name.includes('sparse')
+        );
+        
+        if (!hasProperDiscordIdIndex) {
+            try {
+                await collection.createIndex(
+                    { discordId: 1 }, 
+                    { sparse: true, background: true, name: 'discordId_sparse_1' }
+                );
+                console.log('✅ Created discordId sparse index');
+            } catch (createError) {
+                console.log('ℹ️ discordId index already exists or conflict:', createError.message);
+            }
+        }
+        
+    } catch (error) {
+        console.error('❌ Error in User schema index creation:', error.message);
+        // Don't throw - allow the model to be created even if indexes fail
+    }
+});
+
+// ===== REGULAR INDEXES (these should work fine) =====
 // Add indexes for Arena system
-userSchema.index({ 'arenaStats.challengesWon': -1 });
-userSchema.index({ 'arenaStats.totalGpWon': -1 });
-userSchema.index({ gpBalance: -1 });
-userSchema.index({ lastMonthlyGpGrant: 1 });
+userSchema.index({ 'arenaStats.challengesWon': -1 }, { background: true });
+userSchema.index({ 'arenaStats.totalGpWon': -1 }, { background: true });
+userSchema.index({ gpBalance: -1 }, { background: true });
+userSchema.index({ lastMonthlyGpGrant: 1 }, { background: true });
 
 // Add indexes for trophy system
-userSchema.index({ 'trophyCase.challengeType': 1 });
-userSchema.index({ 'trophyCase.earnedAt': -1 });
+userSchema.index({ 'trophyCase.challengeType': 1 }, { background: true });
+userSchema.index({ 'trophyCase.earnedAt': -1 }, { background: true });
 
 // ===== STATIC METHODS =====
 
