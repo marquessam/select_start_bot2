@@ -1,4 +1,4 @@
-// src/services/leaderboardFeedService.js - STREAMLINED and DRY-compliant
+// src/services/leaderboardFeedService.js - ENHANCED with improved rank change detection
 import { User } from '../models/User.js';
 import { Challenge } from '../models/Challenge.js';
 import { ArcadeBoard } from '../models/ArcadeBoard.js';
@@ -693,37 +693,72 @@ class LeaderboardFeedService extends FeedManagerBase {
                     type: 'newEntry',
                     username: user.username,
                     newRank: user.displayRank,
+                    previousRank: null,
                     achievementCount: user.achieved,
                     reason: `Entered top rankings with ${user.achieved} achievements`
                 });
-            } else if (previousState && currentState.displayRank < previousState.displayRank) {
-                console.log(`LeaderboardFeed: ${user.username} improved from rank ${previousState.displayRank} to ${currentState.displayRank}`);
-                alerts.push({
-                    type: 'overtake',
-                    username: user.username,
-                    previousRank: previousState.displayRank,
-                    newRank: currentState.displayRank,
-                    achievementCount: currentState.achieved,
-                    reason: this.determineChangeReason(previousState, currentState)
-                });
             } else if (previousState) {
-                console.log(`LeaderboardFeed: ${user.username} unchanged (${previousState.displayRank} -> ${currentState.displayRank})`);
+                // FIXED: Detect ANY rank change within top 5, not just improvements
+                if (currentState.displayRank !== previousState.displayRank) {
+                    const isImprovement = currentState.displayRank < previousState.displayRank;
+                    const isDegradation = currentState.displayRank > previousState.displayRank;
+                    
+                    console.log(`LeaderboardFeed: ${user.username} rank changed from ${previousState.displayRank} to ${currentState.displayRank}`);
+                    
+                    alerts.push({
+                        type: isImprovement ? 'improvement' : 'deterioration',
+                        username: user.username,
+                        previousRank: previousState.displayRank,
+                        newRank: currentState.displayRank,
+                        achievementCount: currentState.achieved,
+                        previousAchievementCount: previousState.achieved,
+                        reason: this.determineChangeReason(previousState, currentState, isImprovement)
+                    });
+                }
+                // ENHANCED: Detect tie-breaking scenarios (same rank but different achievement counts)
+                else if (currentState.displayRank === previousState.displayRank && 
+                         currentState.achieved !== previousState.achieved) {
+                    
+                    const achievementDiff = currentState.achieved - previousState.achieved;
+                    if (achievementDiff > 0) {
+                        console.log(`LeaderboardFeed: ${user.username} strengthened their position at rank ${currentState.displayRank}`);
+                        
+                        alerts.push({
+                            type: 'tieStrengthened',
+                            username: user.username,
+                            previousRank: previousState.displayRank,
+                            newRank: currentState.displayRank,
+                            achievementCount: currentState.achieved,
+                            previousAchievementCount: previousState.achieved,
+                            achievementGain: achievementDiff,
+                            reason: `Strengthened position with ${achievementDiff} new achievement${achievementDiff > 1 ? 's' : ''}`
+                        });
+                    }
+                }
             }
         }
 
-        // Check for users who fell out of top 5
+        // ENHANCED: Check for users who fell within top 5 or out of top 5
         for (const [username, previousState] of this.previousDetailedRanks.entries()) {
             if (previousState.displayRank <= 5) {
                 const currentUser = currentRanks.find(u => u.username === username);
-                if ((!currentUser || currentUser.displayRank > 5) && 
-                    now - (this.lastAlertTime.get(username) || 0) >= this.alertCooldown) {
-                    console.log(`LeaderboardFeed: ${username} fell out of top 5 from rank ${previousState.displayRank}`);
-                    alerts.push({
-                        type: 'fallOut',
-                        username: username,
-                        previousRank: previousState.displayRank,
-                        newRank: currentUser?.displayRank || 'Outside Top 5'
-                    });
+                const timeSinceLastUserAlert = now - (this.lastAlertTime.get(username) || 0);
+                
+                if (timeSinceLastUserAlert >= this.alertCooldown) {
+                    if (!currentUser || currentUser.displayRank > 5) {
+                        // Fell out of top 5 completely
+                        console.log(`LeaderboardFeed: ${username} fell out of top 5 from rank ${previousState.displayRank}`);
+                        alerts.push({
+                            type: 'fallOut',
+                            username: username,
+                            previousRank: previousState.displayRank,
+                            newRank: currentUser?.displayRank || 'Outside Top 5',
+                            achievementCount: currentUser?.achieved || 0,
+                            previousAchievementCount: previousState.achieved,
+                            reason: 'Dropped out of top 5'
+                        });
+                    }
+                    // Note: Rank changes within top 5 are already handled in the loop above
                 }
             }
         }
@@ -746,8 +781,12 @@ class LeaderboardFeedService extends FeedManagerBase {
             const changes = alerts.map(alert => ({
                 username: alert.username,
                 newRank: alert.newRank,
+                previousRank: alert.previousRank,
                 reason: alert.reason,
-                type: alert.type
+                type: alert.type,
+                achievementCount: alert.achievementCount,
+                previousAchievementCount: alert.previousAchievementCount,
+                achievementGain: alert.achievementGain
             }));
 
             const currentStandings = currentRanks.slice(0, 5).map(user => ({
@@ -755,7 +794,12 @@ class LeaderboardFeedService extends FeedManagerBase {
                 rank: user.displayRank,
                 score: `${user.achieved}/${currentChallenge.monthly_challange_game_total} achievements (${user.percentage}%)`,
                 achievementCount: user.achieved,
-                totalAchievements: currentChallenge.monthly_challange_game_total
+                totalAchievements: currentChallenge.monthly_challange_game_total,
+                // Add tiebreaker info if available
+                tiebreakerInfo: user.hasTiebreaker && user.tiebreakerScore ? 
+                    `${user.tiebreakerScore} in ${user.tiebreakerGame}` : null,
+                tiebreakerBreakerInfo: user.hasTiebreakerBreaker && user.tiebreakerBreakerScore ? 
+                    `${user.tiebreakerBreakerScore} in ${user.tiebreakerBreakerGame}` : null
             }));
 
             let thumbnailUrl = null;
@@ -773,7 +817,8 @@ class LeaderboardFeedService extends FeedManagerBase {
                 changes: changes,
                 currentStandings: currentStandings,
                 thumbnail: thumbnailUrl,
-                footer: { text: 'Alerts sent hourly • Leaderboard updates every 15 minutes • Data from RetroAchievements' }
+                challengeId: currentChallenge.monthly_challange_gameid,
+                footer: { text: 'Alerts sent when significant changes occur • Leaderboard updates every 15 minutes • Data from RetroAchievements' }
             });
             
             console.log('LeaderboardFeed: Successfully called AlertService.sendMonthlyRankAlert');
@@ -803,21 +848,28 @@ class LeaderboardFeedService extends FeedManagerBase {
         };
     }
 
-    determineChangeReason(previousState, currentState) {
+    determineChangeReason(previousState, currentState, isImprovement = true) {
         if (!previousState) {
             return `Entered top rankings with ${currentState.achieved} achievements`;
         }
 
-        if (currentState.achieved > previousState.achieved) {
-            const newAchievements = currentState.achieved - previousState.achieved;
-            return `Earned ${newAchievements} new achievement(s)`;
+        const achievementDiff = currentState.achieved - previousState.achieved;
+        const rankDiff = Math.abs(currentState.displayRank - previousState.displayRank);
+        
+        if (achievementDiff > 0) {
+            const action = isImprovement ? 'climbed' : 'maintained position despite others advancing';
+            return `Earned ${achievementDiff} new achievement${achievementDiff > 1 ? 's' : ''} and ${action}`;
+        }
+
+        if (achievementDiff === 0 && !isImprovement) {
+            return 'Other players advanced past them';
         }
 
         if (previousState.award !== currentState.award) {
             return `Achievement status improved: ${currentState.award}`;
         }
 
-        return 'Ranking position updated';
+        return isImprovement ? 'Improved position' : 'Position changed';
     }
 
     storeDetailedRanks(ranks) {
