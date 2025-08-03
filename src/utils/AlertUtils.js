@@ -1,4 +1,4 @@
-// src/utils/AlertUtils.js
+// src/utils/AlertUtils.js - ENHANCED with improved rank change formatting for compatibility
 import { EmbedBuilder } from 'discord.js';
 import { config } from '../config/config.js';
 import { COLORS, EMOJIS, getDiscordTimestamp } from './FeedUtils.js';
@@ -52,8 +52,83 @@ function createGameLink(gameTitle, gameId) {
 }
 
 /**
+ * ENHANCED helper function to format position changes with better visual indicators
+ */
+function formatPositionChanges(changes) {
+    let changesText = '';
+    
+    for (const change of changes) {
+        const userLink = createUserProfileLink(change.username);
+        let rankEmoji = '';
+        let previousRankEmoji = '';
+        
+        // Current rank emoji
+        if (change.newRank && change.newRank <= 3) {
+            rankEmoji = EMOJIS[`RANK_${change.newRank}`];
+        } else {
+            rankEmoji = `#${change.newRank || ''}`;
+        }
+        
+        // Previous rank emoji for comparison
+        if (change.previousRank && change.previousRank <= 3) {
+            previousRankEmoji = EMOJIS[`RANK_${change.previousRank}`];
+        } else if (change.previousRank) {
+            previousRankEmoji = `#${change.previousRank}`;
+        }
+        
+        // Determine change type and format accordingly
+        if (change.type === 'newEntry') {
+            changesText += `🆕 ${userLink} entered the top 5 at ${rankEmoji}!\n`;
+            if (change.reason) {
+                changesText += `   └─ ${change.reason}\n`;
+            }
+        } else if (change.type === 'improvement') {
+            changesText += `⬆️ ${userLink} moved from ${previousRankEmoji} to ${rankEmoji}!\n`;
+            if (change.reason) {
+                changesText += `   └─ ${change.reason}\n`;
+            }
+        } else if (change.type === 'deterioration') {
+            changesText += `⬇️ ${userLink} dropped from ${previousRankEmoji} to ${rankEmoji}\n`;
+            if (change.reason) {
+                changesText += `   └─ ${change.reason}\n`;
+            }
+        } else if (change.type === 'tieStrengthened') {
+            changesText += `🔧 ${userLink} strengthened their ${rankEmoji} position!\n`;
+            if (change.achievementGain) {
+                changesText += `   └─ Gained ${change.achievementGain} achievement${change.achievementGain > 1 ? 's' : ''} while maintaining rank\n`;
+            }
+        } else if (change.type === 'fallOut') {
+            if (typeof change.newRank === 'string') {
+                changesText += `📉 ${userLink} fell from ${previousRankEmoji} to outside top 5\n`;
+            } else {
+                changesText += `📉 ${userLink} fell from ${previousRankEmoji} to ${rankEmoji}\n`;
+            }
+            if (change.reason) {
+                changesText += `   └─ ${change.reason}\n`;
+            }
+        } else {
+            // Legacy support for simple rank changes
+            if (change.previousRank && change.newRank < change.previousRank) {
+                changesText += `⬆️ ${userLink} moved from ${previousRankEmoji} to ${rankEmoji}!\n`;
+            } else if (change.previousRank && change.newRank > change.previousRank) {
+                changesText += `⬇️ ${userLink} dropped from ${previousRankEmoji} to ${rankEmoji}\n`;
+            } else {
+                changesText += `📊 ${userLink} is now in ${rankEmoji} place!\n`;
+            }
+            if (change.reason) {
+                changesText += `   └─ ${change.reason}\n`;
+            }
+        }
+        
+        changesText += '\n'; // Add spacing between changes
+    }
+    
+    return changesText.trim();
+}
+
+/**
  * Helper class for sending alerts to designated channels
- * Updated to support multiple alert channels per service and proper color coding
+ * ENHANCED with improved position change formatting and color coding
  */
 export class AlertManager {
     constructor(client) {
@@ -197,7 +272,7 @@ export class AlertManager {
     }
     
     /**
-     * Send a standard alert for position/rank changes
+     * ENHANCED: Send a standard alert for position/rank changes with improved formatting
      * @param {Object} options - Alert options
      * @param {string} alertType - The type of alert to send (determines channel and color)
      * @param {string} overrideChannelId - Optional specific channel ID to override default
@@ -241,22 +316,9 @@ export class AlertManager {
                 embed.setThumbnail(thumbnail);
             }
             
-            // Add position changes if any exist
+            // ENHANCED: Add position changes using improved formatting
             if (changes && changes.length > 0) {
-                let changesText = '';
-                changes.forEach(change => {
-                    let rankEmoji = '';
-                    if (change.newRank && change.newRank <= 3) {
-                        rankEmoji = EMOJIS[`RANK_${change.newRank}`];
-                    } else {
-                        rankEmoji = `#${change.newRank || ''}`;
-                    }
-                    
-                    // UPDATED: Add user profile link
-                    const userLink = createUserProfileLink(change.username);
-                    changesText += `${userLink} is now in ${rankEmoji} place!\n`;
-                });
-                
+                const changesText = formatPositionChanges(changes);
                 embed.addFields({ 
                     name: 'Position Changes', 
                     value: changesText 
@@ -283,7 +345,7 @@ export class AlertManager {
                     const primaryScore = scoreLines[0];
                     const secondaryInfo = scoreLines.slice(1).join('\n');
                     
-                    // UPDATED: Add user profile link
+                    // ENHANCED: Add user profile link
                     const userLink = createUserProfileLink(user.username);
                     standingsText += `${rankEmoji} ${userLink}: ${primaryScore}${globalRank}\n`;
                     
@@ -318,7 +380,7 @@ export class AlertManager {
     }
         
     /**
-     * FIXED: Send a standard alert for new achievements/awards with proper description handling
+     * ENHANCED: Send a standard alert for new achievements/awards with improved description handling
      * @param {Object} options - Alert options
      * @param {string} alertType - The type of alert to send (determines channel)
      * @param {string} overrideChannelId - Optional specific channel ID to override default
@@ -382,7 +444,7 @@ export class AlertManager {
                 embed.setTitle(`🎮 Achievement Unlocked!`);
             }
             
-            // FIXED: Use the passed achievementDescription if provided (contains GP info),
+            // ENHANCED: Use the passed achievementDescription if provided (contains GP info),
             // otherwise create our own description
             let description = '';
             
