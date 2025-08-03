@@ -1,4 +1,4 @@
-// src/index.js - Optimized with performance improvements and index fix
+// src/index.js - Optimized with performance improvements and Monthly Winner Service
 import { Client, Collection, Events, GatewayIntentBits, EmbedBuilder } from 'discord.js';
 import { config, validateConfig } from './config/config.js';
 import { connectDB, checkDatabaseHealth } from './models/index.js';
@@ -22,6 +22,7 @@ import monthlyGPService from './services/monthlyGPService.js';
 import gpRewardService from './services/gpRewardService.js';
 import gachaMachine from './services/gachaMachine.js';
 import combinationService from './services/combinationService.js';
+import monthlyWinnerService from './services/monthlyWinnerService.js';
 import { User } from './models/User.js';
 import { ArcadeBoard } from './models/ArcadeBoard.js';
 
@@ -805,6 +806,7 @@ client.once(Events.ClientReady, async () => {
         gameAwardService.setClient(client);
         gachaMachine.setClient(client);
         combinationService.setClient(client);
+        monthlyWinnerService.setClient(client);
 
         // Start services
         monthlyGPService.start();
@@ -1049,6 +1051,8 @@ client.once(Events.ClientReady, async () => {
         await arenaAlertService.start();
         await arenaFeedService.start();
         await gameAwardService.initialize();
+        monthlyWinnerService.start();
+        console.log('✅ Monthly Winner Service started');
 
         // Check for arena timeouts that occurred while bot was offline
         arenaService.checkAndProcessTimeouts().catch(error => {
@@ -1062,6 +1066,7 @@ client.once(Events.ClientReady, async () => {
         console.log('  • Emoji loading: Non-blocking with timeout protection');
         console.log('  • Gacha Machine: Non-blocking initialization');
         console.log('  • Index conflicts: Automatically resolved on startup');
+        console.log('  • Monthly Winner Service: Automated monthly winner processing');
         console.log('  • All services: Running on optimized schedules');
         
     } catch (error) {
@@ -1093,6 +1098,7 @@ process.on('SIGINT', () => {
     console.log('Shutting down...');
     monthlyGPService.stop();
     gachaMachine.stop();
+    monthlyWinnerService.stop();
     try {
         gpRewardService.stop();
         console.log('✅ GP reward service stopped cleanly');
@@ -1106,6 +1112,7 @@ process.on('SIGTERM', () => {
     console.log('Shutting down...');
     monthlyGPService.stop();
     gachaMachine.stop();
+    monthlyWinnerService.stop();
     try {
         gpRewardService.stop();
         console.log('✅ GP reward service stopped cleanly');
