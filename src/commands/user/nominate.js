@@ -211,7 +211,7 @@ export default {
     createStaticSuccessEmbed(gameData, user, comment = null, remainingCount = null) {
         const embed = new EmbedBuilder()
             .setTitle('✅ Game Nominated Successfully!')
-            .setDescription(`${user.raUsername} has nominated a game for **Sega Month!** 🎮`)
+            .setDescription(`${user.raUsername} has nominated a game!`)
             .setColor('#00FF00')
             .setThumbnail(gameData.ImageIcon)
             .addFields(
