@@ -1,4 +1,4 @@
-// src/utils/AlertService.js - FIXED with proper alert replacement logic
+// src/utils/AlertService.js - ENHANCED with improved alert formatting and rank change detection
 import { EmbedBuilder } from 'discord.js';
 import { config } from '../config/config.js';
 import { COLORS, EMOJIS, getDiscordTimestamp } from './FeedUtils.js';
@@ -137,7 +137,7 @@ export const LinkUtils = {
 };
 
 /**
- * CENTRALIZED ranking display utilities - FIXED to eliminate duplicates
+ * ENHANCED ranking display utilities - FIXED to eliminate duplicates
  */
 export const RankingUtils = {
     getRankDisplay(rank) {
@@ -147,8 +147,87 @@ export const RankingUtils = {
         return `#${rank}`;
     },
     
+    formatPositionChanges(changes) {
+        let changesText = '';
+        
+        for (const change of changes) {
+            const userLink = LinkUtils.createUserLink(change.username);
+            const newRankDisplay = this.getRankDisplay(change.newRank);
+            const previousRankDisplay = change.previousRank ? this.getRankDisplay(change.previousRank) : null;
+            
+            switch (change.type) {
+                case 'newEntry':
+                    changesText += `🆕 ${userLink} entered the top 5 at ${newRankDisplay}!\n`;
+                    if (change.reason) {
+                        changesText += `   └─ ${change.reason}\n`;
+                    }
+                    break;
+                    
+                case 'improvement':
+                    const improvementArrow = '⬆️';
+                    changesText += `${improvementArrow} ${userLink} moved from ${previousRankDisplay} to ${newRankDisplay}!\n`;
+                    if (change.reason) {
+                        changesText += `   └─ ${change.reason}\n`;
+                    }
+                    break;
+                    
+                case 'deterioration':
+                    const deteriorationArrow = '⬇️';
+                    changesText += `${deteriorationArrow} ${userLink} dropped from ${previousRankDisplay} to ${newRankDisplay}\n`;
+                    if (change.reason) {
+                        changesText += `   └─ ${change.reason}\n`;
+                    }
+                    break;
+                    
+                case 'tieStrengthened':
+                    changesText += `🔧 ${userLink} strengthened their ${newRankDisplay} position!\n`;
+                    if (change.achievementGain) {
+                        changesText += `   └─ Gained ${change.achievementGain} achievement${change.achievementGain > 1 ? 's' : ''} while maintaining rank\n`;
+                    }
+                    break;
+                    
+                case 'fallOut':
+                    const fallArrow = '📉';
+                    if (typeof change.newRank === 'string') {
+                        changesText += `${fallArrow} ${userLink} fell from ${previousRankDisplay} to outside top 5\n`;
+                    } else {
+                        changesText += `${fallArrow} ${userLink} fell from ${previousRankDisplay} to ${newRankDisplay}\n`;
+                    }
+                    if (change.reason) {
+                        changesText += `   └─ ${change.reason}\n`;
+                    }
+                    break;
+                    
+                // Handle legacy 'overtake' type for backward compatibility
+                case 'overtake':
+                    const overtakeArrow = change.newRank < change.previousRank ? '⬆️' : '⬇️';
+                    const direction = change.newRank < change.previousRank ? 'moved up' : 'moved down';
+                    changesText += `${overtakeArrow} ${userLink} ${direction} from ${previousRankDisplay} to ${newRankDisplay}!\n`;
+                    if (change.reason) {
+                        changesText += `   └─ ${change.reason}\n`;
+                    }
+                    break;
+                    
+                default:
+                    // Fallback for any other types
+                    changesText += `📊 ${userLink} is now at ${newRankDisplay}`;
+                    if (previousRankDisplay) {
+                        changesText += ` (was ${previousRankDisplay})`;
+                    }
+                    changesText += `!\n`;
+                    if (change.reason) {
+                        changesText += `   └─ ${change.reason}\n`;
+                    }
+            }
+            
+            changesText += '\n'; // Add spacing between different changes
+        }
+        
+        return changesText.trim(); // Remove final newline
+    },
+    
     formatStandings(standings, alertType, options = {}) {
-        const { showTiebreakers = false, maxEntries = 5 } = options;
+        const { showTiebreakers = false, maxEntries = 5, showAchievementCounts = false } = options;
         let standingsText = '';
         
         const sortedStandings = [...standings]
@@ -162,6 +241,11 @@ export const RankingUtils = {
             if (alertType === ALERT_TYPES.MONTHLY_RANKS) {
                 const score = user.score || '';
                 standingsText += `${rankDisplay} ${userLink}: ${score}\n`;
+                
+                // ENHANCED: Show achievement counts for better context
+                if (showAchievementCounts && user.achievementCount && user.totalAchievements) {
+                    standingsText += `   └─ ${user.achievementCount}/${user.totalAchievements} achievements completed\n`;
+                }
                 
                 if (showTiebreakers && user.rank <= 5) {
                     if (user.tiebreakerInfo) {
@@ -181,23 +265,31 @@ export const RankingUtils = {
         return standingsText;
     },
     
-    formatPositionChanges(changes) {
-        let changesText = '';
+    // NEW: Method to detect and highlight tie situations
+    detectTiedPositions(currentStandings) {
+        const tieInfo = [];
+        const rankGroups = {};
         
-        for (const change of changes) {
-            const userLink = LinkUtils.createUserLink(change.username);
-            const rankDisplay = this.getRankDisplay(change.newRank);
-            
-            if (change.type === 'newEntry') {
-                changesText += `${userLink} entered the top 5 at ${rankDisplay}!\n`;
-            } else if (change.type === 'overtake') {
-                changesText += `${userLink} moved to ${rankDisplay}! ${change.reason || ''}\n`;
-            } else {
-                changesText += `${userLink} is now at ${rankDisplay}!\n`;
+        // Group users by rank
+        for (const user of currentStandings) {
+            if (!rankGroups[user.rank]) {
+                rankGroups[user.rank] = [];
+            }
+            rankGroups[user.rank].push(user);
+        }
+        
+        // Find ties (ranks with multiple users)
+        for (const [rank, users] of Object.entries(rankGroups)) {
+            if (users.length > 1) {
+                tieInfo.push({
+                    rank: parseInt(rank),
+                    users: users.map(u => u.username),
+                    count: users.length
+                });
             }
         }
         
-        return changesText;
+        return tieInfo;
     }
 };
 
@@ -208,7 +300,7 @@ export class AlertService {
     constructor(client = null) {
         this.client = client;
         this.channelCache = new Map();
-        this.previousMessages = new Map(); // NEW: Track previous messages per channel/alert type
+        this.previousMessages = new Map(); // Track previous messages per channel/alert type
         
         console.log('AlertService initialized with message replacement capability');
     }
@@ -258,7 +350,7 @@ export class AlertService {
     }
     
     /**
-     * NEW: Delete previous message if this alert type should replace
+     * Delete previous message if this alert type should replace
      */
     async deletePreviousMessage(channel, alertType) {
         if (!REPLACEABLE_ALERTS.includes(alertType)) return;
@@ -279,7 +371,7 @@ export class AlertService {
     }
     
     /**
-     * NEW: Store message ID for potential future deletion
+     * Store message ID for potential future deletion
      */
     storePreviousMessage(channel, alertType, messageId) {
         if (!REPLACEABLE_ALERTS.includes(alertType)) return;
@@ -289,7 +381,7 @@ export class AlertService {
     }
     
     /**
-     * CENTRALIZED rank change alert - handles ALL ranking systems
+     * ENHANCED rank change alert - handles ALL ranking systems with improved formatting
      */
     async sendRankChangeAlert(options) {
         const {
@@ -327,25 +419,25 @@ export class AlertService {
             if (!embedTitle) {
                 if (alertType === ALERT_TYPES.MONTHLY_RANKS) {
                     const currentMonth = monthName || now.toLocaleString('en-US', { month: 'long' });
-                    embedTitle = `📊 ${currentMonth} Challenge Update!`;
+                    embedTitle = `📊 ${currentMonth} Challenge Leaderboard Update!`;
                 } else if (alertType === ALERT_TYPES.ARCADE_RANKS) {
-                    embedTitle = '🕹️ Arcade Alert!';
+                    embedTitle = '🕹️ Arcade Leaderboard Update!';
                 } else if (alertType === ALERT_TYPES.ARENA_RANKS) {
-                    embedTitle = '🏟️ Arena Alert!';
+                    embedTitle = '🏟️ Arena Leaderboard Update!';
                 } else {
-                    embedTitle = 'Leaderboard Update!';
+                    embedTitle = '📈 Leaderboard Update!';
                 }
             }
             
             if (!embedDescription) {
                 if (gameTitle && gameId) {
                     const gameLink = LinkUtils.createGameLink(gameTitle, gameId);
-                    embedDescription = `The leaderboard for ${gameLink} has been updated!`;
+                    embedDescription = `Ranking changes detected for ${gameLink}!`;
                 } else if (leaderboardTitle && leaderboardId) {
                     const leaderboardLink = LinkUtils.createLeaderboardLink(leaderboardTitle, leaderboardId);
-                    embedDescription = `The leaderboard for ${leaderboardLink} has been updated!`;
+                    embedDescription = `Ranking changes detected for ${leaderboardLink}!`;
                 } else {
-                    embedDescription = 'The leaderboard has been updated!';
+                    embedDescription = 'Ranking changes detected in the leaderboard!';
                 }
             }
             
@@ -357,7 +449,7 @@ export class AlertService {
             
             // Add time field
             embed.addFields({
-                name: 'Time',
+                name: '🕐 Update Time',
                 value: now.toLocaleString('en-US', {
                     month: 'long',
                     day: 'numeric', 
@@ -373,34 +465,53 @@ export class AlertService {
                 embed.setThumbnail(thumbnail);
             }
             
-            // Add position changes using centralized formatting
+            // ENHANCED: Add position changes using improved formatting
             if (changes && changes.length > 0) {
                 const changesText = RankingUtils.formatPositionChanges(changes);
                 embed.addFields({ 
-                    name: 'Position Changes', 
+                    name: '📈 Position Changes', 
                     value: changesText,
                     inline: false
                 });
             }
             
-            // Add current standings using centralized formatting
+            // ENHANCED: Add current standings with achievement context
             if (currentStandings && currentStandings.length > 0) {
                 const standingsText = RankingUtils.formatStandings(currentStandings, alertType, {
-                    showTiebreakers: alertType === ALERT_TYPES.MONTHLY_RANKS
+                    showTiebreakers: alertType === ALERT_TYPES.MONTHLY_RANKS,
+                    showAchievementCounts: alertType === ALERT_TYPES.MONTHLY_RANKS
                 });
                 
                 embed.addFields({ 
-                    name: 'Current Top 5', 
+                    name: '🏆 Current Top 5', 
                     value: standingsText,
                     inline: false
                 });
+                
+                // NEW: Detect and highlight current ties
+                if (alertType === ALERT_TYPES.MONTHLY_RANKS) {
+                    const ties = RankingUtils.detectTiedPositions(currentStandings.slice(0, 5));
+                    if (ties.length > 0) {
+                        let tiesText = '';
+                        for (const tie of ties) {
+                            const rankDisplay = RankingUtils.getRankDisplay(tie.rank);
+                            tiesText += `${rankDisplay}: ${tie.users.join(', ')} (${tie.count} players tied)\n`;
+                        }
+                        
+                        embed.addFields({
+                            name: '🤝 Current Ties',
+                            value: tiesText,
+                            inline: false
+                        });
+                    }
+                }
             }
             
             // Add footer
             if (footer) {
                 embed.setFooter(footer);
             } else {
-                let footerText = 'Data provided by RetroAchievements';
+                let footerText = 'Rankings update every 15 minutes • Data from RetroAchievements';
                 if (challengeId) {
                     footerText = `Challenge ID: ${challengeId} • ${footerText}`;
                 }
@@ -409,12 +520,12 @@ export class AlertService {
             
             // Send to all target channels with message replacement
             for (const channel of channels) {
-                // NEW: Delete previous message if this alert type should replace
+                // Delete previous message if this alert type should replace
                 await this.deletePreviousMessage(channel, alertType);
                 
                 const message = await channel.send({ embeds: [embed] });
                 
-                // NEW: Store message ID for future replacement
+                // Store message ID for future replacement
                 this.storePreviousMessage(channel, alertType, message.id);
                 
                 console.log(`AlertService: Sent ${alertType} alert to ${channel.name}`);
