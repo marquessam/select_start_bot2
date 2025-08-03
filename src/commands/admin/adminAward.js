@@ -47,6 +47,23 @@ export default {
                     .setDescription('The index number of the award to remove (from view command)')
                     .setRequired(true)
                     .setMinValue(1))
+        )
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('monthly')
+                .setDescription('View monthly winner awards for all users')
+                .addIntegerOption(option =>
+                    option.setName('year')
+                    .setDescription('Year to filter by (optional)')
+                    .setRequired(false)
+                    .setMinValue(2020)
+                    .setMaxValue(2030))
+                .addIntegerOption(option =>
+                    option.setName('month')
+                    .setDescription('Month to filter by (1-12, optional)')
+                    .setRequired(false)
+                    .setMinValue(1)
+                    .setMaxValue(12))
         ),
 
     async execute(interaction) {
@@ -69,6 +86,9 @@ export default {
                 break;
             case 'clear':
                 await this.handleClearAward(interaction);
+                break;
+            case 'monthly':
+                await this.handleViewMonthlyAwards(interaction);
                 break;
             default:
                 await interaction.reply({
@@ -98,6 +118,54 @@ export default {
                 return interaction.editReply('User not found. Please check the username or register the user first.');
             }
 
+            // Check for potential monthly winner award conflicts
+            const monthlyWinnerTitles = [
+                '1st Place Monthly Challenge Winner',
+                '2nd Place Monthly Challenge Winner', 
+                '3rd Place Monthly Challenge Winner'
+            ];
+            
+            if (monthlyWinnerTitles.some(winnerTitle => title.includes(winnerTitle) || winnerTitle.includes(title))) {
+                const warningMessage = `⚠️ **Warning:** This award title appears to be a monthly winner award.\n\n` +
+                    `The automated monthly winner system may conflict with manual awards. ` +
+                    `Use \`/adminaward monthly\` to view existing monthly winner awards.\n\n` +
+                    `Continue anyway? React ✅ to proceed or ❌ to cancel.`;
+                
+                const warningReply = await interaction.editReply({ 
+                    content: warningMessage
+                });
+                
+                try {
+                    await warningReply.react('✅');
+                    await warningReply.react('❌');
+                    
+                    const filter = (reaction, user) => {
+                        return ['✅', '❌'].includes(reaction.emoji.name) && user.id === interaction.user.id;
+                    };
+                    
+                    const collected = await warningReply.awaitReactions({ 
+                        filter, 
+                        max: 1, 
+                        time: 30000, 
+                        errors: ['time'] 
+                    });
+                    
+                    const reaction = collected.first();
+                    
+                    if (reaction.emoji.name === '❌') {
+                        return interaction.editReply({ 
+                            content: '❌ Award cancelled.',
+                            components: [] 
+                        });
+                    }
+                } catch (timeoutError) {
+                    return interaction.editReply({ 
+                        content: '⏰ Award cancelled due to timeout.',
+                        components: [] 
+                    });
+                }
+            }
+
             // Add the community award
             user.communityAwards.push({
                 title,
@@ -109,7 +177,7 @@ export default {
             await user.save();
 
             return interaction.editReply({
-                content: `Successfully awarded "${title}" (${points} point${points !== 1 ? 's' : ''}) to ${raUsername}!`
+                content: `✅ Successfully awarded "${title}" (${points} point${points !== 1 ? 's' : ''}) to ${raUsername}!`
             });
 
         } catch (error) {
@@ -141,21 +209,54 @@ export default {
                 return interaction.editReply(`User "${user.raUsername}" has no community awards.`);
             }
 
+            // Separate monthly winner awards from other awards
+            const monthlyWinnerTitles = [
+                '1st Place Monthly Challenge Winner',
+                '2nd Place Monthly Challenge Winner', 
+                '3rd Place Monthly Challenge Winner'
+            ];
+            
+            const monthlyAwards = user.communityAwards.filter(award => 
+                monthlyWinnerTitles.includes(award.title)
+            );
+            
+            const otherAwards = user.communityAwards.filter(award => 
+                !monthlyWinnerTitles.includes(award.title)
+            );
+
             // Format awards for display
             let response = `**Community Awards for ${user.raUsername}:**\n\n`;
             
-            user.communityAwards.forEach((award, index) => {
-                const awardDate = award.awardedAt ? new Date(award.awardedAt).toLocaleDateString() : 'Unknown date';
-                response += `**${index + 1}.** "${award.title}" (${award.points} point${award.points !== 1 ? 's' : ''})\n`;
-                response += `   Awarded by: ${award.awardedBy || 'System'} on ${awardDate}\n\n`;
-            });
+            if (monthlyAwards.length > 0) {
+                response += `**🏆 Monthly Winner Awards:**\n`;
+                monthlyAwards.forEach((award, index) => {
+                    const awardDate = award.awardedAt ? new Date(award.awardedAt).toLocaleDateString() : 'Unknown date';
+                    const awardBy = award.awardedBy === 'Monthly Winner System' ? '🤖 Auto-awarded' : award.awardedBy;
+                    response += `• "${award.title}" (${award.points} point${award.points !== 1 ? 's' : ''})\n`;
+                    response += `  ${awardBy} on ${awardDate}\n`;
+                });
+                response += '\n';
+            }
+            
+            if (otherAwards.length > 0) {
+                response += `**🎯 Other Community Awards:**\n`;
+                otherAwards.forEach((award, index) => {
+                    const awardDate = award.awardedAt ? new Date(award.awardedAt).toLocaleDateString() : 'Unknown date';
+                    const globalIndex = user.communityAwards.indexOf(award) + 1;
+                    response += `**${globalIndex}.** "${award.title}" (${award.points} point${award.points !== 1 ? 's' : ''})\n`;
+                    response += `   Awarded by: ${award.awardedBy || 'System'} on ${awardDate}\n\n`;
+                });
+            }
             
             // Add total points
             const totalPoints = user.communityAwards.reduce((sum, award) => sum + award.points, 0);
-            response += `**Total Points:** ${totalPoints}`;
+            response += `**Total Community Points:** ${totalPoints}`;
             
             // Add instruction for deleting awards
-            response += `\n\nTo remove an award, use \`/adminaward clear username:${user.raUsername} index:<number>\``;
+            if (otherAwards.length > 0) {
+                response += `\n\n💡 To remove an award, use \`/adminaward clear username:${user.raUsername} index:<number>\``;
+                response += `\n⚠️ Monthly winner awards are managed by the automated system.`;
+            }
 
             return interaction.editReply(response);
 
@@ -199,15 +300,148 @@ export default {
             const awardTitle = award.title;
             const awardPoints = award.points;
 
+            // Check if this is a monthly winner award
+            const monthlyWinnerTitles = [
+                '1st Place Monthly Challenge Winner',
+                '2nd Place Monthly Challenge Winner', 
+                '3rd Place Monthly Challenge Winner'
+            ];
+            
+            if (monthlyWinnerTitles.includes(award.title)) {
+                return interaction.editReply(
+                    `⚠️ Cannot remove "${awardTitle}" as it's a monthly winner award managed by the automated system.\n\n` +
+                    `If you need to remove this award, please contact a developer or manually edit the database.`
+                );
+            }
+
             // Remove the award from the array
             user.communityAwards.splice(awardIndex, 1);
             await user.save();
 
-            return interaction.editReply(`Successfully removed award "${awardTitle}" (${awardPoints} points) from ${user.raUsername}.`);
+            return interaction.editReply(`✅ Successfully removed award "${awardTitle}" (${awardPoints} points) from ${user.raUsername}.`);
 
         } catch (error) {
             console.error('Error clearing user award:', error);
             return interaction.editReply('An error occurred while removing the award. Please try again.');
+        }
+    },
+
+    /**
+     * Handle viewing monthly winner awards across all users
+     */
+    async handleViewMonthlyAwards(interaction) {
+        await interaction.deferReply();
+
+        try {
+            const year = interaction.options.getInteger('year');
+            const month = interaction.options.getInteger('month');
+
+            // Build query for monthly winner awards
+            const monthlyWinnerTitles = [
+                '1st Place Monthly Challenge Winner',
+                '2nd Place Monthly Challenge Winner', 
+                '3rd Place Monthly Challenge Winner'
+            ];
+
+            const users = await User.find({
+                'communityAwards.title': { $in: monthlyWinnerTitles }
+            });
+
+            if (users.length === 0) {
+                return interaction.editReply('No monthly winner awards found in the database.');
+            }
+
+            // Collect and filter monthly winner awards
+            let allMonthlyAwards = [];
+            
+            for (const user of users) {
+                for (const award of user.communityAwards) {
+                    if (monthlyWinnerTitles.includes(award.title)) {
+                        const awardDate = new Date(award.awardedAt);
+                        
+                        // Apply date filters if provided
+                        if (year && awardDate.getFullYear() !== year) continue;
+                        if (month && (awardDate.getMonth() + 1) !== month) continue;
+                        
+                        allMonthlyAwards.push({
+                            username: user.raUsername,
+                            title: award.title,
+                            points: award.points,
+                            awardedAt: awardDate,
+                            awardedBy: award.awardedBy
+                        });
+                    }
+                }
+            }
+
+            if (allMonthlyAwards.length === 0) {
+                const filterText = year && month ? ` for ${new Date(year, month - 1).toLocaleString('default', { month: 'long' })} ${year}` :
+                                 year ? ` for ${year}` : 
+                                 month ? ` for month ${month}` : '';
+                return interaction.editReply(`No monthly winner awards found${filterText}.`);
+            }
+
+            // Sort by date (most recent first)
+            allMonthlyAwards.sort((a, b) => b.awardedAt - a.awardedAt);
+
+            // Group by month for better display
+            const groupedByMonth = new Map();
+            for (const award of allMonthlyAwards) {
+                const monthKey = `${award.awardedAt.getFullYear()}-${String(award.awardedAt.getMonth() + 1).padStart(2, '0')}`;
+                if (!groupedByMonth.has(monthKey)) {
+                    groupedByMonth.set(monthKey, []);
+                }
+                groupedByMonth.get(monthKey).push(award);
+            }
+
+            // Format response
+            const filterText = year && month ? ` for ${new Date(year, month - 1).toLocaleString('default', { month: 'long' })} ${year}` :
+                              year ? ` for ${year}` : 
+                              month ? ` for month ${month}` : '';
+            
+            let response = `**🏆 Monthly Winner Awards${filterText}:**\n\n`;
+
+            for (const [monthKey, awards] of groupedByMonth) {
+                const [yearStr, monthStr] = monthKey.split('-');
+                const monthName = new Date(parseInt(yearStr), parseInt(monthStr) - 1).toLocaleString('default', { month: 'long' });
+                
+                response += `**${monthName} ${yearStr}:**\n`;
+                
+                // Sort within month by place (1st, 2nd, 3rd)
+                awards.sort((a, b) => {
+                    const getPlace = (title) => {
+                        if (title.includes('1st')) return 1;
+                        if (title.includes('2nd')) return 2;
+                        if (title.includes('3rd')) return 3;
+                        return 4;
+                    };
+                    return getPlace(a.title) - getPlace(b.title);
+                });
+                
+                for (const award of awards) {
+                    const place = award.title.includes('1st') ? '🥇' :
+                                 award.title.includes('2nd') ? '🥈' :
+                                 award.title.includes('3rd') ? '🥉' : '🏆';
+                    
+                    const awardedBy = award.awardedBy === 'Monthly Winner System' ? '🤖' : '👤';
+                    response += `${place} **${award.username}** (${award.points} pts) ${awardedBy}\n`;
+                }
+                response += '\n';
+            }
+
+            response += `**Total Awards:** ${allMonthlyAwards.length}\n`;
+            response += `🤖 = Auto-awarded by system | 👤 = Manually awarded`;
+
+            // Split response if too long
+            if (response.length > 2000) {
+                response = response.substring(0, 1950) + '\n\n*...truncated. Use specific year/month filters for full results.*';
+            }
+
+            return interaction.editReply(response);
+
+        } catch (error) {
+            console.error('Error viewing monthly winner awards:', error);
+            return interaction.editReply('An error occurred while retrieving monthly winner awards. Please try again.');
         }
     }
 };
